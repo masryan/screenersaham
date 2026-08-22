@@ -269,6 +269,13 @@ async function loadLive(){
       // Null berarti "belum ditransaksikan" (suspensi dsb), bukan nol —
       // lihat catatan flow_summary di database. Jangan format null jadi 0.
       capCategory: r.cap_category, pos52w: numOrNull(r.pos_52w),
+      // Market Cap: dipakai kalau kolom `market_cap` sudah ada di
+      // stocks_screener. Kalau belum, coba turunkan dari
+      // `shares_outstanding` x harga. Kalau dua-duanya belum ada di
+      // skema, nilainya null dan UI menampilkan "-" (bukan 0) —
+      // lihat catatan di README/SQL soal menambah kolom ini.
+      sharesOutstanding: numOrNull(r.shares_outstanding),
+      marketCap: numOrNull(r.market_cap) ?? (numOrNull(r.shares_outstanding) != null ? numOrNull(r.shares_outstanding) * (numOrNull(r.price) || 0) : null),
       vsMa50Pct: numOrNull(r.vs_ma50_pct), vsMa200Pct: numOrNull(r.vs_ma200_pct),
       foreignNet1D: numOrNull(r.foreign_net_1d), foreignNet5D: numOrNull(r.foreign_net_5d),
       foreignNet20D: numOrNull(r.foreign_net_20d), foreignUpDays: numOrNull(r.foreign_up_days),
@@ -417,12 +424,18 @@ function renderDetailTeknikal(s){
 }
 
 function renderDetailFundamental(s){
+  const graham = grahamFairValue(s);
+  const marginOfSafetyPct = (graham!=null && s.cClose) ? ((graham - s.cClose) / s.cClose) * 100 : null;
+  const grahamTone = marginOfSafetyPct==null ? "muted" : marginOfSafetyPct>=15 ? "up" : marginOfSafetyPct<=-15 ? "down" : "gold";
+
   return `
     <div class="detail-subtitle">Klasifikasi</div>
     <div class="detail-grid">
       ${dItem("Sektor", s.sektor||"-", true)}
       ${dItem("Syariah", s.syariahLabel==="Ya"?"✅ Ya":(s.syariahLabel||"-"), true)}
       ${dItem("Valuasi", pillHtml(s.valuasi||"-", valuasiTone(s.valuasi)), true)}
+      ${dItem("Kategori Cap", s.capCategory||"-", true)}
+      ${dItem("Market Cap", s.marketCap!=null ? `Rp ${fmtCap(s.marketCap)}` : "-", true)}
     </div>
 
     <div class="detail-subtitle">Rasio Valuasi & Profitabilitas</div>
@@ -433,11 +446,21 @@ function renderDetailFundamental(s){
       ${dItem("Dividend Yield%", s.divYield!=null?dNum(s.divYield,{decimals:2,suffix:'%'}):"-")}
     </div>
 
+    <div class="detail-subtitle">Nilai Wajar (Graham Number)</div>
+    <div class="detail-grid" style="border-left: 3px solid var(--${grahamTone}); padding-left: 10px;">
+      ${dItem("Nilai Wajar", graham!=null ? dNum(graham,{decimals:0}) : "-", true)}
+      ${dItem("Harga Saat Ini", dNum(s.cClose), true)}
+      ${dItem("Margin of Safety", marginOfSafetyPct!=null ? `<span style="color:var(--${grahamTone})">${marginOfSafetyPct>=0?'+':''}${marginOfSafetyPct.toFixed(1)}%</span>` : "-", true)}
+    </div>
+
     <div class="detail-narrative">
       ${s.per!=null && s.pbv!=null
         ? `Berdasarkan PER ${s.per} dan PBV ${s.pbv}, valuasi saham ini saat ini tergolong <b>${(s.valuasi||"-").toLowerCase()}</b>.
-           ${s.divYield ? `Emiten ini memberikan dividend yield sekitar ${dNum(s.divYield,{decimals:2})}% pada harga saat ini.` : "Belum ada data dividend yield untuk emiten ini."}`
-        : "Data fundamental (PER/PBV) untuk emiten ini belum lengkap di database, sehingga valuasi belum bisa dihitung secara akurat."}
+           ${s.divYield ? `Emiten ini memberikan dividend yield sekitar ${dNum(s.divYield,{decimals:2})}% pada harga saat ini.` : "Belum ada data dividend yield untuk emiten ini."}
+           ${graham!=null
+             ? ` Dihitung dengan formula Graham Number (√(22,5 × EPS × BVPS), EPS & BVPS diturunkan dari PER/PBV saat ini), nilai wajarnya sekitar ${dNum(graham,{decimals:0})} — ${marginOfSafetyPct>=0 ? `harga saat ini ${Math.abs(marginOfSafetyPct).toFixed(1)}% di bawah nilai wajar` : `harga saat ini ${Math.abs(marginOfSafetyPct).toFixed(1)}% di atas nilai wajar`}. Graham Number cocok untuk saham dengan EPS & ekuitas positif (umumnya sektor non-cyclical); kurang relevan untuk emiten rugi, bank, atau komoditas yang labanya fluktuatif.`
+             : " PER atau PBV emiten ini negatif/tidak tersedia, sehingga Nilai Wajar (Graham Number) tidak bisa dihitung secara valid."}`
+        : "Data fundamental (PER/PBV) untuk emiten ini belum lengkap di database, sehingga valuasi maupun nilai wajar belum bisa dihitung."}
     </div>
   `;
 }
@@ -448,11 +471,15 @@ function renderDetailAnalisa(s){
   
   // 1. Kalkulasi Trading Plan
   const entry = s.cClose;
+  const tpFromResistance = !!s.resistance;
   const tp = s.resistance || (entry * 1.05); 
-  const sl = s.support && entry - s.support < (s.atr14 || entry * 0.05) ? s.support : entry - (s.atr14 || entry * 0.03); 
+  const slFromSupport = !!(s.support && entry - s.support < (s.atr14 || entry * 0.05));
+  const sl = slFromSupport ? s.support : entry - (s.atr14 || entry * 0.03); 
   const risk = entry - sl;
   const reward = tp - entry;
   const rrr = risk > 0 ? (reward / risk).toFixed(2) : 0;
+  const tpPct = entry ? ((tp - entry) / entry) * 100 : null;
+  const slPct = entry ? ((sl - entry) / entry) * 100 : null;
   
   let tradeTone = "muted"; let tradeStatus = "Netral";
   if (rrr >= 1.5 && s.keyakinanTone === "up" && s.volTone === "up") { tradeTone = "up"; tradeStatus = "🔥 Highly Recommended"; } 
@@ -514,12 +541,17 @@ function renderDetailAnalisa(s){
 
     <!-- TRADING PLAN (Dipertahankan) -->
     <div class="detail-subtitle">Trading Plan Otomatis (Risk/Reward)</div>
-    <div class="detail-grid" style="border-left: 3px solid var(--${tradeTone}); padding-left: 10px; margin-bottom: 16px;">
+    <div class="detail-grid" style="border-left: 3px solid var(--${tradeTone}); padding-left: 10px; margin-bottom: 8px;">
       ${dItem("Asumsi Entry (Harga Live)", dNum(entry), true)}
-      ${dItem("Target Price (Resisten)", '<span style="color:var(--up)">' + dNum(tp) + '</span>', true)}
-      ${dItem("Stop Loss (Support/ATR)", '<span style="color:var(--down)">' + dNum(sl) + '</span>', true)}
+      ${dItem("Take Profit", '<span style="color:var(--up)">' + dNum(tp) + ' <span style="font-size:11px;opacity:0.8;">(' + (tpPct>=0?'+':'') + tpPct.toFixed(1) + '%)</span></span>', true)}
+      ${dItem("Stop Loss", '<span style="color:var(--down)">' + dNum(sl) + ' <span style="font-size:11px;opacity:0.8;">(' + slPct.toFixed(1) + '%)</span></span>', true)}
       ${dItem("Risk/Reward Ratio (RRR)", '<span style="color:var(--' + (rrr >= 1.5 ? 'up' : 'down') + ')">' + rrr + 'x</span>', true)}
       ${dItem("Kualitas Setup", pillHtml(tradeStatus, tradeTone), true)}
+    </div>
+    <div class="detail-narrative" style="margin-bottom: 16px;">
+      Take Profit ${tpFromResistance ? "diambil dari level resisten teknikal terdekat" : "diperkirakan +5% dari harga entry (resisten belum tersedia di data)"}.
+      Stop Loss ${slFromSupport ? "diambil dari level support teknikal terdekat" : `dihitung dari ATR-14 (${s.atr14!=null?dNum(s.atr14):"default 3%"} di bawah entry, karena jarak ke support dianggap terlalu jauh untuk risk yang wajar)`}.
+      Ini bukan rekomendasi baku — sesuaikan dengan toleransi risiko dan ukuran posisi masing-masing.
     </div>
 
     <div class="detail-subtitle">Detail Parameter</div>
@@ -542,6 +574,29 @@ function fmtRp(n){
   if(abs>=1e9)  return sign+(abs/1e9).toFixed(2)+" M";
   if(abs>=1e6)  return sign+(abs/1e6).toFixed(1)+" jt";
   return sign+fmtNum(abs);
+}
+// Sama seperti fmtRp tapi tanpa tanda +/- di depan — dipakai untuk
+// kuantitas non-arah seperti Market Cap (bukan Net Asing yang berarah).
+function fmtCap(n){
+  if(n===null||n===undefined) return "-";
+  const num = Number(n);
+  if(isNaN(num)) return "-";
+  const abs = Math.abs(num);
+  if(abs>=1e12) return (num/1e12).toFixed(2)+" T";
+  if(abs>=1e9)  return (num/1e9).toFixed(2)+" M";
+  if(abs>=1e6)  return (num/1e6).toFixed(1)+" jt";
+  return fmtNum(num);
+}
+// Nilai Wajar (Graham Number) = sqrt(22.5 x EPS x BVPS).
+// EPS dan BVPS tidak disimpan mentah di DB, tapi bisa diturunkan dari
+// rasio yang sudah ada: PER = harga/EPS -> EPS = harga/PER,
+// PBV = harga/BVPS -> BVPS = harga/PBV. Jadi Graham Number bisa
+// dihitung tanpa perlu kolom baru, selama PER & PBV positif (EPS/BVPS
+// negatif membuat akar tidak valid secara matematis -> null / "-").
+function grahamFairValue(s){
+  const per = numOrNull(s.per), pbv = numOrNull(s.pbv), price = numOrNull(s.cClose);
+  if(per==null || pbv==null || price==null || per<=0 || pbv<=0) return null;
+  return price * Math.sqrt(22.5 / (per * pbv));
 }
 
 function flowBarsHtml(series){
