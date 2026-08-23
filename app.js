@@ -41,6 +41,46 @@ function getSupaHeaders() {
 }
 
 // ==========================================
+// supaFetch — pengganti fetch() polos untuk semua request TULIS
+// (POST/PATCH/DELETE) ke Supabase.
+//
+// KENAPA INI PERLU: fetch() browser TIDAK melempar error untuk respons
+// HTTP 4xx/5xx — hanya melempar kalau koneksi jaringan benar-benar putus.
+// Kalau Supabase menolak insert (RLS, kolom salah, atau "Prefer:
+// resolution=merge-duplicates" tanpa unique constraint yang cocok di
+// tabel), balasannya tetap berupa response yang valid (cuma dengan
+// status 400/401/409/dst + body {message,...}). Kode lama membungkus
+// fetch dengan try{...}catch(e){} kosong dan TIDAK PERNAH mengecek
+// res.ok — jadi kalau Supabase menolak, tidak ada error yang pernah
+// muncul: data kelihatan "tersimpan" (karena localStorage sudah lebih
+// dulu diupdate) padahal sebenarnya gagal sinkron ke server.
+//
+// supaFetch melempar Error berisi pesan asli dari Supabase kalau
+// res.ok === false, supaya pemanggil bisa menampilkannya ke user lewat
+// showError()/alert() alih-alih diam-diam gagal.
+// ==========================================
+async function supaFetch(url, options) {
+  const res = await fetch(url, options);
+  if (!res.ok) {
+    let msg = `HTTP ${res.status} ${res.statusText}`;
+    try {
+      const body = await res.json();
+      if (body && body.message) {
+        msg = body.message;
+        if (body.hint) msg += ` (hint: ${body.hint})`;
+      }
+    } catch (e) { /* body bukan JSON, pakai status text saja */ }
+    // Sertakan nama tabel/endpoint di pesan error — tanpa ini, error yang
+    // sama persis bisa muncul dari beberapa request berbeda (mis.
+    // backtest_sessions vs backtest_items) dan tidak mungkin dibedakan
+    // dari pesan Postgrest saja.
+    const table = url.replace(/^.*\/rest\/v1\//, "").split("?")[0];
+    throw new Error(`[${table}] ${msg}`);
+  }
+  return res;
+}
+
+// ==========================================
 // PENGATURAN UI KONEKSI
 // ==========================================
 function openSettings() {
@@ -113,6 +153,12 @@ let state = {
   expanded: new Set(),
   selectedTicker: null, chartData: [], chartLoading: false, selectedLevels: null, loading:false, chartSearch: "",
   detailTicker: null, detailTab: "teknikal",
+  // Tab Sektoral: sektor mana yang sedang di-expand untuk melihat daftar
+  // sahamnya, dan urutan sortir daftar saham di dalam tiap sektor.
+  sektorExpanded: new Set(), sektorSearch: "", sektorSort: "changeDesc",
+  // Sub-tab aktif di panel "🔥 Top Movers" (bagian atas tab Sektoral):
+  // gainer / loser / value / volume / frequency.
+  topMoversTab: "gainer",
   // "Frequency Analyzer" = kolom baseline (rata-rata Frekuensi) di DB yang
   // dipakai sebagai pembanding di rule builder, namanya bisa beda-beda
   // tergantung skema tiap orang — jadi dibuat konfigurasi lewat Pengaturan,
@@ -125,7 +171,18 @@ let state = {
   // di dropdown (belum tentu sudah "dimuat" ke customRules).
   customPresets: [],
   selectedPresetId: "",
-  presetsLoading: false
+  presetsLoading: false,
+  // Tab Broker Summary: top 5 broker buy/sell per saham per tanggal.
+  // Data diisi MANUAL (dari screenshot akun Stockbit sendiri) lewat
+  // form atau tempel CSV — bukan hasil scraping otomatis.
+  bsStockCode: "", bsDate: new Date().toISOString().slice(0,10),
+  bsRows: [], bsEditRows: [], bsLoading: false,
+  bsEditorOpen: false, bsMsg: "", bsMsgError: false, bsCsvText: "",
+  // Broker Summary versi di dalam modal Detail Emiten (terkunci ke
+  // ticker yang sedang dibuka, tabel Supabase sama dengan di atas).
+  detailBsDate: new Date().toISOString().slice(0,10),
+  detailBsRows: [], detailBsEditRows: [], detailBsLoading: false,
+  detailBsEditorOpen: false, detailBsMsg: "", detailBsMsgError: false, detailBsCsvText: ""
 };
 
 function fmtNum(n){ if(n===null||n===undefined) return "-"; return new Intl.NumberFormat("id-ID").format(n); }
@@ -406,7 +463,7 @@ async function loadLive(){
        state.backtests = backtestRes.map(b => ({
          id: b.id, date: b.session_date,
          items: b.backtest_items.map(it => ({
-            ticker: it.ticker, entryPrice: it.entry_price, filterStr: it.notes, sumber: it.source
+            ticker: it.ticker, entryPrice: it.entry_price, filterStr: it.notes, sumber: it.source, kriteria: it.criteria
          }))
        })).sort((a,b) => String(b.id).localeCompare(String(a.id)));
        saveBacktests();
@@ -452,16 +509,27 @@ async function toggleFav(ticker){
 
   try{ 
     if(!isFav) {
-      await fetch(`${SUPABASE_URL}/watchlists`, { method: "POST", headers: { ...getSupaHeaders(), "Prefer": "resolution=merge-duplicates" }, body: JSON.stringify({ticker}) });
+      await supaFetch(`${SUPABASE_URL}/watchlists`, { method: "POST", headers: { ...getSupaHeaders(), "Prefer": "resolution=merge-duplicates" }, body: JSON.stringify({ticker}) });
     } else {
-      await fetch(`${SUPABASE_URL}/watchlists?ticker=eq.${ticker}`, { method: "DELETE", headers: getSupaHeaders() });
+      await supaFetch(`${SUPABASE_URL}/watchlists?ticker=eq.${ticker}`, { method: "DELETE", headers: getSupaHeaders() });
     }
-  } catch(e){}
+  } catch(e){
+    // Gagal sinkron ke Supabase — batalkan perubahan lokal supaya UI
+    // tidak "berbohong" bahwa item sudah tersimpan, dan beri tahu user
+    // alasannya (bukan diam-diam gagal seperti sebelumnya).
+    isFav ? state.watchlist.add(ticker) : state.watchlist.delete(ticker);
+    saveWatchlist();
+    showError(`Gagal menyimpan watchlist ke Supabase: ${e.message}`);
+    render();
+  }
 }
 
 function openDetail(ticker){
   state.detailTicker = ticker;
   state.detailTab = "teknikal";
+  state.detailBsRows = []; state.detailBsEditRows = [];
+  state.detailBsMsg = ""; state.detailBsMsgError = false;
+  state.detailBsEditorOpen = false; state.detailBsCsvText = "";
   render();
 }
 function closeDetail(){
@@ -508,41 +576,138 @@ function renderDetailTeknikal(s){
       ${dItem("Offer Volume", dNum(s.offerVolume))}
     </div>
 
-    <div class="detail-subtitle">Level Support / Resisten & Fibonacci</div>
+    <div class="detail-subtitle">Hari Sebelumnya (Pembanding)</div>
+    <div class="detail-grid">
+      ${dItem("Prev Close", dNum(s.prevClose))}
+      ${dItem("Prev High", dNum(s.prevHigh))}
+      ${dItem("Prev Low", dNum(s.prevLow))}
+      ${dItem("Prev Volume", dNum(s.prevVol))}
+      ${dItem("Perubahan Volume 1D%", s.volChangePct!=null?dNum(s.volChangePct,{plusSign:true,decimals:2,suffix:'%'}):"-", true)}
+    </div>
+
+    <div class="detail-subtitle">Level Support / Resisten & Fibonacci Retracement</div>
     <div class="detail-grid">
       ${dItem("Support", `<span style="color:var(--down)">${dNum(s.support)}</span>`, true)}
       ${dItem("Resisten", `<span style="color:var(--up)">${dNum(s.resistance)}</span>`, true)}
       ${dItem("52W Tinggi", dNum(s.high52w))}
       ${dItem("52W Rendah", dNum(s.low52w))}
       ${dItem("52W Change%", s.week52ChangePct!=null?dNum(s.week52ChangePct,{plusSign:true,decimals:2,suffix:'%'}):"-", true)}
+      ${dItem("Posisi dalam 52W%", s.pos52w!=null?dNum(s.pos52w,{decimals:1,suffix:'%'}):"-", true)}
       ${dItem("Fib 23.6%", dNum(s.fib?.f236))}
       ${dItem("Fib 38.2%", dNum(s.fib?.f382))}
       ${dItem("Fib 50%", dNum(s.fib?.f50))}
       ${dItem("Fib 61.8%", dNum(s.fib?.f618))}
     </div>
 
-    <div class="detail-subtitle">Moving Average & Trend</div>
+    <div class="detail-subtitle">Pivot Point Fibonacci Klasik</div>
     <div class="detail-grid">
+      ${dItem("Pivot (P)", dNum(s.fibP))}
+      ${dItem("Resisten 1", dNum(s.fibR1))}
+      ${dItem("Resisten 2", dNum(s.fibR2))}
+      ${dItem("Resisten 3", dNum(s.fibR3))}
+      ${dItem("Support 1", dNum(s.fibS1))}
+      ${dItem("Support 2", dNum(s.fibS2))}
+      ${dItem("Support 3", dNum(s.fibS3))}
+    </div>
+
+    <div class="detail-subtitle">Moving Average Harga & Trend</div>
+    <div class="detail-grid">
+      ${dItem("MA5", dNum(s.priceMa5))}
+      ${dItem("MA10", dNum(s.priceMa10))}
+      ${dItem("MA20", dNum(s.priceMa20))}
       ${dItem("MA21", dNum(s.ma21))}
       ${dItem("MA50", dNum(s.ma50))}
       ${dItem("MA100", dNum(s.ma100))}
       ${dItem("MA200", dNum(s.ma200))}
-      ${dItem("EMA21 High", dNum(s.ema21H))}
-      ${dItem("EMA21 Low", dNum(s.ema21L))}
-      ${dItem("EMA 89", dNum(s.ema89))}
       ${dItem("Trend Harga (MA)", pillHtml(s.trendHarga||"-", trendTone(s.trendHarga)), true)}
+      ${dItem("Prev MA5", dNum(s.prevPriceMa5))}
+      ${dItem("Prev MA10", dNum(s.prevPriceMa10))}
+      ${dItem("Prev MA20", dNum(s.prevPriceMa20))}
+      ${dItem("Prev MA50", dNum(s.prevPriceMa50))}
+      ${dItem("Prev MA100", dNum(s.prevPriceMa100))}
+      ${dItem("Prev MA200", dNum(s.prevPriceMa200))}
     </div>
 
-    <div class="detail-subtitle">Momentum & Volatilitas</div>
+    <div class="detail-subtitle">Exponential Moving Average (EMA)</div>
+    <div class="detail-grid">
+      ${dItem("EMA5", dNum(s.ema5))}
+      ${dItem("EMA10", dNum(s.ema10))}
+      ${dItem("EMA20", dNum(s.ema20))}
+      ${dItem("EMA21 High", dNum(s.ema21H))}
+      ${dItem("EMA21 Low", dNum(s.ema21L))}
+      ${dItem("EMA50", dNum(s.ema50))}
+      ${dItem("EMA89", dNum(s.ema89))}
+      ${dItem("EMA100", dNum(s.ema100))}
+      ${dItem("EMA200", dNum(s.ema200))}
+      ${dItem("Prev EMA200", dNum(s.prevEma200))}
+      ${dItem("vs MA50%", s.vsMa50Pct!=null?dNum(s.vsMa50Pct,{plusSign:true,decimals:2,suffix:'%'}):"-", true)}
+      ${dItem("vs MA200%", s.vsMa200Pct!=null?dNum(s.vsMa200Pct,{plusSign:true,decimals:2,suffix:'%'}):"-", true)}
+    </div>
+
+    <div class="detail-subtitle">Momentum: RSI, Stochastic & MACD</div>
     <div class="detail-grid">
       ${dItem("RSI 7", rsiGaugeHtml(s.rsi7), true)}
+      ${dItem("RSI 14", s.rsi14!=null?Number(s.rsi14).toFixed(1):"-")}
       ${dItem("RSI 21", s.rsi21!=null?Number(s.rsi21).toFixed(1):"-")}
-      ${dItem("MACD Hist", s.hist!=null?Number(s.hist).toFixed(3):"-")}
+      ${dItem("Prev RSI 14", s.prevRsi14!=null?Number(s.prevRsi14).toFixed(1):"-")}
       ${dItem("Stoch K", s.stochK??"-")}
       ${dItem("Stoch D", s.stochD??"-")}
+      ${dItem("Prev Stoch K", s.prevStochK??"-")}
+      ${dItem("Prev Stoch D", s.prevStochD??"-")}
+      ${dItem("MACD", s.macd!=null?Number(s.macd).toFixed(3):"-")}
+      ${dItem("MACD Signal", s.signal!=null?Number(s.signal).toFixed(3):"-")}
+      ${dItem("MACD Histogram", s.hist!=null?Number(s.hist).toFixed(3):"-")}
+      ${dItem("Prev MACD", s.prevMacd!=null?Number(s.prevMacd).toFixed(3):"-")}
+      ${dItem("Prev MACD Signal", s.prevSignal!=null?Number(s.prevSignal).toFixed(3):"-")}
+      ${dItem("Prev MACD Hist", s.prevMacdHist!=null?Number(s.prevMacdHist).toFixed(3):"-")}
+    </div>
+
+    <div class="detail-subtitle">Volatilitas: ATR, ADR & Bollinger Bands</div>
+    <div class="detail-grid">
       ${dItem("ATR 14", s.atr14??"-")}
+      ${dItem("Prev ATR 14", s.prevAtr14??"-")}
+      ${dItem("ADR 14", s.adr14??"-")}
+      ${dItem("Prev ADR 14", s.prevAdr14??"-")}
       ${dItem("BB Width", s.bbWidth??"-")}
+      ${dItem("BB Upper", dNum(s.bbUpper))}
+      ${dItem("BB Lower", dNum(s.bbLower))}
       ${dItem("CLV", s.clv??"-")}
+      ${dItem("VWAP (Raw)", dNum(s.vwap))}
+    </div>
+
+    <div class="detail-subtitle">Volume, Value & Frekuensi Historis</div>
+    <div class="detail-grid">
+      ${dItem("Vol Ratio (vs MA20)", s.volRatio!=null?Number(s.volRatio).toFixed(2)+"x":"-", true)}
+      ${dItem("Volume MA5", dNum(s.volumeMa5))}
+      ${dItem("Volume MA10", dNum(s.volumeMa10))}
+      ${dItem("Volume MA20", dNum(s.volMA20))}
+      ${dItem("Volume MA50", dNum(s.volumeMa50))}
+      ${dItem("Volume MA100", dNum(s.volumeMa100))}
+      ${dItem("Volume MA200", dNum(s.volumeMa200))}
+      ${dItem("Prev Volume MA5", dNum(s.prevVolumeMa5))}
+      ${dItem("Prev Volume MA10", dNum(s.prevVolumeMa10))}
+      ${dItem("Prev Volume MA20", dNum(s.prevVolumeMa20))}
+      ${dItem("Prev Volume MA50", dNum(s.prevVolumeMa50))}
+      ${dItem("Prev Volume MA100", dNum(s.prevVolumeMa100))}
+      ${dItem("Value MA5 (Rp)", dNum(s.valueMa5))}
+      ${dItem("Value MA10 (Rp)", dNum(s.valueMa10))}
+      ${dItem("Value MA20 (Rp)", dNum(s.valueMa20))}
+      ${dItem("Value MA50 (Rp)", dNum(s.valueMa50))}
+      ${dItem("Value MA100 (Rp)", dNum(s.valueMa100))}
+      ${dItem("Value MA200 (Rp)", dNum(s.valueMa200))}
+      ${dItem("Frekuensi Transaksi", dNum(s.frequency))}
+      ${dItem("Frequency Analyzer", dNum(s.freqAnalyzer))}
+      ${dItem("Frequency MA50", dNum(s.frequencyMa50))}
+      ${dItem("Avg Frekuensi 3M", dNum(s.avgFrequency3m))}
+      ${dItem("Freq Spike", s.freqSpike||"-", true)}
+    </div>
+
+    <div class="detail-subtitle">Antrian Bid / Offer (snapshot EOD)</div>
+    <div class="detail-grid">
+      ${dItem("Bid", `<span style="color:var(--up)">${dNum(s.bid)}</span>`, true)}
+      ${dItem("Bid Volume", dNum(s.bidVolume))}
+      ${dItem("Offer", `<span style="color:var(--down)">${dNum(s.offer)}</span>`, true)}
+      ${dItem("Offer Volume", dNum(s.offerVolume))}
     </div>
 
     <div class="detail-subtitle">Candlestick</div>
@@ -570,6 +735,7 @@ function renderDetailFundamental(s){
       ${dItem("Valuasi", pillHtml(s.valuasi||"-", valuasiTone(s.valuasi)), true)}
       ${dItem("Kategori Cap", s.capCategory||"-", true)}
       ${dItem("Market Cap", s.marketCap!=null ? `Rp ${fmtCap(s.marketCap)}` : "-", true)}
+      ${dItem("Saham Beredar (Shares Outstanding)", dNum(s.sharesOutstanding), true)}
     </div>
 
     <div class="detail-subtitle">Rasio Valuasi & Profitabilitas</div>
@@ -885,6 +1051,180 @@ function renderDetailBandarmologi(s){
   `;
 }
 
+function emptyDbsRow(side, rank){ return { side, rank, broker_code:"", lot:"", value_idr:"" }; }
+
+function renderDetailBrokerSummary(s){
+  const ticker = s.ticker;
+  const editRows = state.detailBsEditRows && state.detailBsEditRows.length ? state.detailBsEditRows : [];
+  const buyEdit = [0,1,2,3,4].map(i => editRows.find(r=>r.side==="buy" && r.rank===i+1) || emptyDbsRow("buy", i+1));
+  const sellEdit = [0,1,2,3,4].map(i => editRows.find(r=>r.side==="sell" && r.rank===i+1) || emptyDbsRow("sell", i+1));
+
+  const editRowsHtml = (rows, label) => rows.map((r,i)=>`
+    <div class="bs-row">
+      <input class="bs-cell" id="dbs${label}Broker${i}" placeholder="Kode" maxlength="6" style="text-transform:uppercase" value="${escapeHtml(r.broker_code||"")}">
+      <input class="bs-cell" id="dbs${label}Lot${i}" type="number" placeholder="Lot" value="${r.lot ?? ""}">
+      <input class="bs-cell" id="dbs${label}Value${i}" type="number" placeholder="Nilai (Rp)" value="${r.value_idr ?? ""}">
+    </div>`).join("");
+
+  const dRows = state.detailBsRows || [];
+  const dBuy = dRows.filter(r=>r.side==="buy").sort((a,b)=>a.rank-b.rank);
+  const dSell = dRows.filter(r=>r.side==="sell").sort((a,b)=>a.rank-b.rank);
+  const maxVal = Math.max(1, ...dRows.map(r=> Number(r.value_idr)||0));
+  const barHtml = (r, cls) => `
+    <div class="bs-bar-row">
+      <span class="bs-bar-broker mono">${escapeHtml(r.broker_code)}</span>
+      <div class="bs-bar-track"><div class="bs-bar-fill ${cls}" style="width:${(Number(r.value_idr)/maxVal)*100}%"></div></div>
+      <span class="bs-bar-value mono">${fmtNum(r.value_idr)}</span>
+    </div>`;
+
+  return `
+    <div class="bs-wrap">
+      <div class="bs-toolbar">
+        <span class="mono" style="font-weight:700;font-size:14px;">${escapeHtml(ticker)}</span>
+        <input id="dbsDate" class="bs-input" type="date" value="${state.detailBsDate||""}">
+        <button class="btn btn-outline" id="dbsLoadBtn" ${state.detailBsLoading?"disabled":""}>${state.detailBsLoading?"Memuat...":"Muat Data"}</button>
+      </div>
+
+      ${state.detailBsMsg ? `<div class="bs-msg ${state.detailBsMsgError?"bs-msg-error":"bs-msg-ok"}">${escapeHtml(state.detailBsMsg)}</div>` : ""}
+
+      ${bsStatusRowHtml(dRows)}
+
+      <div class="bs-display-grid">
+        <div>
+          <div class="bs-col-title bs-buy">Top 5 Buy</div>
+          ${dBuy.length ? dBuy.map(r=>barHtml(r,"bs-fill-buy")).join("") : `<div class="empty-box" style="padding:16px;font-size:12px;">Belum ada data untuk tanggal ini.</div>`}
+        </div>
+        <div>
+          <div class="bs-col-title bs-sell">Top 5 Sell</div>
+          ${dSell.length ? dSell.map(r=>barHtml(r,"bs-fill-sell")).join("") : `<div class="empty-box" style="padding:16px;font-size:12px;">Belum ada data untuk tanggal ini.</div>`}
+        </div>
+      </div>
+
+      <details class="bs-editor-panel" id="dbsEditorPanel" ${state.detailBsEditorOpen?"open":""}>
+        <summary>✏️ Input / Edit Manual (dari screenshot Stockbit Anda)</summary>
+        <div class="bs-editor-grid">
+          <div>
+            <div class="bs-col-title bs-buy">Top 5 Buy</div>
+            <div class="bs-header-row"><span>Broker</span><span>Lot</span><span>Nilai (Rp)</span></div>
+            ${editRowsHtml(buyEdit,"Buy")}
+          </div>
+          <div>
+            <div class="bs-col-title bs-sell">Top 5 Sell</div>
+            <div class="bs-header-row"><span>Broker</span><span>Lot</span><span>Nilai (Rp)</span></div>
+            ${editRowsHtml(sellEdit,"Sell")}
+          </div>
+        </div>
+        <div class="bs-toolbar" style="margin-top:12px;">
+          <button class="btn btn-primary" id="dbsSaveBtn">Simpan ke Database</button>
+        </div>
+        <div class="bs-csv-panel">
+          <label>Atau tempel CSV (format per baris: side,rank,broker_code,lot,value_idr)</label>
+          <textarea id="dbsCsvInput" rows="6" placeholder="buy,1,YP,1200000,45000000000">${escapeHtml(state.detailBsCsvText||"")}</textarea>
+          <button class="btn btn-outline" id="dbsCsvFillBtn">Isi ke Form dari CSV</button>
+        </div>
+      </details>
+    </div>`;
+}
+
+async function loadDetailBrokerSummary(){
+  const ticker = state.detailTicker;
+  const dateEl = document.getElementById("dbsDate");
+  const date = dateEl?.value || "";
+  state.detailBsDate = date;
+  if(!ticker || !date){ state.detailBsMsg = "Tanggal belum diisi."; state.detailBsMsgError = true; render(); return; }
+  if(!SUPABASE_URL || !SUPABASE_KEY){ openSettings(); return; }
+
+  state.detailBsLoading = true; state.detailBsMsg = ""; render();
+  try {
+    const qs = new URLSearchParams({ stock_code: `eq.${ticker}`, trade_date: `eq.${date}`, order: "side.asc,rank.asc" });
+    const res = await fetch(`${SUPABASE_URL}/broker_summary?${qs}`, { headers: getSupaHeaders() });
+    if(!res.ok) throw new Error(`HTTP ${res.status} ${res.statusText}`);
+    const rows = await res.json();
+    state.detailBsRows = rows;
+    state.detailBsEditRows = rows.map(r=>({ side:r.side, rank:r.rank, broker_code:r.broker_code, lot:r.lot, value_idr:r.value_idr }));
+    state.detailBsMsg = rows.length ? `Menampilkan ${rows.length} baris.` : "Belum ada data untuk tanggal ini.";
+    state.detailBsMsgError = false;
+  } catch(e) {
+    state.detailBsMsg = "Gagal memuat: " + e.message;
+    state.detailBsMsgError = true;
+  }
+  state.detailBsLoading = false;
+  render();
+}
+
+function readDbsEditorRows(side, code, date){
+  const label = side === "buy" ? "Buy" : "Sell";
+  const rows = [];
+  for(let i=0;i<5;i++){
+    const brokerEl = document.getElementById(`dbs${label}Broker${i}`);
+    const lotEl = document.getElementById(`dbs${label}Lot${i}`);
+    const valEl = document.getElementById(`dbs${label}Value${i}`);
+    const broker_code = (brokerEl?.value||"").trim().toUpperCase();
+    const value_idr = valEl?.value;
+    if(!broker_code || !value_idr) continue;
+    rows.push({
+      stock_code: code, trade_date: date, side, rank: i+1,
+      broker_code, lot: lotEl?.value ? Number(lotEl.value) : null,
+      value_idr: Number(value_idr)
+    });
+  }
+  return rows;
+}
+
+async function saveDetailBrokerSummaryRows(){
+  const code = state.detailTicker;
+  const date = state.detailBsDate || document.getElementById("dbsDate")?.value;
+  if(!code || !date){ state.detailBsMsg = "Tanggal belum diisi."; state.detailBsMsgError = true; render(); return; }
+  if(!SUPABASE_URL || !SUPABASE_KEY){ openSettings(); return; }
+
+  const rows = [...readDbsEditorRows("buy", code, date), ...readDbsEditorRows("sell", code, date)];
+  if(!rows.length){ state.detailBsMsg = "Belum ada baris terisi."; state.detailBsMsgError = true; render(); return; }
+
+  try {
+    await supaFetch(`${SUPABASE_URL}/broker_summary?on_conflict=stock_code,trade_date,side,rank`, {
+      method: "POST",
+      headers: { ...getSupaHeaders(), "Prefer": "resolution=merge-duplicates,return=representation" },
+      body: JSON.stringify(rows)
+    });
+    state.detailBsMsg = `Tersimpan ${rows.length} baris.`;
+    state.detailBsMsgError = false;
+    state.detailBsEditorOpen = true;
+    render();
+    loadDetailBrokerSummary();
+  } catch(e) {
+    state.detailBsMsg = "Gagal menyimpan: " + e.message;
+    state.detailBsMsgError = true;
+    render();
+  }
+}
+
+function fillDbsFromCsv(){
+  const textEl = document.getElementById("dbsCsvInput");
+  const text = textEl?.value || "";
+  state.detailBsCsvText = text;
+  try {
+    const lines = text.trim().split("\n").filter(Boolean);
+    const rows = lines.map(line=>{
+      const [side, rank, broker_code, lot, value_idr] = line.split(",").map(s=>s.trim());
+      if(side!=="buy" && side!=="sell") throw new Error(`side harus 'buy'/'sell', dapat: "${side}"`);
+      return {
+        side, rank: Number(rank),
+        broker_code: (broker_code||"").toUpperCase(),
+        lot: lot ? Number(lot) : null,
+        value_idr: Number(value_idr)
+      };
+    });
+    state.detailBsEditRows = rows;
+    state.detailBsEditorOpen = true;
+    state.detailBsMsg = "CSV berhasil dibaca ke form. Cek lagi lalu klik Simpan.";
+    state.detailBsMsgError = false;
+  } catch(e) {
+    state.detailBsMsg = "Format CSV tidak valid: " + e.message;
+    state.detailBsMsgError = true;
+  }
+  render();
+}
+
 function renderDetailModalContent(){
   const s = enriched().find(x => x.ticker === state.detailTicker);
   if(!s){
@@ -894,6 +1234,7 @@ function renderDetailModalContent(){
     { key:"teknikal", label:"📊 Teknikal" },
     { key:"fundamental", label:"💰 Fundamental" },
     { key:"bandarmologi", label:"🐋 Bandarmologi (IDX)" },
+    { key:"brokersum", label:"🏦 Broker Summary" },
     { key:"analisa", label:"🧠 Analisa" }
   ];
   const tabBtns = tabs.map(t => `<button type="button" class="detail-tab-btn ${state.detailTab===t.key?'active':''}" data-detail-tab="${t.key}">${t.label}</button>`).join("");
@@ -901,6 +1242,7 @@ function renderDetailModalContent(){
   if(state.detailTab === "teknikal") body = renderDetailTeknikal(s);
   else if(state.detailTab === "fundamental") body = renderDetailFundamental(s);
   else if(state.detailTab === "bandarmologi") body = renderDetailBandarmologi(s);
+  else if(state.detailTab === "brokersum") body = renderDetailBrokerSummary(s);
   else body = renderDetailAnalisa(s);
 
   return `
@@ -953,27 +1295,65 @@ async function loadChart(ticker){
   render();
 }
 
+// Return true kalau sinkron ke Supabase berhasil, false kalau gagal —
+// dulu fungsi ini tidak mengembalikan apa pun sehingga pemanggil
+// (saveToBacktest, addManualBacktest) tidak pernah tahu apakah data
+// betulan tersimpan di server atau cuma di localStorage.
 async function syncBacktestToSupabase(sessionId, sessionDate, items) {
   try {
-    await fetch(`${SUPABASE_URL}/backtest_sessions`, {
+    // `session_date` di Supabase bertipe kolom `date` (YYYY-MM-DD), tapi
+    // `sessionDate` yang dikirim ke fungsi ini adalah string tampilan
+    // locale Indonesia (mis. "23/8/2026, 11.29.08" dari
+    // toLocaleString('id-ID')) — Postgres tidak bisa parse format itu sama
+    // sekali (error: "invalid input syntax for type date"). Daripada
+    // ikut-ikutan parse string locale itu (rawan salah locale/format lain
+    // di kemudian hari), turunkan tanggal ISO langsung dari sessionId
+    // (yang selalu berupa String(Date.now()) — lihat saveToBacktest &
+    // addManualBacktest) sehingga selalu valid terlepas dari format
+    // tampilan yang dipakai UI.
+    const ts = Number(sessionId);
+    const sessionDateIso = Number.isFinite(ts)
+      ? new Date(ts).toISOString().slice(0, 10)
+      : new Date().toISOString().slice(0, 10);
+
+    await supaFetch(`${SUPABASE_URL}/backtest_sessions`, {
       method: "POST",
       headers: { ...getSupaHeaders(), "Prefer": "resolution=merge-duplicates" },
-      body: JSON.stringify({ id: sessionId, session_date: sessionDate })
+      body: JSON.stringify({ id: sessionId, session_date: sessionDateIso })
     });
     
+    // JANGAN kirim `id` di sini — kolom id di tabel backtest_items adalah
+    // GENERATED ALWAYS AS IDENTITY (auto-increment di sisi Supabase), jadi
+    // dia MENOLAK kalau client menyertakan nilai id sendiri (error: "cannot
+    // insert a non-DEFAULT value into column "id" ... Use OVERRIDING SYSTEM
+    // VALUE to override"). Sebelumnya kode ini generate id manual
+    // (Date.now()+random) dan selalu gagal di sini — makanya backtest tidak
+    // pernah benar-benar tersimpan di Supabase meskipun sukses di
+    // localStorage. Tidak ada bagian lain di app yang butuh id ini (hapus
+    // item pakai session_id+ticker), jadi aman dihilangkan.
     const payloadItems = items.map(it => ({
-      id: String(Date.now()) + Math.floor(Math.random()*1000),
       session_id: sessionId, ticker: it.ticker,
       entry_price: it.entryPrice || it.hargaEntry || 0,
-      source: it.sumber || "Screener", notes: it.filterStr || it.keterangan || ""
+      source: it.sumber || "Screener", notes: it.filterStr || it.keterangan || "",
+      // Kolom baru — nama preset/rule kustom yang menghasilkan entry ini.
+      // Butuh kolom `criteria text` di tabel backtest_items (lihat catatan
+      // migrasi SQL di bawah); kalau kolom belum ada, Supabase akan
+      // menolak insert dengan error "column ... does not exist" — jalankan
+      // dulu migrasinya sebelum mencoba lagi.
+      criteria: it.kriteria || null
     }));
     
-    await fetch(`${SUPABASE_URL}/backtest_items`, {
+    await supaFetch(`${SUPABASE_URL}/backtest_items`, {
       method: "POST",
       headers: { ...getSupaHeaders(), "Prefer": "resolution=merge-duplicates" },
       body: JSON.stringify(payloadItems)
     });
-  } catch(e) { }
+    return true;
+  } catch(e) {
+    console.error("Gagal sinkron backtest ke Supabase:", e);
+    showError(`Backtest tersimpan lokal, tapi GAGAL sinkron ke Supabase: ${e.message}`);
+    return false;
+  }
 }
 
 async function saveToBacktest(){
@@ -982,25 +1362,32 @@ async function saveToBacktest(){
 
   if(toSave.length === 0) return alert("Screener kosong atau tidak ada emiten yang dicentang.");
 
+  // Tangkap preset/rule yang SEDANG AKTIF saat tombol ini diklik, supaya
+  // kolom Sumber & Kriteria di tab Backtest menunjukkan preset/filter apa
+  // yang menghasilkan emiten-emiten ini (bukan cuma "Screener" generik).
+  const ctx = getActiveScreenerContext();
   const sessionId = String(Date.now());
   const tglSesi = new Date().toLocaleString('id-ID');
   const items = toSave.map(s => ({
     ticker: s.ticker,
     entryPrice: s.cClose,
-    sumber: "Screener",
+    sumber: ctx.label,
+    kriteria: ctx.criteria,
     keterangan: `Harga: ${s.cekHarga}; RSI: ${s.cekRsi}; Status RSI: ${s.statusRsi}; MACD: ${s.cekMacd}; Rasio Vol: ${(s.volRatio??0).toFixed(2)}x (${s.sinyalVolume}); Keyakinan Naik: ${s.keyakinanNaik}`
   }));
 
   state.backtests.unshift({
     id: sessionId, date: tglSesi,
-    items: items.map(it=>({ ticker: it.ticker, entryPrice: it.entryPrice, filterStr: it.keterangan, sumber: it.sumber }))
+    items: items.map(it=>({ ticker: it.ticker, entryPrice: it.entryPrice, filterStr: it.keterangan, kriteria: it.kriteria, sumber: it.sumber }))
   });
   saveBacktests();
   state.selectedForBacktest.clear(); 
   render();
 
-  await syncBacktestToSupabase(sessionId, tglSesi, items);
-  alert(`${toSave.length} emiten yang dipilih berhasil disimpan ke tab Backtest.`);
+  const synced = await syncBacktestToSupabase(sessionId, tglSesi, items);
+  alert(synced
+    ? `${toSave.length} emiten yang dipilih berhasil disimpan ke tab Backtest.`
+    : `${toSave.length} emiten disimpan lokal, tapi gagal sinkron ke Supabase. Lihat pesan error di atas halaman.`);
 }
 
 async function addManualBacktest(sessionId, ticker, entryPrice, keterangan){
@@ -1017,11 +1404,18 @@ async function addManualBacktest(sessionId, ticker, entryPrice, keterangan){
     session = { id: sid, date: new Date().toLocaleString('id-ID'), items: [] };
     state.backtests.unshift(session);
   }
-  session.items.push({ ticker, entryPrice, filterStr: note, sumber: "Manual" });
+  // Manual entry TIDAK punya kriteria screener (ticker & harga diketik
+  // sendiri di luar hasil filter), jadi kolom Kriteria diisi keterangan
+  // netral, bukan ikut-ikutan preset yang mungkin kebetulan sedang aktif
+  // di tab Screener saat ini (itu tidak relevan untuk entry manual).
+  const manualKriteria = "Input manual — tidak melalui filter screener";
+  session.items.push({ ticker, entryPrice, filterStr: note, kriteria: manualKriteria, sumber: "Manual" });
   saveBacktests();
   render();
 
-  await syncBacktestToSupabase(sid, session.date, [{ ticker, entryPrice, sumber: "Manual", filterStr: note }]);
+  await syncBacktestToSupabase(sid, session.date, [{ ticker, entryPrice, sumber: "Manual", filterStr: note, kriteria: manualKriteria }]);
+  // Kalau gagal, showError() di dalam syncBacktestToSupabase sudah
+  // menampilkan alasannya di banner atas halaman.
 }
 
 async function deleteBacktestSession(id){
@@ -1029,7 +1423,8 @@ async function deleteBacktestSession(id){
   state.backtests = state.backtests.filter(b => String(b.id) !== String(id));
   saveBacktests();
   render();
-  try{ await fetch(`${SUPABASE_URL}/backtest_sessions?id=eq.${id}`, { method: "DELETE", headers: getSupaHeaders() }); }catch(e){}
+  try{ await supaFetch(`${SUPABASE_URL}/backtest_sessions?id=eq.${id}`, { method: "DELETE", headers: getSupaHeaders() }); }
+  catch(e){ showError(`Sesi dihapus lokal, tapi gagal dihapus di Supabase (bisa muncul lagi setelah refresh): ${e.message}`); }
 }
 
 async function deleteBacktestItem(sessionId, ticker){
@@ -1040,7 +1435,8 @@ async function deleteBacktestItem(sessionId, ticker){
   }
   saveBacktests();
   render();
-  try{ await fetch(`${SUPABASE_URL}/backtest_items?session_id=eq.${sessionId}&ticker=eq.${ticker}`, { method: "DELETE", headers: getSupaHeaders() }); }catch(e){}
+  try{ await supaFetch(`${SUPABASE_URL}/backtest_items?session_id=eq.${sessionId}&ticker=eq.${ticker}`, { method: "DELETE", headers: getSupaHeaders() }); }
+  catch(e){ showError(`Item dihapus lokal, tapi gagal dihapus di Supabase (bisa muncul lagi setelah refresh): ${e.message}`); }
 }
 
 // ==========================================
@@ -1116,6 +1512,7 @@ function exportBacktestToExcel(id) {
       "Tanggal Entry": session.date, // Diambil dari waktu tangkap/sesi
       "Ticker": item.ticker,
       "Sumber": item.sumber || "Screener",
+      "Kriteria Screener": item.kriteria || "-",
       "Harga Entry": item.entryPrice,
       "Harga Live": currentPrice,
       "Profit/Loss (%)": parseFloat(pl.toFixed(2)),
@@ -1133,6 +1530,7 @@ function exportBacktestToExcel(id) {
     {wch: 22}, // Tanggal Entry
     {wch: 10}, // Ticker
     {wch: 12}, // Sumber
+    {wch: 40}, // Kriteria Screener
     {wch: 12}, // Harga Entry
     {wch: 12}, // Harga Live
     {wch: 15}, // Profit/Loss (%)
@@ -1162,6 +1560,7 @@ function exportAllBacktestToExcel() {
         "Tanggal Entry": session.date,
         "Ticker": item.ticker,
         "Sumber": item.sumber || "Screener",
+        "Kriteria Screener": item.kriteria || "-",
         "Harga Entry": item.entryPrice,
         "Harga Live": currentPrice,
         "Profit/Loss (%)": parseFloat(pl.toFixed(2)),
@@ -1518,10 +1917,12 @@ function render(){
 
   const content = document.getElementById("content");
   if(state.tab==="screener") content.innerHTML = renderScreener();
+  else if(state.tab==="sektoral") content.innerHTML = renderSektoral();
   else if(state.tab==="watchlist") content.innerHTML = renderWatchlist();
   else if(state.tab==="backtest") content.innerHTML = renderBacktest();
   else if(state.tab==="portfolio") content.innerHTML = renderPortfolio();
   else if(state.tab==="chart") content.innerHTML = renderChart();
+  else if(state.tab==="brokersum") content.innerHTML = renderBrokerSummary();
   else if(state.tab==="about") content.innerHTML = renderAbout();
 
   attachContentEvents();
@@ -1542,6 +1943,18 @@ function render(){
       btn.onclick = () => setDetailTab(btn.dataset.detailTab);
     });
     document.querySelectorAll("#detailModalContent [data-chart]").forEach(b=> b.onclick = ()=>{ closeDetail(); loadChart(b.dataset.chart); });
+
+    // --- Broker Summary di dalam modal Detail Emiten ---
+    const dbsDateInput = document.getElementById("dbsDate");
+    if(dbsDateInput) dbsDateInput.onchange = (e) => { state.detailBsDate = e.target.value; };
+    const dbsLoadBtn = document.getElementById("dbsLoadBtn");
+    if(dbsLoadBtn) dbsLoadBtn.onclick = loadDetailBrokerSummary;
+    const dbsSaveBtn = document.getElementById("dbsSaveBtn");
+    if(dbsSaveBtn) dbsSaveBtn.onclick = saveDetailBrokerSummaryRows;
+    const dbsCsvFillBtn = document.getElementById("dbsCsvFillBtn");
+    if(dbsCsvFillBtn) dbsCsvFillBtn.onclick = fillDbsFromCsv;
+    const dbsEditorPanel = document.getElementById("dbsEditorPanel");
+    if(dbsEditorPanel) dbsEditorPanel.ontoggle = (e) => { state.detailBsEditorOpen = e.target.open; };
   }
 }
 
@@ -1797,6 +2210,49 @@ function ruleMetricValue(s, key){
   if(v===undefined || v===null || v==="" || isNaN(v)) return null;
   return Number(v);
 }
+// Deskripsi 1 baris rule kustom dalam bahasa manusia, mis. "Price > 1"
+// atau "1 Day Price Returns (%) > -15" atau (bandingkan 2 metrik dengan
+// pengali) "Frequency > 5 × Frequency Analyzer".
+function ruleDescription(rule){
+  const aLabel = ruleMetricLabel(rule.aKey);
+  if(rule.bType === "const"){
+    return `${aLabel} ${rule.op} ${rule.bConst}`;
+  }
+  const bLabel = ruleMetricLabel(rule.bKey);
+  const mult = Number(rule.mult);
+  const multPart = (mult && mult !== 1) ? `${rule.mult} × ` : "";
+  return `${aLabel} ${rule.op} ${multPart}${bLabel}`;
+}
+// Ringkasan screener/preset yang SEDANG AKTIF saat user klik "Simpan ke
+// Backtest" — dipakai supaya kolom Sumber & Kriteria di tab Backtest
+// menunjukkan preset/rule apa yang menghasilkan tiap entry, bukan cuma
+// label generik "Screener" seperti sebelumnya.
+function getActiveScreenerContext(){
+  const parts = [];
+  let label = "Screener";
+
+  if(state.activePreset){
+    label = PRESET_LABELS[state.activePreset] || state.activePreset;
+    parts.push(`Preset DSI "${label}"`);
+  }
+
+  if(state.customRules && state.customRules.length){
+    const rulesText = state.customRules.map(ruleDescription).join("; ");
+    const customPreset = state.customPresets.find(p => String(p.id) === String(state.selectedPresetId));
+    if(customPreset){
+      if(!state.activePreset) label = customPreset.name;
+      parts.push(`Preset Kustom "${customPreset.name}": ${rulesText}`);
+    } else {
+      if(!state.activePreset) label = "Rules Kustom";
+      parts.push(`Rules Kustom: ${rulesText}`);
+    }
+  }
+
+  return {
+    label,
+    criteria: parts.length ? parts.join(" | ") : "Tanpa filter/preset aktif (semua data screener)"
+  };
+}
 function evalCustomRule(s, rule){
   const aVal = ruleMetricValue(s, rule.aKey);
   if(aVal===null) return false;
@@ -1832,6 +2288,17 @@ async function refreshCustomPresets(){
   }catch(e){}
 }
 
+// Cek nama preset sudah dipakai preset LAIN atau belum (case-insensitive,
+// abaikan spasi di ujung). excludeId dipakai saat update preset yang
+// sedang dipilih supaya preset itu sendiri tidak dianggap "bentrok"
+// dengan namanya sendiri.
+function isPresetNameTaken(name, excludeId){
+  const norm = name.trim().toLowerCase();
+  return state.customPresets.some(p =>
+    String(p.id) !== String(excludeId ?? "") && String(p.name || "").trim().toLowerCase() === norm
+  );
+}
+
 async function saveCurrentAsPreset(){
   if(!SUPABASE_URL || !SUPABASE_KEY){ openSettings(); return; }
   if(!state.customRules.length){ alert("Belum ada Rule Kustom untuk disimpan. Tambahkan rule dulu lewat \"+ Tambah Rule\"."); return; }
@@ -1839,10 +2306,17 @@ async function saveCurrentAsPreset(){
   if(name === null) return;
   const trimmed = name.trim();
   if(!trimmed){ alert("Nama preset tidak boleh kosong."); return; }
+  // Nama harus unik antar preset — kalau sudah dipakai preset lain, tolak
+  // di sisi client dulu (lebih cepat & pesannya lebih jelas) sebelum
+  // sempat kirim ke Supabase.
+  if(isPresetNameTaken(trimmed)){
+    alert(`Nama preset "${trimmed}" sudah dipakai. Pilih nama lain, atau kalau maksudnya mengubah preset yang sudah ada, pilih presetnya di dropdown "Preset Tersimpan" lalu klik "🔄 Update Preset".`);
+    return;
+  }
 
   state.presetsLoading = true; render();
   try{
-    const res = await fetch(`${SUPABASE_URL}/custom_presets`, {
+    const res = await supaFetch(`${SUPABASE_URL}/custom_presets`, {
       method: "POST",
       headers: { ...getSupaHeaders(), "Prefer": "return=representation" },
       body: JSON.stringify({ name: trimmed, rules: state.customRules })
@@ -1854,6 +2328,40 @@ async function saveCurrentAsPreset(){
     await refreshCustomPresets();
   }catch(e){
     showError("Gagal menyimpan preset: " + e.message);
+  }
+  state.presetsLoading = false; render();
+}
+
+// Simpan ULANG rule kustom yang sedang aktif ke preset yang SEDANG DIPILIH
+// di dropdown "Preset Tersimpan" (bukan bikin preset baru). Ini yang
+// dipakai kalau user memuat preset lama, menambah/mengubah kriteria, lalu
+// mau menimpa preset yang sama — tanpa harus "Simpan sebagai Preset..."
+// dengan nama baru setiap kali.
+async function updateSelectedPreset(){
+  if(!SUPABASE_URL || !SUPABASE_KEY){ openSettings(); return; }
+  const preset = state.customPresets.find(p => String(p.id) === String(state.selectedPresetId));
+  if(!preset){ alert("Pilih dulu preset yang mau diupdate dari dropdown \"Preset Tersimpan\"."); return; }
+  if(!state.customRules.length){ alert("Rules Kustom kosong — tidak ada yang bisa disimpan ke preset."); return; }
+
+  const name = prompt("Nama preset (boleh diganti, atau biarkan sama):", preset.name || "");
+  if(name === null) return;
+  const trimmed = name.trim();
+  if(!trimmed){ alert("Nama preset tidak boleh kosong."); return; }
+  if(isPresetNameTaken(trimmed, preset.id)){
+    alert(`Nama preset "${trimmed}" sudah dipakai preset lain. Pilih nama lain.`);
+    return;
+  }
+
+  state.presetsLoading = true; render();
+  try{
+    await supaFetch(`${SUPABASE_URL}/custom_presets?id=eq.${preset.id}`, {
+      method: "PATCH",
+      headers: { ...getSupaHeaders(), "Prefer": "return=minimal" },
+      body: JSON.stringify({ name: trimmed, rules: state.customRules })
+    });
+    await refreshCustomPresets();
+  }catch(e){
+    showError("Gagal mengupdate preset: " + e.message);
   }
   state.presetsLoading = false; render();
 }
@@ -1953,6 +2461,7 @@ function renderRuleBuilder(){
           ${presetOptions}
         </select>
         <button type="button" class="btn btn-outline" id="loadPresetBtn" ${!state.selectedPresetId || state.presetsLoading ? 'disabled' : ''} title="Muat rule dari preset ini (menimpa rule kustom yang aktif)">📥 Muat</button>
+        <button type="button" class="btn btn-outline" id="updatePresetBtn" ${!state.selectedPresetId || !state.customRules.length || state.presetsLoading ? 'disabled' : ''} title="Timpa preset ini dengan Rules Kustom yang sedang aktif — tidak perlu simpan dengan nama baru" style="color:#34d399;border-color:rgba(16,185,129,0.35);">🔄 Update Preset</button>
         <button type="button" class="btn btn-outline" id="deletePresetBtn" ${!state.selectedPresetId || state.presetsLoading ? 'disabled' : ''} title="Hapus preset ini" style="color:#f87171;border-color:rgba(239,68,68,0.3);">🗑️ Hapus</button>
       </div>
     </div>
@@ -2230,11 +2739,13 @@ function renderBacktest(){
       const tone = pl > 0 ? "up" : pl < 0 ? "down" : "muted";
       const plStr = (pl > 0 ? "+" : "") + pl.toFixed(2) + "%";
       const filterStr = item.filterStr || "-";
+      const kriteriaStr = item.kriteria || "-";
       const sumberPill = pillHtml(item.sumber || "Screener", item.sumber === "Manual" ? "gold" : "muted");
 
       return `<tr>
         <td class="ticker-cell"><button class="ticker-link" data-detail="${item.ticker}" title="Lihat detail ${item.ticker}">${item.ticker}</button></td>
         <td>${sumberPill}</td>
+        <td style="white-space:normal; max-width:260px; font-family:'Sora',sans-serif; font-size:12px; line-height:1.6; color:var(--gold); opacity:0.9;">${kriteriaStr}</td>
         <td style="white-space:normal; max-width:320px; font-family:'Sora',sans-serif; font-size:12px; line-height:1.6; color:var(--text); opacity:0.9;">${filterStr}</td>
         <td class="mono">${fmtNum(item.entryPrice)}</td>
         <td class="mono">${fmtNum(currentPrice)}</td>
@@ -2290,7 +2801,7 @@ function renderBacktest(){
           <table class="mono">
             <thead>
               <tr>
-                <th>Ticker</th><th>Sumber</th><th>Filter / Keterangan</th><th>Harga Entry</th>
+                <th>Ticker</th><th>Sumber</th><th>Kriteria Screener</th><th>Filter / Keterangan</th><th>Harga Entry</th>
                 <th>Harga Live</th><th>Profit / Loss</th><th>Aksi</th><th></th>
               </tr>
             </thead>
@@ -2305,6 +2816,286 @@ function renderBacktest(){
 }
 
   
+
+// ==========================================
+// TAB SEKTORAL — breakdown per sektor (jumlah naik/turun, rata-rata
+// %perubahan, breadth) + daftar saham per sektor yang bisa di-expand,
+// masing-masing menampilkan %gain/loss dan bisa diklik untuk membuka
+// detail emiten (Teknikal/Fundamental/Bandarmologi/Analisa).
+// ==========================================
+// ==========================================
+// TOP MOVERS — 10 Besar Top Gainer / Loser / Value / Volume / Frekuensi
+//
+// Ditampilkan di bagian atas tab Sektoral supaya kelihatan saham mana yang
+// paling aktif/paling bergerak hari ini di seluruh pasar (lintas sektor),
+// beda dengan sektor-grid di bawahnya yang dikelompokkan per sektor.
+// Data diambil dari enriched() yang sama dipakai Screener/Sektoral, jadi
+// selalu sinkron dengan hasil "Refresh Data" terakhir.
+// ==========================================
+const MOVER_TABS = [
+  { key: "gainer",    label: "🚀 Top Gainer",    metricLabel: "%Perubahan" },
+  { key: "loser",     label: "🔻 Top Loser",     metricLabel: "%Perubahan" },
+  { key: "value",     label: "💰 Top Value",     metricLabel: "Value (Rp)" },
+  { key: "volume",    label: "📦 Top Volume",    metricLabel: "Volume (lbr)" },
+  { key: "frequency", label: "🔊 Top Frekuensi", metricLabel: "Frekuensi (x)" },
+];
+
+function computeTopMovers(){
+  const data = enriched();
+  const withPrice = data.filter(s => s.cClose != null);
+
+  const byChangeDesc = withPrice.filter(s => s.changePct != null).sort((a,b)=> b.changePct - a.changePct);
+  const byChangeAsc  = withPrice.filter(s => s.changePct != null).sort((a,b)=> a.changePct - b.changePct);
+  // "Value" = nilai transaksi Rupiah (value_traded kalau ada, fallback ke
+  // turnover — dua-duanya representasi nilai transaksi harian di skema DB).
+  const byValue = withPrice.filter(s => (s.valueTraded ?? s.turnover ?? 0) > 0)
+    .sort((a,b)=> (b.valueTraded ?? b.turnover ?? 0) - (a.valueTraded ?? a.turnover ?? 0));
+  const byVolume = withPrice.filter(s => (s.cVol||0) > 0).sort((a,b)=> (b.cVol||0) - (a.cVol||0));
+  const byFrequency = withPrice.filter(s => (s.frequency||0) > 0).sort((a,b)=> (b.frequency||0) - (a.frequency||0));
+
+  return {
+    gainer: byChangeDesc.slice(0,10),
+    loser: byChangeAsc.slice(0,10),
+    value: byValue.slice(0,10),
+    volume: byVolume.slice(0,10),
+    frequency: byFrequency.slice(0,10),
+  };
+}
+
+function moverMetricValue(s, key){
+  if(key === "gainer" || key === "loser") return s.changePct;
+  if(key === "value") return s.valueTraded ?? s.turnover ?? null;
+  if(key === "volume") return s.cVol ?? null;
+  if(key === "frequency") return s.frequency ?? null;
+  return null;
+}
+function moverMetricDisplay(s, key){
+  const v = moverMetricValue(s, key);
+  if(v === null || v === undefined || isNaN(v)) return "-";
+  if(key === "gainer" || key === "loser") return dNum(v, {plusSign:true, decimals:2, suffix:'%'});
+  if(key === "value") return "Rp " + fmtCap(v);
+  if(key === "volume") return fmtCap(v);
+  if(key === "frequency") return fmtNum(Math.round(v)) + "x";
+  return fmtNum(v);
+}
+
+function renderTopMovers(){
+  const movers = computeTopMovers();
+  const activeTab = MOVER_TABS.some(t => t.key === state.topMoversTab) ? state.topMoversTab : "gainer";
+  const list = movers[activeTab] || [];
+  const activeMeta = MOVER_TABS.find(t => t.key === activeTab);
+  const metricTone = activeTab === "loser" ? "down" : activeTab === "gainer" ? "up" : "gold";
+
+  const tabsHtml = MOVER_TABS.map(t => `
+    <button type="button" class="mover-tab-btn ${activeTab===t.key?'active':''}" data-mover-tab="${t.key}">${t.label}</button>
+  `).join("");
+
+  const rows = list.map((s, i) => {
+    const changeTone = (s.changePct||0) > 0 ? "up" : (s.changePct||0) < 0 ? "down" : "muted";
+    return `
+    <div class="mover-row">
+      <div class="mover-rank">${i+1}</div>
+      <button class="ticker-link mover-ticker" data-detail="${s.ticker}" title="Lihat detail ${s.ticker}">${s.ticker}${s.syariahLabel==="Ya" ? ' <span class="pill pill-teal" style="padding:1px 6px;font-size:9px;vertical-align:middle;">S</span>' : ''}</button>
+      <div class="mover-name" title="${escapeHtml(s.name||'-')}">${escapeHtml(s.name||"-")}</div>
+      <div class="mover-sektor" title="${escapeHtml(s.sektor||'-')}">${escapeHtml(s.sektor||"-")}</div>
+      <div class="mono mover-price">${fmtNum(s.cClose)}</div>
+      <div class="mono mover-change" style="color:var(--${changeTone})">${s.changePct!=null?dNum(s.changePct,{plusSign:true,decimals:2,suffix:'%'}):'-'}</div>
+      <div class="mono mover-metric" style="color:var(--${metricTone})">${moverMetricDisplay(s, activeTab)}</div>
+      <button class="star-btn" data-fav="${s.ticker}" title="${state.watchlist.has(s.ticker)?'Hapus dari watchlist':'Tambah ke watchlist'}">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="${state.watchlist.has(s.ticker)?'var(--gold)':'none'}" stroke="${state.watchlist.has(s.ticker)?'var(--gold)':'var(--muted)'}" stroke-width="2.5"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>
+      </button>
+    </div>`;
+  }).join("");
+
+  return `
+    <div class="panel" style="flex-direction:column;align-items:stretch;">
+      <div class="filter-section-title"><span>🔥 TOP MOVERS — 10 BESAR HARI INI</span><span class="line"></span></div>
+      <div class="mover-tabs">${tabsHtml}</div>
+      ${list.length ? `
+      <div class="mover-list">
+        <div class="mover-row mover-row-header">
+          <div class="mover-rank">#</div>
+          <div>Ticker</div>
+          <div>Nama Emiten</div>
+          <div>Sektor</div>
+          <div>Harga</div>
+          <div>%Perubahan</div>
+          <div>${activeMeta ? activeMeta.metricLabel : ""}</div>
+          <div></div>
+        </div>
+        ${rows}
+      </div>` : `<div class="empty-box" style="padding:20px;">Belum ada data untuk kategori ini.</div>`}
+    </div>
+  `;
+}
+
+function sektorGroups(){
+  const data = enriched();
+  const q = (state.sektorSearch||"").toLowerCase().trim();
+  const groups = {};
+  data.forEach(s=>{
+    const sek = s.sektor || "Tidak Diketahui";
+    if(!groups[sek]) groups[sek] = [];
+    groups[sek].push(s);
+  });
+  return Object.entries(groups).map(([sek, list])=>{
+    const withChange = list.filter(s=> s.changePct!=null);
+    const avgChange = withChange.length ? withChange.reduce((a,s)=>a+s.changePct,0)/withChange.length : null;
+    const gainers = list.filter(s=> (s.changePct||0) > 0).length;
+    const losers = list.filter(s=> (s.changePct||0) < 0).length;
+    const flat = list.length - gainers - losers;
+    const totalTurnover = list.reduce((a,s)=> a + (s.turnover||0), 0);
+    const totalMarketCap = list.reduce((a,s)=> a + (s.marketCap||0), 0);
+
+    let sorted = [...list];
+    let filteredList = q ? sorted.filter(s=> s.ticker.toLowerCase().includes(q) || String(s.name||"").toLowerCase().includes(q)) : sorted;
+    if(state.sektorSort === "changeDesc") filteredList.sort((a,b)=> (b.changePct??-999) - (a.changePct??-999));
+    else if(state.sektorSort === "changeAsc") filteredList.sort((a,b)=> (a.changePct??999) - (b.changePct??999));
+    else if(state.sektorSort === "turnoverDesc") filteredList.sort((a,b)=> (b.turnover||0) - (a.turnover||0));
+    else if(state.sektorSort === "ticker") filteredList.sort((a,b)=> a.ticker.localeCompare(b.ticker));
+
+    const byChange = [...list].sort((a,b)=> (b.changePct??-999) - (a.changePct??-999));
+    return {
+      sektor: sek, list: filteredList, rawCount: list.length,
+      avgChange, gainers, losers, flat, total: list.length,
+      totalTurnover, totalMarketCap,
+      topGainer: byChange[0] || null, topLoser: byChange[byChange.length-1] || null
+    };
+  }).filter(g => !q || g.list.length)
+    .sort((a,b)=> (b.avgChange ?? -999) - (a.avgChange ?? -999));
+}
+
+function renderSektoral(){
+  const data = enriched();
+  if(!data.length){
+    return `<div class="empty-box">Belum ada data saham. Klik "Refresh Data" atau atur koneksi Supabase lewat "⚙️ Pengaturan".</div>`;
+  }
+  const groups = sektorGroups();
+
+  const withChange = data.filter(s=>s.changePct!=null);
+  const overallAvg = withChange.length ? withChange.reduce((a,s)=>a+s.changePct,0)/withChange.length : null;
+  const overallGainers = data.filter(s=>(s.changePct||0)>0).length;
+  const overallLosers = data.filter(s=>(s.changePct||0)<0).length;
+  const overallFlat = data.length - overallGainers - overallLosers;
+  const bestSektor = groups.length ? groups[0] : null;
+  const worstSektor = groups.length ? groups[groups.length-1] : null;
+
+  return `
+    <div class="panel">
+      <div class="filter-section-title"><span>📊 RINGKASAN PASAR PER SEKTOR</span><span class="line"></span></div>
+      <div class="summary-grid">
+        <div class="summary-card tone-up">
+          <div class="summary-lbl">Saham Naik</div>
+          <div class="summary-val" style="color:var(--up)">▲ ${overallGainers}</div>
+        </div>
+        <div class="summary-card tone-down">
+          <div class="summary-lbl">Saham Turun</div>
+          <div class="summary-val" style="color:var(--down)">▼ ${overallLosers}</div>
+        </div>
+        <div class="summary-card">
+          <div class="summary-lbl">Stagnan</div>
+          <div class="summary-val">${overallFlat}</div>
+        </div>
+        <div class="summary-card tone-gold">
+          <div class="summary-lbl">Rata-rata Perubahan</div>
+          <div class="summary-val" style="color:${overallAvg!=null && overallAvg>=0?'var(--up)':'var(--down)'}">${overallAvg!=null?dNum(overallAvg,{plusSign:true,decimals:2,suffix:'%'}):'-'}</div>
+        </div>
+        <div class="summary-card">
+          <div class="summary-lbl">Sektor Terkuat</div>
+          <div class="summary-val" style="font-size:15px;color:var(--up);">${bestSektor ? escapeHtml(bestSektor.sektor) : '-'}</div>
+        </div>
+        <div class="summary-card">
+          <div class="summary-lbl">Sektor Terlemah</div>
+          <div class="summary-val" style="font-size:15px;color:var(--down);">${worstSektor ? escapeHtml(worstSektor.sektor) : '-'}</div>
+        </div>
+      </div>
+
+      <div class="filter-toolbar" style="margin-bottom:0;padding-bottom:0;border-bottom:none;">
+        <div class="field">
+          <label>Cari Saham dalam Sektor</label>
+          <div class="search-wrap">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--muted)" stroke-width="2.5"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+            <input type="text" id="sektorSearchInput" placeholder="Ticker / nama emiten..." value="${escapeHtml(state.sektorSearch)}" style="width:220px;">
+          </div>
+        </div>
+        <div class="field">
+          <label>Urutkan Saham</label>
+          <select id="sektorSortSelect" style="background:rgba(0,0,0,0.2);border:1px solid var(--border);color:var(--text);padding:10px 12px;border-radius:8px;font-size:12.5px;">
+            <option value="changeDesc" ${state.sektorSort==='changeDesc'?'selected':''}>%Perubahan: Tertinggi</option>
+            <option value="changeAsc" ${state.sektorSort==='changeAsc'?'selected':''}>%Perubahan: Terendah</option>
+            <option value="turnoverDesc" ${state.sektorSort==='turnoverDesc'?'selected':''}>Turnover Terbesar</option>
+            <option value="ticker" ${state.sektorSort==='ticker'?'selected':''}>Ticker (A-Z)</option>
+          </select>
+        </div>
+      </div>
+    </div>
+
+    ${renderTopMovers()}
+
+    <div class="sektor-grid">
+      ${groups.map(g=> renderSektorCard(g)).join("")}
+    </div>
+  `;
+}
+
+function renderSektorCard(g){
+  const isOpen = state.sektorExpanded.has(g.sektor);
+  const breadthPct = g.total ? Math.round((g.gainers/g.total)*100) : 0;
+  const avgTone = g.avgChange==null ? "muted" : g.avgChange>0 ? "up" : g.avgChange<0 ? "down" : "gold";
+  return `
+    <div class="sektor-card ${isOpen?'open':''}">
+      <div class="sektor-card-head" data-sektor-toggle="${escapeHtml(g.sektor)}">
+        <div class="sektor-card-title">
+          <div class="sektor-name">${escapeHtml(g.sektor)}</div>
+          <div class="sektor-meta">${g.total} emiten · Turnover Rp ${fmtCap(g.totalTurnover)} · Cap Rp ${fmtCap(g.totalMarketCap)}</div>
+        </div>
+        <div class="sektor-card-mid">
+          <div class="sektor-avg-change mono" style="color:var(--${avgTone})">${g.avgChange!=null?dNum(g.avgChange,{plusSign:true,decimals:2,suffix:'%'}):'-'}</div>
+          <div class="sektor-breadth-bar"><div class="sektor-breadth-fill" style="width:${breadthPct}%"></div></div>
+          <div class="sektor-breadth-lbl"><span style="color:var(--up)">▲${g.gainers}</span> <span style="color:var(--down)">▼${g.losers}</span> <span style="color:var(--muted)">•${g.flat}</span></div>
+        </div>
+        <div class="sektor-card-extremes">
+          ${g.topGainer ? `<div title="Top Gainer">🏆 ${escapeHtml(g.topGainer.ticker)} <span style="color:var(--up)">${g.topGainer.changePct!=null?dNum(g.topGainer.changePct,{plusSign:true,decimals:2,suffix:'%'}):'-'}</span></div>` : ""}
+          ${g.topLoser ? `<div title="Top Loser">🔻 ${escapeHtml(g.topLoser.ticker)} <span style="color:var(--down)">${g.topLoser.changePct!=null?dNum(g.topLoser.changePct,{plusSign:true,decimals:2,suffix:'%'}):'-'}</span></div>` : ""}
+        </div>
+        <button class="sektor-expand-btn" type="button" title="${isOpen?'Tutup':'Lihat semua saham'}">${isOpen?'▲':'▼'}</button>
+      </div>
+      ${isOpen ? `
+      <div class="sektor-card-body">
+        ${g.list.length ? `
+        <div class="sektor-stock-row sektor-stock-header">
+          <div></div>
+          <div>Ticker</div>
+          <div>Nama Emiten</div>
+          <div>Harga</div>
+          <div>%Gain/Loss</div>
+        </div>
+        <div class="sektor-stock-list">
+          ${g.list.map(s=> renderSektorStockRow(s)).join("")}
+        </div>` : `<div class="empty-box" style="padding:20px;">Tidak ada saham yang cocok dengan pencarian.</div>`}
+      </div>` : ``}
+    </div>
+  `;
+}
+
+function renderSektorStockRow(s){
+  const tone = (s.changePct||0) > 0 ? "up" : (s.changePct||0) < 0 ? "down" : "muted";
+  const barPct = Math.min(100, Math.abs(s.changePct||0) / 10 * 100); // skala visual thd 10%
+  return `
+    <div class="sektor-stock-row">
+      <button class="star-btn" data-fav="${s.ticker}" title="${state.watchlist.has(s.ticker)?'Hapus dari watchlist':'Tambah ke watchlist'}">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="${state.watchlist.has(s.ticker)?'var(--gold)':'none'}" stroke="${state.watchlist.has(s.ticker)?'var(--gold)':'var(--muted)'}" stroke-width="2.5"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>
+      </button>
+      <button class="ticker-link sektor-stock-ticker" data-detail="${s.ticker}" title="Lihat detail ${s.ticker}">${s.ticker}${s.syariahLabel==="Ya" ? ' <span class="pill pill-teal" style="padding:1px 6px;font-size:9px;vertical-align:middle;">S</span>' : ''}</button>
+      <div class="sektor-stock-name" title="${escapeHtml(s.name||'-')}">${escapeHtml(s.name||"-")}</div>
+      <div class="sektor-stock-price mono">${dNum(s.cClose)}</div>
+      <div class="sektor-stock-change-wrap">
+        <div class="sektor-change-bar-track"><div class="sektor-change-bar-fill tone-${tone}" style="width:${barPct}%"></div></div>
+        <span class="mono sektor-stock-change" style="color:var(--${tone})">${s.changePct!=null?dNum(s.changePct,{plusSign:true,decimals:2,suffix:'%'}):'-'}</span>
+      </div>
+    </div>
+  `;
+}
 
 function renderWatchlist(){
   const rows = enriched().filter(s=>state.watchlist.has(s.ticker));
@@ -2591,6 +3382,225 @@ function renderAbout(){
   `;
 }
 
+// ==========================================
+// BROKER SUMMARY
+//
+// Menyimpan & menampilkan top 5 broker buy / top 5 broker sell per
+// saham per tanggal. Sumber data: diketik manual atau ditempel dari
+// CSV oleh pengguna, berdasarkan screenshot akun Stockbit MEREKA
+// SENDIRI — bukan hasil scraping otomatis dari Stockbit. Disimpan ke
+// tabel `broker_summary` di Supabase yang sama dengan tabel lain.
+// ==========================================
+
+// Status Normal/Akumulasi/Distribusi — dihitung dari SELISIH total
+// value top 5 broker buy vs top 5 broker sell yang tersimpan (bukan
+// dari total transaksi harian saham, karena kita hanya punya data top
+// 5). Ambang batas 15% net dari total (buy+sell) dipilih supaya
+// selisih kecil/wajar tetap dianggap "Normal" — sesuaikan angka
+// BS_STATUS_THRESHOLD_PCT di bawah kalau mau lebih sensitif/longgar.
+const BS_STATUS_THRESHOLD_PCT = 15;
+
+function computeBsStatus(rows){
+  const buyTotal = rows.filter(r=>r.side==="buy").reduce((a,r)=>a+(Number(r.value_idr)||0),0);
+  const sellTotal = rows.filter(r=>r.side==="sell").reduce((a,r)=>a+(Number(r.value_idr)||0),0);
+  const total = buyTotal + sellTotal;
+  if(total <= 0) return { label:"-", tone:"muted", netPct:0, buyTotal, sellTotal, hasData:false };
+  const netPct = ((buyTotal - sellTotal) / total) * 100;
+  let label, tone;
+  if(netPct >= BS_STATUS_THRESHOLD_PCT){ label = "Akumulasi"; tone = "up"; }
+  else if(netPct <= -BS_STATUS_THRESHOLD_PCT){ label = "Distribusi"; tone = "down"; }
+  else { label = "Normal"; tone = "gold"; }
+  return { label, tone, netPct, buyTotal, sellTotal, hasData:true };
+}
+
+function bsStatusRowHtml(rows){
+  const st = computeBsStatus(rows);
+  if(!st.hasData) return "";
+  const sign = st.netPct >= 0 ? "+" : "";
+  return `
+    <div style="display:flex;align-items:center;flex-wrap:wrap;gap:10px;margin:-4px 0 14px;">
+      <span style="font-size:12.5px;color:var(--muted);">Status:</span>
+      ${pillHtml(st.label, st.tone)}
+      <span class="mono" style="font-size:11.5px;color:var(--muted);">
+        Net ${sign}${st.netPct.toFixed(1)}% &middot; Buy ${fmtNum(st.buyTotal)} vs Sell ${fmtNum(st.sellTotal)}
+      </span>
+    </div>`;
+}
+
+function emptyBsRow(side, rank){ return { side, rank, broker_code:"", lot:"", value_idr:"" }; }
+
+function renderBrokerSummary(){
+  const editRows = state.bsEditRows && state.bsEditRows.length ? state.bsEditRows : [];
+  const buyEdit = [0,1,2,3,4].map(i => editRows.find(r=>r.side==="buy" && r.rank===i+1) || emptyBsRow("buy", i+1));
+  const sellEdit = [0,1,2,3,4].map(i => editRows.find(r=>r.side==="sell" && r.rank===i+1) || emptyBsRow("sell", i+1));
+
+  const editRowsHtml = (rows, label) => rows.map((r,i)=>`
+    <div class="bs-row">
+      <input class="bs-cell" id="bs${label}Broker${i}" placeholder="Kode" maxlength="6" style="text-transform:uppercase" value="${escapeHtml(r.broker_code||"")}">
+      <input class="bs-cell" id="bs${label}Lot${i}" type="number" placeholder="Lot" value="${r.lot ?? ""}">
+      <input class="bs-cell" id="bs${label}Value${i}" type="number" placeholder="Nilai (Rp)" value="${r.value_idr ?? ""}">
+    </div>`).join("");
+
+  const dRows = state.bsRows || [];
+  const dBuy = dRows.filter(r=>r.side==="buy").sort((a,b)=>a.rank-b.rank);
+  const dSell = dRows.filter(r=>r.side==="sell").sort((a,b)=>a.rank-b.rank);
+  const maxVal = Math.max(1, ...dRows.map(r=> Number(r.value_idr)||0));
+  const barHtml = (r, cls) => `
+    <div class="bs-bar-row">
+      <span class="bs-bar-broker mono">${escapeHtml(r.broker_code)}</span>
+      <div class="bs-bar-track"><div class="bs-bar-fill ${cls}" style="width:${(Number(r.value_idr)/maxVal)*100}%"></div></div>
+      <span class="bs-bar-value mono">${fmtNum(r.value_idr)}</span>
+    </div>`;
+
+  return `
+    <div class="bs-wrap">
+      <div class="bs-toolbar">
+        <input id="bsStockCode" class="bs-input" placeholder="Kode saham (mis. BBCA)" maxlength="6" style="text-transform:uppercase" value="${escapeHtml(state.bsStockCode||"")}">
+        <input id="bsDate" class="bs-input" type="date" value="${state.bsDate||""}">
+        <button class="btn btn-outline" id="bsLoadBtn" ${state.bsLoading?"disabled":""}>${state.bsLoading?"Memuat...":"Muat Data"}</button>
+      </div>
+
+      ${state.bsMsg ? `<div class="bs-msg ${state.bsMsgError?"bs-msg-error":"bs-msg-ok"}">${escapeHtml(state.bsMsg)}</div>` : ""}
+
+      ${bsStatusRowHtml(dRows)}
+
+      <div class="bs-display-grid">
+        <div>
+          <div class="bs-col-title bs-buy">Top 5 Buy</div>
+          ${dBuy.length ? dBuy.map(r=>barHtml(r,"bs-fill-buy")).join("") : `<div class="empty-box" style="padding:16px;font-size:12px;">Belum ada data untuk saham/tanggal ini.</div>`}
+        </div>
+        <div>
+          <div class="bs-col-title bs-sell">Top 5 Sell</div>
+          ${dSell.length ? dSell.map(r=>barHtml(r,"bs-fill-sell")).join("") : `<div class="empty-box" style="padding:16px;font-size:12px;">Belum ada data untuk saham/tanggal ini.</div>`}
+        </div>
+      </div>
+
+      <details class="bs-editor-panel" id="bsEditorPanel" ${state.bsEditorOpen?"open":""}>
+        <summary>✏️ Input / Edit Manual (dari screenshot Stockbit Anda)</summary>
+        <div class="bs-editor-grid">
+          <div>
+            <div class="bs-col-title bs-buy">Top 5 Buy</div>
+            <div class="bs-header-row"><span>Broker</span><span>Lot</span><span>Nilai (Rp)</span></div>
+            ${editRowsHtml(buyEdit,"Buy")}
+          </div>
+          <div>
+            <div class="bs-col-title bs-sell">Top 5 Sell</div>
+            <div class="bs-header-row"><span>Broker</span><span>Lot</span><span>Nilai (Rp)</span></div>
+            ${editRowsHtml(sellEdit,"Sell")}
+          </div>
+        </div>
+        <div class="bs-toolbar" style="margin-top:12px;">
+          <button class="btn btn-primary" id="bsSaveBtn">Simpan ke Database</button>
+        </div>
+        <div class="bs-csv-panel">
+          <label>Atau tempel CSV (format per baris: side,rank,broker_code,lot,value_idr)</label>
+          <textarea id="bsCsvInput" rows="6" placeholder="buy,1,YP,1200000,45000000000">${escapeHtml(state.bsCsvText||"")}</textarea>
+          <button class="btn btn-outline" id="bsCsvFillBtn">Isi ke Form dari CSV</button>
+        </div>
+      </details>
+    </div>`;
+}
+
+async function loadBrokerSummary(){
+  const codeEl = document.getElementById("bsStockCode");
+  const dateEl = document.getElementById("bsDate");
+  const code = (codeEl?.value||"").trim().toUpperCase();
+  const date = dateEl?.value||"";
+  state.bsStockCode = code; state.bsDate = date;
+  if(!code || !date){ state.bsMsg = "Isi kode saham dan tanggal dulu."; state.bsMsgError = true; render(); return; }
+  if(!SUPABASE_URL || !SUPABASE_KEY){ openSettings(); return; }
+
+  state.bsLoading = true; state.bsMsg = ""; render();
+  try {
+    const qs = new URLSearchParams({ stock_code: `eq.${code}`, trade_date: `eq.${date}`, order: "side.asc,rank.asc" });
+    const res = await fetch(`${SUPABASE_URL}/broker_summary?${qs}`, { headers: getSupaHeaders() });
+    if(!res.ok) throw new Error(`HTTP ${res.status} ${res.statusText}`);
+    const rows = await res.json();
+    state.bsRows = rows;
+    state.bsEditRows = rows.map(r=>({ side:r.side, rank:r.rank, broker_code:r.broker_code, lot:r.lot, value_idr:r.value_idr }));
+    state.bsMsg = rows.length ? `Menampilkan ${rows.length} baris.` : "Belum ada data untuk saham/tanggal ini.";
+    state.bsMsgError = false;
+  } catch(e) {
+    state.bsMsg = "Gagal memuat: " + e.message;
+    state.bsMsgError = true;
+  }
+  state.bsLoading = false;
+  render();
+}
+
+function readBsEditorRows(side, code, date){
+  const label = side === "buy" ? "Buy" : "Sell";
+  const rows = [];
+  for(let i=0;i<5;i++){
+    const brokerEl = document.getElementById(`bs${label}Broker${i}`);
+    const lotEl = document.getElementById(`bs${label}Lot${i}`);
+    const valEl = document.getElementById(`bs${label}Value${i}`);
+    const broker_code = (brokerEl?.value||"").trim().toUpperCase();
+    const value_idr = valEl?.value;
+    if(!broker_code || !value_idr) continue; // lewati baris kosong
+    rows.push({
+      stock_code: code, trade_date: date, side, rank: i+1,
+      broker_code, lot: lotEl?.value ? Number(lotEl.value) : null,
+      value_idr: Number(value_idr)
+    });
+  }
+  return rows;
+}
+
+async function saveBrokerSummaryRows(){
+  const code = state.bsStockCode || (document.getElementById("bsStockCode")?.value||"").trim().toUpperCase();
+  const date = state.bsDate || document.getElementById("bsDate")?.value;
+  if(!code || !date){ state.bsMsg = "Isi kode saham dan tanggal dulu."; state.bsMsgError = true; render(); return; }
+  if(!SUPABASE_URL || !SUPABASE_KEY){ openSettings(); return; }
+
+  const rows = [...readBsEditorRows("buy", code, date), ...readBsEditorRows("sell", code, date)];
+  if(!rows.length){ state.bsMsg = "Belum ada baris terisi."; state.bsMsgError = true; render(); return; }
+
+  try {
+    await supaFetch(`${SUPABASE_URL}/broker_summary?on_conflict=stock_code,trade_date,side,rank`, {
+      method: "POST",
+      headers: { ...getSupaHeaders(), "Prefer": "resolution=merge-duplicates,return=representation" },
+      body: JSON.stringify(rows)
+    });
+    state.bsMsg = `Tersimpan ${rows.length} baris.`;
+    state.bsMsgError = false;
+    state.bsEditorOpen = true;
+    render();
+    loadBrokerSummary();
+  } catch(e) {
+    state.bsMsg = "Gagal menyimpan: " + e.message;
+    state.bsMsgError = true;
+    render();
+  }
+}
+
+function fillBsFromCsv(){
+  const textEl = document.getElementById("bsCsvInput");
+  const text = textEl?.value || "";
+  state.bsCsvText = text;
+  try {
+    const lines = text.trim().split("\n").filter(Boolean);
+    const rows = lines.map(line=>{
+      const [side, rank, broker_code, lot, value_idr] = line.split(",").map(s=>s.trim());
+      if(side!=="buy" && side!=="sell") throw new Error(`side harus 'buy'/'sell', dapat: "${side}"`);
+      return {
+        side, rank: Number(rank),
+        broker_code: (broker_code||"").toUpperCase(),
+        lot: lot ? Number(lot) : null,
+        value_idr: Number(value_idr)
+      };
+    });
+    state.bsEditRows = rows;
+    state.bsEditorOpen = true;
+    state.bsMsg = "CSV berhasil dibaca ke form. Cek lagi lalu klik Simpan.";
+    state.bsMsgError = false;
+  } catch(e) {
+    state.bsMsg = "Format CSV tidak valid: " + e.message;
+    state.bsMsgError = true;
+  }
+  render();
+}
+
 function attachContentEvents(){
   const advToggleBtn = document.getElementById("advToggleBtn");
   if(advToggleBtn) advToggleBtn.onclick = () => { state.showAdvancedFilters = !state.showAdvancedFilters; render(); };
@@ -2610,6 +3620,9 @@ function attachContentEvents(){
 
   const loadPresetBtn = document.getElementById("loadPresetBtn");
   if(loadPresetBtn) loadPresetBtn.onclick = loadSelectedPreset;
+
+  const updatePresetBtn = document.getElementById("updatePresetBtn");
+  if(updatePresetBtn) updatePresetBtn.onclick = updateSelectedPreset;
 
   const deletePresetBtn = document.getElementById("deletePresetBtn");
   if(deletePresetBtn) deletePresetBtn.onclick = deleteSelectedPreset;
@@ -2757,6 +3770,29 @@ function attachContentEvents(){
   const exportScreenerBtn = document.getElementById("exportScreenerBtn");
   if(exportScreenerBtn) exportScreenerBtn.onclick = exportScreenerToExcel;
   
+  document.querySelectorAll("[data-sektor-toggle]").forEach(el=>{
+    el.onclick = ()=>{
+      const sek = el.dataset.sektorToggle;
+      state.sektorExpanded.has(sek) ? state.sektorExpanded.delete(sek) : state.sektorExpanded.add(sek);
+      render();
+    };
+  });
+  const sektorSearchInput = document.getElementById("sektorSearchInput");
+  if(sektorSearchInput){
+    sektorSearchInput.oninput = (e)=>{
+      state.sektorSearch = e.target.value; render();
+      const el = document.getElementById("sektorSearchInput");
+      if(el){ el.focus(); el.selectionStart = el.value.length; }
+    };
+  }
+  const sektorSortSelect = document.getElementById("sektorSortSelect");
+  if(sektorSortSelect){
+    sektorSortSelect.onchange = (e)=>{ state.sektorSort = e.target.value; render(); };
+  }
+  document.querySelectorAll("[data-mover-tab]").forEach(btn=>{
+    btn.onclick = ()=>{ state.topMoversTab = btn.dataset.moverTab; render(); };
+  });
+
   document.querySelectorAll("[data-detail]").forEach(b=> b.onclick=()=>openDetail(b.dataset.detail));
   document.querySelectorAll("[data-fav]").forEach(b=> b.onclick=()=>toggleFav(b.dataset.fav));
   document.querySelectorAll("[data-chart]").forEach(b=> b.onclick=()=>loadChart(b.dataset.chart));
@@ -2821,6 +3857,20 @@ function attachContentEvents(){
       render();
     };
   });
+
+  // --- Broker Summary ---
+  const bsStockCodeInput = document.getElementById("bsStockCode");
+  if(bsStockCodeInput) bsStockCodeInput.onchange = (e) => { state.bsStockCode = e.target.value.trim().toUpperCase(); };
+  const bsDateInput = document.getElementById("bsDate");
+  if(bsDateInput) bsDateInput.onchange = (e) => { state.bsDate = e.target.value; };
+  const bsLoadBtn = document.getElementById("bsLoadBtn");
+  if(bsLoadBtn) bsLoadBtn.onclick = loadBrokerSummary;
+  const bsSaveBtn = document.getElementById("bsSaveBtn");
+  if(bsSaveBtn) bsSaveBtn.onclick = saveBrokerSummaryRows;
+  const bsCsvFillBtn = document.getElementById("bsCsvFillBtn");
+  if(bsCsvFillBtn) bsCsvFillBtn.onclick = fillBsFromCsv;
+  const bsEditorPanel = document.getElementById("bsEditorPanel");
+  if(bsEditorPanel) bsEditorPanel.ontoggle = (e) => { state.bsEditorOpen = e.target.open; };
 }
 
 document.addEventListener("click", (e) => {

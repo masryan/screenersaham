@@ -267,6 +267,80 @@
   .wl-price{font-size:22px; font-weight: 700; margin-bottom:10px; color: #fff;}
   .wl-pills{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:16px;}
 
+  /* SEKTORAL TAB */
+  .sektor-grid{display:flex;flex-direction:column;gap:14px;}
+  .sektor-card{
+    background: linear-gradient(180deg, rgba(30,41,59,0.6) 0%, rgba(15,23,42,0.8) 100%);
+    backdrop-filter: var(--glass-blur); -webkit-backdrop-filter: var(--glass-blur);
+    border:1px solid var(--border); border-radius:14px; overflow:hidden;
+    box-shadow: var(--shadow-md); transition: border-color .2s, box-shadow .2s;
+  }
+  .sektor-card:hover{border-color: rgba(255,255,255,0.2);}
+  .sektor-card.open{border-color: rgba(245,158,11,0.35); box-shadow: 0 4px 20px rgba(245,158,11,0.08);}
+  .sektor-card-head{
+    display:grid; grid-template-columns: 1.4fr 1.1fr 1.2fr auto;
+    align-items:center; gap:16px; padding:16px 18px; cursor:pointer; transition: background .15s;
+  }
+  .sektor-card-head:hover{background: rgba(255,255,255,0.04);}
+  .sektor-name{font-weight:700; font-size:14.5px; color:var(--text); letter-spacing:-0.01em;}
+  .sektor-meta{color:var(--muted); font-size:11px; margin-top:3px;}
+  .sektor-card-mid{display:flex; flex-direction:column; gap:6px; min-width:120px;}
+  .sektor-avg-change{font-size:19px; font-weight:700;}
+  .sektor-breadth-bar{height:6px; border-radius:4px; background: rgba(248,113,113,0.35); overflow:hidden;}
+  .sektor-breadth-fill{height:100%; background: var(--up-grad); border-radius:4px;}
+  .sektor-breadth-lbl{font-size:10.5px; font-weight:600; display:flex; gap:8px;}
+  .sektor-card-extremes{display:flex; flex-direction:column; gap:4px; font-size:11px; color:var(--muted); font-weight:600;}
+  .sektor-card-extremes div{white-space:nowrap;}
+  .sektor-expand-btn{
+    background: rgba(255,255,255,0.06); border:1px solid var(--border); border-radius:8px;
+    width:32px; height:32px; display:flex; align-items:center; justify-content:center;
+    color:var(--gold); font-size:11px; flex-shrink:0; transition: 0.2s;
+  }
+  .sektor-expand-btn:hover{background: rgba(245,158,11,0.15); border-color: rgba(245,158,11,0.4);}
+
+  .sektor-card-body{border-top:1px solid var(--border); padding:14px 18px 18px; background: rgba(0,0,0,0.15);}
+  .sektor-stock-list{display:flex; flex-direction:column; gap:4px; max-height:420px; overflow-y:auto; padding-right:4px;}
+  .sektor-stock-row{
+    display:grid; grid-template-columns: 28px 100px 1.6fr 90px 1fr;
+    align-items:center; gap:12px; padding:8px 10px; border-radius:8px; transition: background .15s;
+  }
+  .sektor-stock-row:not(.sektor-stock-header):hover{background: rgba(255,255,255,0.06);}
+  .sektor-stock-header{color:var(--muted); font-size:10px; font-weight:700; text-transform:uppercase; letter-spacing:.04em; padding-bottom:6px; border-bottom:1px solid var(--border); margin-bottom:4px;}
+  .sektor-stock-ticker{font-weight:700; font-size:13px; text-align:left; justify-self:start;}
+  .sektor-stock-name{color:var(--muted); font-size:12px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;}
+  .sektor-stock-price{font-size:12.5px; text-align:right;}
+  .sektor-stock-change-wrap{display:flex; align-items:center; gap:8px;}
+  .sektor-change-bar-track{flex:1; height:5px; border-radius:3px; background: rgba(255,255,255,0.06); overflow:hidden;}
+  .sektor-change-bar-fill{height:100%; border-radius:3px;}
+  .sektor-change-bar-fill.tone-up{background: var(--up-grad);}
+  .sektor-change-bar-fill.tone-down{background: var(--down-grad);}
+  .sektor-change-bar-fill.tone-muted{background: var(--muted);}
+  .sektor-stock-change{font-size:12.5px; font-weight:700; text-align:right; min-width:58px;}
+
+  /* TOP MOVERS (dalam tab Sektoral) */
+  .mover-tabs{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:16px;}
+  .mover-tab-btn{
+    font-size:12px; font-weight:600; padding:8px 14px; border-radius:20px;
+    border:1px solid var(--border); background: rgba(255,255,255,0.04); color:var(--muted);
+    cursor:pointer; transition:0.2s; white-space:nowrap;
+  }
+  .mover-tab-btn:hover{background: rgba(255,255,255,0.08); color:var(--text);}
+  .mover-tab-btn.active{background: var(--gold-grad); border-color:transparent; color:#fff; box-shadow: 0 4px 10px rgba(245,158,11,0.3);}
+  .mover-list{display:flex; flex-direction:column; gap:4px;}
+  .mover-row{
+    display:grid; grid-template-columns: 28px 100px 1.6fr 1fr 90px 90px 120px 30px;
+    align-items:center; gap:12px; padding:9px 10px; border-radius:8px; transition: background .15s;
+  }
+  .mover-row:not(.mover-row-header):hover{background: rgba(255,255,255,0.06);}
+  .mover-row-header{color:var(--muted); font-size:10px; font-weight:700; text-transform:uppercase; letter-spacing:.04em; padding-bottom:6px; border-bottom:1px solid var(--border); margin-bottom:4px;}
+  .mover-rank{font-size:11.5px; font-weight:700; color:var(--muted); text-align:center;}
+  .mover-ticker{font-weight:700; font-size:13px; text-align:left; justify-self:start;}
+  .mover-name{color:var(--muted); font-size:12px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;}
+  .mover-sektor{color:var(--muted); font-size:11px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;}
+  .mover-price{font-size:12.5px; text-align:right;}
+  .mover-change{font-size:12.5px; font-weight:700; text-align:right;}
+  .mover-metric{font-size:12.5px; font-weight:700; text-align:right;}
+
   .ticker-chips{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:20px;}
   .chip{font-size:12px;padding:6px 14px;border-radius:20px;border:1px solid var(--border);background: rgba(255,255,255,0.05);color:var(--text);font-weight:600; transition:0.2s; cursor:pointer;}
   .chip:hover{background: rgba(255,255,255,0.1);}
@@ -398,6 +472,15 @@
     /* FILTER TOOLBAR */
     .filter-toolbar{gap:10px;}
     .filter-toolbar .search-wrap, .filter-toolbar .search-wrap input{width:100%;}
+    /* Field "Screener DSI (Preset Siap Pakai)" dipaksa inline flex:0 0 auto
+       di app.js supaya rapi di desktop — tapi itu bikin flex-shrink:0,
+       jadi baris tombol preset menolak menyempit dan malah overflow ke
+       luar layar (kepotong) alih-alih wrap ke baris baru di HP. Di layar
+       sempit, field ini HARUS boleh menyempit selebar viewport supaya
+       flex-wrap pada tombol di dalamnya benar-benar bisa bekerja. */
+    .filter-toolbar > .field{flex:1 1 100% !important;min-width:0;width:100%;}
+    .filter-toolbar > .field > div{width:100%;}
+    .filter-toolbar .pill{white-space:normal;text-align:center;}
     .multi-select{min-width:0;}
     .filter-grid{grid-template-columns:repeat(2,1fr);gap:8px 10px;}
     .toolbar-footer{flex-direction:column;align-items:stretch;gap:10px;}
@@ -407,6 +490,29 @@
     .summary-grid{grid-template-columns:repeat(2,1fr);gap:10px;}
     .summary-val{font-size:19px;}
     .wl-grid{grid-template-columns:1fr;gap:12px;}
+
+    /* SEKTORAL */
+    .sektor-card-head{display:flex; flex-direction:column; align-items:stretch; padding:12px 14px; gap:10px; position:relative;}
+    .sektor-card-head .sektor-expand-btn{position:absolute; top:12px; right:14px;}
+    .sektor-card-title{padding-right:40px;}
+    .sektor-card-mid{flex-direction:row; align-items:center; justify-content:space-between; min-width:0;}
+    .sektor-breadth-bar{flex:1; margin:0 10px;}
+    .sektor-card-extremes{flex-direction:row; gap:14px; flex-wrap:wrap;}
+    .sektor-name{font-size:13.5px;}
+    .sektor-stock-row{grid-template-columns:22px 64px 1fr; gap:6px 8px; padding:8px 6px;}
+    .sektor-stock-row.sektor-stock-header{display:none;}
+    .sektor-stock-price{display:none;}
+    .sektor-stock-name{font-size:11px;}
+    .sektor-stock-change-wrap{min-width:70px;}
+
+    /* TOP MOVERS */
+    .mover-tabs{gap:6px;}
+    .mover-tab-btn{padding:7px 11px;font-size:11px;}
+    .mover-row{grid-template-columns:22px 64px 1fr; gap:6px 8px; padding:8px 6px;}
+    .mover-row.mover-row-header{display:none;}
+    .mover-sektor, .mover-price{display:none;}
+    .mover-name{font-size:11px;}
+    .mover-change, .mover-metric{font-size:11px;}
 
     /* TABLE — scroll horizontal, tapi lebih ringkas */
     table{font-size:11.5px;}
@@ -458,3 +564,98 @@
     .porto-summary{grid-template-columns:1fr;}
     .detail-grid{grid-template-columns:1fr;}
   }
+/* =============================================================
+   Tambahan CSS untuk fitur Broker Summary.
+   Tempel di akhir styles.css. Memakai var(--teal) dsb yang
+   sepertinya sudah didefinisikan di styles.css Anda (terlihat
+   dipakai di index.html) — sesuaikan nama variabel kalau beda.
+   ============================================================= */
+
+.bs-wrap { display: flex; flex-direction: column; gap: 16px; }
+
+.bs-toolbar { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
+
+.bs-input {
+  padding: 8px 12px;
+  border-radius: 8px;
+  border: 1px solid rgba(255,255,255,0.12);
+  background: rgba(255,255,255,0.04);
+  color: inherit;
+  font-family: inherit;
+}
+
+.bs-display-grid,
+.bs-editor-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 20px;
+}
+
+.bs-col-title {
+  font-weight: 600;
+  margin-bottom: 8px;
+  font-size: 13px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.bs-col-title.bs-buy { color: #10b981; }
+.bs-col-title.bs-sell { color: #ef4444; }
+
+.bs-header-row,
+.bs-row {
+  display: grid;
+  grid-template-columns: 70px 1fr 1fr;
+  gap: 6px;
+  margin-bottom: 6px;
+}
+.bs-header-row span { font-size: 11px; opacity: 0.6; }
+
+.bs-cell {
+  padding: 6px 8px;
+  border-radius: 6px;
+  border: 1px solid rgba(255,255,255,0.1);
+  background: rgba(255,255,255,0.03);
+  color: inherit;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 12.5px;
+}
+
+.bs-bar-row {
+  display: grid;
+  grid-template-columns: 60px 1fr 110px;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+.bs-bar-broker { font-family: 'JetBrains Mono', monospace; font-weight: 600; font-size: 12.5px; }
+.bs-bar-track { background: rgba(255,255,255,0.06); border-radius: 6px; overflow: hidden; height: 18px; }
+.bs-bar-fill { height: 100%; border-radius: 6px; }
+.bs-fill-buy { background: #10b981; }
+.bs-fill-sell { background: #ef4444; }
+.bs-bar-value { font-family: 'JetBrains Mono', monospace; font-size: 12px; text-align: right; opacity: 0.85; }
+
+.bs-empty { opacity: 0.5; font-size: 13px; padding: 8px 0; }
+
+.bs-editor-panel { margin-top: 4px; }
+.bs-editor-panel summary { cursor: pointer; font-weight: 600; margin-bottom: 12px; }
+
+.bs-csv-panel { margin-top: 16px; display: flex; flex-direction: column; gap: 8px; }
+.bs-csv-panel label { font-size: 12px; opacity: 0.7; }
+.bs-csv-panel textarea {
+  width: 100%;
+  padding: 8px;
+  border-radius: 8px;
+  border: 1px solid rgba(255,255,255,0.12);
+  background: rgba(255,255,255,0.03);
+  color: inherit;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 12px;
+}
+
+.bs-msg { font-size: 13px; min-height: 18px; }
+.bs-msg-ok { color: #10b981; }
+.bs-msg-error { color: #ef4444; }
+
+@media (max-width: 640px) {
+  .bs-display-grid, .bs-editor-grid { grid-template-columns: 1fr; }
+}
