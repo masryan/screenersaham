@@ -13,7 +13,6 @@ const DEFAULT_SUPABASE_KEY = (window.APP_CONFIG && window.APP_CONFIG.SUPABASE_AN
 
 let SUPABASE_URL = localStorage.getItem("ihsg_supa_url") || DEFAULT_SUPABASE_URL;
 let SUPABASE_KEY = localStorage.getItem("ihsg_supa_key") || DEFAULT_SUPABASE_KEY;
-let APPSCRIPT_URL = localStorage.getItem("ihsg_script_url") || "";
 
 // ==========================================
 // DAFTAR SAHAM SYARIAH (fallback client-side)
@@ -29,6 +28,9 @@ const SYARIAH_TICKERS = new Set([
   "BANK","BBMI","BRIS","BTPS","JMAS","PNBS","SPOT","AADI","ABMM","ADMR","ADRO","AKRA","ARII","ATLA","BBRM","BESS","BOAT","BSML","BSSR","BULL","BUMI","BYAN","CANI","CGAS","COAL","DEWA","DSSA","DWGL","ELSA","ENRG","FIRE","GEMS","HRUM","IATA","INDY","ITMA","ITMG","KKGI","KOPI","MAHA","MBAP","MCOL","MEDC","MKAP","MYOH","PGAS","PKPK","PSAT","PSSI","PTBA","PTIS","RAJA","RATU","RGAS","RMKE","RMKO","RUIS","SEMA","SGER","SICO","SMMT","SOCI","SUNI","TCPI","TEBE","TOBA","TPMA","UNIQ","WINS","WOWS","ADMG","AGII","AKPI","ALDO","ALKA","ANTM","APLI","ARCI","ASPR","AVIA","AYLS","BATR","BLES","BMSR","BRMS","BRNA","CHEM","CITA","CLPI","CTBN","DGWG","DKFT","EKAD","EPAC","ESIP","ESSA","FASW","FPNI","FWCT","GDST","GGRP","IFII","IFSH","IGAR","INCI","INKP","INTD","INTP","IPOL","ISSP","KDSI","KKES","LMSH","LTLS","MBMA","MDKA","MDKI","MINE","NICE","NICL","NIKL","OBMD","OKAS","PACK","PBID","PDPP","PICO","PPRI","PSAB","PTMR","SAMF","SBMA","SMBR","SMCB","SMGA","SMGR","SMKL","SMLE","SOLA","SPMA","SULI","TALF","TBMS","TINS","TIRT","TKIM","TPIA","TRST","UNIC","WTON","YPAS","AMFG","AMIN","APII","ARNA","ASGR","BINO","BLUE","CAKK","CCSI","CRSN","DYAN","FOLK","GPSO","HEXA","HOPE","HYGN","ICON","IKAI","IKBI","IMPC","JECC","JTPE","KBLI","KBLM","KIAS","KING","KOBX","KOIN","KONI","KUAS","LION","MARK","MFMI","MHKI","MLIA","MUTU","NAIK","NTBK","PADA","PTMP","SCCO","SKRN","SMIL","SOSS","SPTO","TIRA","TOTO","UNTR","VISI","VOKS","WIDI","AALI","ADES","AGAR","AISA","AMMS","ASHA","AYAM","BISI","BOBA","BRRC","BUAH","BUDI","BWPT","CAMP","CEKA","CLEO","CMRY","CPIN","CPRO","CSRA","DAYA","DEWI","DMND","DSFI","DSNG","EPMT","EURO","FISH","FLMC","FOOD","FORE","GOOD","GRPM","GULA","GUNA","GZCO","HERO","HOKI","ICBP","IKAN","INDF","JARR","JAWA","JPFA","KEJU","KINO","KMDS","LSIP","MAIN","MAXI","MBTO","MKTR","MLPL","MPPA","MRAT","MSJA","MYOR","NANO","NASI","NAYZ","NEST","NSSS","PCAR","PGUN","PNGO","PSDN","PSGO","PTPS","RANC","ROTI","SDPC","SGRO","SIMP","SIPD","SKBM","SKLT","SMAR","STAA","STTP","TAPG","TCID","TGKA","TGUK","TLDN","UCID","UDNG","ULTJ","UNVR","VICI","WAPO","YUPI","ACES","AEGS","ASLC","AUTO","BABY","BAIK","BAUT","BAYU","BELL","BIKE","BLTZ","BMBL","BMTR","BOGA","BOLT","BRAM","CINT","CNMA","CSAP","CSMI","DEPO","DOOH","DOSS","DRMA","EAST","ECII","ENAK","ERAA","ERAL","ERTX","ESTA","FAST","FILM","GDYR","GEMA","GJTL","GOLF","GRPH","GWSA","HAJJ","HRTA","IDEA","IIKP","INDR","INDS","IPTV","ISAP","JGLE","JIHD","KAQI","KICI","KLIN","KOTA","KPIG","LFLO","LIVE","LMAX","LMPI","LPIN","LPPF","MAPA","MAPB","MAPI","MDIA","MDIY","MEJA","MERI","MGLV","MICE","MKNT","MNCN","MPMX","MSIN","MSKY","OLIV","PANR","PART","PDES","PGLI","PJAA","PLAN","PMJS","PMUI","POLU","PSKT","PTSP","PZZA","RAAM","RALS","SCNP","SHID","SLIS","SMSM","SNLK","SOFA","SOTS","SPRE","SSTM","SWID","TFCO","TMPO","TOOL","TRIS","TYRE","UFOE","VERN","VKTR","WOOD","YELO","ZONE","BMHS","CARE","CHEK","DGNS","DVLA","HALO","HEAL","IKPM","IRRA","KLBF","LABS","MDLA","MEDS","MERK","MIKA","MMIX","MTMH","OBAT","OMED","PEHA","PEVE","PRAY","PRDA","PRIM","RSCH","RSGK","SAME","SCPI","SIDO","SILO","SOHO","SURI","TSPC","SRTG","PALM","DEFI","ADCP","AMAN","APLN","ASPI","ASRI","ATAP","BAPI","BBSS","BCIP","BEST","BIPP","BKDP","BKSL","BSBK","BSDE","CITY","CSIS","CTRA","DADA","DILD","DMAS","DUTI","ELTY","EMDE","FMII","GMTD","GPRA","GRIA","HBAT","HOMI","INPP","IPAC","JRPT","KBAG","KIJA","KOCI","LAND","LPCK","LPLI","MKPI","MMLP","MSIE","MTLA","MTSM","NZIA","PAMG","PLIN","POLI","PURI","RBMS","REAL","RELF","RISE","ROCK","RODA","SAGE","SATU","SMDM","SMRA","UANG","URBN","VAST","WINR","AREA","ATIC","AWAN","AXIO","BELI","CASH","CHIP","CYBR","DCII","DIVA","DMMX","ELIT","GLVA","HDIT","IOTF","IRSX","JATI","KIOS","KREN","LUCK","MCAS","MLPT","MPIX","MSTI","MTDL","NFCX","PGJO","PTSN","RUNS","TFAS","TOSK","TRON","UVCR","WGSH","WIFI","WIRG","ZYRX","ASLI","BALI","BDKR","CASS","CMNP","DATA","DGIK","EXCL","FIMP","GHON","GOLD","HADE","IBST","IDPR","INET","IPCM","ISAT","JAST","JKON","JSMR","KARW","KEEN","KETR","KOKA","MANG","META","MORA","MPOW","MTEL","MTPS","NRCA","PORT","POWR","PPRE","PTPP","PTPW","SMKM","SSIA","SUPR","TAMA","TLKM","TOTL","WEGE","AKSI","ASSA","BIRD","BLOG","BLTA","CMPP","ELPI","GIAA","GTRA","HAIS","HATM","HELI","JAYA","KJEN","KLAS","LAJU","LOPI","LRNA","MIRA","MITI","NELY","PJHB","PPGL","PURA","RCCC","SAFE","SAPX","SMDR","TAXI","TMAS","TNCA","TRJA","TRUK","WBSA","WEHA","GRHA"
 ]);
 function isSyariah(ticker){ return SYARIAH_TICKERS.has(String(ticker||"").toUpperCase()); }
+function escapeHtml(str){
+  return String(str ?? "").replace(/[&<>"']/g, c => ({ "&":"&amp;", "<":"&lt;", ">":"&gt;", '"':"&quot;", "'":"&#39;" }[c]));
+}
 
 function getSupaHeaders() {
   return {
@@ -46,7 +48,7 @@ function openSettings() {
   if(urlDisp.endsWith("/rest/v1")) urlDisp = urlDisp.replace("/rest/v1", "");
   document.getElementById("setSupaUrl").value = urlDisp;
   document.getElementById("setSupaKey").value = SUPABASE_KEY;
-  document.getElementById("setScriptUrl").value = APPSCRIPT_URL;
+  document.getElementById("setFreqAnalyzerCol").value = state.freqAnalyzerCol;
   document.getElementById("settingsModalOverlay").classList.add("open");
 }
 
@@ -64,11 +66,13 @@ function saveSettings() {
   
   SUPABASE_URL = supaUrlInput;
   SUPABASE_KEY = document.getElementById("setSupaKey").value.trim();
-  APPSCRIPT_URL = document.getElementById("setScriptUrl").value.trim();
-  
+
   localStorage.setItem("ihsg_supa_url", SUPABASE_URL);
   localStorage.setItem("ihsg_supa_key", SUPABASE_KEY);
-  localStorage.setItem("ihsg_script_url", APPSCRIPT_URL);
+
+  const freqColInput = (document.getElementById("setFreqAnalyzerCol").value || "").trim();
+  state.freqAnalyzerCol = freqColInput || "freq_ma20";
+  localStorage.setItem(LS_FREQ_ANALYZER_COL, state.freqAnalyzerCol);
   
   closeSettings();
   
@@ -83,6 +87,8 @@ function saveSettings() {
 // APLIKASI UTAMA
 // ==========================================
 const LS_WATCHLIST = "ihsg_watchlist", LS_BACKTEST = "ihsg_backtest", LS_PORTO = "ihsg_portofolio", LS_STOCK_CACHE = "ihsg_stock_cache";
+const LS_FREQ_ANALYZER_COL = "ihsg_freq_analyzer_col";
+const LS_CUSTOM_RULES = "ihsg_custom_rules_v1";
 
 let state = {
   demoMode: false, stocks: [], watchlist: new Set(), backtests: [],
@@ -91,21 +97,35 @@ let state = {
   tab: "screener", search: "", activePreset: null,
   visibleCols: new Set(), // diisi loadSettings() dari localStorage atau DEFAULT_VISIBLE_COLS
   colPickerOpen: false,
-  filters: {sektor:[], syariahLabel:[], cekHarga:[], cekRsi:[], statusRsi:[], cekMacd:[], band:[], sinyalVolume:[], keyakinanNaik:[], trendHarga:[], polaCandle:[], uangGedeMasuk:[], isBBSqueeze:[], valuasi:[]},
+  filters: {sektor:[], syariahLabel:[], cekHarga:[], cekRsi:[], statusRsi:[], cekMacd:[], band:[], sinyalVolume:[], sinyalFrekuensi:[], keyakinanNaik:[], trendHarga:[], polaCandle:[], uangGedeMasuk:[], isBBSqueeze:[], valuasi:[]},
   showAdvancedFilters: false,
   rangeFilters: { 
     bbWidth:{min:"",max:""}, 
     atr14:{min:"",max:""}, 
     clv:{min:"",max:""},
     rsi7:{min:"58",max:"72"},  
-    rsi21:{min:"58",max:"72"}  
+    rsi21:{min:"58",max:"72"},
+    frequency:{min:"",max:""}
   },
   openDropdown: null, 
   sort: { col: null, asc: true },
   page: 1, limit: 10,
   expanded: new Set(),
-  selectedTicker: null, chartData: [], selectedLevels: null, loading:false, chartSearch: "",
-  detailTicker: null, detailTab: "teknikal"
+  selectedTicker: null, chartData: [], chartLoading: false, selectedLevels: null, loading:false, chartSearch: "",
+  detailTicker: null, detailTab: "teknikal",
+  // "Frequency Analyzer" = kolom baseline (rata-rata Frekuensi) di DB yang
+  // dipakai sebagai pembanding di rule builder, namanya bisa beda-beda
+  // tergantung skema tiap orang — jadi dibuat konfigurasi lewat Pengaturan,
+  // bukan di-hardcode. Default "freq_ma20" (isi lewat "⚙️ Pengaturan").
+  freqAnalyzerCol: "freq_ma20",
+  // Rules kustom ala "Edit Screener" Stockbit: {id, aKey, op, mult, bType, bKey, bConst}
+  customRules: [],
+  // Preset Screener kustom (disimpan di tabel custom_presets Supabase):
+  // {id, name, rules, created_at}. selectedPresetId = preset yang dipilih
+  // di dropdown (belum tentu sudah "dimuat" ke customRules).
+  customPresets: [],
+  selectedPresetId: "",
+  presetsLoading: false
 };
 
 function fmtNum(n){ if(n===null||n===undefined) return "-"; return new Intl.NumberFormat("id-ID").format(n); }
@@ -162,6 +182,11 @@ function loadSettings(){
     const saved = JSON.parse(localStorage.getItem(LS_VISIBLE_COLS)||"null");
     state.visibleCols = new Set(Array.isArray(saved) ? saved : DEFAULT_VISIBLE_COLS);
   }catch(e){ state.visibleCols = new Set(DEFAULT_VISIBLE_COLS); }
+  try{ state.freqAnalyzerCol = localStorage.getItem(LS_FREQ_ANALYZER_COL) || "freq_ma20"; }catch(e){ state.freqAnalyzerCol = "freq_ma20"; }
+  try{
+    const savedRules = JSON.parse(localStorage.getItem(LS_CUSTOM_RULES)||"[]");
+    state.customRules = Array.isArray(savedRules) ? savedRules : [];
+  }catch(e){ state.customRules = []; }
 }
 function saveVisibleCols(){ localStorage.setItem(LS_VISIBLE_COLS, JSON.stringify([...state.visibleCols])); }
 function toggleColumn(key){
@@ -192,6 +217,28 @@ function volumeSignal(row, ratio){
   else if(ratio>=1.5){ label="Tinggi"; tone="up"; }
   else if(ratio>=0.8){ label="Normal"; tone="muted"; }
   else               { label="Rendah"; tone="down"; }
+  return { ratio, label, tone };
+}
+// ==========================================
+// FREQUENCY ANALYZER (mirip kolom "Frequency" di screener Stockbit)
+//
+// "Frekuensi" = jumlah transaksi (kali matched) suatu saham dalam sehari —
+// beda dari Volume (jumlah lembar/lot). Frekuensi tinggi dengan volume
+// relatif kecil sering menandakan banyak investor ritel aktif keluar-masuk
+// (bukan satu order besar), jadi dianalisis terpisah dari Volume.
+//
+// Rasio dihitung dari `frequency / freqAnalyzer` kalau backend sudah mengirim
+// rata-rata 20 hari (freq_ma20); kalau kolom itu belum ada di skema DB,
+// ratio-nya null dan UI menampilkan "-" (bukan 0) — sama seperti pola
+// avgVolume3m/vol_ma20 di atas.
+// ==========================================
+function frequencySignal(ratio){
+  if(ratio===null || ratio===undefined || isNaN(ratio)) return { ratio:null, label:"-", tone:"muted" };
+  let label, tone;
+  if(ratio>=2.5)      { label="Sangat Ramai"; tone="up"; }
+  else if(ratio>=1.5) { label="Ramai"; tone="up"; }
+  else if(ratio>=0.7) { label="Normal"; tone="muted"; }
+  else                { label="Sepi"; tone="down"; }
   return { ratio, label, tone };
 }
 function keyakinanNaik(row, vol){
@@ -227,20 +274,21 @@ async function loadLive(){
 
   state.loading = true; showError(""); render();
   try {
-    const [stocksRes, portoRes, backtestRes, wlRes] = await Promise.all([
+    const [stocksRes, portoRes, backtestRes, wlRes, presetsRes] = await Promise.all([
       // Ambil dari VIEW gabungan, bukan tabel stocks mentah: stocks_screener
       // sudah menggabungkan fundamental+teknikal (tabel stocks) dengan
       // bandarmologi asli dari IDX (view flow_summary), lewat left join.
       fetch(`${SUPABASE_URL}/stocks_screener?select=*`, { headers: getSupaHeaders() }).then(r => r.json()),
       fetch(`${SUPABASE_URL}/portfolios?select=*`, { headers: getSupaHeaders() }).then(r => r.json()),
       fetch(`${SUPABASE_URL}/backtest_sessions?select=*,backtest_items(*)`, { headers: getSupaHeaders() }).then(r => r.json()),
-      fetch(`${SUPABASE_URL}/watchlists?select=ticker`, { headers: getSupaHeaders() }).then(r => r.json())
+      fetch(`${SUPABASE_URL}/watchlists?select=ticker`, { headers: getSupaHeaders() }).then(r => r.json()),
+      fetch(`${SUPABASE_URL}/custom_presets?select=*&order=created_at.desc`, { headers: getSupaHeaders() }).then(r => r.json())
     ]);
 
     if (stocksRes.message) throw new Error(stocksRes.message);
 
     state.stocks = stocksRes.map(r => ({
-      ticker: r.ticker, sektor: r.sector,
+      ticker: r.ticker, sektor: r.sector, name: r.name, industry: r.industry,
       // Kolom `syariah` di DB dipakai kalau sudah diisi; kalau masih
       // kosong (belum dilabeli backend), fallback ke daftar statis
       // SYARIAH_TICKERS di atas supaya filter tetap bisa dipakai.
@@ -250,10 +298,31 @@ async function loadLive(){
       // tidak ada dua kolom untuk hal yang sama (day_high dulu diisi Yahoo
       // quote, sekarang jadi satu-satunya sumber High hari ini).
       cOpen: r.c_open, cHigh: r.day_high, cLow: r.day_low, cClose: r.price, cVol: r.volume,
-      changePct: r.change_pct, turnover: r.turnover ?? r.value_traded, vwap20: r.vwap20,
-      volRatio: numOrNull(r.vol_ratio), volMA20: numOrNull(r.vol_ma20 ?? r.avg_volume_3m),
-      per: r.per, pbv: r.pbv, roe: r.roe, divYield: r.dividend_yield,
+      changePct: r.change_pct, turnover: r.turnover, valueTraded: numOrNull(r.value_traded), vwap20: r.vwap20,
+      volRatio: numOrNull(r.vol_ratio), volMA20: numOrNull(r.vol_ma20), avgVolume3m: numOrNull(r.avg_volume_3m),
+      // Frekuensi transaksi (jumlah kali matched, bukan jumlah lembar) —
+      // nama kolom di beberapa skema IDX kadang "frequency", kadang
+      // "frekuensi", jadi dua-duanya dicoba.
+      // "freqAnalyzer" = baseline rata-rata Frekuensi (mirip "Volume MA 100"
+      // punya Volume) yang dipakai rule builder, misal "Frequency > 5 *
+      // Frequency Analyzer" — nama kolomnya di DB dikonfigurasi lewat
+      // Pengaturan (state.freqAnalyzerCol) karena bisa beda tiap skema.
+      frequency: numOrNull(r.frequency ?? r.frekuensi),
+      freqAnalyzer: numOrNull(r[state.freqAnalyzerCol] ?? r.freq_ma20 ?? r.frequency_ma20),
+      avgFrequency3m: numOrNull(r.avg_frequency_3m ?? r.avg_frekuensi_3m),
+      // Antrian bid/offer terbaik — snapshot EOD dari sync-idx-full.mjs
+      // (bukan live order book, lihat catatan di skrip). Null kalau
+      // memang tidak ada antrian tercatat hari itu.
+      bid: numOrNull(r.bid), bidVolume: numOrNull(r.bid_volume),
+      offer: numOrNull(r.offer), offerVolume: numOrNull(r.offer_volume),
+      per: r.per, forwardPer: numOrNull(r.forward_per), pbv: r.pbv, roe: r.roe, divYield: r.dividend_yield,
+      bookValue: numOrNull(r.book_value), psr: numOrNull(r.psr), peg: numOrNull(r.peg),
+      roa: numOrNull(r.roa), npm: numOrNull(r.npm), opm: numOrNull(r.opm),
+      revenueGrowth: numOrNull(r.revenue_growth), earningsGrowth: numOrNull(r.earnings_growth),
+      dividendRate: numOrNull(r.dividend_rate), payoutRatio: numOrNull(r.payout_ratio),
+      beta: numOrNull(r.beta), der: numOrNull(r.der), currentRatio: numOrNull(r.current_ratio),
       support: r.support, resistance: r.resistance, high52w: r.week52_high, low52w: r.week52_low,
+      week52ChangePct: numOrNull(r.week52_change_pct),
       ema21H: r.ema21h, ema21L: r.ema21l, ma21: r.ma21, ma50: r.ma50, ma100: r.ma100, ma200: r.ma200,
       rsi7: r.rsi7, rsi21: r.rsi21, hist: r.macd_hist, histPrev: 0,
       fib: r.fibonacci, 
@@ -264,6 +333,33 @@ async function loadLive(){
       isBBSqueeze: boolLabel(r.is_bb_squeeze), atr14: numOrNull(r.atr14), valuasi: r.valuasi ?? "-", clv: numOrNull(r.clv),
       ema89: numOrNull(r.ema89), prevHigh: numOrNull(r.prev_high), prevLow: numOrNull(r.prev_low), prevVol: numOrNull(r.prev_vol),
       stochK: numOrNull(r.stoch_k), stochD: numOrNull(r.stoch_d), prevStochK: numOrNull(r.prev_stoch_k), prevStochD: numOrNull(r.prev_stoch_d),
+
+      // --- Sudah ada di DB tapi sebelumnya belum pernah dipetakan ---
+      prevClose: numOrNull(r.prev_close), macd: numOrNull(r.macd), signal: numOrNull(r.signal),
+
+      // --- Perluasan indikator dari stock_indicators_ext (via stocks_screener) ---
+      priceMa5: numOrNull(r.price_ma5), priceMa10: numOrNull(r.price_ma10), priceMa20: numOrNull(r.price_ma20),
+      prevPriceMa5: numOrNull(r.prev_price_ma5), prevPriceMa10: numOrNull(r.prev_price_ma10),
+      prevPriceMa20: numOrNull(r.prev_price_ma20), prevPriceMa50: numOrNull(r.prev_price_ma50),
+      prevPriceMa100: numOrNull(r.prev_price_ma100), prevPriceMa200: numOrNull(r.prev_price_ma200),
+      volumeMa5: numOrNull(r.volume_ma5), volumeMa10: numOrNull(r.volume_ma10),
+      volumeMa50: numOrNull(r.volume_ma50), volumeMa100: numOrNull(r.volume_ma100), volumeMa200: numOrNull(r.volume_ma200),
+      prevVolumeMa5: numOrNull(r.prev_volume_ma5), prevVolumeMa10: numOrNull(r.prev_volume_ma10),
+      prevVolumeMa20: numOrNull(r.prev_volume_ma20), prevVolumeMa50: numOrNull(r.prev_volume_ma50),
+      prevVolumeMa100: numOrNull(r.prev_volume_ma100),
+      valueMa5: numOrNull(r.value_ma5), valueMa10: numOrNull(r.value_ma10), valueMa20: numOrNull(r.value_ma20),
+      valueMa50: numOrNull(r.value_ma50), valueMa100: numOrNull(r.value_ma100), valueMa200: numOrNull(r.value_ma200),
+      frequencyMa50: numOrNull(r.frequency_ma50), freqSpike: r.freq_spike,
+      rsi14: numOrNull(r.rsi14), prevRsi14: numOrNull(r.prev_rsi14),
+      prevMacd: numOrNull(r.prev_macd), prevSignal: numOrNull(r.prev_signal), prevMacdHist: numOrNull(r.prev_macd_hist),
+      bbUpper: numOrNull(r.bb_upper), bbLower: numOrNull(r.bb_lower),
+      adr14: numOrNull(r.adr14), prevAtr14: numOrNull(r.prev_atr14), prevAdr14: numOrNull(r.prev_adr14),
+      vwap: numOrNull(r.vwap),
+      ema5: numOrNull(r.ema5), ema10: numOrNull(r.ema10), ema20: numOrNull(r.ema20),
+      ema50: numOrNull(r.ema50), ema100: numOrNull(r.ema100), ema200: numOrNull(r.ema200),
+      prevEma200: numOrNull(r.prev_ema200),
+      fibP: numOrNull(r.fib_p), fibR1: numOrNull(r.fib_r1), fibR2: numOrNull(r.fib_r2), fibR3: numOrNull(r.fib_r3),
+      fibS1: numOrNull(r.fib_s1), fibS2: numOrNull(r.fib_s2), fibS3: numOrNull(r.fib_s3),
 
       // --- Bandarmologi ASLI dari IDX (bukan proxy volume) ---
       // Null berarti "belum ditransaksikan" (suspensi dsb), bukan nol —
@@ -284,6 +380,13 @@ async function loadLive(){
       flowDate: r.flow_date, flowDays: numOrNull(r.flow_days),
     }));
 
+    // Kalau salah satu dari ketiga fetch ini gagal (mis. RLS menolak),
+    // Supabase membalas objek {message:...}, bukan array — dulu ini
+    // dilewati diam-diam tanpa pemberitahuan apa pun ke user. Sekarang
+    // dikumpulkan jadi peringatan yang ditampilkan di errorMsg supaya
+    // kelihatan kalau porto/backtest/watchlist gagal dimuat.
+    const warnings = [];
+
     if (Array.isArray(portoRes)) {
        state.portfolio = portoRes.map(p => ({
          id: p.id, ticker: p.ticker, status: p.status,
@@ -294,6 +397,9 @@ async function loadLive(){
          entries: p.entries 
        }));
        savePortoLocal();
+    } else {
+       console.warn("Gagal memuat portfolios:", portoRes);
+       warnings.push("Portofolio gagal dimuat" + (portoRes && portoRes.message ? ` (${portoRes.message})` : ""));
     }
 
     if (Array.isArray(backtestRes)) {
@@ -304,12 +410,27 @@ async function loadLive(){
          }))
        })).sort((a,b) => String(b.id).localeCompare(String(a.id)));
        saveBacktests();
+    } else {
+       console.warn("Gagal memuat backtest_sessions:", backtestRes);
+       warnings.push("Backtest gagal dimuat" + (backtestRes && backtestRes.message ? ` (${backtestRes.message})` : ""));
     }
 
     if (Array.isArray(wlRes)) {
         state.watchlist = new Set(wlRes.map(w => w.ticker));
         saveWatchlist();
+    } else {
+        console.warn("Gagal memuat watchlists:", wlRes);
+        warnings.push("Watchlist gagal dimuat" + (wlRes && wlRes.message ? ` (${wlRes.message})` : ""));
     }
+
+    if (Array.isArray(presetsRes)) {
+       state.customPresets = presetsRes;
+    } else {
+       console.warn("Gagal memuat custom_presets:", presetsRes);
+       warnings.push("Preset screener gagal dimuat" + (presetsRes && presetsRes.message ? ` (${presetsRes.message})` : ""));
+    }
+
+    if (warnings.length) showError(warnings.join(" · "));
 
   } catch (e) {
     showError("Gagal terhubung ke Database Supabase: " + e.message);
@@ -374,7 +495,17 @@ function renderDetailTeknikal(s){
       ${dItem("Perubahan%", `<span style="color:${(s.changePct??0)>=0?'var(--up)':'var(--down)'}">${s.changePct!=null?dNum(s.changePct,{plusSign:true,decimals:2,suffix:'%'}):'-'}</span>`, true)}
       ${dItem("Volume", dNum(s.cVol))}
       ${dItem("Turnover (Rp)", dNum(s.turnover))}
+      ${dItem("Value Traded IDX (Rp)", dNum(s.valueTraded))}
       ${dItem("VWAP 20D", dNum(s.vwap20))}
+      ${dItem("Avg Volume 3M", dNum(s.avgVolume3m))}
+    </div>
+
+    <div class="detail-subtitle">Antrian Bid / Offer (snapshot EOD)</div>
+    <div class="detail-grid">
+      ${dItem("Bid", `<span style="color:var(--up)">${dNum(s.bid)}</span>`, true)}
+      ${dItem("Bid Volume", dNum(s.bidVolume))}
+      ${dItem("Offer", `<span style="color:var(--down)">${dNum(s.offer)}</span>`, true)}
+      ${dItem("Offer Volume", dNum(s.offerVolume))}
     </div>
 
     <div class="detail-subtitle">Level Support / Resisten & Fibonacci</div>
@@ -383,6 +514,7 @@ function renderDetailTeknikal(s){
       ${dItem("Resisten", `<span style="color:var(--up)">${dNum(s.resistance)}</span>`, true)}
       ${dItem("52W Tinggi", dNum(s.high52w))}
       ${dItem("52W Rendah", dNum(s.low52w))}
+      ${dItem("52W Change%", s.week52ChangePct!=null?dNum(s.week52ChangePct,{plusSign:true,decimals:2,suffix:'%'}):"-", true)}
       ${dItem("Fib 23.6%", dNum(s.fib?.f236))}
       ${dItem("Fib 38.2%", dNum(s.fib?.f382))}
       ${dItem("Fib 50%", dNum(s.fib?.f50))}
@@ -431,7 +563,9 @@ function renderDetailFundamental(s){
   return `
     <div class="detail-subtitle">Klasifikasi</div>
     <div class="detail-grid">
+      ${dItem("Nama Perusahaan", s.name||"-", true)}
       ${dItem("Sektor", s.sektor||"-", true)}
+      ${dItem("Industri", s.industry||"-", true)}
       ${dItem("Syariah", s.syariahLabel==="Ya"?"✅ Ya":(s.syariahLabel||"-"), true)}
       ${dItem("Valuasi", pillHtml(s.valuasi||"-", valuasiTone(s.valuasi)), true)}
       ${dItem("Kategori Cap", s.capCategory||"-", true)}
@@ -441,9 +575,27 @@ function renderDetailFundamental(s){
     <div class="detail-subtitle">Rasio Valuasi & Profitabilitas</div>
     <div class="detail-grid">
       ${dItem("PER", s.per??"-")}
+      ${dItem("Forward PER", s.forwardPer??"-")}
       ${dItem("PBV", s.pbv??"-")}
+      ${dItem("PSR", s.psr??"-")}
+      ${dItem("PEG", s.peg??"-")}
+      ${dItem("Book Value", dNum(s.bookValue))}
       ${dItem("ROE%", s.roe!=null?dNum(s.roe,{decimals:2,suffix:'%'}):"-")}
+      ${dItem("ROA%", s.roa!=null?dNum(s.roa,{decimals:2,suffix:'%'}):"-")}
+      ${dItem("NPM%", s.npm!=null?dNum(s.npm,{decimals:2,suffix:'%'}):"-")}
+      ${dItem("OPM%", s.opm!=null?dNum(s.opm,{decimals:2,suffix:'%'}):"-")}
       ${dItem("Dividend Yield%", s.divYield!=null?dNum(s.divYield,{decimals:2,suffix:'%'}):"-")}
+      ${dItem("Dividend Rate", dNum(s.dividendRate))}
+    </div>
+
+    <div class="detail-subtitle">Pertumbuhan & Kesehatan Keuangan</div>
+    <div class="detail-grid">
+      ${dItem("Revenue Growth%", s.revenueGrowth!=null?dNum(s.revenueGrowth,{plusSign:true,decimals:2,suffix:'%'}):"-", true)}
+      ${dItem("Earnings Growth%", s.earningsGrowth!=null?dNum(s.earningsGrowth,{plusSign:true,decimals:2,suffix:'%'}):"-", true)}
+      ${dItem("Payout Ratio%", s.payoutRatio!=null?dNum(s.payoutRatio,{decimals:2,suffix:'%'}):"-")}
+      ${dItem("Beta", s.beta??"-")}
+      ${dItem("DER", s.der??"-")}
+      ${dItem("Current Ratio", s.currentRatio??"-")}
     </div>
 
     <div class="detail-subtitle">Nilai Wajar (Graham Number)</div>
@@ -485,6 +637,67 @@ function renderDetailAnalisa(s){
   if (rrr >= 1.5 && s.keyakinanTone === "up" && s.volTone === "up") { tradeTone = "up"; tradeStatus = "🔥 Highly Recommended"; } 
   else if (rrr >= 1) { tradeTone = "gold"; tradeStatus = "⭐ Layak Pantau"; } 
   else { tradeTone = "down"; tradeStatus = "⚠️ High Risk"; }
+
+  // --- Target TP & SL Versi RSI (jarak EMA21 Low <-> harga sekarang, rasio 1:1) ---
+  // Tiga sinyal yang jadi kriteria (field sama dengan label pill Sinyal
+  // Harga / Sinyal RSI / Keyakinan Naik di stocks_screener):
+  //   1. Sinyal Harga = crossup EMA 21 H (harga breakout di atas EMA21 H & L)
+  //   2. Sinyal RSI   = RSI 7 cross up RSI 21
+  //   3. Keyakinan Naik di tier "Tinggi"/"Sangat Tinggi" (tone "up")
+  // Kalau ketiganya terpenuhi -> status "confirmed" (setup penuh).
+  // Kalau EMA21 Low ada tapi baru sebagian sinyal yang terpenuhi -> tetap
+  // ditampilkan, statusnya "partial" (belum full-konfirmasi) supaya
+  // kelihatan progress-nya, bukan langsung disembunyikan.
+  // Kalau EMA21 Low belum ada di data sama sekali, ATAU tidak ada satupun
+  // dari 3 sinyal yang match, blok ini disembunyikan total — jatuh balik
+  // ke Trading Plan resistance/support/ATR di atas saja. Sesuaikan
+  // substring di bawah kalau format teks cek_harga/cek_rsi berubah.
+  //
+  // Perhitungan (rasio 1:1, ukur dari EMA21 Low ke harga sekarang):
+  //   jarak    = entry - EMA21 Low
+  //   SL       = EMA21 Low (dipakai apa adanya untuk target & RRR, supaya
+  //              box-nya persis simetris 1:1 seperti acuan/referensi)
+  //   TP       = entry + jarak
+  //   slOrder  = EMA21 Low - buffer (1-2 tik harga IDX) — HANYA saran
+  //              penempatan order stop aktual (margin eksekusi), tidak
+  //              dipakai untuk hitung RRR/Target supaya rasio tetap 1:1.
+  const cekHargaLower = String(s.cekHarga || "").toLowerCase();
+  const cekRsiLower = String(s.cekRsi || "").toLowerCase();
+  const hargaCrossEma21 = cekHargaLower.includes("crossup") && cekHargaLower.includes("ema 21 h");
+  const rsiCrossUp = cekRsiLower.includes("cross up");
+  const keyakinanTinggi = keyakinanToneFromLabel(s.keyakinanNaik) === "up";
+  const emaTersedia = s.ema21L != null && entry > s.ema21L;
+  const sinyalCocok = [hargaCrossEma21, rsiCrossUp, keyakinanTinggi].filter(Boolean).length;
+  const rsiSetupTampil = emaTersedia && sinyalCocok > 0;
+  const rsiSetupConfirmed = hargaCrossEma21 && rsiCrossUp && keyakinanTinggi && emaTersedia;
+
+  // Tabel tik harga resmi IDX (fraksi harga), dipakai untuk saran buffer SL.
+  function idxTickSize(price){
+    if (price == null) return 1;
+    if (price < 200) return 1;
+    if (price < 500) return 2;
+    if (price < 2000) return 5;
+    if (price < 5000) return 10;
+    return 25;
+  }
+
+  let rsiSetup = null;
+  if (rsiSetupTampil) {
+    const jarak = entry - s.ema21L;                // jarak EMA21 Low -> harga sekarang
+    const slRsi = s.ema21L;                          // SL = EMA21 Low apa adanya (rasio 1:1 persis)
+    const tpRsi = entry + jarak;                     // TP = entry + jarak, rasio 1:1
+    const tick = idxTickSize(s.ema21L);
+    const slBuffer = tick * 2;
+    const slOrder = s.ema21L - slBuffer;              // saran harga order stop aktual (2 tik di bawah SL)
+    const rrrLive = 1;                                // by design selalu 1:1 (risk = reward = jarak)
+    const tpRsiPct = entry ? ((tpRsi - entry) / entry) * 100 : null;
+    const slRsiPct = entry ? ((slRsi - entry) / entry) * 100 : null;
+    const missing = [];
+    if (!hargaCrossEma21) missing.push("Sinyal Harga belum crossup EMA21 H");
+    if (!rsiCrossUp) missing.push("RSI 7 belum cross up RSI 21");
+    if (!keyakinanTinggi) missing.push("Keyakinan Naik belum di tier Tinggi/Sangat Tinggi");
+    rsiSetup = { slRsi, tpRsi, jarak, rrrLive, tpRsiPct, slRsiPct, slOrder, confirmed: rsiSetupConfirmed, missing };
+  }
 
   // 2. Sintesis AI (Teknikal, Fundamental, Bandarmologi)
   let aiScore = 0;
@@ -554,10 +767,31 @@ function renderDetailAnalisa(s){
       Ini bukan rekomendasi baku — sesuaikan dengan toleransi risiko dan ukuran posisi masing-masing.
     </div>
 
+    ${rsiSetup ? `
+    <!-- TARGET TP & SL VERSI RSI (Breakout EMA21, rasio 1:1) -->
+    <div class="detail-subtitle">🎯 Target TP & SL — Versi RSI (Breakout EMA21) ${rsiSetup.confirmed ? pillHtml("Confirmed", "up") : pillHtml("Belum Full-Konfirmasi", "gold")}</div>
+    <div class="detail-grid" style="border-left: 3px solid var(--${rsiSetup.confirmed ? "teal" : "gold"}); padding-left: 10px; margin-bottom: 8px;">
+      ${dItem("Stop Loss (EMA21 Low)", '<span style="color:var(--down)">' + dNum(rsiSetup.slRsi) + ' <span style="font-size:11px;opacity:0.8;">(' + rsiSetup.slRsiPct.toFixed(1) + '%)</span></span>', true)}
+      ${dItem("Take Profit (Proyeksi 1:1)", '<span style="color:var(--up)">' + dNum(rsiSetup.tpRsi) + ' <span style="font-size:11px;opacity:0.8;">(' + (rsiSetup.tpRsiPct>=0?'+':'') + rsiSetup.tpRsiPct.toFixed(1) + '%)</span></span>', true)}
+      ${dItem("Jarak EMA21 Low → Harga Sekarang", dNum(rsiSetup.jarak), true)}
+      ${dItem("Risk/Reward Ratio", '<span style="color:var(--up)">' + rsiSetup.rrrLive.toFixed(2) + 'x</span>', true)}
+    </div>
+    <div class="detail-narrative" style="margin-bottom: 16px;">
+      ${rsiSetup.confirmed
+        ? `Setup breakout EMA21 <b>terkonfirmasi penuh</b>: harga crossup EMA21 H &amp; L, RSI 7 cross up RSI 21, dan Keyakinan Naik di tier Tinggi/Sangat Tinggi.`
+        : `Setup breakout EMA21 <b>belum full-konfirmasi</b> — masih menunggu: ${rsiSetup.missing.join("; ")}.`}
+      Jarak dihitung dari EMA21 Low ke harga sekarang. Stop Loss = EMA21 Low, Take Profit = harga sekarang + jarak tersebut, sehingga rasio persis 1:1.
+      Untuk eksekusi order aktual, disarankan taruh stop sedikit di bawah level SL di atas — sekitar ${dNum(rsiSetup.slOrder)} (buffer ±2 tik harga) — supaya tidak kena stop karena noise/wick tipis, tanpa mengubah target TP.
+      ${!rsiSetup.confirmed ? " Level ini indikatif — pertimbangkan menunggu konfirmasi penuh sebelum entry." : ""}
+    </div>
+    ` : ``}
+
     <div class="detail-subtitle">Detail Parameter</div>
     <div class="detail-grid">
       ${dItem("Sinyal MACD", pillHtml(s.cekMacd||"-", ((s.cekMacd||"").includes("Buy")||(s.cekMacd||"").includes("Bullish"))?"up":(s.cekMacd||"").includes("Sell")?"down":"muted"), true)}
       ${dItem("Sinyal Volume", pillHtml(s.sinyalVolume||"-", s.volTone), true)}
+      ${dItem("Frekuensi Transaksi", s.frequency!=null ? fmtNum(s.frequency) + (s.freqRatio!=null ? ` <span style="font-size:11px;opacity:0.8;">(${s.freqRatio.toFixed(2)}x)</span>` : "") : "-", true)}
+      ${dItem("Sinyal Frekuensi", pillHtml(s.sinyalFrekuensi||"-", s.freqTone), true)}
       ${dItem("Bandarmologi", pillHtml(bandLabel, bandTone), true)}
       ${dItem("Keyakinan Naik", pillHtml(s.keyakinanNaik||"-", s.keyakinanTone), true)}
     </div>
@@ -686,47 +920,36 @@ function renderDetailModalContent(){
   `;
 }
 
-function hashStringToSeed(str){
-  let h = 0;
-  for(let i=0;i<str.length;i++){ h = (h*31 + str.charCodeAt(i)) | 0; }
-  return Math.abs(h) || 1;
-}
-function seededRandom(seed){
-  let s = seed % 2147483647;
-  if(s<=0) s += 2147483646;
-  return function(){ s = (s*16807) % 2147483647; return (s-1)/2147483646; };
-}
-function genDemoSeries(ticker, lastClose, length){
-  length = length || 60;
-  const base = (lastClose && lastClose>0) ? lastClose : 1000;
-  const rand = seededRandom(hashStringToSeed(String(ticker||"TICKER")));
-  const volatility = Math.max(base*0.015, 5);
-  let price = base;
-  const series = [price];
-  for(let i=1;i<length;i++){
-    const change = (rand()-0.5) * volatility * 2;
-    price = Math.max(price - change, base*0.5);
-    series.push(price);
-  }
-  series.reverse();
-  series[series.length-1] = base;
-  return series;
-}
 
-function loadChart(ticker){
+async function loadChart(ticker){
   state.selectedTicker=ticker; state.tab="chart";
+  const stock = enriched().find(s=>s.ticker===ticker);
+  state.selectedLevels = stock ? {
+    support:stock.support, resistance:stock.resistance,
+    ema21H:stock.ema21H, ema21L:stock.ema21L, fib:stock.fib
+  } : null;
+
+  // Histori harga close ASLI dari tabel `flows` (diisi sync-flow.mjs dari
+  // IDX), bukan lagi deret acak (genDemoSeries lama). `flows` disimpan
+  // sampai ~200 hari terakhir per ticker — lihat MAX_DAYS di sync-flow.mjs.
+  state.chartData = [];
+  state.chartLoading = true;
+  render();
   try{
-    const stock = enriched().find(s=>s.ticker===ticker);
-    state.selectedLevels = stock ? {
-      support:stock.support, resistance:stock.resistance,
-      ema21H:stock.ema21H, ema21L:stock.ema21L, fib:stock.fib
-    } : null;
-    const series = genDemoSeries(ticker, stock ? stock.cClose : 1000);
-    state.chartData = series.map((c,i)=>({date:`H${i-series.length}`, close:Math.round(c)}));
+    const rows = await fetch(
+      `${SUPABASE_URL}/flows?ticker=eq.${encodeURIComponent(ticker)}&select=date,close&order=date.asc`,
+      { headers: getSupaHeaders() }
+    ).then(r=>r.json());
+
+    if (Array.isArray(rows) && rows.length){
+      state.chartData = rows
+        .filter(r => r.close != null)
+        .map(r => ({ date: r.date, close: Math.round(r.close) }));
+    }
   } catch(e){
-    state.selectedLevels = null;
     state.chartData = [];
   }
+  state.chartLoading = false;
   render();
 }
 
@@ -818,6 +1041,65 @@ async function deleteBacktestItem(sessionId, ticker){
   saveBacktests();
   render();
   try{ await fetch(`${SUPABASE_URL}/backtest_items?session_id=eq.${sessionId}&ticker=eq.${ticker}`, { method: "DELETE", headers: getSupaHeaders() }); }catch(e){}
+}
+
+// ==========================================
+// EKSPOR EXCEL — TAB SCREENER
+//
+// Mengekspor hasil screener yang SEDANG TAMPIL (sudah kena filter,
+// Rules Kustom, preset DSI, pencarian, dan urutan sort) — bukan cuma
+// halaman aktif, tapi SELURUH baris hasil filter. Kolom yang diekspor
+// mengikuti kolom yang sedang dipilih lewat panel "🧩 Kolom" (state.visibleCols),
+// supaya konsisten dengan apa yang dilihat user di tabel.
+// ==========================================
+let lastScreenerExport = { rows: [], columns: [] };
+
+// Sebagian kolom nilainya nested (mis. "fib.f382", "band.label") atau
+// perlu dibulatkan/diformat supaya enak dibaca di Excel (bukan HTML).
+function screenerRawValue(s, col){
+  switch(col.key){
+    case "fib.f382": return s.fib?.f382 ?? null;
+    case "fib.f50": return s.fib?.f50 ?? null;
+    case "fib.f618": return s.fib?.f618 ?? null;
+    case "band.label": return s.band?.label ?? null;
+    case "syariah": return (s.syariah===true||s.syariah==="true"||s.syariah==="Ya") ? "Ya" : "Tidak";
+    case "changePct": case "volChangePct": case "week52ChangePct": case "vsMa50Pct": case "vsMa200Pct":
+      return s[col.key]!=null ? Number(s[col.key].toFixed ? s[col.key].toFixed(2) : s[col.key]) : null;
+    case "freqRatio": case "volRatio":
+      return s[col.key]!=null ? Number(Number(s[col.key]).toFixed(2)) : null;
+    default: {
+      const v = s[col.key];
+      if(v === undefined) return null;
+      if(typeof v === "number") return Number.isFinite(v) ? v : null;
+      return v ?? null;
+    }
+  }
+}
+
+function exportScreenerToExcel(){
+  const { rows, columns } = lastScreenerExport;
+  if(!rows || !rows.length){
+    return alert("Tidak ada data screener untuk diekspor (cek filter/pencarian yang aktif).");
+  }
+
+  // Selalu sertakan Ticker + Nama Emiten di depan, lalu kolom-kolom
+  // yang sedang tampil di tabel (sesuai urutan SCREENER_COLUMNS).
+  const data = rows.map(s => {
+    const row = { "Ticker": s.ticker, "Nama Emiten": s.name || "-" };
+    columns.forEach(col => { row[col.label] = screenerRawValue(s, col); });
+    return row;
+  });
+
+  const worksheet = XLSX.utils.json_to_sheet(data);
+  const workbook = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(workbook, worksheet, "Hasil Screener");
+
+  // Lebar kolom otomatis: dasar dari panjang label, minimum 10 char.
+  const headers = Object.keys(data[0]);
+  worksheet['!cols'] = headers.map(h => ({ wch: Math.max(10, h.length + 2) }));
+
+  const dateStr = new Date().toISOString().slice(0, 10);
+  XLSX.writeFile(workbook, `Screener_IHSG_${dateStr}.xlsx`);
 }
 
 function exportBacktestToExcel(id) {
@@ -1078,6 +1360,19 @@ function enriched(){
     const band = bandarmologi(s, ratio);
     const vol = volumeSignal(s, ratio);
     const sinyalVolume = s.sinyalVolume ?? vol.label;
+
+    // Rasio frekuensi hanya dihitung kalau ada basis pembandingnya
+    // (freqAnalyzer atau avgFrequency3m dari DB) — tidak diakal-akali dari
+    // Volume, karena Frekuensi & Volume adalah dua metrik berbeda.
+    const freqBase = s.freqAnalyzer ?? s.avgFrequency3m ?? null;
+    const freqRatio = (s.frequency!=null && freqBase) ? (s.frequency/freqBase) : null;
+    const freq = frequencySignal(freqRatio);
+    const sinyalFrekuensi = freq.label;
+
+    // Dipakai rule builder ("1 Day Volume Change") — persentase perubahan
+    // Volume hari ini vs Volume kemarin (prevVol).
+    const volChangePct = (s.prevVol!=null && s.prevVol!==0 && s.cVol!=null) ? ((s.cVol - s.prevVol)/s.prevVol)*100 : null;
+
     const conf = keyakinanNaik(s, vol);
     const keyakinan = s.keyakinanNaik ?? conf.label;
     const kTone = s.keyakinanNaik ? keyakinanToneFromLabel(s.keyakinanNaik) : conf.tone;
@@ -1093,6 +1388,7 @@ function enriched(){
 
     return { 
       ...s, band, volRatio: ratio, sinyalVolume, volTone: vol.tone, 
+      freqRatio, sinyalFrekuensi, freqTone: freq.tone, volChangePct,
       keyakinanNaik: keyakinan, keyakinanScore: s.keyakinanScore ?? conf.score, 
       keyakinanTone: kTone, syariahLabel: boolLabel(s.syariah),
       rekomendasi, rekTone
@@ -1144,6 +1440,12 @@ function getFiltered(){
       if (s.foreignNet20D == null || s.foreignNet20D < 50e9) return false;
       if (s.foreignUpDays == null || s.foreignUpDays < 12) return false;
       if (s.turnover == null || s.turnover < 5e9) return false;
+    } else if (state.activePreset === 'freq_spike') {
+      // Lonjakan jumlah transaksi vs rata-rata — perlu freqRatio (dari
+      // frequency & freq_ma20/avg_frequency_3m). Kalau kolom itu belum
+      // ada di DB, freqRatio selalu null → preset ini tidak mengeluarkan
+      // hasil, bukan salah menghitung dari Volume.
+      if (s.freqRatio == null || s.freqRatio < 1.5) return false;
     }
 
     const f=state.filters;
@@ -1155,6 +1457,7 @@ function getFiltered(){
     if(f.cekMacd.length && !f.cekMacd.includes(s.cekMacd)) return false;
     if(f.band.length && !f.band.includes(s.band.label)) return false;
     if(f.sinyalVolume.length && !f.sinyalVolume.includes(s.sinyalVolume)) return false;
+    if(f.sinyalFrekuensi.length && !f.sinyalFrekuensi.includes(s.sinyalFrekuensi)) return false;
     if(f.keyakinanNaik.length && !f.keyakinanNaik.includes(s.keyakinanNaik)) return false;
     if(f.trendHarga.length && !f.trendHarga.includes(s.trendHarga)) return false;
     if(f.polaCandle.length && !f.polaCandle.includes(s.polaCandle)) return false;
@@ -1168,6 +1471,13 @@ function getFiltered(){
     if(!inRange(s.clv, rf.clv)) return false;
     if(!inRange(s.rsi7, rf.rsi7)) return false;
     if(!inRange(s.rsi21, rf.rsi21)) return false;
+    if(!inRange(s.frequency, rf.frequency)) return false;
+
+    if(state.customRules && state.customRules.length){
+      for(const rule of state.customRules){
+        if(!evalCustomRule(s, rule)) return false;
+      }
+    }
 
     return true;
   });
@@ -1294,16 +1604,17 @@ function renderRangeFilter(key, label, opts){
 
 const FILTER_LABELS = {
   sektor:"Sektor", syariahLabel:"Syariah", trendHarga:"Trend", cekMacd:"MACD", polaCandle:"Pola Candle",
-  sinyalVolume:"Sinyal Volume", keyakinanNaik:"Keyakinan Naik", cekHarga:"Sinyal Harga", cekRsi:"Sinyal RSI",
+  sinyalVolume:"Sinyal Volume", sinyalFrekuensi:"Sinyal Frekuensi", keyakinanNaik:"Keyakinan Naik", cekHarga:"Sinyal Harga", cekRsi:"Sinyal RSI",
   statusRsi:"Status RSI", band:"Bandarmologi", uangGedeMasuk:"Uang Gede", isBBSqueeze:"BB Squeeze", valuasi:"Valuasi",
-  bbWidth:"BB Width", atr14:"ATR 14", clv:"CLV", rsi7:"RSI 7", rsi21:"RSI 21"
+  bbWidth:"BB Width", atr14:"ATR 14", clv:"CLV", rsi7:"RSI 7", rsi21:"RSI 21", frequency:"Frekuensi"
 };
-const PRESET_LABELS = { eri:"Eri Ginanjar", rsicross:"RSI & Harga Cross", golden:"Golden Cross DSI", uptrend:"Super Uptrend", breakout:"Volatility Breakout", pullback:"Pullback Uptrend", custom_bandar:"BPJS", asing_akumulasi:"Akumulasi Asing (IDX)" };
+const PRESET_LABELS = { eri:"Eri Ginanjar", rsicross:"RSI & Harga Cross", golden:"Golden Cross DSI", uptrend:"Super Uptrend", breakout:"Volatility Breakout", pullback:"Pullback Uptrend", custom_bandar:"BPJS", asing_akumulasi:"Akumulasi Asing (IDX)", freq_spike:"Lonjakan Frekuensi" };
 function clearChip(kind, key, value){
   if(kind==="search") state.search="";
   else if(kind==="preset") state.activePreset=null;
   else if(kind==="multi") state.filters[key] = state.filters[key].filter(v=>String(v)!==String(value));
   else if(kind==="range") state.rangeFilters[key] = {min:"",max:""};
+  else if(kind==="rules") { state.customRules = []; saveCustomRules(); }
   state.page = 1;
   render();
 }
@@ -1323,6 +1634,9 @@ function renderActiveFilterChips(){
       chips.push(`<span class="filter-chip">${FILTER_LABELS[key]||key}: ${r.min||'…'} - ${r.max||'…'} <button onclick="clearChip('range','${key}')" title="Hapus">✕</button></span>`);
     }
   });
+  if(state.customRules && state.customRules.length){
+    chips.push(`<span class="filter-chip">Rules Kustom: ${state.customRules.length} aktif <button onclick="clearChip('rules')" title="Hapus semua rule">✕</button></span>`);
+  }
   if(chips.length===0) return "";
   return `<div class="active-filters-bar">${chips.join("")}</div>`;
 }
@@ -1332,7 +1646,8 @@ function hasActiveFilters(){
   const anyMulti = Object.keys(f).some(k => f[k].length > 0);
   const rf = state.rangeFilters;
   const anyRange = Object.keys(rf).some(k => rf[k].min !== "" || rf[k].max !== "");
-  return anyMulti || anyRange || !!state.search;
+  const anyRules = state.customRules && state.customRules.length > 0;
+  return anyMulti || anyRange || !!state.search || anyRules;
 }
 
 // Setiap kolom punya "group" supaya bisa dikelompokkan di panel pemilih
@@ -1347,12 +1662,27 @@ const SCREENER_COLUMNS = [
   { key:"cClose", label:"Close", group:"Harga", cell:s=>`<td class="mono">${fmtNum(s.cClose)}</td>` },
   { key:"changePct", label:"Perubahan%", group:"Harga", cell:s=>`<td class="mono" style="color:${(s.changePct??0)>=0?'var(--up)':'var(--down)'}">${s.changePct!=null?((s.changePct>=0?'+':'')+s.changePct.toFixed(2)+'%'):'-'}</td>` },
   { key:"cVol", label:"Volume", group:"Harga", cell:s=>`<td class="mono">${fmtNum(s.cVol)}</td>` },
+  { key:"volChangePct", label:"1D Vol Change (%)", group:"Harga", cell:s=>`<td class="mono" style="color:${(s.volChangePct??0)>=0?'var(--up)':'var(--down)'}">${s.volChangePct!=null?((s.volChangePct>=0?'+':'')+s.volChangePct.toFixed(1)+'%'):'-'}</td>` },
+  { key:"frequency", label:"Frekuensi", group:"Harga", cell:s=>`<td class="mono">${fmtNum(s.frequency)}</td>` },
+  { key:"freqAnalyzer", label:"Frequency Analyzer", group:"Harga", cell:s=>`<td class="mono">${fmtNum(s.freqAnalyzer)}</td>` },
+  { key:"freqRatio", label:"Rasio Frek.", group:"Harga", cell:s=>`<td class="mono" style="color:${s.freqTone==='up'?'var(--up)':s.freqTone==='down'?'var(--down)':'var(--muted)'}">${s.freqRatio!=null?s.freqRatio.toFixed(2)+'x':'-'}</td>` },
+  { key:"sinyalFrekuensi", label:"Sinyal Frekuensi", group:"Harga", cell:s=>`<td>${pillHtml(s.sinyalFrekuensi||"-", s.freqTone)}</td>` },
   { key:"turnover", label:"Turnover", group:"Harga", cell:s=>`<td class="mono">${fmtNum(s.turnover)}</td>` },
   { key:"vwap20", label:"VWAP20", group:"Harga", cell:s=>`<td class="mono">${fmtNum(s.vwap20)}</td>` },
   { key:"per", label:"PER", group:"Fundamental", cell:s=>`<td class="mono">${s.per??"-"}</td>` },
   { key:"pbv", label:"PBV", group:"Fundamental", cell:s=>`<td class="mono">${s.pbv??"-"}</td>` },
   { key:"roe", label:"ROE%", group:"Fundamental", cell:s=>`<td class="mono">${s.roe??"-"}</td>` },
   { key:"divYield", label:"Div Yield%", group:"Fundamental", cell:s=>`<td class="mono">${s.divYield??"-"}</td>` },
+  { key:"forwardPer", label:"Forward PER", group:"Fundamental", cell:s=>`<td class="mono">${s.forwardPer??"-"}</td>` },
+  { key:"psr", label:"PSR", group:"Fundamental", cell:s=>`<td class="mono">${s.psr??"-"}</td>` },
+  { key:"peg", label:"PEG", group:"Fundamental", cell:s=>`<td class="mono">${s.peg??"-"}</td>` },
+  { key:"roa", label:"ROA%", group:"Fundamental", cell:s=>`<td class="mono">${s.roa??"-"}</td>` },
+  { key:"npm", label:"NPM%", group:"Fundamental", cell:s=>`<td class="mono">${s.npm??"-"}</td>` },
+  { key:"opm", label:"OPM%", group:"Fundamental", cell:s=>`<td class="mono">${s.opm??"-"}</td>` },
+  { key:"bid", label:"Bid", group:"Harga", cell:s=>`<td class="mono" style="color:var(--up)">${s.bid??"-"}</td>` },
+  { key:"bidVolume", label:"Bid Volume", group:"Harga", cell:s=>`<td class="mono">${s.bidVolume??"-"}</td>` },
+  { key:"offer", label:"Offer", group:"Harga", cell:s=>`<td class="mono" style="color:var(--down)">${s.offer??"-"}</td>` },
+  { key:"offerVolume", label:"Offer Volume", group:"Harga", cell:s=>`<td class="mono">${s.offerVolume??"-"}</td>` },
   { key:"valuasi", label:"Valuasi", group:"Fundamental", cell:s=>`<td>${pillHtml(s.valuasi||"-", valuasiTone(s.valuasi))}</td>` },
   { key:"support", label:"Support", group:"Teknikal", cell:s=>`<td class="mono" style="color:var(--down)">${fmtNum(s.support)}</td>` },
   { key:"resistance", label:"Resisten", group:"Teknikal", cell:s=>`<td class="mono" style="color:var(--up)">${fmtNum(s.resistance)}</td>` },
@@ -1395,11 +1725,245 @@ const SCREENER_COLUMNS = [
   { key:"rekomendasi", label:"Rekomendasi Setup", group:"Analisa", cell:s=>`<td>${s.rekomendasi !== "-" ? pillHtml(s.rekomendasi, s.rekTone) : '<span style="color:var(--muted)">-</span>'}</td>` }
 ];
 
+// ==========================================
+// RULE BUILDER KUSTOM (mirip "Edit Screener" Stockbit)
+//
+// Bentuk rule yang didukung, sesuai contoh di Stockbit:
+//   1) Metric  <op>  Angka tetap                  → "1 Day Price Returns (%) > -15"
+//   2) Metric  <op>  Pengali * Metric lain          → "Frequency > 5 * Frequency Analyzer"
+// Rule disimpan sebagai {id, aKey, op, mult, bType:'metric'|'const', bKey, bConst}
+// dan diterapkan sebagai filter AND tambahan di getFiltered().
+// ==========================================
+const RULE_METRICS = [
+  { key:"cClose", label:"Price" },
+  { key:"changePct", label:"1 Day Price Returns (%)" },
+  { key:"cVol", label:"Volume" },
+  { key:"prevVol", label:"Previous Volume" },
+  { key:"volChangePct", label:"1 Day Volume Change (%)" },
+  { key:"volMA20", label:"Volume MA20" },
+  { key:"avgVolume3m", label:"Avg Volume 3M" },
+  { key:"frequency", label:"Frequency" },
+  { key:"freqAnalyzer", label:"Frequency Analyzer" },
+  { key:"avgFrequency3m", label:"Avg Frequency 3M" },
+  { key:"turnover", label:"Turnover" },
+  { key:"ma21", label:"Price MA21" },
+  { key:"ma50", label:"Price MA50" },
+  { key:"ma100", label:"Price MA100" },
+  { key:"ma200", label:"Price MA200" },
+  { key:"rsi7", label:"RSI 7" },
+  { key:"rsi21", label:"RSI 21" },
+  { key:"atr14", label:"ATR 14" },
+  { key:"bbWidth", label:"BB Width" },
+  { key:"clv", label:"CLV" },
+  { key:"support", label:"Support" },
+  { key:"resistance", label:"Resistance" },
+
+  // --- Perluasan (lihat stock_indicators_ext) ---
+  { key:"cOpen", label:"Open Price" }, { key:"cHigh", label:"High Price" }, { key:"cLow", label:"Low Price" },
+  { key:"prevClose", label:"Previous Price" }, { key:"valueTraded", label:"Value" },
+  { key:"priceMa5", label:"Price MA 5" }, { key:"priceMa10", label:"Price MA 10" }, { key:"priceMa20", label:"Price MA 20" },
+  { key:"prevPriceMa5", label:"Previous Price MA 5" }, { key:"prevPriceMa10", label:"Previous Price MA 10" },
+  { key:"prevPriceMa20", label:"Previous Price MA 20" }, { key:"prevPriceMa50", label:"Previous Price MA 50" },
+  { key:"prevPriceMa100", label:"Previous Price MA 100" }, { key:"prevPriceMa200", label:"Previous Price MA 200" },
+  { key:"volumeMa5", label:"Volume MA 5" }, { key:"volumeMa10", label:"Volume MA 10" },
+  { key:"volumeMa50", label:"Volume MA 50" }, { key:"volumeMa100", label:"Volume MA 100" }, { key:"volumeMa200", label:"Volume MA 200" },
+  { key:"prevVolumeMa5", label:"Previous Volume MA 5" }, { key:"prevVolumeMa10", label:"Previous Volume MA 10" },
+  { key:"prevVolumeMa20", label:"Previous Volume MA 20" }, { key:"prevVolumeMa50", label:"Previous Volume MA 50" },
+  { key:"prevVolumeMa100", label:"Previous Volume MA 100" },
+  { key:"valueMa5", label:"Value MA 5" }, { key:"valueMa10", label:"Value MA 10" }, { key:"valueMa20", label:"Value MA 20" },
+  { key:"valueMa50", label:"Value MA 50" }, { key:"valueMa100", label:"Value MA 100" }, { key:"valueMa200", label:"Value MA 200" },
+  { key:"frequencyMa50", label:"Frequency Analyzer MA 50" },
+  { key:"rsi14", label:"RSI (14)" }, { key:"prevRsi14", label:"Previous RSI (14)" },
+  { key:"macd", label:"MACD (12,26)" }, { key:"prevMacd", label:"Previous MACD (12,26)" },
+  { key:"stochK", label:"Stochastic K (14,1,3)" }, { key:"stochD", label:"Stochastic D (14,1,3)" },
+  { key:"prevStochK", label:"Previous Stochastic K" }, { key:"prevStochD", label:"Previous Stochastic D" },
+  { key:"bbUpper", label:"Bollinger Band Upper (20)" }, { key:"bbLower", label:"Bollinger Band Lower (20)" },
+  { key:"adr14", label:"Average Daily Range 14" },
+  { key:"prevAtr14", label:"Previous Average True Range 14" }, { key:"prevAdr14", label:"Previous Average Daily Range 14" },
+  { key:"vwap", label:"VWAP" },
+  { key:"ema5", label:"EMA 5" }, { key:"ema10", label:"EMA 10" }, { key:"ema20", label:"EMA 20" },
+  { key:"ema50", label:"EMA 50" }, { key:"ema100", label:"EMA 100" }, { key:"ema200", label:"EMA 200" },
+  { key:"prevEma200", label:"Previous EMA 200" },
+  { key:"fibP", label:"Fibonacci P" }, { key:"fibR1", label:"Fibonacci R1" }, { key:"fibR2", label:"Fibonacci R2" },
+  { key:"fibR3", label:"Fibonacci R3" }, { key:"fibS1", label:"Fibonacci S1" }, { key:"fibS2", label:"Fibonacci S2" },
+  { key:"fibS3", label:"Fibonacci S3" },
+];
+const RULE_OPS = {
+  ">": (a,b)=>a>b, "<": (a,b)=>a<b, ">=": (a,b)=>a>=b, "<=": (a,b)=>a<=b, "=": (a,b)=>a===b
+};
+function ruleMetricLabel(key){ const m = RULE_METRICS.find(x=>x.key===key); return m ? m.label : key; }
+function ruleMetricValue(s, key){
+  const v = s[key];
+  if(v===undefined || v===null || v==="" || isNaN(v)) return null;
+  return Number(v);
+}
+function evalCustomRule(s, rule){
+  const aVal = ruleMetricValue(s, rule.aKey);
+  if(aVal===null) return false;
+  const cmp = RULE_OPS[rule.op];
+  if(!cmp) return false;
+  if(rule.bType === "const"){
+    const bVal = parseFloat(rule.bConst);
+    if(isNaN(bVal)) return false;
+    return cmp(aVal, bVal);
+  }
+  const bVal = ruleMetricValue(s, rule.bKey);
+  if(bVal===null) return false;
+  const mult = parseFloat(rule.mult);
+  if(isNaN(mult)) return false;
+  return cmp(aVal, mult * bVal);
+}
+function saveCustomRules(){ localStorage.setItem(LS_CUSTOM_RULES, JSON.stringify(state.customRules)); }
+
+// ==========================================
+// PRESET SCREENER KUSTOM (tabel custom_presets di Supabase)
+//
+// Beda dengan "Screener DSI" (state.activePreset, hardcoded di kode) —
+// ini preset Rules Kustom buatan user sendiri, disimpan ke Supabase
+// supaya bisa dipanggil lagi kapan saja / dari device lain, mirip
+// fitur "Preset" di Edit Screener Stockbit.
+// ==========================================
+async function refreshCustomPresets(){
+  if(!SUPABASE_URL || !SUPABASE_KEY) return;
+  try{
+    const res = await fetch(`${SUPABASE_URL}/custom_presets?select=*&order=created_at.desc`, { headers: getSupaHeaders() });
+    const data = await res.json();
+    if(Array.isArray(data)) state.customPresets = data;
+  }catch(e){}
+}
+
+async function saveCurrentAsPreset(){
+  if(!SUPABASE_URL || !SUPABASE_KEY){ openSettings(); return; }
+  if(!state.customRules.length){ alert("Belum ada Rule Kustom untuk disimpan. Tambahkan rule dulu lewat \"+ Tambah Rule\"."); return; }
+  const name = prompt("Nama preset (mis. \"Breakout Volume + RSI\"):", "");
+  if(name === null) return;
+  const trimmed = name.trim();
+  if(!trimmed){ alert("Nama preset tidak boleh kosong."); return; }
+
+  state.presetsLoading = true; render();
+  try{
+    const res = await fetch(`${SUPABASE_URL}/custom_presets`, {
+      method: "POST",
+      headers: { ...getSupaHeaders(), "Prefer": "return=representation" },
+      body: JSON.stringify({ name: trimmed, rules: state.customRules })
+    });
+    const saved = await res.json();
+    if(Array.isArray(saved) && saved[0] && saved[0].id){
+      state.selectedPresetId = saved[0].id;
+    }
+    await refreshCustomPresets();
+  }catch(e){
+    showError("Gagal menyimpan preset: " + e.message);
+  }
+  state.presetsLoading = false; render();
+}
+
+function loadSelectedPreset(){
+  const preset = state.customPresets.find(p => String(p.id) === String(state.selectedPresetId));
+  if(!preset) return;
+  const rules = Array.isArray(preset.rules) ? preset.rules : [];
+  // Deep-clone + pastikan tiap rule punya id lokal (jaga-jaga kalau
+  // rule lama disimpan tanpa id, atau dobel id antar-preset).
+  state.customRules = rules.map(r => ({ ...r, id: "r" + Date.now() + "_" + (ruleIdCounter++) }));
+  saveCustomRules();
+  state.page = 1;
+  render();
+}
+
+async function deleteSelectedPreset(){
+  const preset = state.customPresets.find(p => String(p.id) === String(state.selectedPresetId));
+  if(!preset) return;
+  if(!confirm(`Hapus preset "${preset.name}"? Ini tidak akan menghapus Rules Kustom yang sedang aktif.`)) return;
+
+  state.presetsLoading = true; render();
+  try{
+    await fetch(`${SUPABASE_URL}/custom_presets?id=eq.${preset.id}`, { method: "DELETE", headers: getSupaHeaders() });
+    state.selectedPresetId = "";
+    await refreshCustomPresets();
+  }catch(e){
+    showError("Gagal menghapus preset: " + e.message);
+  }
+  state.presetsLoading = false; render();
+}
+
+let ruleIdCounter = 0;
+function addCustomRule(){
+  state.customRules.push({
+    id: "r" + Date.now() + "_" + (ruleIdCounter++),
+    aKey: "cVol", op: ">", mult: "1", bType: "metric", bKey: "volMA20", bConst: ""
+  });
+  saveCustomRules();
+  state.page = 1;
+  render();
+}
+function updateCustomRule(id, field, value){
+  const rule = state.customRules.find(r=>r.id===id);
+  if(!rule) return;
+  if(field === "toggleBType"){
+    rule.bType = rule.bType === "const" ? "metric" : "const";
+  } else {
+    rule[field] = value;
+  }
+  saveCustomRules();
+  state.page = 1;
+  render();
+}
+function deleteCustomRule(id){
+  state.customRules = state.customRules.filter(r=>r.id!==id);
+  saveCustomRules();
+  state.page = 1;
+  render();
+}
+function renderRuleBuilder(){
+  const metricOptions = (selected) => RULE_METRICS.map(m=>`<option value="${m.key}" ${selected===m.key?'selected':''}>${m.label}</option>`).join("");
+  const opOptions = (selected) => Object.keys(RULE_OPS).map(op=>`<option value="${op}" ${selected===op?'selected':''}>${op}</option>`).join("");
+
+  const rows = state.customRules.map(r => `
+    <div class="rule-row" data-rule-id="${r.id}">
+      <select class="rule-select" data-rule-field="aKey" data-rule-id="${r.id}">${metricOptions(r.aKey)}</select>
+      <select class="rule-op" data-rule-field="op" data-rule-id="${r.id}">${opOptions(r.op)}</select>
+      ${r.bType === "const"
+        ? `<input type="number" step="any" class="rule-const" data-rule-field="bConst" data-rule-id="${r.id}" value="${r.bConst}" placeholder="angka">`
+        : `<input type="number" step="any" class="rule-mult" data-rule-field="mult" data-rule-id="${r.id}" value="${r.mult}">
+           <span class="rule-times">&times;</span>
+           <select class="rule-select" data-rule-field="bKey" data-rule-id="${r.id}">${metricOptions(r.bKey)}</select>`
+      }
+      <button type="button" class="rule-btype-toggle" data-rule-field="toggleBType" data-rule-id="${r.id}" title="${r.bType==='const' ? 'Ganti jadi: bandingkan dengan metrik lain' : 'Ganti jadi: bandingkan dengan angka tetap'}">${r.bType==='const' ? '🔢' : '📊'}</button>
+      <button type="button" class="rule-del" data-rule-del="${r.id}" title="Hapus rule">✕</button>
+    </div>
+  `).join("");
+
+  const presetOptions = state.customPresets.map(p =>
+    `<option value="${p.id}" ${String(state.selectedPresetId)===String(p.id)?'selected':''}>${escapeHtml(p.name)} (${Array.isArray(p.rules)?p.rules.length:0} rule)</option>`
+  ).join("");
+
+  return `
+    <div class="panel" style="margin-bottom:16px;">
+      <div class="filter-section-title">Rules Kustom (mirip Edit Screener Stockbit)<span class="line"></span></div>
+      <div class="rule-list">${rows || '<div style="color:var(--muted);font-size:13px;padding:6px 0 2px;">Belum ada rule kustom. Klik "+ Tambah Rule" untuk mulai — mis. "Frequency &gt; 5 &times; Frequency Analyzer".</div>'}</div>
+      <div style="display:flex;align-items:center;gap:12px;margin-top:12px;flex-wrap:wrap;">
+        <button type="button" class="btn btn-outline" id="addRuleBtn">+ Tambah Rule</button>
+        <button type="button" class="btn btn-outline" id="savePresetBtn" ${state.presetsLoading?'disabled':''}>💾 Simpan sebagai Preset...</button>
+        ${state.customRules.length ? `<span style="font-size:12px;color:var(--muted);">${state.customRules.length} rule aktif — otomatis diterapkan ke tabel di bawah (AND, semua harus terpenuhi).</span>` : ""}
+      </div>
+      <div style="display:flex;align-items:center;gap:10px;margin-top:14px;flex-wrap:wrap;padding-top:12px;border-top:1px solid var(--border);">
+        <label style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;">Preset Tersimpan</label>
+        <select id="presetSelect" style="background:rgba(0,0,0,0.2);border:1px solid var(--border);color:var(--text);font-size:12.5px;border-radius:7px;padding:8px 9px;min-width:220px;flex:1;max-width:320px;">
+          <option value="">${state.customPresets.length ? '— pilih preset —' : 'Belum ada preset tersimpan'}</option>
+          ${presetOptions}
+        </select>
+        <button type="button" class="btn btn-outline" id="loadPresetBtn" ${!state.selectedPresetId || state.presetsLoading ? 'disabled' : ''} title="Muat rule dari preset ini (menimpa rule kustom yang aktif)">📥 Muat</button>
+        <button type="button" class="btn btn-outline" id="deletePresetBtn" ${!state.selectedPresetId || state.presetsLoading ? 'disabled' : ''} title="Hapus preset ini" style="color:#f87171;border-color:rgba(239,68,68,0.3);">🗑️ Hapus</button>
+      </div>
+    </div>
+  `;
+}
+
 // Kolom yang tampil DEFAULT — cukup untuk overview cepat tanpa scroll
 // horizontal panjang. Sisanya disembunyikan sampai dipilih lewat panel
 // "🧩 Kolom", supaya tabel nyaman dilihat begitu halaman dibuka.
 const DEFAULT_VISIBLE_COLS = [
-  "sektor", "cClose", "changePct", "cVol",
+  "sektor", "cClose", "changePct", "cVol", "frequency",
   "per", "pbv", "roe", "divYield", "valuasi",
   "trendHarga", "rsi7", "cekMacd",
   "foreignNet20D", "keyakinanNaik", "rekomendasi"
@@ -1422,6 +1986,10 @@ function renderScreener(){
   const getOpts = (key) => uniqueOpts(list,key);
   const allFilteredChecked = filtered.length > 0 && filtered.every(s => state.selectedForBacktest.has(s.ticker));
   const visibleColumns = SCREENER_COLUMNS.filter(c => state.visibleCols.has(c.key));
+  // Disimpan supaya tombol "Ekspor Excel" (di-wire lewat attachContentEvents,
+  // terpisah dari closure render ini) tetap bisa mengambil data hasil
+  // filter/sort/kolom-tampil yang PALING BARU tanpa menghitung ulang.
+  lastScreenerExport = { rows: sorted, columns: visibleColumns };
 
   const FREEZE_W = { chk: 36, star: 34, ticker: 104 };
   const FREEZE_LEFT = { chk: 0, star: FREEZE_W.chk, ticker: FREEZE_W.chk + FREEZE_W.star };
@@ -1474,6 +2042,7 @@ function renderScreener(){
 
   return `
     ${summaryCards}
+    ${renderRuleBuilder()}
     <div class="panel">
       <div class="filter-toolbar">
         <div class="field" style="flex:0 0 auto;">
@@ -1487,6 +2056,7 @@ function renderScreener(){
             <button class="pill ${state.activePreset === 'pullback' ? 'pill-teal' : 'pill-muted'}" onclick="state.activePreset = state.activePreset === 'pullback' ? null : 'pullback'; state.page=1; render();">🧲 Pullback Uptrend</button>
           <button class="pill ${state.activePreset === 'custom_bandar' ? 'pill-up' : 'pill-muted'}" onclick="state.activePreset = state.activePreset === 'custom_bandar' ? null : 'custom_bandar'; state.page=1; render();" title="Proxy dari lonjakan volume — bukan data asing resmi">🔥 BPJS (proxy volume)</button>
           <button class="pill ${state.activePreset === 'asing_akumulasi' ? 'pill-up' : 'pill-muted'}" onclick="state.activePreset = state.activePreset === 'asing_akumulasi' ? null : 'asing_akumulasi'; state.page=1; render();" title="Net beli asing 20 hari &ge; 50M, konsisten &ge;12/20 hari, likuid &ge;5M/hari — dari data resmi IDX">🐋 Akumulasi Asing (IDX)</button>
+          <button class="pill ${state.activePreset === 'freq_spike' ? 'pill-teal' : 'pill-muted'}" onclick="state.activePreset = state.activePreset === 'freq_spike' ? null : 'freq_spike'; state.page=1; render();" title="Rasio Frekuensi &ge; 1.5x rata-rata — butuh kolom frequency/freq_ma20 di DB, kalau belum ada preset ini tidak akan menampilkan hasil">🔊 Lonjakan Frekuensi</button>
             </div>
         </div>
         <div class="field">
@@ -1502,6 +2072,10 @@ function renderScreener(){
             ${PAGE_SIZE_OPTIONS.map(n=>`<option value="${n}" ${String(state.limit)===String(n)?'selected':''}>${n}</option>`).join("")}
             <option value="all" ${state.limit==="all"?'selected':''}>Semua</option>
           </select>
+        </div>
+        <div class="field" style="flex:0 0 auto;">
+          <label>&nbsp;</label>
+          <button type="button" class="btn btn-outline" id="exportScreenerBtn" style="color:#22d3ee;border-color:rgba(6,182,212,0.4);white-space:nowrap;" title="Ekspor hasil screener yang sedang difilter/diurutkan ke file Excel (.xlsx)">📊 Ekspor Excel (${sorted.length})</button>
         </div>
       </div>
 
@@ -1529,6 +2103,7 @@ function renderScreener(){
         <div class="filter-section-title">Momentum, Volume & Keyakinan<span class="line"></span></div>
         <div class="filter-grid">
           ${renderMultiSelect("sinyalVolume", "Sinyal Volume", getOpts("sinyalVolume"))}
+          ${renderMultiSelect("sinyalFrekuensi", "Sinyal Frekuensi", getOpts("sinyalFrekuensi"))}
           ${renderMultiSelect("keyakinanNaik", "Keyakinan Naik", getOpts("keyakinanNaik"))}
           ${renderMultiSelect("band", "Bandarmologi", getOpts("band"))}
           ${renderMultiSelect("uangGedeMasuk", "Uang Gede Masuk", getOpts("uangGedeMasuk"))}
@@ -1548,6 +2123,7 @@ function renderScreener(){
             ${renderRangeFilter("clv", "CLV", {step:"0.01"})}
             ${renderRangeFilter("rsi7", "RSI 7", {step:"0.1"})}
             ${renderRangeFilter("rsi21", "RSI 21", {step:"0.1"})}
+            ${renderRangeFilter("frequency", "Frekuensi (x transaksi)", {step:"1"})}
           </div>
         </div>
       </div>
@@ -1942,12 +2518,18 @@ function renderChart(){
       <span><span style="display:inline-block;width:12px;height:3px;border-radius:2px;background:#94a3b8;vertical-align:middle;margin-right:6px;border-top:2px dashed #94a3b8;"></span>Fibonacci</span>
     </div>`;
 
+  const chartBoxInner = state.chartLoading
+    ? `<div class="empty-box" style="height:100%;display:flex;align-items:center;justify-content:center;">Memuat histori harga...</div>`
+    : (!state.chartData.length
+        ? `<div class="empty-box" style="height:100%;display:flex;align-items:center;justify-content:center;">Belum ada histori harga untuk ${t} di tabel <code>flows</code> — jalankan <code>sync-flow.mjs</code> dulu.</div>`
+        : `<svg id="chartSvg" width="100%" height="100%" viewBox="0 0 800 300" preserveAspectRatio="none"></svg>`);
+
   return `${picker}
     ${chartToolbar}
     ${tvBox}
-    <div class="chart-section-title">Level Teknikal Internal (dari data Screener)</div>
+    <div class="chart-section-title">Level Teknikal Internal (harga close asli dari tabel flows)</div>
     ${legend}
-    <div class="chart-box"><svg id="chartSvg" width="100%" height="100%" viewBox="0 0 800 300" preserveAspectRatio="none"></svg></div>`;
+    <div class="chart-box">${chartBoxInner}</div>`;
 }
 
 function drawChartSVG(){
@@ -2012,6 +2594,35 @@ function renderAbout(){
 function attachContentEvents(){
   const advToggleBtn = document.getElementById("advToggleBtn");
   if(advToggleBtn) advToggleBtn.onclick = () => { state.showAdvancedFilters = !state.showAdvancedFilters; render(); };
+
+  const addRuleBtn = document.getElementById("addRuleBtn");
+  if(addRuleBtn) addRuleBtn.onclick = addCustomRule;
+
+  document.querySelectorAll("[data-rule-del]").forEach(btn=>{
+    btn.onclick = () => deleteCustomRule(btn.dataset.ruleDel);
+  });
+
+  const savePresetBtn = document.getElementById("savePresetBtn");
+  if(savePresetBtn) savePresetBtn.onclick = saveCurrentAsPreset;
+
+  const presetSelect = document.getElementById("presetSelect");
+  if(presetSelect) presetSelect.onchange = (e) => { state.selectedPresetId = e.target.value; render(); };
+
+  const loadPresetBtn = document.getElementById("loadPresetBtn");
+  if(loadPresetBtn) loadPresetBtn.onclick = loadSelectedPreset;
+
+  const deletePresetBtn = document.getElementById("deletePresetBtn");
+  if(deletePresetBtn) deletePresetBtn.onclick = deleteSelectedPreset;
+
+  document.querySelectorAll("[data-rule-field]").forEach(el=>{
+    const id = el.dataset.ruleId;
+    const field = el.dataset.ruleField;
+    if(field === "toggleBType"){
+      el.onclick = () => updateCustomRule(id, field, null);
+    } else {
+      el.onchange = (e) => updateCustomRule(id, field, e.target.value);
+    }
+  });
 
   const colPickerBtn = document.getElementById("colPickerBtn");
   if(colPickerBtn) colPickerBtn.onclick = (e) => { e.stopPropagation(); state.colPickerOpen = !state.colPickerOpen; render(); };
@@ -2097,6 +2708,8 @@ function attachContentEvents(){
     state.activePreset = null;
     Object.keys(state.filters).forEach(k => state.filters[k] = []);
     Object.keys(state.rangeFilters).forEach(k => state.rangeFilters[k] = {min:"", max:""});
+    state.customRules = [];
+    saveCustomRules();
     state.page = 1;
     render();
   };
@@ -2140,6 +2753,9 @@ function attachContentEvents(){
 
   const exportAllBtBtn = document.getElementById("exportAllBtBtn");
   if(exportAllBtBtn) exportAllBtBtn.onclick = exportAllBacktestToExcel;
+
+  const exportScreenerBtn = document.getElementById("exportScreenerBtn");
+  if(exportScreenerBtn) exportScreenerBtn.onclick = exportScreenerToExcel;
   
   document.querySelectorAll("[data-detail]").forEach(b=> b.onclick=()=>openDetail(b.dataset.detail));
   document.querySelectorAll("[data-fav]").forEach(b=> b.onclick=()=>toggleFav(b.dataset.fav));
