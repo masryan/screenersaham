@@ -114,17 +114,6 @@ async function stockbitFetch(endpointTemplate, ticker){
 // ada opsi "semua yang lolos filter" supaya tidak sengaja membombardir
 // akun Stockbit sendiri dengan ratusan request.
 //
-// PENTING: 1 request = 1 SAHAM x 1 HARI (bukan 1 request untuk seluruh
-// rentang tanggal). Awalnya sempat dicoba 1 request per saham untuk
-// seluruh rentang (from..to) supaya lebih hemat request, tapi ternyata
-// parameter "limit" di endpoint membatasi TOTAL baris gabungan semua
-// hari — untuk saham aktif, itu berarti cuma tanggal tertentu saja yang
-// kebagian jatah sebelum limit habis, sisanya hilang begitu saja
-// (lihat histori: query 10 hari, yang kesimpan cuma 1 tanggal). Dengan
-// query per-hari, tiap tanggal punya jatah "limit" sendiri-sendiri jadi
-// jauh lebih reliable, walau jumlah request ke Stockbit jadi lebih
-// banyak (tickers x hari) — makanya ada jeda antar-request di bawah.
-//
 // SKEMA RESPONS BELUM DIKETAHUI: endpoint broker summary Stockbit belum
 // diverifikasi (field "Endpoint Broker Summary" di Pengaturan memang
 // masih kosong by default, diisi sendiri oleh user dari tab Network).
@@ -134,16 +123,48 @@ async function stockbitFetch(endpointTemplate, ticker){
 // state.stockbitBrokerBulkResults supaya user bisa lihat & laporkan
 // balik nama field yang benar (baru mapping-nya disesuaikan).
 // ==========================================================
+// Kalender resmi Libur Bursa BEI 2026, dari pengumuman IDX No. Peng-00171/BEI.POP/09-2025
+// (idx.co.id/id/berita/jadwal-libur-bursa) + berita yang mengutipnya. 21 tanggal di luar
+// weekend, sudah dicocokkan dengan angka resmi "21 hari libur bursa 2026" yang diberitakan.
+// PENTING: kalender ini WAJIB diupdate tiap tahun (IDX biasanya umumkan kalender tahun
+// berikutnya sekitar September) — kalau BURSA_HOLIDAYS tidak ada entri untuk suatu tahun,
+// tradingDaysBack() otomatis fallback ke exclude-weekend-saja untuk tahun itu (lihat di bawah).
+const BURSA_HOLIDAYS = new Set([
+  // 2026
+  "2026-01-01", // Tahun Baru Masehi
+  "2026-01-16", // Isra Mikraj Nabi Muhammad SAW
+  "2026-02-16", // Cuti Bersama Tahun Baru Imlek 2577 Kongzili
+  "2026-02-17", // Tahun Baru Imlek 2577 Kongzili
+  "2026-03-18", // Cuti Bersama Hari Suci Nyepi
+  "2026-03-19", // Hari Suci Nyepi Tahun Baru Saka 1948
+  "2026-03-20", // Cuti Bersama Idul Fitri 1447 H
+  "2026-03-23", // Cuti Bersama Idul Fitri 1447 H
+  "2026-03-24", // Cuti Bersama Idul Fitri 1447 H
+  "2026-04-03", // Wafat Yesus Kristus (Jumat Agung)
+  "2026-05-01", // Hari Buruh Internasional
+  "2026-05-14", // Kenaikan Yesus Kristus
+  "2026-05-27", // Idul Adha 1447 H
+  "2026-05-28", // Cuti Bersama Idul Adha 1447 H
+  "2026-06-01", // Hari Lahir Pancasila
+  "2026-06-16", // Tahun Baru Islam 1448 H (1 Muharram)
+  "2026-08-17", // Hari Kemerdekaan RI ke-81
+  "2026-08-25", // Maulid Nabi Muhammad SAW
+  "2026-12-24", // Cuti Bersama Hari Raya Natal
+  "2026-12-25", // Hari Raya Natal
+  "2026-12-31", // Libur Bursa (penutup tahun)
+]);
+
 function tradingDaysBack(n, fromDate = new Date()){
-  // Hari bursa = Senin-Jumat. BELUM memperhitungkan libur nasional/cuti
-  // bersama IDX — kalau endpoint mengembalikan "tidak ada data" untuk
-  // tanggal tertentu, kemungkinan itu memang hari libur bursa.
+  // Hari bursa = Senin-Jumat DIKURANGI tanggal di BURSA_HOLIDAYS (kalau tahunnya terdaftar).
+  // Untuk tahun yang belum ada di kalender di atas, otomatis fallback ke exclude-weekend-saja
+  // (perilaku lama) — lebih baik sedikit kurang akurat daripada berhenti total.
   const days = [];
   let d = new Date(fromDate);
   while(days.length < n){
     d.setDate(d.getDate() - 1);
     const dow = d.getDay();
-    if(dow !== 0 && dow !== 6) days.push(d.toISOString().slice(0,10));
+    const iso = d.toISOString().slice(0,10);
+    if(dow !== 0 && dow !== 6 && !BURSA_HOLIDAYS.has(iso)) days.push(iso);
   }
   return days.reverse(); // urut lama -> baru
 }
@@ -234,8 +255,7 @@ function parseStockbitMarketDetector(raw){
   return byDate;
 }
 
-async function fetchAndSaveBrokerSummaryBulk(tickers, days){
-  days = Number.isFinite(days) && days >= 1 ? days : (state.bsBulkDays || 10);
+async function fetchAndSaveBrokerSummaryBulk(tickers, days = 10){
   if(state.stockbitBrokerBulkLoading) return;
   if(!tickers || !tickers.length){
     state.stockbitBrokerBulkResults = [{ ticker:"-", date:"-", ok:false, msg:"Centang minimal 1 saham di tab Screener dulu." }];
@@ -249,61 +269,57 @@ async function fetchAndSaveBrokerSummaryBulk(tickers, days){
   if(!SUPABASE_URL || !SUPABASE_KEY){ openSettings(); return; }
 
   const tradingDates = tradingDaysBack(days); // urut lama -> baru
+  const fromDate = tradingDates[0];
+  const toDate = tradingDates[tradingDates.length - 1];
 
   state.stockbitBrokerBulkLoading = true;
-  // 1 request per SAHAM per HARI (lihat catatan di atas fungsi ini kenapa
-  // bukan 1 request untuk seluruh rentang tanggal sekaligus).
-  state.stockbitBrokerBulkProgress = { done: 0, total: tickers.length * tradingDates.length };
+  state.stockbitBrokerBulkProgress = { done: 0, total: tickers.length }; // 1 request per SAHAM sekarang, bukan per hari
   state.stockbitBrokerBulkResults = [];
   render();
 
   for(const ticker of tickers){
-    const rows = [];
-    const failedDates = []; // {date, msg}
-    let successDays = 0;
-
-    for(const date of tradingDates){
-      const res = await stockbitFetchMarketDetector(ticker, date, date);
-      if(res.error){
-        failedDates.push({ date, msg: res.error });
+    const res = await stockbitFetchMarketDetector(ticker, fromDate, toDate);
+    if(res.error){
+      state.stockbitBrokerBulkResults.push({ ticker, date: `${fromDate}..${toDate}`, ok:false, msg: res.error });
+    } else {
+      const byDate = parseStockbitMarketDetector(res.raw);
+      if(!byDate || !Object.keys(byDate).length){
+        state.stockbitBrokerBulkResults.push({ ticker, date: `${fromDate}..${toDate}`, ok:false, msg: "Skema respons tidak dikenali / tidak ada data (cek raw JSON manual dulu)." });
       } else {
-        const byDate = parseStockbitMarketDetector(res.raw);
-        const dd = byDate && byDate[date];
-        if(!dd || (!dd.buy.length && !dd.sell.length)){
-          failedDates.push({ date, msg: "tidak ada data (kemungkinan libur bursa)" });
+        const rows = [];
+        tradingDates.forEach(d => {
+          const dd = byDate[d];
+          if(!dd) return;
+          dd.buy.forEach(r => rows.push({ stock_code:ticker, trade_date:d, side:"buy", rank:r.rank, broker_code:r.broker_code, lot:r.lot, value_idr:r.value_idr }));
+          dd.sell.forEach(r => rows.push({ stock_code:ticker, trade_date:d, side:"sell", rank:r.rank, broker_code:r.broker_code, lot:r.lot, value_idr:r.value_idr }));
+        });
+        const missingDates = tradingDates.filter(d => !byDate[d]);
+        if(!rows.length){
+          state.stockbitBrokerBulkResults.push({ ticker, date: `${fromDate}..${toDate}`, ok:false, msg: "Tidak ada baris broker valid di respons ini." });
         } else {
-          successDays++;
-          dd.buy.forEach(r => rows.push({ stock_code:ticker, trade_date:date, side:"buy", rank:r.rank, broker_code:r.broker_code, lot:r.lot, value_idr:r.value_idr }));
-          dd.sell.forEach(r => rows.push({ stock_code:ticker, trade_date:date, side:"sell", rank:r.rank, broker_code:r.broker_code, lot:r.lot, value_idr:r.value_idr }));
+          try{
+            await supaFetch(`${SUPABASE_URL}/broker_summary?on_conflict=stock_code,trade_date,side,rank`, {
+              method: "POST",
+              headers: { ...getSupaHeaders(), "Prefer": "resolution=merge-duplicates,return=minimal" },
+              body: JSON.stringify(rows)
+            });
+            let msg = `Tersimpan ${rows.length} baris untuk ${Object.keys(byDate).length}/${tradingDates.length} hari bursa.`;
+            // "limit" di URL endpoint membatasi TOTAL baris gabungan semua
+            // tanggal, jadi kalau sahamnya sangat aktif & rentang harinya
+            // lebar, sebagian hari bisa kepotong (tidak ikut ke-return).
+            // Kalau itu terjadi, kelihatan di sini supaya user tahu perlu
+            // naikkan "limit" di Endpoint Pengaturan atau pakai rentang lebih pendek.
+            if(missingDates.length) msg += ` ⚠️ ${missingDates.length} hari tidak ada data: ${missingDates.join(", ")} (cek dulu apakah tanggal itu ada di BURSA_HOLIDAYS di app.js — kalau BUKAN hari libur bursa, kemungkinan "limit" di endpoint kurang besar untuk saham seaktif ini, coba naikkan di Pengaturan)`;
+            state.stockbitBrokerBulkResults.push({ ticker, date: `${fromDate}..${toDate}`, ok:true, msg });
+          }catch(e){
+            state.stockbitBrokerBulkResults.push({ ticker, date: `${fromDate}..${toDate}`, ok:false, msg: "Gagal simpan ke DB: " + e.message });
+          }
         }
       }
-      state.stockbitBrokerBulkProgress.done++;
-      render();
-      // Jeda antar-request (sekarang per SAHAM x HARI, jadi totalnya lebih
-      // banyak dari sebelumnya) supaya tidak membombardir akun Stockbit.
-      await new Promise(r => setTimeout(r, 300));
     }
-
-    if(!rows.length){
-      state.stockbitBrokerBulkResults.push({
-        ticker, date: `${tradingDates[0]}..${tradingDates[tradingDates.length-1]}`, ok:false,
-        msg: `Tidak ada data sama sekali untuk ${tradingDates.length} hari ini. Cek Token/Endpoint di Pengaturan, atau skema respons berubah (lihat raw JSON manual).`
-      });
-    } else {
-      try{
-        await supaFetch(`${SUPABASE_URL}/broker_summary?on_conflict=stock_code,trade_date,side,rank`, {
-          method: "POST",
-          headers: { ...getSupaHeaders(), "Prefer": "resolution=merge-duplicates,return=minimal" },
-          body: JSON.stringify(rows)
-        });
-        let msg = `Tersimpan ${rows.length} baris untuk ${successDays}/${tradingDates.length} hari bursa.`;
-        if(failedDates.length) msg += ` ⚠️ ${failedDates.length} hari gagal/kosong: ${failedDates.map(f=>f.date).join(", ")}`;
-        state.stockbitBrokerBulkResults.push({ ticker, date: `${tradingDates[0]}..${tradingDates[tradingDates.length-1]}`, ok:true, msg });
-      }catch(e){
-        state.stockbitBrokerBulkResults.push({ ticker, date: `${tradingDates[0]}..${tradingDates[tradingDates.length-1]}`, ok:false, msg: "Gagal simpan ke DB: " + e.message });
-      }
-    }
+    state.stockbitBrokerBulkProgress.done++;
     render();
+    await new Promise(r => setTimeout(r, 350)); // tetap jaga jeda antar-SAHAM (bukan antar-hari lagi)
   }
 
   state.stockbitBrokerBulkLoading = false;
@@ -497,7 +513,6 @@ const LS_FREQ_ANALYZER_COL = "ihsg_freq_analyzer_col";
 const LS_CUSTOM_RULES = "ihsg_custom_rules_v1";
 const LS_STOCKBIT_TOKEN = "ihsg_stockbit_token", LS_STOCKBIT_QUOTE_EP = "ihsg_stockbit_quote_ep",
       LS_STOCKBIT_BROKER_EP = "ihsg_stockbit_broker_ep", LS_STOCKBIT_PROXY = "ihsg_stockbit_proxy";
-const LS_BS_BULK_DAYS = "ihsg_bs_bulk_days"; // periode "Tarik Otomatis" (hari bursa), diset user di tab Broker Summary
 const STOCKBIT_DEFAULT_QUOTE_EP = "https://exodus.stockbit.com/stream/v3/symbol/{ticker}";
 // NOTE (25 Agu 2026): endpoint di atas TERBUKTI SALAH — itu API "Stream"
 // (linimasa komentar komunitas), bukan API harga. Endpoint quote/orderbook
@@ -521,7 +536,7 @@ let state = {
   tab: "screener", search: "", activePreset: null,
   visibleCols: new Set(), // diisi loadSettings() dari localStorage atau DEFAULT_VISIBLE_COLS
   colPickerOpen: false,
-  filters: {sektor:[], syariahLabel:[], cekHarga:[], cekRsi:[], statusRsi:[], cekMacd:[], band:[], sinyalVolume:[], sinyalFrekuensi:[], keyakinanNaik:[], trendHarga:[], polaCandle:[], uangGedeMasuk:[], isBBSqueeze:[], valuasi:[], capCategory:[], freqSpike:[], rekomendasi:[]},
+  filters: {sektor:[], syariahLabel:[], cekHarga:[], cekRsi:[], statusRsi:[], cekMacd:[], band:[], sinyalVolume:[], sinyalFrekuensi:[], keyakinanNaik:[], trendHarga:[], polaCandle:[], uangGedeMasuk:[], isBBSqueeze:[], valuasi:[]},
   showAdvancedFilters: false,
   rangeFilters: { 
     bbWidth:{min:"",max:""}, 
@@ -564,8 +579,7 @@ let state = {
   bsEditorOpen: false, bsMsg: "", bsMsgError: false, bsCsvText: "",
   // Broker Summary versi di dalam modal Detail Emiten (terkunci ke
   // ticker yang sedang dibuka, tabel Supabase sama dengan di atas).
-  detailBsDateFrom: new Date().toISOString().slice(0,10), detailBsDateTo: new Date().toISOString().slice(0,10),
-  detailBsEditDate: new Date().toISOString().slice(0,10),
+  detailBsDate: new Date().toISOString().slice(0,10),
   detailBsRows: [], detailBsEditRows: [], detailBsLoading: false,
   detailBsEditorOpen: false, detailBsMsg: "", detailBsMsgError: false, detailBsCsvText: "",
   // ==========================================
@@ -592,12 +606,9 @@ let state = {
   stockbitBrokerEndpoint: STOCKBIT_DEFAULT_BROKER_EP, stockbitProxyUrl: "",
   stockbitTokenExpiresAt: null, stockbitTokenSyncedAt: null, stockbitTokenSource: "manual",
   stockbitLive: {}, stockbitBulkLoading: false, stockbitBulkProgress: null,
-  // Tarik otomatis Top 5 Broker Buy/Sell HANYA untuk ticker yang dicentang
-  // (state.selectedForBacktest) — lihat fetchAndSaveBrokerSummaryBulk().
-  // bsBulkDays = jumlah hari bursa yang ditarik, bisa diatur user langsung
-  // di tab Broker Summary (disimpan ke localStorage lewat LS_BS_BULK_DAYS).
-  stockbitBrokerBulkLoading: false, stockbitBrokerBulkProgress: null, stockbitBrokerBulkResults: [],
-  bsBulkDays: 10
+  // Tarik otomatis Top 5 Broker Buy/Sell (10 hari bursa) HANYA untuk ticker
+  // yang dicentang (state.selectedForBacktest) — lihat fetchAndSaveBrokerSummaryBulk().
+  stockbitBrokerBulkLoading: false, stockbitBrokerBulkProgress: null, stockbitBrokerBulkResults: []
 };
 
 function fmtNum(n){ if(n===null||n===undefined) return "-"; return new Intl.NumberFormat("id-ID").format(n); }
@@ -661,10 +672,6 @@ function loadSettings(){
     state.stockbitBrokerEndpoint = localStorage.getItem(LS_STOCKBIT_BROKER_EP) || STOCKBIT_DEFAULT_BROKER_EP;
     state.stockbitProxyUrl = localStorage.getItem(LS_STOCKBIT_PROXY) || "";
   }catch(e){}
-  try{
-    const savedDays = parseInt(localStorage.getItem(LS_BS_BULK_DAYS), 10);
-    state.bsBulkDays = (Number.isFinite(savedDays) && savedDays >= 1 && savedDays <= 60) ? savedDays : 10;
-  }catch(e){ state.bsBulkDays = 10; }
   try{
     const savedRules = JSON.parse(localStorage.getItem(LS_CUSTOM_RULES)||"[]");
     state.customRules = Array.isArray(savedRules) ? savedRules : [];
@@ -867,7 +874,7 @@ async function loadLive(){
       offer: numOrNull(r.offer), offerVolume: numOrNull(r.offer_volume),
       per: r.per, forwardPer: numOrNull(r.forward_per), pbv: r.pbv, roe: r.roe, divYield: r.dividend_yield,
       bookValue: numOrNull(r.book_value), psr: numOrNull(r.psr), peg: numOrNull(r.peg),
-      roa: numOrNull(r.roa), npm: numOrNull(r.npm), opm: numOrNull(r.opm),
+      roa: numOrNull(r.roa), npm: numOrNull(r.npm), opm: numOrNull(r.opm), eps: numOrNull(r.eps),
       revenueGrowth: numOrNull(r.revenue_growth), earningsGrowth: numOrNull(r.earnings_growth),
       dividendRate: numOrNull(r.dividend_rate), payoutRatio: numOrNull(r.payout_ratio),
       beta: numOrNull(r.beta), der: numOrNull(r.der), currentRatio: numOrNull(r.current_ratio),
@@ -876,7 +883,7 @@ async function loadLive(){
       ema21H: r.ema21h, ema21L: r.ema21l, ma21: r.ma21, ma50: r.ma50, ma100: r.ma100, ma200: r.ma200,
       rsi7: r.rsi7, rsi21: r.rsi21, hist: r.macd_hist, histPrev: 0,
       fib: r.fibonacci, 
-      cekHarga: r.cek_harga, cekRsi: r.cek_rsi, statusRsi: r.status_rsi, cekMacd: r.cek_macd,
+      cekHarga: r.cek_harga, cekRsi: r.cek_rsi, statusRsi: r.status_rsi, cekMacd: r.cek_macd, cekVolume: r.cek_volume,
       keyakinanNaik: r.keyakinan_naik,
       trendHarga: r.trend_harga, candleKemarin: r.candle_kemarin, candleHariIni: r.candle_hari_ini, polaCandle: r.pola_candle,
       uangGedeMasuk: boolLabel(r.uang_gede_masuk), bbWidth: numOrNull(r.bb_width),
@@ -886,6 +893,11 @@ async function loadLive(){
 
       // --- Sudah ada di DB tapi sebelumnya belum pernah dipetakan ---
       prevClose: numOrNull(r.prev_close), macd: numOrNull(r.macd), signal: numOrNull(r.signal),
+      changeAbs: numOrNull(r.change_abs),
+      // Kapan baris ini terakhir diupdate sync-idx-full.mjs — dipakai untuk
+      // indikator "data seberapa fresh" di UI (mis. badge "diupdate 2j lalu"
+      // atau warning kalau data lebih tua dari 1 hari bursa).
+      updatedAt: r.updated_at,
 
       // --- Perluasan indikator dari stock_indicators_ext (via stocks_screener) ---
       priceMa5: numOrNull(r.price_ma5), priceMa10: numOrNull(r.price_ma10), priceMa20: numOrNull(r.price_ma20),
@@ -1023,10 +1035,6 @@ function openDetail(ticker){
   state.detailBsRows = []; state.detailBsEditRows = [];
   state.detailBsMsg = ""; state.detailBsMsgError = false;
   state.detailBsEditorOpen = false; state.detailBsCsvText = "";
-  // Reset periode ke "hari ini" tiap buka emiten baru, biar tidak nyangkut
-  // di rentang tanggal emiten sebelumnya.
-  const today = new Date().toISOString().slice(0,10);
-  state.detailBsDateFrom = today; state.detailBsDateTo = today; state.detailBsEditDate = today;
   render();
 }
 function closeDetail(){
@@ -1648,13 +1656,8 @@ function renderDetailBrokerSummary(s){
     </div>`).join("");
 
   const dRows = state.detailBsRows || [];
-
-  // Kelompokkan hasil per tanggal (urut terbaru dulu) — karena sekarang
-  // "Muat Data" bisa menarik rentang tanggal, bukan cuma 1 hari.
-  const byDate = {};
-  dRows.forEach(r => { (byDate[r.trade_date] = byDate[r.trade_date] || []).push(r); });
-  const datesDesc = Object.keys(byDate).sort((a,b)=> a < b ? 1 : -1);
-
+  const dBuy = dRows.filter(r=>r.side==="buy").sort((a,b)=>a.rank-b.rank);
+  const dSell = dRows.filter(r=>r.side==="sell").sort((a,b)=>a.rank-b.rank);
   const maxVal = Math.max(1, ...dRows.map(r=> Number(r.value_idr)||0));
   const barHtml = (r, cls) => `
     <div class="bs-bar-row">
@@ -1663,55 +1666,31 @@ function renderDetailBrokerSummary(s){
       <span class="bs-bar-value mono">${fmtNum(r.value_idr)}</span>
     </div>`;
 
-  const dateBlocksHtml = datesDesc.length ? datesDesc.map(date => {
-    const rows = byDate[date];
-    const dBuy = rows.filter(r=>r.side==="buy").sort((a,b)=>a.rank-b.rank);
-    const dSell = rows.filter(r=>r.side==="sell").sort((a,b)=>a.rank-b.rank);
-    return `
-      <div class="bs-date-block" style="margin-bottom:18px;padding-bottom:14px;border-bottom:1px solid var(--border);">
-        <div style="display:flex;align-items:center;gap:10px;margin-bottom:6px;">
-          <span class="mono" style="font-weight:700;font-size:13px;">${date}</span>
-          <button type="button" class="link-btn" data-dbs-edit-date="${date}" title="Isi form edit manual di bawah dengan tanggal ini">✏️ Edit tanggal ini</button>
-        </div>
-        ${bsStatusRowHtml(rows)}
-        <div class="bs-display-grid">
-          <div>
-            <div class="bs-col-title bs-buy">Top 5 Buy</div>
-            ${dBuy.length ? dBuy.map(r=>barHtml(r,"bs-fill-buy")).join("") : `<div class="empty-box" style="padding:16px;font-size:12px;">Tidak ada data buy.</div>`}
-          </div>
-          <div>
-            <div class="bs-col-title bs-sell">Top 5 Sell</div>
-            ${dSell.length ? dSell.map(r=>barHtml(r,"bs-fill-sell")).join("") : `<div class="empty-box" style="padding:16px;font-size:12px;">Tidak ada data sell.</div>`}
-          </div>
-        </div>
-      </div>`;
-  }).join("") : `<div class="empty-box" style="padding:16px;font-size:12px;">Belum ada data untuk periode ini.</div>`;
-
   return `
     <div class="bs-wrap">
-      <div class="bs-toolbar" style="flex-wrap:wrap;gap:10px;">
+      <div class="bs-toolbar">
         <span class="mono" style="font-weight:700;font-size:14px;">${escapeHtml(ticker)}</span>
-        <div style="display:flex;align-items:center;gap:6px;">
-          <label style="font-size:11.5px;color:var(--muted);">Dari</label>
-          <input id="dbsDateFrom" class="bs-input" type="date" value="${state.detailBsDateFrom||""}">
-        </div>
-        <div style="display:flex;align-items:center;gap:6px;">
-          <label style="font-size:11.5px;color:var(--muted);">Sampai</label>
-          <input id="dbsDateTo" class="bs-input" type="date" value="${state.detailBsDateTo||""}">
-        </div>
+        <input id="dbsDate" class="bs-input" type="date" value="${state.detailBsDate||""}">
         <button class="btn btn-outline" id="dbsLoadBtn" ${state.detailBsLoading?"disabled":""}>${state.detailBsLoading?"Memuat...":"Muat Data"}</button>
       </div>
 
       ${state.detailBsMsg ? `<div class="bs-msg ${state.detailBsMsgError?"bs-msg-error":"bs-msg-ok"}">${escapeHtml(state.detailBsMsg)}</div>` : ""}
 
-      ${dateBlocksHtml}
+      ${bsStatusRowHtml(dRows)}
+
+      <div class="bs-display-grid">
+        <div>
+          <div class="bs-col-title bs-buy">Top 5 Buy</div>
+          ${dBuy.length ? dBuy.map(r=>barHtml(r,"bs-fill-buy")).join("") : `<div class="empty-box" style="padding:16px;font-size:12px;">Belum ada data untuk tanggal ini.</div>`}
+        </div>
+        <div>
+          <div class="bs-col-title bs-sell">Top 5 Sell</div>
+          ${dSell.length ? dSell.map(r=>barHtml(r,"bs-fill-sell")).join("") : `<div class="empty-box" style="padding:16px;font-size:12px;">Belum ada data untuk tanggal ini.</div>`}
+        </div>
+      </div>
 
       <details class="bs-editor-panel" id="dbsEditorPanel" ${state.detailBsEditorOpen?"open":""}>
         <summary>✏️ Input / Edit Manual (dari screenshot Stockbit Anda)</summary>
-        <div style="display:flex;align-items:center;gap:6px;margin:10px 0;">
-          <label style="font-size:11.5px;color:var(--muted);">Tanggal yang diedit</label>
-          <input id="dbsEditDate" class="bs-input" type="date" value="${state.detailBsEditDate||""}">
-        </div>
         <div class="bs-editor-grid">
           <div>
             <div class="bs-col-title bs-buy">Top 5 Buy</div>
@@ -1738,34 +1717,22 @@ function renderDetailBrokerSummary(s){
 
 async function loadDetailBrokerSummary(){
   const ticker = state.detailTicker;
-  const fromEl = document.getElementById("dbsDateFrom");
-  const toEl = document.getElementById("dbsDateTo");
-  const from = fromEl?.value || state.detailBsDateFrom || "";
-  const to = toEl?.value || state.detailBsDateTo || "";
-  state.detailBsDateFrom = from; state.detailBsDateTo = to;
-  if(!ticker || !from || !to){ state.detailBsMsg = "Tanggal (dari & sampai) belum diisi."; state.detailBsMsgError = true; render(); return; }
-  if(from > to){ state.detailBsMsg = 'Tanggal "Dari" tidak boleh lebih besar dari "Sampai".'; state.detailBsMsgError = true; render(); return; }
+  const dateEl = document.getElementById("dbsDate");
+  const date = dateEl?.value || "";
+  state.detailBsDate = date;
+  if(!ticker || !date){ state.detailBsMsg = "Tanggal belum diisi."; state.detailBsMsgError = true; render(); return; }
   if(!SUPABASE_URL || !SUPABASE_KEY){ openSettings(); return; }
 
   state.detailBsLoading = true; state.detailBsMsg = ""; render();
   try {
-    // URLSearchParams tidak bisa punya 2 key "trade_date" sekaligus (yang
-    // kedua akan menimpa yang pertama), jadi query string gte+lte disusun
-    // manual di sini.
-    const url = `${SUPABASE_URL}/broker_summary?stock_code=eq.${encodeURIComponent(ticker)}&trade_date=gte.${from}&trade_date=lte.${to}&order=trade_date.desc,side.asc,rank.asc`;
-    const res = await fetch(url, { headers: getSupaHeaders(), cache: "no-store" });
+    const qs = new URLSearchParams({ stock_code: `eq.${ticker}`, trade_date: `eq.${date}`, order: "side.asc,rank.asc" });
+    const res = await fetch(`${SUPABASE_URL}/broker_summary?${qs}`, { headers: getSupaHeaders(), cache: "no-store" });
     if(!res.ok) throw new Error(`HTTP ${res.status} ${res.statusText}`);
     const rows = await res.json();
     state.detailBsRows = rows;
-    const uniqDates = [...new Set(rows.map(r=>r.trade_date))];
-    state.detailBsMsg = rows.length
-      ? `Menampilkan ${rows.length} baris untuk ${uniqDates.length} tanggal (${from}..${to}).`
-      : `Belum ada data untuk periode ${from}..${to}.`;
+    state.detailBsEditRows = rows.map(r=>({ side:r.side, rank:r.rank, broker_code:r.broker_code, lot:r.lot, value_idr:r.value_idr }));
+    state.detailBsMsg = rows.length ? `Menampilkan ${rows.length} baris.` : "Belum ada data untuk tanggal ini.";
     state.detailBsMsgError = false;
-    // Form edit manual default ke tanggal "Sampai" biar user tinggal isi
-    // data hari terbaru tanpa perlu klik "Edit tanggal ini" dulu.
-    state.detailBsEditDate = to;
-    state.detailBsEditRows = rows.filter(r=>r.trade_date===to).map(r=>({ side:r.side, rank:r.rank, broker_code:r.broker_code, lot:r.lot, value_idr:r.value_idr }));
   } catch(e) {
     state.detailBsMsg = "Gagal memuat: " + e.message;
     state.detailBsMsgError = true;
@@ -1795,9 +1762,8 @@ function readDbsEditorRows(side, code, date){
 
 async function saveDetailBrokerSummaryRows(){
   const code = state.detailTicker;
-  const dateEl = document.getElementById("dbsEditDate");
-  const date = dateEl?.value || state.detailBsEditDate;
-  if(!code || !date){ state.detailBsMsg = "Tanggal edit belum diisi."; state.detailBsMsgError = true; render(); return; }
+  const date = state.detailBsDate || document.getElementById("dbsDate")?.value;
+  if(!code || !date){ state.detailBsMsg = "Tanggal belum diisi."; state.detailBsMsgError = true; render(); return; }
   if(!SUPABASE_URL || !SUPABASE_KEY){ openSettings(); return; }
 
   const rows = [...readDbsEditorRows("buy", code, date), ...readDbsEditorRows("sell", code, date)];
@@ -1809,15 +1775,9 @@ async function saveDetailBrokerSummaryRows(){
       headers: { ...getSupaHeaders(), "Prefer": "resolution=merge-duplicates,return=representation" },
       body: JSON.stringify(rows)
     });
-    state.detailBsMsg = `Tersimpan ${rows.length} baris untuk ${date}.`;
+    state.detailBsMsg = `Tersimpan ${rows.length} baris.`;
     state.detailBsMsgError = false;
     state.detailBsEditorOpen = true;
-    state.detailBsEditDate = date;
-    // Lebarkan rentang "Dari/Sampai" kalau tanggal yang baru disimpan ada
-    // di luar rentang yang sedang ditampilkan, supaya langsung kelihatan
-    // setelah reload di bawah — bukan malah "hilang" dari layar.
-    if(!state.detailBsDateFrom || date < state.detailBsDateFrom) state.detailBsDateFrom = date;
-    if(!state.detailBsDateTo || date > state.detailBsDateTo) state.detailBsDateTo = date;
     render();
     loadDetailBrokerSummary();
   } catch(e) {
@@ -2502,9 +2462,6 @@ function getFiltered(){
     if(f.uangGedeMasuk.length && !f.uangGedeMasuk.includes(s.uangGedeMasuk)) return false;
     if(f.isBBSqueeze.length && !f.isBBSqueeze.includes(s.isBBSqueeze)) return false;
     if(f.valuasi.length && !f.valuasi.includes(s.valuasi)) return false;
-    if(f.capCategory.length && !f.capCategory.includes(s.capCategory)) return false;
-    if(f.freqSpike.length && !f.freqSpike.includes(s.freqSpike)) return false;
-    if(f.rekomendasi.length && !f.rekomendasi.includes(s.rekomendasi)) return false;
 
     const rf = state.rangeFilters;
     if(!inRange(s.bbWidth, rf.bbWidth)) return false;
@@ -2588,27 +2545,8 @@ function render(){
     document.querySelectorAll("#detailModalContent [data-chart]").forEach(b=> b.onclick = ()=>{ closeDetail(); loadChart(b.dataset.chart); });
 
     // --- Broker Summary di dalam modal Detail Emiten ---
-    const dbsDateFromInput = document.getElementById("dbsDateFrom");
-    if(dbsDateFromInput) dbsDateFromInput.onchange = (e) => { state.detailBsDateFrom = e.target.value; };
-    const dbsDateToInput = document.getElementById("dbsDateTo");
-    if(dbsDateToInput) dbsDateToInput.onchange = (e) => { state.detailBsDateTo = e.target.value; };
-    const dbsEditDateInput = document.getElementById("dbsEditDate");
-    if(dbsEditDateInput) dbsEditDateInput.onchange = (e) => {
-      state.detailBsEditDate = e.target.value;
-      const rows = (state.detailBsRows||[]).filter(r=>r.trade_date===e.target.value);
-      state.detailBsEditRows = rows.map(r=>({ side:r.side, rank:r.rank, broker_code:r.broker_code, lot:r.lot, value_idr:r.value_idr }));
-      render();
-    };
-    document.querySelectorAll("#detailModalContent [data-dbs-edit-date]").forEach(btn=>{
-      btn.onclick = () => {
-        const date = btn.dataset.dbsEditDate;
-        state.detailBsEditDate = date;
-        const rows = (state.detailBsRows||[]).filter(r=>r.trade_date===date);
-        state.detailBsEditRows = rows.map(r=>({ side:r.side, rank:r.rank, broker_code:r.broker_code, lot:r.lot, value_idr:r.value_idr }));
-        state.detailBsEditorOpen = true;
-        render();
-      };
-    });
+    const dbsDateInput = document.getElementById("dbsDate");
+    if(dbsDateInput) dbsDateInput.onchange = (e) => { state.detailBsDate = e.target.value; };
     const dbsLoadBtn = document.getElementById("dbsLoadBtn");
     if(dbsLoadBtn) dbsLoadBtn.onclick = loadDetailBrokerSummary;
     const dbsSaveBtn = document.getElementById("dbsSaveBtn");
@@ -2681,7 +2619,6 @@ const FILTER_LABELS = {
   sektor:"Sektor", syariahLabel:"Syariah", trendHarga:"Trend", cekMacd:"MACD", polaCandle:"Pola Candle",
   sinyalVolume:"Sinyal Volume", sinyalFrekuensi:"Sinyal Frekuensi", keyakinanNaik:"Keyakinan Naik", cekHarga:"Sinyal Harga", cekRsi:"Sinyal RSI",
   statusRsi:"Status RSI", band:"Bandarmologi", uangGedeMasuk:"Uang Gede", isBBSqueeze:"BB Squeeze", valuasi:"Valuasi",
-  capCategory:"Kategori Kap.", freqSpike:"Freq Spike", rekomendasi:"Rekomendasi Setup",
   bbWidth:"BB Width", atr14:"ATR 14", clv:"CLV", rsi7:"RSI 7", rsi21:"RSI 21", frequency:"Frekuensi"
 };
 const PRESET_LABELS = { bagger:"Skor Bagger ≥75", eri:"Eri Ginanjar", rsicross:"RSI & Harga Cross", golden:"Golden Cross DSI", uptrend:"Super Uptrend", breakout:"Volatility Breakout", pullback:"Pullback Uptrend", custom_bandar:"BPJS", asing_akumulasi:"Akumulasi Asing (IDX)", freq_spike:"Lonjakan Frekuensi" };
@@ -2878,6 +2815,40 @@ const RULE_METRICS = [
   { key:"fibP", label:"Fibonacci P" }, { key:"fibR1", label:"Fibonacci R1" }, { key:"fibR2", label:"Fibonacci R2" },
   { key:"fibR3", label:"Fibonacci R3" }, { key:"fibS1", label:"Fibonacci S1" }, { key:"fibS2", label:"Fibonacci S2" },
   { key:"fibS3", label:"Fibonacci S3" },
+
+  // --- Fundamental (PER/PBV/ROE/dst) ---
+  { key:"per", label:"PER" }, { key:"forwardPer", label:"Forward PER" }, { key:"pbv", label:"PBV" },
+  { key:"eps", label:"EPS" }, { key:"bookValue", label:"Book Value" }, { key:"psr", label:"PSR" },
+  { key:"peg", label:"PEG" }, { key:"roe", label:"ROE (%)" }, { key:"roa", label:"ROA (%)" },
+  { key:"npm", label:"Net Profit Margin (%)" }, { key:"opm", label:"Operating Margin (%)" },
+  { key:"revenueGrowth", label:"Revenue Growth (%)" }, { key:"earningsGrowth", label:"Earnings Growth (%)" },
+  { key:"divYield", label:"Dividend Yield (%)" }, { key:"dividendRate", label:"Dividend Rate" },
+  { key:"payoutRatio", label:"Payout Ratio (%)" }, { key:"beta", label:"Beta" },
+  { key:"der", label:"DER" }, { key:"currentRatio", label:"Current Ratio" },
+  { key:"marketCap", label:"Market Cap" }, { key:"sharesOutstanding", label:"Shares Outstanding" },
+
+  // --- Harga & posisi 52 minggu ---
+  { key:"high52w", label:"52 Week High" }, { key:"low52w", label:"52 Week Low" },
+  { key:"week52ChangePct", label:"52 Week Change (%)" }, { key:"pos52w", label:"Posisi dalam Range 52W (%)" },
+  { key:"changeAbs", label:"Perubahan Harga (Rp)" }, { key:"prevHigh", label:"Previous High" }, { key:"prevLow", label:"Previous Low" },
+  { key:"vsMa50Pct", label:"Jarak ke MA50 (%)" }, { key:"vsMa200Pct", label:"Jarak ke MA200 (%)" },
+
+  // --- Bid/Offer & VWAP20 ---
+  { key:"bid", label:"Bid" }, { key:"bidVolume", label:"Bid Volume" },
+  { key:"offer", label:"Offer" }, { key:"offerVolume", label:"Offer Volume" },
+  { key:"vwap20", label:"VWAP 20" }, { key:"volRatio", label:"Volume Ratio" },
+
+  // --- EMA/MACD tambahan ---
+  { key:"ema21H", label:"EMA 21 (High)" }, { key:"ema21L", label:"EMA 21 (Low)" }, { key:"ema89", label:"EMA 89" },
+  { key:"hist", label:"MACD Histogram" }, { key:"histPrev", label:"MACD Histogram (Prev)" },
+  { key:"signal", label:"MACD Signal" }, { key:"prevSignal", label:"Previous MACD Signal" },
+  { key:"prevMacdHist", label:"Previous MACD Histogram" },
+
+  // --- Bandarmologi asli (foreign flow dari IDX) ---
+  { key:"foreignNet1D", label:"Foreign Net 1 Hari" }, { key:"foreignNet5D", label:"Foreign Net 5 Hari" },
+  { key:"foreignNet20D", label:"Foreign Net 20 Hari" }, { key:"foreignUpDays", label:"Foreign Net Positif (Hari)" },
+  { key:"avgTicket", label:"Avg Ticket Size Asing" }, { key:"crossingPct", label:"Crossing (%)" },
+  { key:"flowDays", label:"Jumlah Hari Data Flow" },
 ];
 const RULE_OPS = {
   ">": (a,b)=>a>b, "<": (a,b)=>a<b, ">=": (a,b)=>a>=b, "<=": (a,b)=>a<=b, "=": (a,b)=>a===b
@@ -3280,7 +3251,6 @@ function renderScreener(){
         <div class="filter-grid">
           ${renderMultiSelect("sektor", "Sektor", getOpts("sektor"))}
           ${renderMultiSelect("syariahLabel", "Syariah", getOpts("syariahLabel"))}
-          ${renderMultiSelect("capCategory", "Kategori Kap.", getOpts("capCategory"))}
         </div>
       </div>
 
@@ -3301,11 +3271,9 @@ function renderScreener(){
         <div class="filter-grid">
           ${renderMultiSelect("sinyalVolume", "Sinyal Volume", getOpts("sinyalVolume"))}
           ${renderMultiSelect("sinyalFrekuensi", "Sinyal Frekuensi", getOpts("sinyalFrekuensi"))}
-          ${renderMultiSelect("freqSpike", "Freq Spike", getOpts("freqSpike"))}
           ${renderMultiSelect("keyakinanNaik", "Keyakinan Naik", getOpts("keyakinanNaik"))}
           ${renderMultiSelect("band", "Bandarmologi", getOpts("band"))}
           ${renderMultiSelect("uangGedeMasuk", "Uang Gede Masuk", getOpts("uangGedeMasuk"))}
-          ${renderMultiSelect("rekomendasi", "Rekomendasi Setup", getOpts("rekomendasi"))}
         </div>
       </div>
 
@@ -4157,28 +4125,18 @@ function renderBrokerSummary(){
           <div style="font-size:12px; color:var(--muted); max-width:560px; line-height:1.5;">
             🔴 Tarik otomatis Top 5 Buy/Sell dari Stockbit untuk
             <b>${state.selectedForBacktest.size} saham yang dicentang</b> di tab 📋 Screener,
-            selama periode hari bursa terakhir yang kamu atur di samping (Senin&ndash;Jumat, belum
-            menghitung libur bursa nasional). Butuh "Endpoint Broker Summary" &amp; Token terisi di
-            ⚙️ Pengaturan. Hasil otomatis disimpan langsung ke database yang sama seperti input manual
-            di bawah. Ditarik <b>per hari satu-satu</b> (bukan sekaligus satu rentang) supaya tidak ada
-            tanggal yang kepotong &mdash; makin banyak hari/saham yang dicentang, makin lama & makin
-            banyak request ke Stockbit.
+            selama <b>10 hari bursa terakhir</b> (Senin&ndash;Jumat, belum menghitung libur bursa nasional).
+            Butuh "Endpoint Broker Summary" &amp; Token terisi di ⚙️ Pengaturan. Hasil otomatis disimpan
+            langsung ke database yang sama seperti input manual di bawah.
           </div>
-          <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
-            <label for="bsBulkDaysInput" style="font-size:11.5px; color:var(--muted); white-space:nowrap;">Periode (hari bursa)</label>
-            <input type="number" id="bsBulkDaysInput" min="1" max="60" step="1"
-              value="${state.bsBulkDays}"
-              ${state.stockbitBrokerBulkLoading ? "disabled" : ""}
-              style="width:64px; padding:6px 8px; border-radius:8px; border:1px solid var(--border); background:var(--bg-input, rgba(255,255,255,0.03)); color:var(--text); font-size:12.5px;">
-            <button type="button" class="btn btn-outline" id="bsAutoBulkBtn"
-              ${state.stockbitBrokerBulkLoading || state.selectedForBacktest.size===0 ? "disabled" : ""}
-              style="color:#f87171;border-color:rgba(239,68,68,0.4);white-space:nowrap;"
-              title="${state.selectedForBacktest.size===0 ? 'Centang minimal 1 saham di tab Screener dulu' : ''}">
-              ${state.stockbitBrokerBulkLoading
-                ? `Menarik ${state.stockbitBrokerBulkProgress?.done||0}/${state.stockbitBrokerBulkProgress?.total||0}...`
-                : `Tarik Otomatis (${state.selectedForBacktest.size} dicentang &times; ${state.bsBulkDays} hari)`}
-            </button>
-          </div>
+          <button type="button" class="btn btn-outline" id="bsAutoBulkBtn"
+            ${state.stockbitBrokerBulkLoading || state.selectedForBacktest.size===0 ? "disabled" : ""}
+            style="color:#f87171;border-color:rgba(239,68,68,0.4);white-space:nowrap;"
+            title="${state.selectedForBacktest.size===0 ? 'Centang minimal 1 saham di tab Screener dulu' : ''}">
+            ${state.stockbitBrokerBulkLoading
+              ? `Menarik ${state.stockbitBrokerBulkProgress?.done||0}/${state.stockbitBrokerBulkProgress?.total||0}...`
+              : `Tarik Otomatis (${state.selectedForBacktest.size} dicentang &times; 10 hari)`}
+          </button>
         </div>
         ${state.stockbitBrokerBulkResults && state.stockbitBrokerBulkResults.length ? `
           <div class="mono" style="margin-top:10px; max-height:220px; overflow-y:auto; font-size:11.5px;">
@@ -4973,17 +4931,8 @@ function attachContentEvents(){
   if(bsSaveBtn) bsSaveBtn.onclick = saveBrokerSummaryRows;
   const bsCsvFillBtn = document.getElementById("bsCsvFillBtn");
   if(bsCsvFillBtn) bsCsvFillBtn.onclick = fillBsFromCsv;
-  const bsBulkDaysInput = document.getElementById("bsBulkDaysInput");
-  if(bsBulkDaysInput) bsBulkDaysInput.onchange = (e) => {
-    let v = parseInt(e.target.value, 10);
-    if(!Number.isFinite(v) || v < 1) v = 1;
-    if(v > 60) v = 60; // batas wajar supaya tidak kebablasan menghajar rate limit Stockbit
-    state.bsBulkDays = v;
-    localStorage.setItem(LS_BS_BULK_DAYS, String(v));
-    render();
-  };
   const bsAutoBulkBtn = document.getElementById("bsAutoBulkBtn");
-  if(bsAutoBulkBtn) bsAutoBulkBtn.onclick = () => fetchAndSaveBrokerSummaryBulk([...state.selectedForBacktest], state.bsBulkDays);
+  if(bsAutoBulkBtn) bsAutoBulkBtn.onclick = () => fetchAndSaveBrokerSummaryBulk([...state.selectedForBacktest], 10);
   const bsEditorPanel = document.getElementById("bsEditorPanel");
   if(bsEditorPanel) bsEditorPanel.ontoggle = (e) => { state.bsEditorOpen = e.target.open; };
 
