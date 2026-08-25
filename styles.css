@@ -31,6 +31,14 @@
   }
   
   * { box-sizing: border-box; }
+  html, body {
+    /* Safety net: kalau ada elemen anak (pill, tombol, dll) yang sedikit
+       lebih lebar dari viewport di HP, ini mencegah SELURUH halaman ikut
+       ter-scroll ke samping (termasuk header di paling atas). Tabel tetap
+       bisa scroll horizontal sendiri lewat .table-wrap { overflow:auto }. */
+    max-width: 100vw;
+    overflow-x: hidden;
+  }
   body { 
     margin: 0; 
     background: var(--bg-main); 

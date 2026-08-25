@@ -1,0 +1,6962 @@
+// ============================================================
+// KONFIGURASI
+// ============================================================
+// ============================================================
+// KONFIGURASI SUPABASE
+// ============================================================
+// ============================================================
+// SKEMA TAMBAHAN YANG DIPERLUKAN DI SUPABASE (jalankan sekali via SQL editor):
+//
+//   alter table absensi add column if not exists is_lembur boolean default false;
+//
+//   create table if not exists lembur_penugasan (
+//     tanggal      date not null,
+//     id_pegawai   text not null,
+//     nama_pegawai text,
+//     keterangan   text,
+//     primary key (tanggal, id_pegawai)
+//   );
+//
+// Tabel shift_jadwal (tanggal, tim, kode) dan jadwal_libur (tanggal,
+// keterangan) diasumsikan sudah ada dari fitur sebelumnya.
+// ============================================================
+var DEFAULT_SUPABASE_URL      = 'https://swyvxrkagsgzplvdiogj.supabase.co';
+var DEFAULT_SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InN3eXZ4cmthZ3NnenBsdmRpb2dqIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODQ0OTc4MTAsImV4cCI6MjEwMDA3MzgxMH0.HEINMbRZ1NUp_HSX2IeytwYFmrZk_Ipa7NBwo5aCoH4';
+var SUPABASE_URL      = localStorage.getItem('ppnpn_supabase_url') || DEFAULT_SUPABASE_URL;
+var SUPABASE_ANON_KEY = localStorage.getItem('ppnpn_supabase_key') || DEFAULT_SUPABASE_ANON_KEY;
+var supabaseClient    = null;
+
+function initSupabaseClient() {
+  if (SUPABASE_URL && SUPABASE_ANON_KEY && window.supabase) {
+    try {
+      supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+    } catch (e) { supabaseClient = null; }
+  } else {
+    supabaseClient = null;
+  }
+}
+initSupabaseClient();
+
+// SCRIPT_URL dipertahankan sekadar sebagai penanda "backend siap dipakai?"
+// supaya seluruh pengecekan `if (SCRIPT_URL)` di kode lama tetap berfungsi
+// tanpa perlu diubah satu per satu — sekarang backend-nya Supabase.
+var SCRIPT_URL = supabaseClient ? 'supabase' : '';
+var SHEET_ID = '';
+
+// ============================================================
+// STATE
+// ============================================================
+var currentUser = null;
+var currentUserData = null;
+var sheetData = {
+  users: [], dataPegawai: [], dataKeluarga: [],
+  absensi: [], permohonan: [], radius: [],
+  hakCuti: [], shiftSatpam: [], jamKerja: [],
+  hariLibur: [], jenisCuti: []
+};
+var cameraStream = null;
+var userLat = null, userLon = null;
+var locationOk = false;
+var officeLat = null, officeLon = null, officeRadius = 100;
+var clockInterval = null;
+var pulangCardInterval = null;
+var todayAbsenData = null;
+
+// Set berisi ID baris yang dicentang untuk fitur hapus banyak data sekaligus
+var selectedPegawai = new Set();
+var selectedAbsensi = new Set();
+var selectedCuti    = new Set();
+
+// ============================================================
+// STATE PEGAWAI, JAM KERJA & RADIUS
+// Diisi murni dari Supabase saat runtime (bukan data statis/demo lagi).
+// Nama variabel dipertahankan agar kode lama yang mereferensikannya
+// tetap berfungsi tanpa perlu diubah satu per satu.
+// ============================================================
+var DEMO_USERS = [];
+var DEMO_JAM_KERJA = [];
+var DEMO_RADIUS = {radiusTolerance: 100, officeLat: null, officeLon: null};
+
+// ============================================================
+// DAFTAR TUGAS DEFAULT (Cek List Tugas Cleaning Service / Pramubakti)
+// Diimport otomatis ke tabel daftar_tugas saat pertama kali dipakai.
+// Kode "L13" = berlaku untuk SEMUA pegawai Cleaning Service & Pramubakti.
+// ============================================================
+
+var DEFAULT_DAFTAR_TUGAS = [
+  {
+    "id_tugas": "T0001",
+    "list_kode": "L1",
+    "nama_pegawai": "N Erna Narulita S",
+    "uraian": "Menyiapkan Makan Minum Kepala Kantor dan sekretaris",
+    "periode": "Harian"
+  },
+  {
+    "id_tugas": "T0002",
+    "list_kode": "L1",
+    "nama_pegawai": "N Erna Narulita S",
+    "uraian": "Membantu Sekretaris",
+    "periode": "Harian"
+  },
+  {
+    "id_tugas": "T0003",
+    "list_kode": "L1",
+    "nama_pegawai": "N Erna Narulita S",
+    "uraian": "Menyiapkan konsumsi kegiatan rapat",
+    "periode": "Harian"
+  },
+  {
+    "id_tugas": "T0004",
+    "list_kode": "L1",
+    "nama_pegawai": "N Erna Narulita S",
+    "uraian": "Membersihkan alat makan minum kepala kantor dan sekretaris",
+    "periode": "Harian"
+  },
+  {
+    "id_tugas": "T0005",
+    "list_kode": "L1",
+    "nama_pegawai": "N Erna Narulita S",
+    "uraian": "Pekerjaan yang berhubungan dengan Pengarah Layanan dan resepsionis",
+    "periode": "Harian"
+  },
+  {
+    "id_tugas": "T0006",
+    "list_kode": "L1",
+    "nama_pegawai": "N Erna Narulita S",
+    "uraian": "Membersihkan seluruh meja dan kursi yang ada di area TPT",
+    "periode": "Harian"
+  },
+  {
+    "id_tugas": "T0007",
+    "list_kode": "L1",
+    "nama_pegawai": "N Erna Narulita S",
+    "uraian": "Mengganti seprei kasur tidur kepala kantor seminggu sekali",
+    "periode": "Harian"
+  },
+  {
+    "id_tugas": "T0008",
+    "list_kode": "L2",
+    "nama_pegawai": "Alma Assyifa R",
+    "uraian": "Menyiapkan Makan Minum Kepala Kantor dan sekretaris",
+    "periode": "Harian"
+  },
+  {
+    "id_tugas": "T0009",
+    "list_kode": "L2",
+    "nama_pegawai": "Alma Assyifa R",
+    "uraian": "Membantu Sekretaris",
+    "periode": "Harian"
+  },
+  {
+    "id_tugas": "T0010",
+    "list_kode": "L2",
+    "nama_pegawai": "Alma Assyifa R",
+    "uraian": "Menyiapkan konsumsi kegiatan rapat",
+    "periode": "Harian"
+  },
+  {
+    "id_tugas": "T0011",
+    "list_kode": "L2",
+    "nama_pegawai": "Alma Assyifa R",
+    "uraian": "Membersihkan alat makan minum kepala kantor dan sekretaris",
+    "periode": "Harian"
+  },
+  {
+    "id_tugas": "T0012",
+    "list_kode": "L2",
+    "nama_pegawai": "Alma Assyifa R",
+    "uraian": "Pekerjaan yang berhubungan dengan Pengarah Layanan dan resepsionis",
+    "periode": "Harian"
+  },
+  {
+    "id_tugas": "T0013",
+    "list_kode": "L2",
+    "nama_pegawai": "Alma Assyifa R",
+    "uraian": "Membersihkan seluruh meja dan kursi yang ada di area TPT",
+    "periode": "Harian"
+  },
+  {
+    "id_tugas": "T0014",
+    "list_kode": "L2",
+    "nama_pegawai": "Alma Assyifa R",
+    "uraian": "Mengganti seprei kasur tidur kepala kantor seminggu sekali",
+    "periode": "Harian"
+  },
+  {
+    "id_tugas": "T0015",
+    "list_kode": "L3",
+    "nama_pegawai": "Prastyo Panca Putra",
+    "uraian": "Mengepel, membersihkan ruang TPT secara keseluruhan",
+    "periode": "Harian"
+  },
+  {
+    "id_tugas": "T0016",
+    "list_kode": "L3",
+    "nama_pegawai": "Prastyo Panca Putra",
+    "uraian": "Membersihkan Sofa TPT Setiap Hari",
+    "periode": "Harian"
+  },
+  {
+    "id_tugas": "T0017",
+    "list_kode": "L3",
+    "nama_pegawai": "Prastyo Panca Putra",
+    "uraian": "Membersihkan Ruang Helpdesk",
+    "periode": "Harian"
+  },
+  {
+    "id_tugas": "T0018",
+    "list_kode": "L3",
+    "nama_pegawai": "Prastyo Panca Putra",
+    "uraian": "Membersihkan Ruang Anak",
+    "periode": "Harian"
+  },
+  {
+    "id_tugas": "T0019",
+    "list_kode": "L3",
+    "nama_pegawai": "Prastyo Panca Putra",
+    "uraian": "Membersihkan Ruang Konsultasi",
+    "periode": "Harian"
+  },
+  {
+    "id_tugas": "T0020",
+    "list_kode": "L3",
+    "nama_pegawai": "Prastyo Panca Putra",
+    "uraian": "Membersihkan kaca lobby TPT dan sekat  kaca konsultasi minimal seminggu sekali",
+    "periode": "Harian"
+  },
+  {
+    "id_tugas": "T0021",
+    "list_kode": "L3",
+    "nama_pegawai": "Prastyo Panca Putra",
+    "uraian": "Rutin Pemanasan Genset",
+    "periode": "Harian"
+  },
+  {
+    "id_tugas": "T0022",
+    "list_kode": "L3",
+    "nama_pegawai": "Prastyo Panca Putra",
+    "uraian": "Maintenance genset dan kelistrikan",
+    "periode": "Harian"
+  },
+  {
+    "id_tugas": "T0023",
+    "list_kode": "L3",
+    "nama_pegawai": "Prastyo Panca Putra",
+    "uraian": "Membersihkan kantin dan tangga dari kantin ke ruang kepala kantor",
+    "periode": "Harian"
+  },
+  {
+    "id_tugas": "T0024",
+    "list_kode": "L4",
+    "nama_pegawai": "Latief Maulana",
+    "uraian": "Mengepel dan merapihkan seluruh ruangan Seksi pengawasan 1,2,3,4,5",
+    "periode": "Harian"
+  },
+  {
+    "id_tugas": "T0025",
+    "list_kode": "L4",
+    "nama_pegawai": "Latief Maulana",
+    "uraian": "Mengepel dan merapihkan seluruh ruangan Seksi",
+    "periode": "Harian"
+  },
+  {
+    "id_tugas": "T0026",
+    "list_kode": "L4",
+    "nama_pegawai": "Latief Maulana",
+    "uraian": "Membersihkan ruang Pelayanan, Ruang Laktasi dan Ruang Lansia",
+    "periode": "Harian"
+  },
+  {
+    "id_tugas": "T0027",
+    "list_kode": "L4",
+    "nama_pegawai": "Latief Maulana",
+    "uraian": "Membersihkan ,Mengepel dan merapihkan Ruang Rapat Pengawasan",
+    "periode": "Harian"
+  },
+  {
+    "id_tugas": "T0028",
+    "list_kode": "L4",
+    "nama_pegawai": "Latief Maulana",
+    "uraian": "Mengepel dan merapihkan gudang Pelayanan dan ATK",
+    "periode": "Harian"
+  },
+  {
+    "id_tugas": "T0029",
+    "list_kode": "L4",
+    "nama_pegawai": "Latief Maulana",
+    "uraian": "Perawatan burung",
+    "periode": "Harian"
+  },
+  {
+    "id_tugas": "T0030",
+    "list_kode": "L5",
+    "nama_pegawai": "Arif Saefudin",
+    "uraian": "Mengepel dan membersihkan ruangan SUKI, Bendahara, P3, Closing, dan Poliklinik",
+    "periode": "Harian"
+  },
+  {
+    "id_tugas": "T0031",
+    "list_kode": "L5",
+    "nama_pegawai": "Arif Saefudin",
+    "uraian": "Perawatan burung",
+    "periode": "Harian"
+  },
+  {
+    "id_tugas": "T0032",
+    "list_kode": "L6",
+    "nama_pegawai": "Dede Saripudin",
+    "uraian": "Membersihkan seluruh Toilet laki-laki dan toilet perempuan (P3) beserta lorong toilet",
+    "periode": "Harian"
+  },
+  {
+    "id_tugas": "T0033",
+    "list_kode": "L6",
+    "nama_pegawai": "Dede Saripudin",
+    "uraian": "Mengepel dan membersihkan tangga hitam menuju aula dari parkiran motor, tangga bagian belakang Gedung sampai lantai 3, dan lorong di depan gudang galon",
+    "periode": "Harian"
+  },
+  {
+    "id_tugas": "T0034",
+    "list_kode": "L6",
+    "nama_pegawai": "Dede Saripudin",
+    "uraian": "Pemeliharaan Aula harian",
+    "periode": "Harian"
+  },
+  {
+    "id_tugas": "T0035",
+    "list_kode": "L7",
+    "nama_pegawai": "Sopiyan Sopandi",
+    "uraian": "Membersihkan Ruang Kepala Kantor berserta ruang tidur dan toiletnya",
+    "periode": "Harian"
+  },
+  {
+    "id_tugas": "T0036",
+    "list_kode": "L7",
+    "nama_pegawai": "Sopiyan Sopandi",
+    "uraian": "Membersihkan Ruang Rapat",
+    "periode": "Harian"
+  },
+  {
+    "id_tugas": "T0037",
+    "list_kode": "L7",
+    "nama_pegawai": "Sopiyan Sopandi",
+    "uraian": "Membersihkan Ruang Teteh Manis",
+    "periode": "Harian"
+  },
+  {
+    "id_tugas": "T0038",
+    "list_kode": "L7",
+    "nama_pegawai": "Sopiyan Sopandi",
+    "uraian": "Membersihkan Ruang Sekretaris",
+    "periode": "Harian"
+  },
+  {
+    "id_tugas": "T0039",
+    "list_kode": "L7",
+    "nama_pegawai": "Sopiyan Sopandi",
+    "uraian": "Membersihkan Lorong Aula",
+    "periode": "Harian"
+  },
+  {
+    "id_tugas": "T0040",
+    "list_kode": "L7",
+    "nama_pegawai": "Sopiyan Sopandi",
+    "uraian": "Maintanance Motor",
+    "periode": "Harian"
+  },
+  {
+    "id_tugas": "T0041",
+    "list_kode": "L8",
+    "nama_pegawai": "Andang Kusnandar",
+    "uraian": "Pemeliharaan tanaman dan kebersihan halaman (depan dan belakang kantor)",
+    "periode": "Harian"
+  },
+  {
+    "id_tugas": "T0042",
+    "list_kode": "L8",
+    "nama_pegawai": "Andang Kusnandar",
+    "uraian": "Pemeliharaan tanaman di dalam gedung kantor",
+    "periode": "Harian"
+  },
+  {
+    "id_tugas": "T0043",
+    "list_kode": "L8",
+    "nama_pegawai": "Andang Kusnandar",
+    "uraian": "Pemeliharaan kebersihan Kolam",
+    "periode": "Harian"
+  },
+  {
+    "id_tugas": "T0044",
+    "list_kode": "L8",
+    "nama_pegawai": "Andang Kusnandar",
+    "uraian": "Pemeliharaan kebersihan parkiran mobil dan motor",
+    "periode": "Harian"
+  },
+  {
+    "id_tugas": "T0045",
+    "list_kode": "L8",
+    "nama_pegawai": "Andang Kusnandar",
+    "uraian": "Pemeliharaan kebersihan gudang genset",
+    "periode": "Harian"
+  },
+  {
+    "id_tugas": "T0046",
+    "list_kode": "L8",
+    "nama_pegawai": "Andang Kusnandar",
+    "uraian": "Pemeliharaan kebersihan pos keamanan depan dan belakang",
+    "periode": "Harian"
+  },
+  {
+    "id_tugas": "T0047",
+    "list_kode": "L9",
+    "nama_pegawai": "Vina Valentina",
+    "uraian": "Membersihkan alat makan minum Seksi Pelayanan dan",
+    "periode": "Harian"
+  },
+  {
+    "id_tugas": "T0048",
+    "list_kode": "L9",
+    "nama_pegawai": "Vina Valentina",
+    "uraian": "Membersihkan Seksi Pengawasan 4",
+    "periode": "Harian"
+  },
+  {
+    "id_tugas": "T0049",
+    "list_kode": "L9",
+    "nama_pegawai": "Vina Valentina",
+    "uraian": "Membersihkan, merapihkan, mengelap semua meja dan kursi di Seksi Pelayanan dan Pengawasan 4",
+    "periode": "Harian"
+  },
+  {
+    "id_tugas": "T0050",
+    "list_kode": "L9",
+    "nama_pegawai": "Vina Valentina",
+    "uraian": "Membersihakan Toilet perempuan Lantai 1 (dekat tangga)",
+    "periode": "Harian"
+  },
+  {
+    "id_tugas": "T0051",
+    "list_kode": "L9",
+    "nama_pegawai": "Vina Valentina",
+    "uraian": "Menyiapkan konsumsi kegiatan rapat (Flexibel)",
+    "periode": "Harian"
+  },
+  {
+    "id_tugas": "T0052",
+    "list_kode": "L10",
+    "nama_pegawai": "Mustikandryna Okeu",
+    "uraian": "Membersihkan alat makan minum Seksi Pengawasan 1,2,3,5",
+    "periode": "Harian"
+  },
+  {
+    "id_tugas": "T0053",
+    "list_kode": "L10",
+    "nama_pegawai": "Mustikandryna Okeu",
+    "uraian": "Membersihkan, merapihkan, dan mengelap semua meja dan kursi di seksi pengawasan 1,2,3,5",
+    "periode": "Harian"
+  },
+  {
+    "id_tugas": "T0054",
+    "list_kode": "L10",
+    "nama_pegawai": "Mustikandryna Okeu",
+    "uraian": "Membersihkan Toilet perempuan TPT",
+    "periode": "Harian"
+  },
+  {
+    "id_tugas": "T0055",
+    "list_kode": "L10",
+    "nama_pegawai": "Mustikandryna Okeu",
+    "uraian": "Menyiapkan konsumsi kegiatan rapat (Flexibel)",
+    "periode": "Harian"
+  },
+  {
+    "id_tugas": "T0056",
+    "list_kode": "L11",
+    "nama_pegawai": "Yuyun Yuningsih",
+    "uraian": "Membersihkan alat makan minum lantai 2",
+    "periode": "Harian"
+  },
+  {
+    "id_tugas": "T0057",
+    "list_kode": "L11",
+    "nama_pegawai": "Yuyun Yuningsih",
+    "uraian": "Membersihkan, merapihkan, mengelap semua meja dan kursi di lantai 2",
+    "periode": "Harian"
+  },
+  {
+    "id_tugas": "T0058",
+    "list_kode": "L11",
+    "nama_pegawai": "Yuyun Yuningsih",
+    "uraian": "Membersihkan toilet perempuan Lantai 2 (dekat aula)",
+    "periode": "Harian"
+  },
+  {
+    "id_tugas": "T0059",
+    "list_kode": "L11",
+    "nama_pegawai": "Yuyun Yuningsih",
+    "uraian": "Menyiapkan konsumsi kegiatan rapat (Flexibel)",
+    "periode": "Harian"
+  },
+  {
+    "id_tugas": "T0060",
+    "list_kode": "L12",
+    "nama_pegawai": "Zaenudin",
+    "uraian": "Supir",
+    "periode": "Harian"
+  },
+  {
+    "id_tugas": "T0061",
+    "list_kode": "L12",
+    "nama_pegawai": "Zaenudin",
+    "uraian": "Menjaga kebersihan kendaraan mobil",
+    "periode": "Harian"
+  },
+  {
+    "id_tugas": "T0062",
+    "list_kode": "L12",
+    "nama_pegawai": "Zaenudin",
+    "uraian": "Maintanance Mobil",
+    "periode": "Insidentil"
+  },
+  {
+    "id_tugas": "T0063",
+    "list_kode": "L12",
+    "nama_pegawai": "Zaenudin",
+    "uraian": "Mengurus pajak mobil dan motor",
+    "periode": "Insidentil"
+  },
+  {
+    "id_tugas": "T0064",
+    "list_kode": "L13",
+    "nama_pegawai": "Semua CS dan Pramubakti",
+    "uraian": "Kegiatan Kantor",
+    "periode": "Insidentil"
+  },
+  {
+    "id_tugas": "T0065",
+    "list_kode": "L13",
+    "nama_pegawai": "Semua CS dan Pramubakti",
+    "uraian": "Membersihkan Toren Air",
+    "periode": "Bulanan"
+  },
+  {
+    "id_tugas": "T0066",
+    "list_kode": "L13",
+    "nama_pegawai": "Semua CS dan Pramubakti",
+    "uraian": "Mengelap kaca luar kantor termasuk kaca di lobi TPT",
+    "periode": "Mingguan"
+  },
+  {
+    "id_tugas": "T0067",
+    "list_kode": "L13",
+    "nama_pegawai": "Semua CS dan Pramubakti",
+    "uraian": "Merapihkan pohon dan rumput di halaman kantor",
+    "periode": "Bulanan"
+  },
+  {
+    "id_tugas": "T0068",
+    "list_kode": "L13",
+    "nama_pegawai": "Semua CS dan Pramubakti",
+    "uraian": "Pembersihan Aula dan Lantai 3",
+    "periode": "Mingguan"
+  },
+  {
+    "id_tugas": "T0069",
+    "list_kode": "L13",
+    "nama_pegawai": "Semua CS dan Pramubakti",
+    "uraian": "Membersihkan Gudang pelayanan dan ATK",
+    "periode": "Mingguan"
+  }
+];
+
+// ============================================================
+// JADWAL HARI LIBUR DEFAULT (seed awal, admin bisa tambah/edit/hapus)
+// Dipakai sebagai parameter hari libur untuk pegawai Cleaning Service &
+// Pramubakti. Security tetap memakai jadwal shift (kode "L"/Libur).
+// ============================================================
+var DEFAULT_LIBUR = [
+  { tanggal: '2026-01-01', keterangan: 'Tahun Baru' }
+];
+
+// Terapkan cache Jam Kerja & Radius terakhir (localStorage) sebagai tampilan
+// sementara sebelum data terbaru dari Supabase selesai dimuat saat login
+(function applySavedSettings(){
+  try {
+    var savedJK = JSON.parse(localStorage.getItem('ppnpn_jamkerja_setting') || 'null');
+    if (savedJK && Array.isArray(savedJK) && savedJK.length) {
+      DEMO_JAM_KERJA.length = 0;
+      savedJK.forEach(function(r){ DEMO_JAM_KERJA.push(r); });
+    }
+  } catch(e) {}
+  try {
+    var savedR = JSON.parse(localStorage.getItem('ppnpn_radius_setting') || 'null');
+    if (savedR) {
+      if (savedR.officeLat != null) DEMO_RADIUS.officeLat = savedR.officeLat;
+      if (savedR.officeLon != null) DEMO_RADIUS.officeLon = savedR.officeLon;
+      if (savedR.radiusTolerance != null) DEMO_RADIUS.radiusTolerance = savedR.radiusTolerance;
+    }
+  } catch(e) {}
+})();
+
+// Cache lokal absensi & permohonan (disinkronkan dari Supabase)
+var localAbsensi = JSON.parse(localStorage.getItem('ppnpn_absensi') || '[]');
+var localPermohonan = JSON.parse(localStorage.getItem('ppnpn_permohonan') || '[]');
+var localAllPegawai = JSON.parse(localStorage.getItem('ppnpn_all_pegawai') || 'null');
+var localPegawai = JSON.parse(localStorage.getItem('ppnpn_pegawai') || 'null');
+var localKeluarga = JSON.parse(localStorage.getItem('ppnpn_keluarga') || '{}');
+var adminCutiCurrentTab = 'pending';
+
+// Cache: jadwal hari libur, daftar tugas, dan progress checklist tugas (sinkron ke Supabase)
+var localLibur = JSON.parse(localStorage.getItem('ppnpn_libur') || 'null');
+var localDaftarTugas = JSON.parse(localStorage.getItem('ppnpn_daftar_tugas') || 'null');
+var localChecklistTugas = JSON.parse(localStorage.getItem('ppnpn_checklist_tugas') || '[]');
+var localChecklistFotoUmum = JSON.parse(localStorage.getItem('ppnpn_checklist_foto_umum') || '[]');
+var localIjinKeluar = JSON.parse(localStorage.getItem('ppnpn_ijin_keluar') || '[]');
+var localChecklistApproval = JSON.parse(localStorage.getItem('ppnpn_checklist_approval') || '[]');
+var selectedLibur = new Set();
+var selectedTugas = new Set();
+
+// ============================================================
+// UTILS
+// ============================================================
+function fmtDate(d) {
+  if (!d) return '-';
+  if (typeof d === 'string' && d.includes('-')) {
+    const [y,m,dd] = d.split('-');
+    return `${dd}/${m}/${y}`;
+  }
+  const dt = new Date(d);
+  return isNaN(dt) ? d : dt.toLocaleDateString('id-ID');
+}
+function fmtTime(d) {
+  if (!d) return '-';
+  if (typeof d === 'string' && d.match(/^\d{2}:\d{2}/)) return d.substring(0,5);
+  const dt = new Date(d);
+  return isNaN(dt) ? d : dt.toTimeString().substring(0,5);
+}
+function today() {
+  return new Date().toISOString().split('T')[0];
+}
+function todayStr() {
+  const d = new Date();
+  const days = ['Minggu','Senin','Selasa','Rabu','Kamis','Jumat','Sabtu'];
+  const months = ['Januari','Februari','Maret','April','Mei','Juni','Juli','Agustus','September','Oktober','November','Desember'];
+  return `${days[d.getDay()]}, ${d.getDate()} ${months[d.getMonth()]} ${d.getFullYear()}`;
+}
+function haversine(lat1,lon1,lat2,lon2) {
+  const R=6371000, dLat=(lat2-lat1)*Math.PI/180, dLon=(lon2-lon1)*Math.PI/180;
+  const a=Math.sin(dLat/2)*Math.sin(dLat/2)+Math.cos(lat1*Math.PI/180)*Math.cos(lat2*Math.PI/180)*Math.sin(dLon/2)*Math.sin(dLon/2);
+  return R*2*Math.atan2(Math.sqrt(a),Math.sqrt(1-a));
+}
+function genId(prefix) {
+  return prefix + Date.now().toString(36).toUpperCase();
+}
+
+
+
+
+
+// ============================================================
+// PERIODE HAK CUTI — RESET OTOMATIS TIAP 1 JANUARI & 1 JULI
+// ------------------------------------------------------------
+// Status kepegawaian PPNPN adalah kontrak yang diperbarui tiap 6 bulan,
+// sehingga saldo hak cuti tahunan (6 hari) ikut direset otomatis mengikuti
+// siklus kontrak tsb: Semester 1 (1 Jan - 30 Jun) dan Semester 2
+// (1 Jul - 31 Des). Reset ini TIDAK memerlukan aksi manual/cron — saldo
+// selalu dihitung ulang dari permohonan cuti yang tanggalnya jatuh di
+// periode berjalan saja, jadi begitu tanggal sistem masuk 1 Jan / 1 Jul,
+// pemakaian periode sebelumnya otomatis tidak lagi mengurangi saldo baru.
+// ============================================================
+function getPeriodeCuti(tanggalRef) {
+  var d = tanggalRef ? new Date(tanggalRef) : new Date();
+  var tahun = d.getFullYear();
+  var bulan = d.getMonth() + 1; // 1-12
+  if (bulan <= 6) {
+    return {
+      semester: 1,
+      tahun: tahun,
+      start: tahun + '-01-01',
+      end: tahun + '-06-30',
+      label: 'Semester 1 ' + tahun + ' (Jan–Jun)',
+      resetBerikutnya: tahun + '-07-01'
+    };
+  }
+  return {
+    semester: 2,
+    tahun: tahun,
+    start: tahun + '-07-01',
+    end: tahun + '-12-31',
+    label: 'Semester 2 ' + tahun + ' (Jul–Des)',
+    resetBerikutnya: (tahun + 1) + '-01-01'
+  };
+}
+
+// Daftar beberapa periode terakhir (terbaru lebih dulu) — dipakai untuk
+// filter riwayat saldo cuti per semester di menu Hak Cuti Pegawai.
+function getDaftarPeriodeCuti(jumlah) {
+  jumlah = jumlah || 4;
+  var out = [];
+  var d = new Date();
+  for (var i = 0; i < jumlah; i++) {
+    out.push(getPeriodeCuti(d));
+    d.setMonth(d.getMonth() - 6);
+  }
+  return out;
+}
+
+function hariMenujuReset(periode) {
+  periode = periode || getPeriodeCuti();
+  var msPerHari = 24 * 60 * 60 * 1000;
+  var sisaHari = Math.ceil((new Date(periode.resetBerikutnya) - new Date(today())) / msPerHari);
+  return Math.max(0, sisaHari);
+}
+
+// Hitung saldo cuti tahunan 1 pegawai untuk 1 periode (default: periode
+// aktif saat ini). Hanya permohonan "Cuti Tahunan" berstatus "Disetujui"
+// dengan Tanggal_Mulai di dalam rentang periode yang dihitung, sehingga
+// saldo otomatis kembali menjadi 6 hari setiap awal periode baru.
+function hitungSaldoCuti(idPegawai, periode) {
+  periode = periode || getPeriodeCuti();
+  var HAK = 6;
+  var pakai = (localPermohonan || []).filter(function(pm) {
+    return pm.ID_Karyawan === idPegawai &&
+           pm.Jenis_Cuti && pm.Jenis_Cuti.indexOf('Cuti Tahunan') >= 0 &&
+           pm.Status === 'Disetujui' &&
+           pm.Tanggal_Mulai && pm.Tanggal_Mulai >= periode.start && pm.Tanggal_Mulai <= periode.end;
+  }).reduce(function(s, pm) { return s + Number(pm.Jumlah_Hari || 0); }, 0);
+  var sisa = Math.max(0, HAK - pakai);
+  return { hak: HAK, pakai: pakai, sisa: sisa, periode: periode };
+}
+
+// ============================================================
+// PAGINATION UTILITY (dipakai di semua tabel: absensi, cuti, pegawai, dll)
+// ============================================================
+var pgState = {};
+
+function pgGet(key) {
+  if (!pgState[key]) pgState[key] = { page: 1, perPage: 10 };
+  return pgState[key];
+}
+
+// Render satu halaman dari `data` ke <tbody id=tbodyId>, plus kontrol pagination di #paginationId.
+// rowFn(item, indexInPage) -> string HTML <tr>
+function renderPaged(key, data, tbodyId, paginationId, rowFn, colSpan, emptyMsg) {
+  var st = pgGet(key);
+  var total = data.length;
+  var totalPages = Math.max(1, Math.ceil(total / st.perPage));
+  if (st.page > totalPages) st.page = totalPages;
+  if (st.page < 1) st.page = 1;
+  var start = (st.page - 1) * st.perPage;
+  var pageData = data.slice(start, start + st.perPage);
+  var tbody = document.getElementById(tbodyId);
+  if (tbody) {
+    if (!total) {
+      tbody.innerHTML = '<tr><td colspan="' + colSpan + '" style="text-align:center;padding:24px;color:var(--text-muted)">' + (emptyMsg || 'Tidak ada data') + '</td></tr>';
+    } else {
+      tbody.innerHTML = pageData.map(rowFn).join('');
+    }
+  }
+  window['__pgRerender_' + key] = function () {
+    renderPaged(key, data, tbodyId, paginationId, rowFn, colSpan, emptyMsg);
+  };
+  renderPaginationBar(paginationId, key, total, st.page, st.perPage);
+}
+
+function pgPageList(current, total) {
+  var out = [];
+  for (var i = 1; i <= total; i++) {
+    if (i === 1 || i === total || (i >= current - 1 && i <= current + 1)) out.push(i);
+    else if (out[out.length - 1] !== '...') out.push('...');
+  }
+  return out;
+}
+
+
+// Catatan: fungsi pilih-semua & generate SPK Lembur yang aktif ada di
+// toggleAllLembur() dan generateSpkLemburDocx() (lihat bagian "ADMIN:
+// PENUGASAN & SPK LEMBUR" di bawah).
+
+
+function renderPaginationBar(containerId, key, total, page, perPage) {
+  var el = document.getElementById(containerId);
+  if (!el) return;
+  var totalPages = Math.max(1, Math.ceil(total / perPage));
+  var startItem = total === 0 ? 0 : (page - 1) * perPage + 1;
+  var endItem = Math.min(total, page * perPage);
+  var pages = pgPageList(page, totalPages);
+  var btns = '';
+  btns += '<button class="pg-btn" ' + (page <= 1 ? 'disabled' : '') + ' onclick="pgGoto(\'' + key + '\',1)" title="Halaman pertama">&laquo;</button>';
+  btns += '<button class="pg-btn" ' + (page <= 1 ? 'disabled' : '') + ' onclick="pgGoto(\'' + key + '\',' + (page - 1) + ')" title="Sebelumnya">&lsaquo;</button>';
+  pages.forEach(function (p) {
+    if (p === '...') { btns += '<span style="padding:0 4px;color:var(--text-muted)">…</span>'; }
+    else { btns += '<button class="pg-btn ' + (p === page ? 'active' : '') + '" onclick="pgGoto(\'' + key + '\',' + p + ')">' + p + '</button>'; }
+  });
+  btns += '<button class="pg-btn" ' + (page >= totalPages ? 'disabled' : '') + ' onclick="pgGoto(\'' + key + '\',' + (page + 1) + ')" title="Berikutnya">&rsaquo;</button>';
+  btns += '<button class="pg-btn" ' + (page >= totalPages ? 'disabled' : '') + ' onclick="pgGoto(\'' + key + '\',' + totalPages + ')" title="Halaman terakhir">&raquo;</button>';
+
+  el.innerHTML =
+    '<div class="pg-info">' + (total ? ('Menampilkan ' + startItem + '–' + endItem + ' dari ' + total + ' data') : 'Tidak ada data') + '</div>' +
+    '<div class="pg-controls">' + btns +
+    '<select class="pg-size" onchange="pgResize(\'' + key + '\',this.value)">' +
+    [10, 25, 50, 100].map(function (n) { return '<option value="' + n + '" ' + (n === perPage ? 'selected' : '') + '>' + n + ' / hal</option>'; }).join('') +
+    '</select></div>';
+}
+
+function pgGoto(key, page) {
+  pgGet(key).page = Number(page);
+  if (window['__pgRerender_' + key]) window['__pgRerender_' + key]();
+}
+function pgResize(key, size) {
+  var st = pgGet(key);
+  st.perPage = Number(size);
+  st.page = 1;
+  if (window['__pgRerender_' + key]) window['__pgRerender_' + key]();
+}
+function showAlert(elId, type, msg) {
+  const el = document.getElementById(elId);
+  if (!el) return;
+  el.innerHTML = `<div class="alert alert-${type}">${msg}</div>`;
+  setTimeout(()=> { if(el) el.innerHTML=''; }, 5000);
+}
+
+// ============================================================
+// CONFIG
+// ============================================================
+function showConfigSetup() {
+  // Hanya admin yang bisa akses
+  if (!currentUser || currentUser.status !== 'Admin') {
+    alert('⛔ Akses ditolak. Konfigurasi hanya dapat diubah oleh Administrator.');
+    return;
+  }
+  document.getElementById('cfgSheetId').value  = SUPABASE_URL || '';
+  document.getElementById('cfgScriptUrl').value = SUPABASE_ANON_KEY || '';
+  document.getElementById('configModal').classList.add('open');
+}
+function closeConfigModal() { document.getElementById('configModal').classList.remove('open'); }
+function saveConfig() {
+  SUPABASE_URL      = document.getElementById('cfgSheetId').value.trim();
+  SUPABASE_ANON_KEY = document.getElementById('cfgScriptUrl').value.trim();
+  localStorage.setItem('ppnpn_supabase_url', SUPABASE_URL);
+  localStorage.setItem('ppnpn_supabase_key', SUPABASE_ANON_KEY);
+  initSupabaseClient();
+  SCRIPT_URL = supabaseClient ? 'supabase' : '';
+  closeConfigModal();
+  // Tampilkan notifikasi di dalam app
+  var notif = document.createElement('div');
+  notif.style.cssText = 'position:fixed;top:80px;right:20px;z-index:9999;background:#16a34a;color:#fff;padding:12px 20px;border-radius:12px;font-size:13px;font-weight:600;box-shadow:0 4px 20px rgba(0,0,0,0.2);animation:fadeIn 0.3s';
+  notif.textContent = supabaseClient ? '✅ Konfigurasi Supabase berhasil disimpan!' : '⚠ URL/Key belum valid, cek kembali.';
+  document.body.appendChild(notif);
+  setTimeout(function(){ notif.remove(); }, 3000);
+  if (supabaseClient) setTimeout(function(){ location.reload(); }, 800);
+}
+function quickSaveUrl(val) {
+  // Kolom cepat di banner dashboard sekarang dipakai untuk Project URL Supabase
+  SUPABASE_URL = val.trim();
+  localStorage.setItem('ppnpn_supabase_url', SUPABASE_URL);
+  initSupabaseClient();
+  SCRIPT_URL = supabaseClient ? 'supabase' : '';
+}
+
+// ============================================================
+// LAPISAN DATA — SUPABASE
+// Semua pemanggil callAPI()/postAPI() di seluruh kode di bawah TIDAK
+// diubah; hanya implementasi di sini yang diganti dari Google Apps
+// Script menjadi query ke Supabase, dengan bentuk hasil {success,data}
+// yang sama persis seperti sebelumnya supaya kompatibel.
+// ============================================================
+async function callAPI(action, params={}) {
+  if (!supabaseClient) return null;
+  try {
+    switch (action) {
+
+      case 'login': {
+        const uname = String(params.username||'').toLowerCase();
+        const { data, error } = await supabaseClient
+          .from('pegawai').select('*')
+          .eq('username', uname).eq('password', params.password).limit(1);
+        if (error || !data || !data.length) return { success:false };
+        const r = data[0];
+        return { success:true, user: {
+          idPegawai: r.id_pegawai, namaPegawai: r.nama_pegawai, username: r.username,
+          password: r.password, status: r.status, pekerjaan: r.pekerjaan, Tim: r.tim
+        }};
+      }
+
+      case 'getPegawai': {
+        let q = supabaseClient.from('pegawai').select('*');
+        if (params.idPegawai) q = q.eq('id_pegawai', params.idPegawai);
+        if (params.pekerjaan) q = q.eq('pekerjaan', params.pekerjaan);
+        const { data, error } = await q;
+        if (error) return { success:false, error: error.message };
+        return { success:true, data: (data||[]).map(function(r){
+          return {
+            'ID PEGAWAI': r.id_pegawai, 'NAMA': r.nama_pegawai, 'NIK': r.nik,
+            'NO HP': r.no_hp, 'TEMPAT LAHIR': r.tempat_lahir, 'TGL LAHIR': r.tgl_lahir,
+            'JENIS KELAMIN': r.jenis_kelamin, 'PENDIDIKAN': r.pendidikan, 'ALAMAT': r.alamat,
+            'PEKERJAAN': r.pekerjaan, 'Tim': r.tim, 'TIM': r.tim,
+            'PASSWORD': r.password, 'USERNAME': r.username, 'STATUS': r.status
+          };
+        })};
+      }
+
+      case 'savePegawai': {
+        const upd = {};
+        if (params.NAMA !== undefined)          upd.nama_pegawai   = params.NAMA;
+        if (params.NIK !== undefined)           upd.nik            = params.NIK;
+        if (params.NO_HP !== undefined)         upd.no_hp          = params.NO_HP;
+        if (params.TEMPAT_LAHIR !== undefined)  upd.tempat_lahir   = params.TEMPAT_LAHIR;
+        if (params.TGL_LAHIR !== undefined)     upd.tgl_lahir      = params.TGL_LAHIR || null;
+        if (params.JENIS_KELAMIN !== undefined) upd.jenis_kelamin  = params.JENIS_KELAMIN;
+        if (params.PENDIDIKAN !== undefined)    upd.pendidikan     = params.PENDIDIKAN;
+        if (params.ALAMAT !== undefined)        upd.alamat         = params.ALAMAT;
+        const { error } = await supabaseClient.from('pegawai').update(upd).eq('id_pegawai', params.idPegawai);
+        return { success: !error, error: error?error.message:null };
+      }
+
+      case 'savePegawaiAdmin': {
+        const row = {
+          id_pegawai: params.idPegawai, nama_pegawai: params.NAMA,
+          nik: params.NIK, pekerjaan: params.PEKERJAAN, tim: params.TIM,
+          no_hp: params.NO_HP, password: params.PASSWORD, username: params.USERNAME,
+          status: params.STATUS || 'Pegawai'
+        };
+        const { error } = await supabaseClient.from('pegawai').upsert(row, { onConflict: 'id_pegawai' });
+        return { success: !error, error: error?error.message:null };
+      }
+
+      case 'deletePegawai': {
+        const ids = Array.isArray(params.idPegawai) ? params.idPegawai : [params.idPegawai];
+        const { error } = await supabaseClient.from('pegawai').delete().in('id_pegawai', ids);
+        return { success: !error, error: error?error.message:null };
+      }
+
+      case 'deleteAbsensi': {
+        const ids = Array.isArray(params.idAbsen) ? params.idAbsen : [params.idAbsen];
+        const { error } = await supabaseClient.from('absensi').delete().in('id_absen', ids);
+        return { success: !error, error: error?error.message:null };
+      }
+
+      case 'deletePermohonan': {
+        const ids = Array.isArray(params.idPengajuan) ? params.idPengajuan : [params.idPengajuan];
+        const { error } = await supabaseClient.from('permohonan').delete().in('id_pengajuan', ids);
+        return { success: !error, error: error?error.message:null };
+      }
+
+      case 'getKeluarga': {
+        const { data, error } = await supabaseClient.from('keluarga').select('*').eq('id_pegawai', params.idPegawai);
+        if (error) return { success:false, error: error.message };
+        return { success:true, data: (data||[]).map(function(r){
+          return {
+            'NAMA ANGGOTA': r.nama, 'HUBUNGAN': r.hubungan, 'TEMPAT LAHIR': r.ttl,
+            'TANGGAL LAHIR': r.tgl_lahir, 'NIK PEGAWAI': r.nik, 'NO KK': r.no_kk,
+            'PENDIDIKAN': r.pendidikan, 'STATUS TANGGUNGAN': r.tanggungan
+          };
+        })};
+      }
+
+      case 'saveKeluarga': {
+        const row = {
+          id_pegawai: params.idPegawai, nama: params.nama, hubungan: params.hubungan,
+          ttl: params.ttl, tgl_lahir: params.tgl || null, nik: params.nik,
+          no_kk: params.kk, pendidikan: params.pendidikan, tanggungan: params.tanggungan
+        };
+        const { error } = await supabaseClient.from('keluarga').insert(row);
+        return { success: !error, error: error?error.message:null };
+      }
+
+      case 'getAbsensi': {
+        let q = supabaseClient.from('absensi').select('*').order('tanggal', { ascending:false });
+        if (params.idPegawai) q = q.eq('id_pegawai', params.idPegawai);
+        if (params.from) q = q.gte('tanggal', params.from);
+        if (params.to)   q = q.lte('tanggal', params.to);
+        const { data, error } = await q;
+        if (error) return { success:false, error: error.message };
+        return { success:true, data: (data||[]).map(mapAbsensiRow) };
+      }
+
+      case 'saveAbsensi': {
+        const row = {
+          id_absen: params.IdAbsen, id_pegawai: params.idPegawai, nama_pegawai: params.namaPegawai,
+          pekerjaan: params.pekerjaan, tim: params.Tim, tanggal: params.tanggal,
+          absen_masuk: params.absenMasuk || null, status_absen_masuk: params.statusAbsenMasuk || null,
+          lokasi_masuk: params.lokasiMasuk || null, lat_masuk: params.latMasuk || null, lon_masuk: params.lonMasuk || null,
+          absen_pulang: params.absenPulang || null, status_absen_pulang: params.statusAbsenPulang || null,
+          lokasi_pulang: params.lokasiPulang || null, lat_pulang: params.latPulang || null, lon_pulang: params.lonPulang || null,
+          durasi_kerja: params.durasiKerja || null, is_lembur: !!params.isLembur,
+          foto_masuk: params.fotoMasuk || null, foto_pulang: params.fotoPulang || null
+        };
+        const { error } = await supabaseClient.from('absensi').upsert(row, { onConflict: 'id_pegawai,tanggal' });
+        return { success: !error, error: error?error.message:null };
+      }
+
+      // ---- PENUGASAN LEMBUR (pegawai yang ditunjuk lembur di hari libur) ----
+      case 'getLembur': {
+        let q = supabaseClient.from('lembur_penugasan').select('*').order('tanggal', { ascending:false });
+        if (params.from) q = q.gte('tanggal', params.from);
+        if (params.to)   q = q.lte('tanggal', params.to);
+        if (params.idPegawai) q = q.eq('id_pegawai', params.idPegawai);
+        const { data, error } = await q;
+        if (error) return { success:false, error: error.message };
+        return { success:true, data: (data||[]).map(function(r){
+          return { tanggal: r.tanggal, idPegawai: r.id_pegawai, namaPegawai: r.nama_pegawai, jamMulai: r.jam_mulai, jamSelesai: r.jam_selesai, keterangan: r.keterangan };
+        })};
+      }
+
+      case 'saveLembur': {
+        const rows = (Array.isArray(params.rows) ? params.rows : [params]).map(function(r){
+          return { tanggal: r.tanggal, id_pegawai: r.idPegawai, nama_pegawai: r.namaPegawai, jam_mulai: r.jamMulai || null, jam_selesai: r.jamSelesai || null, keterangan: r.keterangan || '' };
+        });
+        const { error } = await supabaseClient.from('lembur_penugasan').upsert(rows, { onConflict: 'tanggal,id_pegawai' });
+        return { success: !error, error: error?error.message:null };
+      }
+
+      case 'deleteLembur': {
+        const items = Array.isArray(params.items) ? params.items : [{ tanggal: params.tanggal, idPegawai: params.idPegawai }];
+        for (const it of items) {
+          await supabaseClient.from('lembur_penugasan').delete().eq('tanggal', it.tanggal).eq('id_pegawai', it.idPegawai);
+        }
+        return { success:true };
+      }
+
+      case 'getPermohonan': {
+        let q = supabaseClient.from('permohonan').select('*').order('tanggal_mulai', { ascending:false });
+        if (params.idKaryawan) q = q.eq('id_karyawan', params.idKaryawan);
+        const { data, error } = await q;
+        if (error) return { success:false, error: error.message };
+        return { success:true, data: (data||[]).map(function(r){
+          return {
+            ID_Pengajuan: r.id_pengajuan, ID_Karyawan: r.id_karyawan, Nama_Karyawan: r.nama_karyawan,
+            Jenis_Cuti: r.jenis_cuti, Tanggal_Mulai: r.tanggal_mulai, Tanggal_Selesai: r.tanggal_selesai,
+            Jumlah_Hari: r.jumlah_hari, Alasan: r.alasan, Status: r.status, Lampiran: r.lampiran,
+            created_at: r.created_at
+          };
+        })};
+      }
+
+      case 'savePermohonan': {
+        const row = {
+          id_pengajuan: params.ID_Pengajuan, id_karyawan: params.ID_Karyawan, nama_karyawan: params.Nama_Karyawan,
+          jenis_cuti: params.Jenis_Cuti, tanggal_mulai: params.Tanggal_Mulai, tanggal_selesai: params.Tanggal_Selesai,
+          jumlah_hari: params.Jumlah_Hari, alasan: params.Alasan, status: params.Status || 'Menunggu',
+          lampiran: params.Lampiran
+        };
+        const { error } = await supabaseClient.from('permohonan').insert(row);
+        return { success: !error, error: error?error.message:null };
+      }
+
+      case 'updatePermohonan': {
+        const { error } = await supabaseClient.from('permohonan')
+          .update({ status: params.Status }).eq('id_pengajuan', params.ID_Pengajuan);
+        return { success: !error, error: error?error.message:null };
+      }
+
+      // ---- IJIN KELUAR (izin keluar sementara pada jam kerja) ----
+      case 'getIjinKeluar': {
+        let q = supabaseClient.from('ijin_keluar').select('*').order('tanggal', { ascending:false });
+        if (params.idPegawai) q = q.eq('id_pegawai', params.idPegawai);
+        const { data, error } = await q;
+        if (error) return { success:false, error: error.message };
+        return { success:true, data: (data||[]).map(function(r){
+          return {
+            idIjin: r.id_ijin, idPegawai: r.id_pegawai, namaPegawai: r.nama_pegawai,
+            tanggal: r.tanggal, keperluan: r.keperluan, jamKeluar: r.jam_keluar, jamKembali: r.jam_kembali,
+            alasan: r.alasan, status: r.status, catatanAdmin: r.catatan_admin, created_at: r.created_at
+          };
+        })};
+      }
+
+      case 'saveIjinKeluar': {
+        const row = {
+          id_ijin: params.idIjin, id_pegawai: params.idPegawai, nama_pegawai: params.namaPegawai,
+          tanggal: params.tanggal, keperluan: params.keperluan, jam_keluar: params.jamKeluar,
+          jam_kembali: params.jamKembali, alasan: params.alasan, status: params.status || 'Menunggu',
+          catatan_admin: params.catatanAdmin || null
+        };
+        const { error } = await supabaseClient.from('ijin_keluar').insert(row);
+        return { success: !error, error: error?error.message:null };
+      }
+
+      case 'updateIjinKeluar': {
+        const { error } = await supabaseClient.from('ijin_keluar')
+          .update({ status: params.status, catatan_admin: params.catatanAdmin || null }).eq('id_ijin', params.idIjin);
+        return { success: !error, error: error?error.message:null };
+      }
+
+      case 'deleteIjinKeluar': {
+        const ids = Array.isArray(params.idIjin) ? params.idIjin : [params.idIjin];
+        const { error } = await supabaseClient.from('ijin_keluar').delete().in('id_ijin', ids);
+        return { success: !error, error: error?error.message:null };
+      }
+
+      // ---- PERSETUJUAN CHECKLIST TUGAS HARIAN (catatan & approval hasil kerja CS) ----
+      case 'getChecklistApproval': {
+        let q = supabaseClient.from('checklist_approval').select('*');
+        if (params.idPegawai) q = q.eq('id_pegawai', params.idPegawai);
+        if (params.tanggal)   q = q.eq('tanggal', params.tanggal);
+        if (params.from) q = q.gte('tanggal', params.from);
+        if (params.to)   q = q.lte('tanggal', params.to);
+        const { data, error } = await q;
+        if (error) return { success:false, error: error.message };
+        return { success:true, data: (data||[]).map(function(r){
+          return { id:r.id, idPegawai:r.id_pegawai, namaPegawai:r.nama_pegawai, tanggal:r.tanggal, status:r.status, catatan:r.catatan_admin };
+        })};
+      }
+
+      case 'saveChecklistApproval': {
+        const row = {
+          id: params.idPegawai + '_' + params.tanggal,
+          id_pegawai: params.idPegawai, nama_pegawai: params.namaPegawai, tanggal: params.tanggal,
+          status: params.status || 'Menunggu', catatan_admin: params.catatan || null
+        };
+        const { error } = await supabaseClient.from('checklist_approval').upsert(row, { onConflict:'id' });
+        return { success: !error, error: error?error.message:null };
+      }
+
+      case 'getShift': {
+        let q = supabaseClient.from('shift_jadwal').select('*');
+        if (params.from) q = q.gte('tanggal', params.from);
+        if (params.to)   q = q.lte('tanggal', params.to);
+        const { data, error } = await q;
+        if (error) return { success:false, error: error.message };
+        const byTgl = {};
+        (data||[]).forEach(function(r){
+          if (!byTgl[r.tanggal]) byTgl[r.tanggal] = { Tanggal: r.tanggal };
+          byTgl[r.tanggal][r.tim] = r.kode;
+        });
+        return { success:true, data: Object.values(byTgl) };
+      }
+
+      case 'saveShift': {
+        const rows = [];
+        (params.rows||[]).forEach(function(r){
+          ['TIM 1','TIM 2','TIM 3','TIM 4'].forEach(function(t){
+            if (r[t] !== undefined) rows.push({ tanggal: r.Tanggal, tim: t, kode: r[t] });
+          });
+        });
+        if (!rows.length) return { success:true };
+        const { error } = await supabaseClient.from('shift_jadwal').upsert(rows, { onConflict: 'tanggal,tim' });
+        return { success: !error, error: error?error.message:null };
+      }
+
+      case 'deleteShift': {
+        // Menghapus seluruh baris jadwal shift (semua TIM) dalam rentang
+        // tanggal tertentu — dipakai untuk "Hapus Jadwal" per bulan.
+        if (!params.from || !params.to) return { success:false, error:'Rentang tanggal tidak lengkap' };
+        const { error } = await supabaseClient.from('shift_jadwal').delete()
+          .gte('tanggal', params.from).lte('tanggal', params.to);
+        return { success: !error, error: error?error.message:null };
+      }
+
+      case 'getRadius': {
+        const { data, error } = await supabaseClient.from('konfigurasi').select('*').eq('id',1).limit(1);
+        if (error || !data || !data.length) return { success:false };
+        const r = data[0];
+        return { success:true, data: {
+          officeLat: r.office_lat, officeLon: r.office_lon, radiusTolerance: r.radius_tolerance
+        }};
+      }
+
+      case 'saveRadius': {
+        const row = {
+          id: 1,
+          office_lat: params.officeLat,
+          office_lon: params.officeLon,
+          radius_tolerance: params.radiusTolerance
+        };
+        const { error } = await supabaseClient.from('konfigurasi').upsert(row, { onConflict: 'id' });
+        return { success: !error, error: error?error.message:null };
+      }
+
+      case 'getSpkSettings': {
+        const { data, error } = await supabaseClient.from('konfigurasi').select('*').eq('id',1).limit(1);
+        if (error || !data || !data.length) return { success:false };
+        const r = data[0];
+        return { success:true, data: {
+          namaTtd: r.spk_nama_ttd || '', jabatanTtd: r.spk_jabatan_ttd || '',
+          kota: r.spk_kota || 'Subang', formatNomor: r.spk_format_nomor || ''
+        }};
+      }
+
+      case 'saveSpkSettings': {
+        const row = {
+          id: 1,
+          spk_nama_ttd: params.namaTtd || null,
+          spk_jabatan_ttd: params.jabatanTtd || null,
+          spk_kota: params.kota || null,
+          spk_format_nomor: params.formatNomor || null
+        };
+        const { error } = await supabaseClient.from('konfigurasi').upsert(row, { onConflict: 'id' });
+        return { success: !error, error: error?error.message:null };
+      }
+
+      case 'getJamKerja': {
+        const { data, error } = await supabaseClient.from('jam_kerja').select('*');
+        if (error) return { success:false, error: error.message };
+        return { success:true, data: (data||[]).map(r => ({
+          PEKERJAAN: r.pekerjaan, SHIFT: r.shift, JAM_MASUK: r.jam_masuk, JAM_PULANG: r.jam_pulang
+        }))};
+      }
+
+      case 'saveJamKerja': {
+        await supabaseClient.from('jam_kerja').delete().neq('pekerjaan', 'NULL_DUMMY');
+        const rows = (params.data || []).map(r => ({
+          pekerjaan: r.PEKERJAAN, shift: r.SHIFT, jam_masuk: r.JAM_MASUK, jam_pulang: r.JAM_PULANG
+        }));
+        const { error } = await supabaseClient.from('jam_kerja').insert(rows);
+        return { success: !error, error: error?error.message:null };
+      }
+
+      // ---- JADWAL HARI LIBUR ----
+      case 'getLibur': {
+        let q = supabaseClient.from('jadwal_libur').select('*').order('tanggal', { ascending:true });
+        if (params.from) q = q.gte('tanggal', params.from);
+        if (params.to)   q = q.lte('tanggal', params.to);
+        const { data, error } = await q;
+        if (error) return { success:false, error: error.message };
+        return { success:true, data: (data||[]).map(function(r){ return { tanggal: r.tanggal, keterangan: r.keterangan }; }) };
+      }
+
+      case 'saveLibur': {
+        const rows = Array.isArray(params.rows) ? params.rows : [{ tanggal: params.tanggal, keterangan: params.keterangan }];
+        const { error } = await supabaseClient.from('jadwal_libur')
+          .upsert(rows.map(function(r){ return { tanggal:r.tanggal, keterangan:r.keterangan||'' }; }), { onConflict:'tanggal' });
+        return { success: !error, error: error?error.message:null };
+      }
+
+      case 'deleteLibur': {
+        const tgls = Array.isArray(params.tanggal) ? params.tanggal : [params.tanggal];
+        const { error } = await supabaseClient.from('jadwal_libur').delete().in('tanggal', tgls);
+        return { success: !error, error: error?error.message:null };
+      }
+
+      // ---- DAFTAR TUGAS (Cek List Tugas) ----
+      case 'getDaftarTugas': {
+        let q = supabaseClient.from('daftar_tugas').select('*');
+        if (params.idPegawai) q = q.eq('id_pegawai', params.idPegawai);
+        const { data, error } = await q;
+        if (error) return { success:false, error: error.message };
+        return { success:true, data: (data||[]).map(function(r){
+          return { idTugas: r.id_tugas, listKode: r.list_kode, idPegawai: r.id_pegawai, namaPegawai: r.nama_pegawai, uraian: r.uraian, periode: r.periode };
+        })};
+      }
+
+      case 'saveDaftarTugas': {
+        const rows = Array.isArray(params.rows) ? params.rows : [params];
+        const payload = rows.map(function(r){
+          return {
+            id_tugas: r.idTugas, list_kode: r.listKode || null, id_pegawai: r.idPegawai || null,
+            nama_pegawai: r.namaPegawai || null, uraian: r.uraian, periode: r.periode || 'Harian'
+          };
+        });
+        const { error } = await supabaseClient.from('daftar_tugas').upsert(payload, { onConflict:'id_tugas' });
+        return { success: !error, error: error?error.message:null };
+      }
+
+      case 'deleteDaftarTugas': {
+        const ids = Array.isArray(params.idTugas) ? params.idTugas : [params.idTugas];
+        const { error } = await supabaseClient.from('daftar_tugas').delete().in('id_tugas', ids);
+        return { success: !error, error: error?error.message:null };
+      }
+
+      // ---- PROGRESS CHECKLIST TUGAS (tersimpan harian per pegawai) ----
+      case 'getChecklistTugas': {
+        let q = supabaseClient.from('checklist_tugas').select('*');
+        if (params.idPegawai) q = q.eq('id_pegawai', params.idPegawai);
+        if (params.periodKey) q = q.eq('period_key', params.periodKey);
+        if (params.from) q = q.gte('tanggal', params.from);
+        if (params.to)   q = q.lte('tanggal', params.to);
+        const { data, error } = await q;
+        if (error) return { success:false, error: error.message };
+        return { success:true, data: (data||[]).map(function(r){
+          return { id:r.id, idTugas:r.id_tugas, idPegawai:r.id_pegawai, namaPegawai:r.nama_pegawai,
+            tanggal:r.tanggal, periode:r.periode, periodKey:r.period_key, selesai:r.selesai, waktuSelesai:r.waktu_selesai,
+            fotoUrl:r.foto_url||'', catatanAdmin:r.catatan_admin||'' };
+        })};
+      }
+
+      case 'saveChecklistTugas': {
+        const row = {
+          id: params.idPegawai + '_' + params.periodKey + '_' + params.idTugas,
+          id_tugas: params.idTugas, id_pegawai: params.idPegawai, nama_pegawai: params.namaPegawai,
+          tanggal: params.tanggal, periode: params.periode, period_key: params.periodKey,
+          selesai: !!params.selesai, waktu_selesai: params.selesai ? new Date().toISOString() : null
+        };
+        // Kolom opsional: hanya disertakan jika memang dikirim, supaya nilai
+        // lama (mis. foto/catatan yang sudah ada) tidak tertimpa jadi kosong
+        // saat hanya status selesai yang berubah.
+        if (params.fotoUrl !== undefined) row.foto_url = params.fotoUrl;
+        if (params.catatanAdmin !== undefined) row.catatan_admin = params.catatanAdmin;
+        const { error } = await supabaseClient.from('checklist_tugas').upsert(row, { onConflict:'id' });
+        return { success: !error, error: error?error.message:null };
+      }
+
+      // ---- FOTO BUKTI UMUM CHECKLIST (foto sekaligus, tidak terikat 1 tugas) ----
+      case 'getChecklistFotoUmum': {
+        let q = supabaseClient.from('checklist_foto_umum').select('*');
+        if (params.idPegawai) q = q.eq('id_pegawai', params.idPegawai);
+        if (params.tanggal)   q = q.eq('tanggal', params.tanggal);
+        if (params.from) q = q.gte('tanggal', params.from);
+        if (params.to)   q = q.lte('tanggal', params.to);
+        const { data, error } = await q.order('created_at', { ascending: true });
+        if (error) return { success:false, error: error.message };
+        return { success:true, data: (data||[]).map(function(r){
+          return { id:r.id, idPegawai:r.id_pegawai, namaPegawai:r.nama_pegawai, tanggal:r.tanggal, fotoUrl:r.foto_url };
+        })};
+      }
+
+      case 'saveChecklistFotoUmum': {
+        const row = {
+          id: params.id || (params.idPegawai + '_' + params.tanggal + '_' + Date.now()),
+          id_pegawai: params.idPegawai, nama_pegawai: params.namaPegawai,
+          tanggal: params.tanggal, foto_url: params.fotoUrl
+        };
+        const { error } = await supabaseClient.from('checklist_foto_umum').upsert(row, { onConflict:'id' });
+        return { success: !error, error: error?error.message:null, id: row.id };
+      }
+
+      case 'deleteChecklistFotoUmum': {
+        const ids = Array.isArray(params.id) ? params.id : [params.id];
+        const { error } = await supabaseClient.from('checklist_foto_umum').delete().in('id', ids);
+        return { success: !error, error: error?error.message:null };
+      }
+
+      default:
+        return { success:false, error:'Unknown action: '+action };
+    }
+  } catch(e) {
+    console.log('Supabase error ('+action+'):', e);
+    return { success:false, error: e.message };
+  }
+}
+async function postAPI(action, data={}) {
+  return callAPI(action, data);
+}
+function mapAbsensiRow(r) {
+  return {
+    IdAbsen: r.id_absen, idPegawai: r.id_pegawai, namaPegawai: r.nama_pegawai,
+    pekerjaan: r.pekerjaan, Tim: r.tim, tanggal: r.tanggal,
+    absenMasuk: r.absen_masuk||'', statusAbsenMasuk: r.status_absen_masuk||'',
+    lokasiMasuk: r.lokasi_masuk||'', latMasuk: r.lat_masuk, lonMasuk: r.lon_masuk,
+    absenPulang: r.absen_pulang||'', statusAbsenPulang: r.status_absen_pulang||'',
+    lokasiPulang: r.lokasi_pulang||'', latPulang: r.lat_pulang, lonPulang: r.lon_pulang,
+    durasiKerja: r.durasi_kerja||'', isLembur: !!r.is_lembur,
+    fotoMasuk: r.foto_masuk||'', fotoPulang: r.foto_pulang||''
+  };
+}
+
+// ============================================================
+// PENUGASAN LEMBUR — cache lokal pegawai yang ditunjuk lembur
+// ============================================================
+var localLembur = JSON.parse(localStorage.getItem('ppnpn_lembur') || '[]');
+
+// True jika pegawai ditunjuk lembur pada tanggal tsb (dipakai saat absen &
+// saat menghitung potongan, supaya absen di hari libur karena ditugaskan
+// lembur tidak dianggap "absen liar" / tidak dihukum seperti hari kerja biasa).
+function isPenugasanLembur(idPegawai, tanggalStr) {
+  return (localLembur||[]).some(function(l){ return l.idPegawai === idPegawai && l.tanggal === tanggalStr; });
+}
+
+// ============================================================
+// CEK LIST TUGAS (Cleaning Service & Pramubakti) — tersimpan ke database
+// ============================================================
+function getWeekNumber(d) {
+    d = new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()));
+    d.setUTCDate(d.getUTCDate() + 4 - (d.getUTCDay()||7));
+    var yearStart = new Date(Date.UTC(d.getUTCFullYear(),0,1));
+    return Math.ceil((((d - yearStart) / 86400000) + 1)/7);
+}
+
+// Kunci periode dipakai supaya progress "Harian" reset tiap hari, "Mingguan"
+// reset tiap minggu, "Bulanan" reset tiap bulan, dan "Insidentil" tidak reset
+// otomatis (dievaluasi manual oleh admin).
+function periodKeyFor(periode, d) {
+  d = d || new Date();
+  if (periode === 'Mingguan') return 'W' + getWeekNumber(d) + '-' + d.getFullYear();
+  if (periode === 'Bulanan')  return d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0');
+  if (periode === 'Insidentil') return 'INSIDENTIL';
+  return today(); // Harian -> reset tiap hari
+}
+
+// Ambil (dan cache) seluruh daftar_tugas dari database. Jika tabel masih
+// kosong (baru pertama kali dipakai), otomatis diisi dari data default.
+async function ensureDaftarTugasLoaded() {
+  if (Array.isArray(localDaftarTugas) && localDaftarTugas.length) return localDaftarTugas;
+  if (SCRIPT_URL) {
+    var res = await callAPI('getDaftarTugas', {});
+    if (res && res.success && res.data && res.data.length) {
+      localDaftarTugas = res.data;
+      localStorage.setItem('ppnpn_daftar_tugas', JSON.stringify(localDaftarTugas));
+      return localDaftarTugas;
+    }
+    // Tabel kosong -> import otomatis data default ke database
+    if (res && res.success) {
+      var seed = DEFAULT_DAFTAR_TUGAS.map(function(t){
+        return { idTugas: t.id_tugas, listKode: t.list_kode, idPegawai: null, namaPegawai: t.nama_pegawai, uraian: t.uraian, periode: t.periode };
+      });
+      await callAPI('saveDaftarTugas', { rows: seed });
+      localDaftarTugas = seed;
+      localStorage.setItem('ppnpn_daftar_tugas', JSON.stringify(localDaftarTugas));
+      return localDaftarTugas;
+    }
+  }
+  // Fallback offline
+  localDaftarTugas = DEFAULT_DAFTAR_TUGAS.map(function(t){
+    return { idTugas: t.id_tugas, listKode: t.list_kode, idPegawai: null, namaPegawai: t.nama_pegawai, uraian: t.uraian, periode: t.periode };
+  });
+  return localDaftarTugas;
+}
+
+// Tugas yang menjadi tanggung jawab seorang pegawai: dicocokkan lewat
+// idPegawai (jika admin sudah menautkan), lewat nama, atau tugas "untuk semua"
+// (list_kode L13 / namaPegawai kosong & pekerjaan CS-Pramubakti).
+function getTugasUntukPegawai(u, semuaTugas) {
+  var namaLower = String(u.namaPegawai||'').trim().toLowerCase();
+  return semuaTugas.filter(function(t){
+    if (t.idPegawai && t.idPegawai === u.idPegawai) return true;
+    if (t.namaPegawai && String(t.namaPegawai).trim().toLowerCase() === namaLower) return true;
+    if (!t.idPegawai && (!t.namaPegawai || /semua/i.test(t.namaPegawai))) return true;
+    return false;
+  });
+}
+
+async function loadChecklist() {
+  var u = currentUser;
+  var semuaTugas = await ensureDaftarTugasLoaded();
+  var myTugas = getTugasUntukPegawai(u, semuaTugas);
+
+  var byPeriode = { Harian: [], Mingguan: [], Bulanan: [], Insidentil: [] };
+  myTugas.forEach(function(t){ (byPeriode[t.periode] || byPeriode.Harian).push(t); });
+
+  // Ambil progress tersimpan dari database untuk seluruh periode yang relevan
+  var progress = {};
+  if (SCRIPT_URL) {
+    var res = await callAPI('getChecklistTugas', { idPegawai: u.idPegawai });
+    if (res && res.success) {
+      res.data.forEach(function(r){ progress[r.id] = r; });
+      localChecklistTugas = res.data;
+      localStorage.setItem('ppnpn_checklist_tugas', JSON.stringify(localChecklistTugas));
+    }
+  } else {
+    (localChecklistTugas||[]).forEach(function(r){ progress[r.id] = r; });
+  }
+
+  function renderGroup(containerId, wrapId, list, periode) {
+    var wrap = document.getElementById(wrapId);
+    var container = document.getElementById(containerId);
+    if (!wrap || !container) return;
+    if (!list.length) { wrap.style.display = 'none'; return; }
+    wrap.style.display = '';
+    var pk = periodKeyFor(periode);
+    var html = '';
+    list.forEach(function(t){
+      var id = u.idPegawai + '_' + pk + '_' + t.idTugas;
+      var prog = progress[id];
+      var checked = prog && prog.selesai ? 'checked' : '';
+      var fotoUrl = prog && prog.fotoUrl ? prog.fotoUrl : '';
+      var slug = pk + '_' + t.idTugas;
+      var thumbId = 'thumb_' + slug;
+      var btnId = 'fotobtn_' + slug;
+      var fileId = 'file_' + slug;
+      html += '<label class="task-item">' +
+        '<input type="checkbox" data-id-tugas="'+t.idTugas+'" data-periode="'+periode+'" '+checked+' onchange="toggleChecklistTugas(this)">' +
+        '<span class="task-item-text">'+t.uraian+'</span>' +
+        '<span class="task-foto-area">' +
+          '<img id="'+thumbId+'" class="task-foto-thumb" src="'+fotoUrl+'" style="display:'+(fotoUrl?'inline-block':'none')+'" onclick="event.preventDefault();event.stopPropagation();viewFotoBesar(this.src)">' +
+          '<button type="button" id="'+btnId+'" class="task-foto-btn" title="Upload foto bukti tugas ini" onclick="event.preventDefault();event.stopPropagation();document.getElementById(\''+fileId+'\').click()">📷</button>' +
+          '<input type="file" accept="image/*" capture="environment" id="'+fileId+'" style="display:none" onchange="onFotoTugasSelected(event,\''+t.idTugas+'\',\''+periode+'\',\''+pk+'\')" onclick="event.stopPropagation()">' +
+        '</span>' +
+      '</label>';
+    });
+    container.innerHTML = html;
+  }
+
+  renderGroup('checklistHarianContainer', 'checklistHarianWrap', byPeriode.Harian, 'Harian');
+  renderGroup('checklistMingguanContainer', 'checklistMingguanWrap', byPeriode.Mingguan, 'Mingguan');
+  renderGroup('checklistBulananContainer', 'checklistBulananWrap', byPeriode.Bulanan, 'Bulanan');
+  renderGroup('checklistInsidentilContainer', 'checklistInsidentilWrap', byPeriode.Insidentil, 'Insidentil');
+
+  loadFotoUmumChecklist();
+
+  if (!myTugas.length) {
+    document.getElementById('checklistEmptyMsg').style.display = 'block';
+  } else {
+    document.getElementById('checklistEmptyMsg').style.display = 'none';
+  }
+
+  // Tampilkan status persetujuan & catatan admin untuk hari ini (jika sudah dinilai)
+  var banner = document.getElementById('checklistApprovalBanner');
+  if (banner) {
+    var todayAppr = await getChecklistApprovalForDate(today());
+    var mine = todayAppr.find(function(a){ return a.idPegawai === u.idPegawai; });
+    if (mine && mine.status && mine.status !== 'Menunggu') {
+      var isOk = mine.status === 'Disetujui';
+      banner.style.display = 'block';
+      banner.innerHTML = '<div class="alert ' + (isOk ? 'alert-success' : 'alert-warn') + '">' +
+        (isOk ? '✅ <strong>Hasil kerja hari ini telah disetujui admin.</strong>' : '⚠ <strong>Admin meminta perbaikan pada hasil kerja hari ini.</strong>') +
+        (mine.catatan ? '<br><span style="font-size:12px">📝 Catatan admin: ' + mine.catatan + '</span>' : '') +
+        '</div>';
+    } else {
+      banner.style.display = 'none';
+      banner.innerHTML = '';
+    }
+  }
+}
+
+// Setiap centang langsung tersimpan ke database (tersimpan per hari secara otomatis)
+async function toggleChecklistTugas(el) {
+  var u = currentUser;
+  var idTugas = el.getAttribute('data-id-tugas');
+  var periode = el.getAttribute('data-periode');
+  var pk = periodKeyFor(periode);
+  var payload = {
+    idTugas: idTugas, idPegawai: u.idPegawai, namaPegawai: u.namaPegawai,
+    tanggal: today(), periode: periode, periodKey: pk, selesai: el.checked
+  };
+  el.disabled = true;
+  if (SCRIPT_URL) {
+    var res = await callAPI('saveChecklistTugas', payload);
+    if (res && res.success === false) {
+      alert('❌ Gagal menyimpan status tugas ke database: ' + (res.error || 'Unknown error') + '\n\nPastikan tabel "checklist_tugas" di Supabase sudah dikonfigurasi dengan benar.');
+      el.checked = !el.checked;
+      el.disabled = false;
+      return;
+    }
+  }
+  // Cache lokal (untuk fallback offline / evaluasi cepat)
+  var id = u.idPegawai + '_' + pk + '_' + idTugas;
+  localChecklistTugas = (localChecklistTugas||[]).filter(function(r){ return r.id !== id; });
+  localChecklistTugas.push({ id: id, idTugas: idTugas, idPegawai: u.idPegawai, namaPegawai: u.namaPegawai, tanggal: today(), periode: periode, periodKey: pk, selesai: el.checked });
+  localStorage.setItem('ppnpn_checklist_tugas', JSON.stringify(localChecklistTugas));
+  el.disabled = false;
+}
+
+// Tombol "Simpan Progress" tetap tersedia untuk memastikan semua status
+// tersinkron ke database (berguna jika sempat offline saat mencentang).
+async function saveChecklistCS() {
+  var boxes = document.querySelectorAll('#page-checklist input[data-id-tugas]');
+  for (var i = 0; i < boxes.length; i++) { await toggleChecklistTugas(boxes[i]); }
+  alert('✅ Progress tugas berhasil disimpan ke database!');
+}
+
+// ============================================================
+// FOTO BUKTI CHECKLIST TUGAS (per-tugas & foto sekaligus/umum)
+// ============================================================
+
+// Ubah File (hasil <input type="file">) menjadi data URL base64.
+function fileToDataUrl(file) {
+  return new Promise(function(resolve, reject){
+    var reader = new FileReader();
+    reader.onload = function(){ resolve(reader.result); };
+    reader.onerror = function(){ reject(new Error('Gagal membaca file foto.')); };
+    reader.readAsDataURL(file);
+  });
+}
+
+// Ubah nama pegawai menjadi slug aman untuk nama folder penyimpanan foto,
+// mis. "Budi Santoso" -> "budi-santoso". Dipakai sebagai AWALAN nama folder
+// per pegawai supaya foto tiap pegawai gampang ditemukan & terpisah rapi.
+function slugifyNamaPegawai(nama) {
+  var slug = String(nama || '')
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '');
+  return slug || 'pegawai';
+}
+
+// Kompres & resize gambar (data URL) sebelum diunggah, supaya ukuran file
+// jauh lebih kecil & hemat kuota penyimpanan Supabase/Drive. Gambar
+// diperkecil maksimal `maxDim` px pada sisi terpanjang & dipadatkan ulang
+// sebagai JPEG dengan kualitas `quality` (0-1). Mengembalikan Promise data
+// URL JPEG hasil kompresi.
+function compressImageDataUrl(dataUrl, maxDim, quality) {
+  maxDim = maxDim || 1280;
+  quality = quality || 0.7;
+  return new Promise(function(resolve, reject){
+    var img = new Image();
+    img.onload = function(){
+      var w = img.width, h = img.height;
+      if (w > maxDim || h > maxDim) {
+        if (w >= h) { h = Math.round(h * (maxDim / w)); w = maxDim; }
+        else { w = Math.round(w * (maxDim / h)); h = maxDim; }
+      }
+      try {
+        var canvas = document.createElement('canvas');
+        canvas.width = w; canvas.height = h;
+        var ctx = canvas.getContext('2d');
+        ctx.drawImage(img, 0, 0, w, h);
+        resolve(canvas.toDataURL('image/jpeg', quality));
+      } catch (e) {
+        // Kalau kompresi gagal (mis. canvas tainted), pakai gambar asli saja
+        // supaya proses absensi/upload tugas tetap jalan.
+        resolve(dataUrl);
+      }
+    };
+    img.onerror = function(){ resolve(dataUrl); };
+    img.src = dataUrl;
+  });
+}
+
+// Upload 1 foto bukti checklist (per-tugas atau umum) ke penyimpanan yang
+// sama dengan foto absensi. Foto dikompres & diperkecil dulu sebelum
+// diunggah supaya hemat ukuran/kuota penyimpanan.
+// - Supabase Storage: folder terpisah "checklist/{nama-pegawai}-{idPegawai}/"
+// - Google Drive: folder utama "UploadFoto" > sub-folder "ceklist/", dengan
+//   nama file diawali "{nama pegawai}_{username}_{tanggal}" supaya gampang
+//   dikenali pemiliknya langsung dari nama filenya.
+async function uploadFotoChecklist(file, idPegawai, namaPegawai, username, tanggal, label) {
+  if (!file) return { url: null, error: null };
+  try {
+    var rawDataUrl = await fileToDataUrl(file);
+    var dataUrl = await compressImageDataUrl(rawDataUrl, 1280, 0.7); // kompres -> selalu JPEG
+    var namaSlug = slugifyNamaPegawai(namaPegawai);
+    var folderPegawai = namaSlug + '-' + idPegawai;
+    var fileName = idPegawai + '_' + tanggal + '_' + label + '_' + Date.now() + '.jpg';
+
+    if (storageSetting.provider === 'gdrive') {
+      if (!storageSetting.gdriveUrl) return { url: null, error: 'URL Web App Google Drive belum diisi di Konfigurasi Sistem.' };
+      // Nama file khusus Drive: nama pegawai_username_tanggal_label_waktu.jpg
+      var gdriveFileName = namaSlug + '_' + slugifyNamaPegawai(username) + '_' + tanggal + '_' + label + '_' + Date.now() + '.jpg';
+      var resp = await fetch(storageSetting.gdriveUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+        body: JSON.stringify({
+          action: 'uploadFoto', fileName: gdriveFileName, folderId: storageSetting.gdriveFolder || '',
+          subFolder: 'ceklist',
+          base64: dataUrl.split(',')[1], mimeType: 'image/jpeg'
+        })
+      });
+      var json = await resp.json();
+      if (json && json.success && json.url) return { url: json.url, error: null };
+      return { url: null, error: (json && json.error) ? json.error : 'Upload ke Google Drive gagal (cek URL Web App & deployment-nya).' };
+    } else {
+      if (!supabaseClient) return { url: null, error: 'Supabase belum terhubung.' };
+      var bucket = storageSetting.bucket || 'absensi-foto';
+      var blob = dataUrlToBlob(dataUrl);
+      var path = 'checklist/' + folderPegawai + '/' + fileName;
+      var up = await supabaseClient.storage.from(bucket).upload(path, blob, { contentType: blob.type || 'image/jpeg', upsert: true });
+      if (up.error) {
+        console.log('Upload foto checklist gagal:', up.error.message);
+        return { url: null, error: 'Gagal upload ke bucket "' + bucket + '": ' + up.error.message };
+      }
+      var pub = supabaseClient.storage.from(bucket).getPublicUrl(path);
+      var publicUrl = (pub && pub.data) ? pub.data.publicUrl : null;
+      return { url: publicUrl, error: publicUrl ? null : 'Upload berhasil tapi gagal mendapatkan URL publik.' };
+    }
+  } catch (err) {
+    console.log('Gagal upload foto checklist:', err);
+    return { url: null, error: err.message || 'Terjadi kesalahan tak terduga saat upload foto.' };
+  }
+}
+
+// Foto bukti untuk 1 tugas tertentu — otomatis menandai tugas selesai juga.
+async function onFotoTugasSelected(event, idTugas, periode, pk) {
+  var file = event.target.files && event.target.files[0];
+  if (!file) return;
+  var u = currentUser;
+  var slug = pk + '_' + idTugas;
+  var btn = document.getElementById('fotobtn_' + slug);
+  if (btn) { btn.disabled = true; btn.textContent = '⏳'; }
+
+  var res = await uploadFotoChecklist(file, u.idPegawai, u.namaPegawai, u.username, today(), 'tugas_' + idTugas);
+  if (res.url) {
+    var payload = {
+      idTugas: idTugas, idPegawai: u.idPegawai, namaPegawai: u.namaPegawai,
+      tanggal: today(), periode: periode, periodKey: pk, selesai: true, fotoUrl: res.url
+    };
+    var saveRes = SCRIPT_URL ? await callAPI('saveChecklistTugas', payload) : null;
+    if (SCRIPT_URL && saveRes && saveRes.success === false) {
+      alert('⚠️ Foto berhasil terunggah, tapi GAGAL disimpan ke database: ' + (saveRes.error || 'Unknown error') + '\n\nKemungkinan kolom "foto_url" belum ada di tabel checklist_tugas. Foto ini tidak akan tersimpan permanen sampai kolom tersebut ditambahkan.');
+      if (btn) { btn.disabled = false; btn.textContent = '📷'; }
+      event.target.value = '';
+      return;
+    }
+    var id = u.idPegawai + '_' + pk + '_' + idTugas;
+    localChecklistTugas = (localChecklistTugas||[]).filter(function(r){ return r.id !== id; });
+    localChecklistTugas.push({ id:id, idTugas:idTugas, idPegawai:u.idPegawai, namaPegawai:u.namaPegawai,
+      tanggal:today(), periode:periode, periodKey:pk, selesai:true, fotoUrl:res.url });
+    localStorage.setItem('ppnpn_checklist_tugas', JSON.stringify(localChecklistTugas));
+
+    var cb = document.querySelector('#page-checklist input[data-id-tugas="'+idTugas+'"][data-periode="'+periode+'"]');
+    if (cb) cb.checked = true;
+    var thumb = document.getElementById('thumb_' + slug);
+    if (thumb) { thumb.src = res.url; thumb.style.display = 'inline-block'; }
+  } else {
+    alert('❌ Gagal upload foto bukti: ' + (res.error || 'Unknown error'));
+  }
+  if (btn) { btn.disabled = false; btn.textContent = '📷'; }
+  event.target.value = '';
+}
+
+// Muat & tampilkan galeri foto bukti "sekaligus" (umum, tidak terikat 1 tugas) hari ini.
+async function loadFotoUmumChecklist() {
+  var u = currentUser;
+  if (!u) return;
+  var data = [];
+  if (SCRIPT_URL) {
+    var res = await callAPI('getChecklistFotoUmum', { idPegawai: u.idPegawai, tanggal: today() });
+    if (res && res.success) {
+      data = res.data;
+      localChecklistFotoUmum = (localChecklistFotoUmum||[]).filter(function(r){
+        return !(r.idPegawai === u.idPegawai && r.tanggal === today());
+      }).concat(data);
+      localStorage.setItem('ppnpn_checklist_foto_umum', JSON.stringify(localChecklistFotoUmum));
+    }
+  } else {
+    data = (localChecklistFotoUmum||[]).filter(function(r){ return r.idPegawai === u.idPegawai && r.tanggal === today(); });
+  }
+  renderFotoUmumGallery(data);
+}
+
+function renderFotoUmumGallery(list) {
+  var wrap = document.getElementById('checklistFotoUmumGallery');
+  if (!wrap) return;
+  if (!list.length) { wrap.innerHTML = '<p style="font-size:12px;color:var(--text-muted)">Belum ada foto diunggah hari ini.</p>'; return; }
+  wrap.innerHTML = list.map(function(f){
+    return '<div class="foto-umum-item" style="position:relative">' +
+      '<img src="'+f.fotoUrl+'" style="width:76px;height:76px;object-fit:cover;border-radius:10px;border:1px solid var(--border);cursor:pointer" onclick="viewFotoBesar(\''+f.fotoUrl+'\')">' +
+      '<button type="button" onclick="hapusFotoUmum(\''+f.id+'\')" title="Hapus foto" style="position:absolute;top:-6px;right:-6px;width:20px;height:20px;border-radius:50%;background:var(--danger);color:#fff;border:none;font-size:11px;cursor:pointer;line-height:1;padding:0">✕</button>' +
+    '</div>';
+  }).join('');
+}
+
+async function onFotoUmumSelected(event) {
+  var files = event.target.files;
+  if (!files || !files.length) return;
+  var u = currentUser;
+  var gagalDb = false, pesanErrorDb = '';
+  for (var i = 0; i < files.length; i++) {
+    var res = await uploadFotoChecklist(files[i], u.idPegawai, u.namaPegawai, u.username, today(), 'umum');
+    if (res.url) {
+      var idFoto = u.idPegawai + '_' + today() + '_' + Date.now() + '_' + i;
+      if (SCRIPT_URL) {
+        var saveRes = await callAPI('saveChecklistFotoUmum', { id: idFoto, idPegawai: u.idPegawai, namaPegawai: u.namaPegawai, tanggal: today(), fotoUrl: res.url });
+        if (saveRes && saveRes.success === false) { gagalDb = true; pesanErrorDb = saveRes.error || 'Unknown error'; continue; }
+      }
+      localChecklistFotoUmum.push({ id: idFoto, idPegawai: u.idPegawai, namaPegawai: u.namaPegawai, tanggal: today(), fotoUrl: res.url });
+      localStorage.setItem('ppnpn_checklist_foto_umum', JSON.stringify(localChecklistFotoUmum));
+    } else {
+      alert('❌ Gagal upload salah satu foto: ' + (res.error || 'Unknown error'));
+    }
+  }
+  if (gagalDb) {
+    alert('⚠️ Foto berhasil terunggah, tapi GAGAL disimpan ke database: ' + pesanErrorDb + '\n\nKemungkinan tabel "checklist_foto_umum" belum dibuat di Supabase. Foto ini tidak akan tersimpan permanen sampai tabel tersebut dibuat.');
+  }
+  event.target.value = '';
+  loadFotoUmumChecklist();
+}
+
+async function hapusFotoUmum(id) {
+  if (!confirm('Hapus foto bukti ini?')) return;
+  if (SCRIPT_URL) await callAPI('deleteChecklistFotoUmum', { id: id });
+  localChecklistFotoUmum = (localChecklistFotoUmum||[]).filter(function(r){ return r.id !== id; });
+  localStorage.setItem('ppnpn_checklist_foto_umum', JSON.stringify(localChecklistFotoUmum));
+  loadFotoUmumChecklist();
+}
+
+// Modal lihat foto ukuran penuh (dipakai foto per-tugas, foto umum, & detail admin)
+function viewFotoBesar(url) {
+  if (!url) return;
+  document.getElementById('fotoBesarImg').src = url;
+  document.getElementById('fotoBesarModal').classList.add('open');
+}
+
+// Ambil (dan cache) daftar pegawai Cleaning Service & Pramubakti dari data
+// pegawai — dipakai untuk tabel progress & untuk mengisi otomatis dropdown
+// "Nama Pegawai" pada form Tambah/Edit Tugas.
+var cachedCSPegawaiList = null;
+async function ensureCSPegawaiList(forceRefresh) {
+  if (cachedCSPegawaiList && !forceRefresh) return cachedCSPegawaiList;
+  var csUsers = [];
+  if (SCRIPT_URL) {
+    var resCS = await callAPI('getPegawai', {pekerjaan: 'Cleaning Service'});
+    var resPB = await callAPI('getPegawai', {pekerjaan: 'Pramubakti'});
+    [resCS, resPB].forEach(function(res){
+      if (res && res.success) csUsers = csUsers.concat(res.data.map(function(p){ return { idPegawai:p['ID PEGAWAI'], namaPegawai:p['NAMA'] }; }));
+    });
+  }
+  if (!csUsers.length) {
+    csUsers = DEMO_USERS.filter(function(u){ return u.pekerjaan==='Cleaning Service' || u.pekerjaan==='Pramubakti'; });
+  }
+  cachedCSPegawaiList = csUsers;
+  return csUsers;
+}
+
+async function loadAdminChecklistCS() {
+  var tgl = document.getElementById('admFilterTglCS').value;
+  if (!tgl) {
+    tgl = today();
+    document.getElementById('admFilterTglCS').value = tgl;
+  }
+  var d = new Date(tgl);
+
+  var tbody = document.getElementById('adminChecklistCSBody');
+  tbody.innerHTML = '<tr><td colspan="8" style="text-align:center;padding:20px;color:var(--text-muted)">⏳ Memuat data...</td></tr>';
+
+  var semuaTugas = await ensureDaftarTugasLoaded();
+
+  // Ambil daftar pegawai Cleaning Service & Pramubakti
+  var csUsers = await ensureCSPegawaiList();
+
+  // Ambil semua progress checklist untuk tanggal terpilih (dari database)
+  var allProgress = [];
+  if (SCRIPT_URL) {
+    var pr = await callAPI('getChecklistTugas', { from: tgl, to: tgl });
+    if (pr && pr.success) allProgress = pr.data;
+  }
+  if (!allProgress.length) allProgress = (localChecklistTugas||[]).filter(function(r){ return r.tanggal===tgl; });
+
+  // Ambil status persetujuan (catatan & approval hasil kerja) untuk tanggal terpilih
+  var allApproval = await getChecklistApprovalForDate(tgl);
+
+  var html = '';
+  csUsers.forEach(function(u){
+    var myTugas = getTugasUntukPegawai(u, semuaTugas);
+    var byPeriode = { Harian: [], Mingguan: [], Bulanan: [], Insidentil: [] };
+    myTugas.forEach(function(t){ (byPeriode[t.periode] || byPeriode.Harian).push(t); });
+
+    var myProgress = allProgress.filter(function(r){ return r.idPegawai === u.idPegawai; });
+    var doneIds = new Set(myProgress.filter(function(r){ return r.selesai; }).map(function(r){ return r.idTugas; }));
+
+    var doneHarian = byPeriode.Harian.filter(function(t){ return doneIds.has(t.idTugas); });
+    var doneMingguan = byPeriode.Mingguan.filter(function(t){ return doneIds.has(t.idTugas); });
+
+    var pctHarian = byPeriode.Harian.length ? Math.round((doneHarian.length / byPeriode.Harian.length) * 100) : 0;
+    var pctMingguan = byPeriode.Mingguan.length ? Math.round((doneMingguan.length / byPeriode.Mingguan.length) * 100) : 0;
+
+    var badgeH = pctHarian === 100 ? 'badge-green' : (pctHarian > 0 ? 'badge-amber' : 'badge-red');
+    var badgeM = pctMingguan === 100 ? 'badge-green' : (pctMingguan > 0 ? 'badge-amber' : 'badge-red');
+
+    var appr = allApproval.find(function(a){ return a.idPegawai === u.idPegawai; });
+    var statusAppr = appr ? appr.status : 'Menunggu';
+    var catatanAppr = appr && appr.catatan ? appr.catatan : '-';
+    var badgeAppr = statusAppr==='Disetujui' ? 'badge-green' : (statusAppr==='Ditolak' ? 'badge-red' : 'badge-amber');
+
+    html += `
+      <tr>
+        <td style="font-family:'Space Mono',monospace; font-size:12px;">${u.idPegawai}</td>
+        <td><strong>${u.namaPegawai}</strong></td>
+        <td><span class="badge ${badgeH}">${doneHarian.length} / ${byPeriode.Harian.length} (${pctHarian}%)</span></td>
+        <td><span class="badge ${badgeM}">${doneMingguan.length} / ${byPeriode.Mingguan.length} (${pctMingguan}%)</span></td>
+        <td style="font-size:12px; color:var(--text-muted); line-height:1.5;">
+          ${doneHarian.length ? '<strong style="color:var(--primary-light)">Harian:</strong> ' + doneHarian.map(function(t){return t.uraian;}).join(', ') + '<br>' : ''}
+          ${doneMingguan.length ? '<strong style="color:var(--accent)">Mingguan:</strong> ' + doneMingguan.map(function(t){return t.uraian;}).join(', ') : ''}
+          ${!doneHarian.length && !doneMingguan.length ? '<i>Belum ada tugas yang dikerjakan</i>' : ''}
+        </td>
+        <td><span class="badge ${badgeAppr}">${statusAppr}</span></td>
+        <td style="max-width:160px;font-size:12px;color:var(--text-muted)">${catatanAppr}</td>
+        <td style="white-space:nowrap">
+          <button class="btn btn-outline btn-sm" title="Lihat detail, foto bukti & edit checklist" onclick="openChecklistDetailAdmin('${u.idPegawai}','${String(u.namaPegawai).replace(/'/g,"\\'")}','${tgl}')">📋</button>
+          <button class="btn btn-success btn-sm" title="Setujui hasil kerja" style="margin-left:4px" onclick="openChecklistApprovalNote('${u.idPegawai}','${String(u.namaPegawai).replace(/'/g,"\\'")}','${tgl}','Disetujui')">✓</button>
+          <button class="btn btn-danger btn-sm" title="Tolak / minta perbaikan" style="margin-left:4px" onclick="openChecklistApprovalNote('${u.idPegawai}','${String(u.namaPegawai).replace(/'/g,"\\'")}','${tgl}','Ditolak')">✗</button>
+        </td>
+      </tr>
+    `;
+  });
+
+  if (!csUsers.length) {
+    html = '<tr><td colspan="8" style="text-align:center;padding:24px;">Tidak ada pegawai Cleaning Service / Pramubakti</td></tr>';
+  }
+
+  tbody.innerHTML = html;
+}
+
+// Ambil status persetujuan checklist (per pegawai) untuk 1 tanggal tertentu
+async function getChecklistApprovalForDate(tgl) {
+  var data = [];
+  if (SCRIPT_URL) {
+    var res = await callAPI('getChecklistApproval', { tanggal: tgl });
+    if (res && res.success) {
+      data = res.data;
+      // update cache lokal: buang entri lama utk tanggal ini, gabung yang baru
+      localChecklistApproval = (localChecklistApproval||[]).filter(function(r){ return r.tanggal !== tgl; }).concat(data);
+      localStorage.setItem('ppnpn_checklist_approval', JSON.stringify(localChecklistApproval));
+    }
+  }
+  if (!data.length) data = (localChecklistApproval||[]).filter(function(r){ return r.tanggal === tgl; });
+  return data;
+}
+
+// Membuka modal catatan & persetujuan untuk checklist tugas harian seorang CS/Pramubakti
+function openChecklistApprovalNote(idPegawai, namaPegawai, tanggal, status) {
+  document.getElementById('approvalNoteTitle').textContent = (status==='Disetujui' ? '✅ Setujui Hasil Kerja' : '❌ Tolak / Minta Perbaikan');
+  document.getElementById('approvalNoteSubtitle').textContent = namaPegawai + ' — ' + fmtDate(tanggal);
+  document.getElementById('anType').value = 'checklist';
+  document.getElementById('anId').value = idPegawai + '|' + tanggal;
+  document.getElementById('anStatus').value = status;
+  document.getElementById('anCatatan').value = '';
+  var btn = document.getElementById('anSubmitBtn');
+  btn.className = 'btn btn-sm ' + (status==='Disetujui' ? 'btn-success' : 'btn-danger');
+  btn.textContent = status==='Disetujui' ? '✓ Setujui' : '✗ Tolak';
+  document.getElementById('approvalNoteModal').classList.add('open');
+}
+
+// Simpan status persetujuan + catatan checklist ke database
+async function saveChecklistApproval(idPegawai, namaPegawai, tanggal, status, catatan) {
+  var payload = { idPegawai: idPegawai, namaPegawai: namaPegawai, tanggal: tanggal, status: status, catatan: catatan||'' };
+  if (SCRIPT_URL) await callAPI('saveChecklistApproval', payload);
+  var id = idPegawai + '_' + tanggal;
+  localChecklistApproval = (localChecklistApproval||[]).filter(function(r){ return r.id !== id; });
+  localChecklistApproval.push({ id: id, idPegawai: idPegawai, namaPegawai: namaPegawai, tanggal: tanggal, status: status, catatan: catatan||'' });
+  localStorage.setItem('ppnpn_checklist_approval', JSON.stringify(localChecklistApproval));
+}
+
+// ============================================================
+// ADMIN: DETAIL & EDIT CHECKLIST TUGAS (per pegawai/tanggal) —
+// lihat foto bukti (per-tugas & sekaligus/umum), koreksi status
+// selesai/tidak, dan tulis catatan admin per tugas.
+// ============================================================
+async function openChecklistDetailAdmin(idPegawai, namaPegawai, tgl) {
+  document.getElementById('cdIdPegawai').value = idPegawai;
+  document.getElementById('cdNamaPegawai').value = namaPegawai;
+  document.getElementById('cdTanggal').value = tgl;
+  document.getElementById('checklistDetailSubtitle').textContent = namaPegawai + ' — ' + fmtDate(tgl);
+
+  var body = document.getElementById('checklistDetailBody');
+  body.innerHTML = '<p style="text-align:center;padding:16px;color:var(--text-muted)">⏳ Memuat data...</p>';
+  document.getElementById('checklistDetailFotoUmumBody').innerHTML = '';
+  document.getElementById('checklistDetailModal').classList.add('open');
+
+  var semuaTugas = await ensureDaftarTugasLoaded();
+  var csUsers = await ensureCSPegawaiList();
+  var fullUser = csUsers.find(function(x){ return x.idPegawai === idPegawai; }) || { idPegawai: idPegawai, namaPegawai: namaPegawai };
+  var myTugas = getTugasUntukPegawai(fullUser, semuaTugas);
+
+  var progress = {};
+  if (SCRIPT_URL) {
+    var res = await callAPI('getChecklistTugas', { idPegawai: idPegawai, from: tgl, to: tgl });
+    if (res && res.success) res.data.forEach(function(r){ progress[r.idTugas] = r; });
+  }
+  if (!Object.keys(progress).length) {
+    (localChecklistTugas||[]).filter(function(r){ return r.idPegawai === idPegawai && r.tanggal === tgl; })
+      .forEach(function(r){ progress[r.idTugas] = r; });
+  }
+
+  var byPeriode = { Harian: [], Mingguan: [], Bulanan: [], Insidentil: [] };
+  myTugas.forEach(function(t){ (byPeriode[t.periode] || byPeriode.Harian).push(t); });
+
+  var html = '';
+  ['Harian','Mingguan','Bulanan','Insidentil'].forEach(function(periode){
+    var list = byPeriode[periode];
+    if (!list.length) return;
+    html += '<div style="font-size:12px;font-weight:700;color:var(--text-muted);text-transform:uppercase;letter-spacing:.5px;margin:14px 0 8px">'+periode+'</div>';
+    list.forEach(function(t){
+      var prog = progress[t.idTugas];
+      var checked = prog && prog.selesai ? 'checked' : '';
+      var fotoUrl = prog && prog.fotoUrl ? prog.fotoUrl : '';
+      var catatan = prog && prog.catatanAdmin ? String(prog.catatanAdmin).replace(/"/g,'&quot;') : '';
+      html += '<div class="task-item" style="flex-wrap:wrap;cursor:default">' +
+        '<input type="checkbox" data-cd-id-tugas="'+t.idTugas+'" data-cd-periode="'+periode+'" '+checked+'>' +
+        '<span class="task-item-text">'+t.uraian+'</span>' +
+        (fotoUrl ? '<img class="task-foto-thumb" src="'+fotoUrl+'" onclick="viewFotoBesar(\''+fotoUrl+'\')">' : '<span style="font-size:11px;color:var(--text-muted)">Tanpa foto</span>') +
+        '<input type="text" class="cd-catatan-input" data-cd-catatan-tugas="'+t.idTugas+'" placeholder="Catatan admin untuk tugas ini (opsional)" value="'+catatan+'" style="flex-basis:100%;margin-top:8px;padding:8px 10px;border:1px solid var(--border);border-radius:8px;font-size:12.5px;font-family:inherit">' +
+      '</div>';
+    });
+  });
+  body.innerHTML = html || '<p style="font-size:13px;color:var(--text-muted)">Belum ada tugas yang ditugaskan untuk pegawai ini.</p>';
+
+  var fotoUmumList = [];
+  if (SCRIPT_URL) {
+    var resF = await callAPI('getChecklistFotoUmum', { idPegawai: idPegawai, tanggal: tgl });
+    if (resF && resF.success) fotoUmumList = resF.data;
+  }
+  if (!fotoUmumList.length) {
+    fotoUmumList = (localChecklistFotoUmum||[]).filter(function(r){ return r.idPegawai === idPegawai && r.tanggal === tgl; });
+  }
+  var fotoUmumWrap = document.getElementById('checklistDetailFotoUmumBody');
+  fotoUmumWrap.innerHTML = fotoUmumList.length
+    ? fotoUmumList.map(function(f){ return '<img src="'+f.fotoUrl+'" style="width:64px;height:64px;object-fit:cover;border-radius:8px;border:1px solid var(--border);cursor:pointer" onclick="viewFotoBesar(\''+f.fotoUrl+'\')">'; }).join('')
+    : '<p style="font-size:12px;color:var(--text-muted)">Tidak ada foto bukti sekaligus untuk tanggal ini.</p>';
+}
+
+async function simpanChecklistDetailAdmin() {
+  var idPegawai = document.getElementById('cdIdPegawai').value;
+  var namaPegawai = document.getElementById('cdNamaPegawai').value;
+  var tgl = document.getElementById('cdTanggal').value;
+  var boxes = document.querySelectorAll('#checklistDetailBody input[data-cd-id-tugas]');
+  var gagal = [];
+
+  for (var i = 0; i < boxes.length; i++) {
+    var el = boxes[i];
+    var idTugas = el.getAttribute('data-cd-id-tugas');
+    var periode = el.getAttribute('data-cd-periode');
+    var pk = periodKeyFor(periode);
+    var catatanEl = document.querySelector('[data-cd-catatan-tugas="'+idTugas+'"]');
+    var catatan = catatanEl ? catatanEl.value : '';
+
+    var payload = {
+      idTugas: idTugas, idPegawai: idPegawai, namaPegawai: namaPegawai,
+      tanggal: tgl, periode: periode, periodKey: pk, selesai: el.checked, catatanAdmin: catatan
+    };
+    if (SCRIPT_URL) {
+      var res = await callAPI('saveChecklistTugas', payload);
+      if (res && res.success === false) { gagal.push(idTugas + ': ' + (res.error||'Unknown error')); continue; }
+    }
+
+    var id = idPegawai + '_' + pk + '_' + idTugas;
+    localChecklistTugas = (localChecklistTugas||[]).filter(function(r){ return r.id !== id; });
+    localChecklistTugas.push({ id:id, idTugas:idTugas, idPegawai:idPegawai, namaPegawai:namaPegawai,
+      tanggal:tgl, periode:periode, periodKey:pk, selesai:el.checked, catatanAdmin:catatan });
+  }
+  localStorage.setItem('ppnpn_checklist_tugas', JSON.stringify(localChecklistTugas));
+
+  if (gagal.length) {
+    alert('⚠️ Sebagian perubahan GAGAL disimpan ke database:\n\n' + gagal.join('\n') + '\n\nKemungkinan kolom "catatan_admin" / "foto_url" belum ada di tabel checklist_tugas.');
+  } else {
+    alert('✅ Perubahan checklist tugas berhasil disimpan!');
+  }
+  closeModal('checklistDetailModal');
+  loadAdminChecklistCS();
+}
+
+// ============================================================
+// ADMIN: KELOLA DAFTAR TUGAS (tambah / edit / hapus)
+// ============================================================
+async function loadDaftarTugasAdminTable() {
+  var semuaTugas = await ensureDaftarTugasLoaded();
+  var tbody = document.getElementById('daftarTugasAdminBody');
+  if (!tbody) return;
+
+  // Terapkan filter pencarian nama CS & periode
+  var elNama = document.getElementById('filterTugasNama');
+  var elPeriode = document.getElementById('filterTugasPeriode');
+  var qNama = elNama ? elNama.value.trim().toLowerCase() : '';
+  var qPeriode = elPeriode ? elPeriode.value : '';
+  var tugasTampil = semuaTugas.filter(function(t){
+    var cocokNama = !qNama || (t.namaPegawai||'').toLowerCase().indexOf(qNama) !== -1 ||
+      (!t.namaPegawai && 'semua cs/pramubakti'.indexOf(qNama) !== -1);
+    var cocokPeriode = !qPeriode || t.periode === qPeriode;
+    return cocokNama && cocokPeriode;
+  });
+
+  if (!semuaTugas.length) {
+    tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;padding:20px;">Belum ada data tugas</td></tr>';
+    return;
+  }
+  if (!tugasTampil.length) {
+    tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;padding:20px;">Tidak ada tugas yang cocok dengan filter</td></tr>';
+    return;
+  }
+  tbody.innerHTML = tugasTampil.map(function(t){
+    var tid = t.idTugas;
+    return '<tr>' +
+      '<td style="width:36px"><input type="checkbox" class="row-chk-tugas" value="'+tid+'" onchange="toggleSelectTugas(\''+tid+'\', this.checked)" '+(selectedTugas.has(tid)?'checked':'')+'></td>' +
+      '<td style="font-family:\'Space Mono\',monospace;font-size:12px">'+tid+'</td>' +
+      '<td>'+(t.namaPegawai||'<i>Semua CS/Pramubakti</i>')+'</td>' +
+      '<td>'+t.uraian+'</td>' +
+      '<td><span class="badge badge-green">'+t.periode+'</span></td>' +
+      '<td><button class="btn btn-outline btn-sm" onclick="openTugasModal(\''+tid+'\')">✏️</button></td>' +
+    '</tr>';
+  }).join('');
+}
+
+function toggleSelectTugas(id, checked) {
+  if (checked) selectedTugas.add(id); else selectedTugas.delete(id);
+}
+
+function toggleAllTugas(cb) {
+  document.querySelectorAll('.row-chk-tugas').forEach(function(el){
+    el.checked = cb.checked;
+    toggleSelectTugas(el.value, cb.checked);
+  });
+}
+
+async function hapusTugasBulk() {
+  if (!selectedTugas.size) { alert('Pilih minimal satu tugas untuk dihapus.'); return; }
+  if (!confirm('Hapus '+selectedTugas.size+' tugas terpilih dari database?')) return;
+  var ids = Array.from(selectedTugas);
+  if (SCRIPT_URL) await callAPI('deleteDaftarTugas', { idTugas: ids });
+  localDaftarTugas = (localDaftarTugas||[]).filter(function(t){ return ids.indexOf(t.idTugas) === -1; });
+  localStorage.setItem('ppnpn_daftar_tugas', JSON.stringify(localDaftarTugas));
+  selectedTugas.clear();
+  loadDaftarTugasAdminTable();
+}
+
+async function openTugasModal(idTugas) {
+  var t = idTugas ? (localDaftarTugas||[]).find(function(x){ return x.idTugas===idTugas; }) : null;
+  document.getElementById('modalTugasTitle').textContent = t ? 'Edit Tugas' : 'Tambah Tugas';
+  document.getElementById('adm-tugas-id').value = t ? t.idTugas : ('T' + Date.now());
+  document.getElementById('adm-tugas-id').disabled = !!t;
+  document.getElementById('adm-tugas-uraian').value = t ? t.uraian : '';
+  document.getElementById('adm-tugas-periode').value = t ? t.periode : 'Harian';
+
+  // Isi dropdown "Nama Pegawai" otomatis dari data pegawai (CS/Pramubakti)
+  var selNama = document.getElementById('adm-tugas-nama');
+  selNama.innerHTML = '<option value="">⏳ Memuat data pegawai...</option>';
+  document.getElementById('tugasAdminModal').classList.add('open');
+
+  var csUsers = await ensureCSPegawaiList(true); // selalu ambil data pegawai terbaru
+  var namaTersimpan = t ? (t.namaPegawai || '') : '';
+  var opsiLain = '';
+  // Jika tugas edit menyimpan nama yang sudah tidak ada di data pegawai saat ini,
+  // tetap tampilkan sebagai opsi agar data tidak hilang tanpa sengaja.
+  if (namaTersimpan && !csUsers.some(function(u){ return u.namaPegawai === namaTersimpan; })) {
+    opsiLain = '<option value="'+namaTersimpan.replace(/"/g,'&quot;')+'">'+namaTersimpan+' (tidak ditemukan di data pegawai)</option>';
+  }
+  selNama.innerHTML = '<option value="">-- Semua CS/Pramubakti --</option>' +
+    csUsers.map(function(u){
+      return '<option value="'+String(u.namaPegawai).replace(/"/g,'&quot;')+'">'+u.namaPegawai+' ('+u.idPegawai+')</option>';
+    }).join('') + opsiLain;
+  selNama.value = namaTersimpan;
+}
+
+async function simpanTugasAdmin() {
+  var row = {
+    idTugas: document.getElementById('adm-tugas-id').value.trim(),
+    namaPegawai: document.getElementById('adm-tugas-nama').value.trim() || null,
+    uraian: document.getElementById('adm-tugas-uraian').value.trim(),
+    periode: document.getElementById('adm-tugas-periode').value,
+    idPegawai: null
+  };
+  if (!row.idTugas || !row.uraian) { alert('ID Tugas dan Uraian Pekerjaan wajib diisi.'); return; }
+  if (SCRIPT_URL) await callAPI('saveDaftarTugas', row);
+  localDaftarTugas = (localDaftarTugas||[]).filter(function(t){ return t.idTugas !== row.idTugas; });
+  localDaftarTugas.push(row);
+  localStorage.setItem('ppnpn_daftar_tugas', JSON.stringify(localDaftarTugas));
+  closeModal('tugasAdminModal');
+  loadDaftarTugasAdminTable();
+}
+
+// ============================================================
+// JADWAL HARI LIBUR (parameter hari libur untuk CS & Pramubakti dari database)
+// ============================================================
+var HARI_NAMA = ['Minggu','Senin','Selasa','Rabu','Kamis',"Jum'at",'Sabtu'];
+
+async function ensureLiburLoaded() {
+  if (Array.isArray(localLibur)) return localLibur;
+  if (SCRIPT_URL) {
+    var res = await callAPI('getLibur', {});
+    if (res && res.success) {
+      localLibur = res.data;
+      localStorage.setItem('ppnpn_libur', JSON.stringify(localLibur));
+      // Seed data default (hari libur nasional) jika tabel masih kosong
+      if (!localLibur.length && DEFAULT_LIBUR.length) {
+        await callAPI('saveLibur', { rows: DEFAULT_LIBUR });
+        localLibur = DEFAULT_LIBUR.slice();
+        localStorage.setItem('ppnpn_libur', JSON.stringify(localLibur));
+      }
+      return localLibur;
+    }
+  }
+  localLibur = DEFAULT_LIBUR.slice();
+  return localLibur;
+}
+
+// Dipakai oleh halaman Absensi (CS & Pramubakti): true jika tanggal ada di
+// tabel jadwal_libur. Jika data belum termuat sama sekali, fallback ke
+// weekend (Sabtu/Minggu) supaya tetap aman.
+function isHariLibur(tanggalStr) {
+  if (!Array.isArray(localLibur)) {
+    var dow = new Date(tanggalStr + 'T00:00:00').getDay();
+    return dow === 0 || dow === 6;
+  }
+  return localLibur.some(function(l){ return l.tanggal === tanggalStr; });
+}
+
+function getKeteranganLibur(tanggalStr) {
+  var f = (localLibur||[]).find(function(l){ return l.tanggal === tanggalStr; });
+  return f ? f.keterangan : '';
+}
+
+// True jika tanggal tsb adalah hari libur/off BAGI pegawai tertentu.
+// Security: mengikuti jadwal shift (kode "L" pada TIM miliknya).
+// CS/Pramubakti/Pengemudi: mengikuti tabel jadwal_libur (isHariLibur).
+function isPegawaiLiburOnDate(peg, tanggalStr) {
+  if (!peg) return isHariLibur(tanggalStr);
+  var job = peg.pekerjaan || peg['PEKERJAAN'] || '';
+  if (job === 'Security') {
+    var tim = peg.Tim || peg.tim || peg['Tim'] || peg['TIM'] || '';
+    if (!tim) return isHariLibur(tanggalStr);
+    var tims = ['TIM 1','TIM 2','TIM 3','TIM 4'];
+    var idx = tims.indexOf(tim);
+    var val = (shiftData[tanggalStr] && shiftData[tanggalStr][tim])
+      ? String(shiftData[tanggalStr][tim]).toUpperCase()
+      : (idx >= 0 ? hitungShiftOtomatis(tanggalStr, idx) : 'L');
+    return val === 'L';
+  }
+  return isHariLibur(tanggalStr);
+}
+
+async function loadAdminLibur() {
+  await ensureLiburLoaded();
+  var tbody = document.getElementById('adminLiburBody');
+  var sorted = (localLibur||[]).slice().sort(function(a,b){ return a.tanggal.localeCompare(b.tanggal); });
+  if (!sorted.length) {
+    tbody.innerHTML = '<tr><td colspan="4" style="text-align:center;padding:20px">Belum ada data hari libur</td></tr>';
+    return;
+  }
+  tbody.innerHTML = sorted.map(function(l){
+    return '<tr>' +
+      '<td><input type="checkbox" class="row-chk-libur" value="'+l.tanggal+'" onchange="toggleSelectLibur(\''+l.tanggal+'\', this.checked)" '+(selectedLibur.has(l.tanggal)?'checked':'')+'></td>' +
+      '<td style="font-family:\'Space Mono\',monospace">'+l.tanggal+' <span style="color:var(--text-muted);font-size:11px">('+HARI_NAMA[new Date(l.tanggal+'T00:00:00').getDay()]+')</span></td>' +
+      '<td>'+(l.keterangan||'-')+'</td>' +
+      '<td><button class="btn btn-outline btn-sm" onclick="openLiburModal(\''+l.tanggal+'\')">✏️</button></td>' +
+    '</tr>';
+  }).join('');
+}
+
+function toggleSelectLibur(tgl, checked) {
+  if (checked) selectedLibur.add(tgl); else selectedLibur.delete(tgl);
+}
+function toggleAllLibur(cb) {
+  document.querySelectorAll('.row-chk-libur').forEach(function(el){
+    el.checked = cb.checked;
+    toggleSelectLibur(el.value, cb.checked);
+  });
+}
+
+async function hapusLiburBulk() {
+  if (!selectedLibur.size) { alert('Pilih minimal satu tanggal untuk dihapus.'); return; }
+  if (!confirm('Hapus '+selectedLibur.size+' jadwal libur terpilih?')) return;
+  var tgls = Array.from(selectedLibur);
+  if (SCRIPT_URL) await callAPI('deleteLibur', { tanggal: tgls });
+  localLibur = (localLibur||[]).filter(function(l){ return tgls.indexOf(l.tanggal) === -1; });
+  localStorage.setItem('ppnpn_libur', JSON.stringify(localLibur));
+  selectedLibur.clear();
+  loadAdminLibur();
+}
+
+async function quickAddLibur() {
+  var tgl = document.getElementById('adm-libur-quick-tgl').value;
+  var ket = document.getElementById('adm-libur-quick-ket').value.trim();
+  if (!tgl) { alert('Pilih tanggal terlebih dahulu.'); return; }
+  if (SCRIPT_URL) await callAPI('saveLibur', { tanggal: tgl, keterangan: ket });
+  localLibur = (localLibur||[]).filter(function(l){ return l.tanggal !== tgl; });
+  localLibur.push({ tanggal: tgl, keterangan: ket });
+  localStorage.setItem('ppnpn_libur', JSON.stringify(localLibur));
+  document.getElementById('adm-libur-quick-tgl').value = '';
+  document.getElementById('adm-libur-quick-ket').value = '';
+  loadAdminLibur();
+}
+
+function openLiburModal(tgl) {
+  var l = (localLibur||[]).find(function(x){ return x.tanggal === tgl; });
+  document.getElementById('modalLiburTitle').textContent = l ? 'Edit Hari Libur' : 'Tambah Hari Libur';
+  document.getElementById('adm-libur-tgl').value = l ? l.tanggal : '';
+  document.getElementById('adm-libur-ket').value = l ? (l.keterangan||'') : '';
+  document.getElementById('liburAdminModal').classList.add('open');
+}
+
+async function simpanLiburAdmin() {
+  var tgl = document.getElementById('adm-libur-tgl').value;
+  var ket = document.getElementById('adm-libur-ket').value.trim();
+  if (!tgl) { alert('Tanggal wajib diisi.'); return; }
+  if (SCRIPT_URL) await callAPI('saveLibur', { tanggal: tgl, keterangan: ket });
+  localLibur = (localLibur||[]).filter(function(l){ return l.tanggal !== tgl; });
+  localLibur.push({ tanggal: tgl, keterangan: ket });
+  localStorage.setItem('ppnpn_libur', JSON.stringify(localLibur));
+  closeModal('liburAdminModal');
+  loadAdminLibur();
+}
+
+// Generate hari Sabtu & Minggu selama 1 tahun penuh sebagai parameter hari
+// libur mingguan CS & Pramubakti (bisa dijalankan ulang tiap tahun).
+async function generateWeekendLibur() {
+  var tahun = parseInt(document.getElementById('adm-libur-gen-tahun').value, 10) || new Date().getFullYear();
+  if (!confirm('Generate seluruh hari Sabtu & Minggu tahun '+tahun+' sebagai hari libur?')) return;
+  var rows = [];
+  var d = new Date(tahun, 0, 1);
+  while (d.getFullYear() === tahun) {
+    var dow = d.getDay();
+    if (dow === 0 || dow === 6) {
+      var tgl = d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');
+      if (!(localLibur||[]).find(function(l){ return l.tanggal===tgl; })) {
+        rows.push({ tanggal: tgl, keterangan: dow===0 ? 'Minggu' : 'Sabtu' });
+      }
+    }
+    d.setDate(d.getDate()+1);
+  }
+  if (!rows.length) { alert('Semua hari Sabtu & Minggu tahun ini sudah ada di jadwal.'); return; }
+  if (SCRIPT_URL) await callAPI('saveLibur', { rows: rows });
+  localLibur = (localLibur||[]).concat(rows);
+  localStorage.setItem('ppnpn_libur', JSON.stringify(localLibur));
+  loadAdminLibur();
+  alert('✅ '+rows.length+' hari libur akhir pekan berhasil ditambahkan.');
+}
+
+async function loadLiburUserPage() {
+  await ensureLiburLoaded();
+  var tbody = document.getElementById('liburUserBody');
+  var sorted = (localLibur||[]).slice().sort(function(a,b){ return a.tanggal.localeCompare(b.tanggal); });
+  if (!sorted.length) {
+    tbody.innerHTML = '<tr><td colspan="3" style="text-align:center;padding:20px">Belum ada data hari libur</td></tr>';
+    return;
+  }
+  tbody.innerHTML = sorted.map(function(l){
+    return '<tr><td style="font-family:\'Space Mono\',monospace">'+l.tanggal+'</td>' +
+      '<td>'+HARI_NAMA[new Date(l.tanggal+'T00:00:00').getDay()]+'</td>' +
+      '<td>'+(l.keterangan||'-')+'</td></tr>';
+  }).join('');
+}
+
+// ============================================================
+// LOGIN
+// ============================================================
+function togglePasswordVisibility() {
+  const input = document.getElementById('loginPassword');
+  const eyeIcon = document.getElementById('eyeIcon');
+  const showing = input.type === 'text';
+  input.type = showing ? 'password' : 'text';
+  eyeIcon.innerHTML = showing
+    ? '<path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/>'
+    : '<path d="M17.94 17.94A10.94 10.94 0 0 1 12 20c-7 0-11-8-11-8a18.6 18.6 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"/><line x1="1" y1="1" x2="23" y2="23"/>';
+}
+
+function loadRememberedLogin() {
+  try {
+    const saved = JSON.parse(localStorage.getItem('ppnpn_remember') || 'null');
+    if (saved && saved.username) {
+      document.getElementById('loginUsername').value = saved.username;
+      document.getElementById('loginPassword').value = saved.password || '';
+      document.getElementById('rememberMe').checked = true;
+    }
+  } catch(e) {}
+}
+
+// Modal daftar user di halaman login — membantu pegawai yang lupa
+// username/format password awal sebelum berhasil masuk aplikasi.
+async function openLoginUserListModal() {
+  document.getElementById('loginUserListModal').classList.add('open');
+  var body = document.getElementById('loginUserListBody');
+  body.innerHTML = '<p style="font-size:13px;color:var(--text-muted);text-align:center;padding:20px 0">Memuat daftar user...</p>';
+
+  if (!supabaseClient) { initSupabaseClient(); SCRIPT_URL = supabaseClient ? 'supabase' : ''; }
+  if (!SCRIPT_URL) {
+    body.innerHTML = '<p style="font-size:13px;color:var(--danger);text-align:center;padding:20px 0">❌ Tidak dapat terhubung ke database.</p>';
+    return;
+  }
+
+  var res = await callAPI('getPegawai', {});
+  if (!res || !res.success || !res.data || !res.data.length) {
+    body.innerHTML = '<p style="font-size:13px;color:var(--danger);text-align:center;padding:20px 0">❌ Gagal memuat daftar user.</p>';
+    return;
+  }
+
+  body.innerHTML = res.data.map(function(p){
+    var nama = p['NAMA'] || '-';
+    var username = p['USERNAME'] || '-';
+    return '<div class="userlist-row">' +
+             '<span class="userlist-nama">' + nama + '</span>' +
+             '<span class="userlist-username">' + username + '</span>' +
+           '</div>';
+  }).join('');
+}
+
+async function doLogin() {
+  const username = document.getElementById('loginUsername').value.trim().toLowerCase();
+  const password = document.getElementById('loginPassword').value.trim();
+  const remember = document.getElementById('rememberMe').checked;
+  const errEl = document.getElementById('loginError');
+  errEl.style.display = 'none';
+
+  if (!username || !password) {
+    errEl.textContent = 'Username dan password wajib diisi!';
+    errEl.style.display = 'block'; return;
+  }
+
+  document.getElementById('loginBtnText').innerHTML = '<span class="loading-spinner"></span> Memuat...';
+
+  if (!SCRIPT_URL) {
+    document.getElementById('loginBtnText').textContent = 'Masuk';
+    errEl.textContent = '❌ Tidak dapat terhubung ke database. Periksa koneksi internet Anda.';
+    errEl.style.display = 'block'; return;
+  }
+
+  let user = null;
+  const result = await callAPI('login', {username, password});
+  if (result && result.success) user = result.user;
+
+  document.getElementById('loginBtnText').textContent = 'Masuk';
+
+  if (!user) {
+    errEl.textContent = '❌ Username atau password salah!';
+    errEl.style.display = 'block'; return;
+  }
+
+  currentUser = user;
+
+  // Simpan sesi supaya tidak logout otomatis saat refresh
+  try { localStorage.setItem('ppnpn_session', JSON.stringify(user)); } catch(e) {}
+
+  // Simpan atau hapus kredensial "ingat saya"
+  try {
+    if (remember) {
+      localStorage.setItem('ppnpn_remember', JSON.stringify({ username, password }));
+    } else {
+      localStorage.removeItem('ppnpn_remember');
+    }
+  } catch(e) {}
+
+  initApp();
+}
+
+function confirmLogout() {
+  const u = currentUser;
+  if (u) {
+    document.getElementById('logoutUserInfo').textContent =
+      `Anda login sebagai ${u.namaPegawai} (${u.pekerjaan}). Pastikan semua data sudah tersimpan sebelum keluar.`;
+  }
+  document.getElementById('logoutModal').classList.add('open');
+}
+
+function doLogout() {
+  closeModal('logoutModal');
+  currentUser = null;
+  currentUserData = null;
+  if (cameraStream && cameraStream !== 'skip') {
+    cameraStream.getTracks().forEach(function(t){ t.stop(); });
+  }
+  cameraStream = null;
+  if (clockInterval) { clearInterval(clockInterval); clockInterval=null; }
+  localStorage.removeItem('ppnpn_session');
+  document.getElementById('appPage').style.display = 'none';
+  document.getElementById('loginPage').style.display = 'flex';
+  document.getElementById('loginUsername').value = '';
+  document.getElementById('loginPassword').value = '';
+}
+
+// ============================================================
+// APP INIT
+// ============================================================
+function initApp() {
+  document.getElementById('loginPage').style.display = 'none';
+  document.getElementById('appPage').style.display = 'block';
+
+  var u = currentUser;
+  var isAdmin = u.status === 'Admin';
+
+  document.getElementById('userAvatar').textContent = u.namaPegawai.charAt(0).toUpperCase();
+  document.getElementById('sidebarName').textContent = u.namaPegawai;
+  document.getElementById('sidebarRole').textContent = isAdmin ? '👑 Administrator' :
+    u.pekerjaan + (u.Tim && u.Tim!=='HR' && u.Tim!=='CS' && u.Tim!=='Admin' ? ' — '+u.Tim : '');
+
+  if (isAdmin) {
+    document.getElementById('userAvatar').style.background = 'linear-gradient(135deg, #7c3aed, #4c1d95)';
+  }
+
+  document.getElementById('pegawaiMenu').style.display = isAdmin ? 'none' : 'block';
+  document.getElementById('adminMenu').style.display   = isAdmin ? 'block' : 'none';
+  document.getElementById('topbarDate').textContent = todayStr();
+
+var menuCS = document.getElementById('menuChecklistCS');
+  if (menuCS) menuCS.style.display = ((u.pekerjaan === 'Cleaning Service' || u.pekerjaan === 'Pramubakti') && !isAdmin) ? 'flex' : 'none';
+  // Preload jadwal hari libur & daftar tugas (dipakai lintas halaman)
+  ensureLiburLoaded();
+  ensureDaftarTugasLoaded();
+  // Load radius kantor & jam kerja murni dari Supabase (tidak ada fallback demo)
+  if (SCRIPT_URL) {
+    callAPI('getRadius', {}).then(function(r) {
+      if (r && r.success && r.data) {
+        var d = r.data;
+        officeLat    = parseFloat(d['officeLat']);
+        officeLon    = parseFloat(d['officeLon']);
+        officeRadius = parseFloat(d['radiusTolerance']) || 100;
+        // Koordinat di sheet disimpan sebagai integer (dikali 1e7), normalisasi jika perlu
+        if (Math.abs(officeLat) > 180) officeLat = officeLat / 1e7;
+        if (Math.abs(officeLon) > 180) officeLon = officeLon / 1e7;
+        DEMO_RADIUS.officeLat = officeLat;
+        DEMO_RADIUS.officeLon = officeLon;
+        DEMO_RADIUS.radiusTolerance = officeRadius;
+      } else {
+        console.warn('Lokasi kantor belum dikonfigurasi di database. Admin perlu mengatur di menu Pengaturan.');
+      }
+    });
+
+    callAPI('getJamKerja', {}).then(function(r) {
+      if (r && r.success && r.data && r.data.length > 0) {
+        DEMO_JAM_KERJA.length = 0;
+        r.data.forEach(function(d) { DEMO_JAM_KERJA.push(d); });
+      } else {
+        console.warn('Jam kerja belum dikonfigurasi di database. Admin perlu mengatur di menu Pengaturan.');
+      }
+    });
+
+    // Preload absensi & permohonan dari Supabase ke cache lokal
+    syncFromSheets();
+  } else {
+    console.error('Tidak dapat terhubung ke database Supabase.');
+  }
+
+  buildBottomNav();
+  showPage('dashboard');
+}
+
+// Sinkronisasi data dari Google Sheets ke localCache
+async function syncFromSheets() {
+  var u = currentUser;
+  if (!SCRIPT_URL || !u) return;
+
+  try {
+    // Absensi milik user ini (pegawai) atau semua (admin)
+    var absenParams = u.status === 'Admin' ? {} : { idPegawai: u.idPegawai };
+    var absenResult = await callAPI('getAbsensi', absenParams);
+    if (absenResult && absenResult.success && absenResult.data.length > 0) {
+      if (u.status === 'Admin') {
+        localAbsensi = absenResult.data;
+      } else {
+        // Merge: replace data milik user ini, pertahankan data lain
+        localAbsensi = localAbsensi.filter(function(a) { return a.idPegawai !== u.idPegawai; });
+        localAbsensi = localAbsensi.concat(absenResult.data);
+      }
+      localStorage.setItem('ppnpn_absensi', JSON.stringify(localAbsensi));
+    }
+
+    // Permohonan
+    var cutiParams = u.status === 'Admin' ? {} : { idKaryawan: u.idPegawai };
+    var cutiResult = await callAPI('getPermohonan', cutiParams);
+    if (cutiResult && cutiResult.success && cutiResult.data.length > 0) {
+      if (u.status === 'Admin') {
+        localPermohonan = cutiResult.data;
+      } else {
+        localPermohonan = localPermohonan.filter(function(p) { return p.ID_Karyawan !== u.idPegawai; });
+        localPermohonan = localPermohonan.concat(cutiResult.data);
+      }
+      localStorage.setItem('ppnpn_permohonan', JSON.stringify(localPermohonan));
+    }
+
+    // Profil pegawai
+    if (u.status !== 'Admin') {
+      var pegResult = await callAPI('getPegawai', { idPegawai: u.idPegawai });
+      if (pegResult && pegResult.success && pegResult.data.length > 0) {
+        var p = pegResult.data[0];
+        if (!localPegawai) localPegawai = {};
+        localPegawai[u.idPegawai] = {
+          NAMA: p['NAMA'], NIK: p['NIK'], NO_HP: p['NO HP'],
+          TEMPAT_LAHIR: p['TEMPAT LAHIR'], TGL_LAHIR: p['TGL LAHIR'],
+          JENIS_KELAMIN: p['JENIS KELAMIN'], PENDIDIKAN: p['PENDIDIKAN'],
+          ALAMAT: p['ALAMAT']
+        };
+        localStorage.setItem('ppnpn_pegawai', JSON.stringify(localPegawai));
+      }
+
+      // Keluarga
+      var klResult = await callAPI('getKeluarga', { idPegawai: u.idPegawai });
+      if (klResult && klResult.success) {
+        localKeluarga[u.idPegawai] = klResult.data.map(function(k) {
+          return {
+            nama: k['NAMA ANGGOTA'], hubungan: k['HUBUNGAN'],
+            ttl: k['TEMPAT LAHIR'], tgl: k['TANGGAL LAHIR'],
+            nik: k['NIK PEGAWAI'], kk: k['NO KK'],
+            pendidikan: k['PENDIDIKAN'], tanggungan: k['STATUS TANGGUNGAN']
+          };
+        });
+        localStorage.setItem('ppnpn_keluarga', JSON.stringify(localKeluarga));
+      }
+    }
+
+    // Refresh dashboard setelah data masuk
+    loadDashboard();
+
+  } catch(err) {
+    console.log('Sync error:', err);
+  }
+}
+
+// Ambil ulang data permohonan cuti/ijin terbaru dari server (dipakai supaya
+// saldo/hak cuti selalu real-time setelah admin menyetujui/menolak, tanpa
+// harus logout-login ulang).
+async function refreshPermohonan() {
+  var u = currentUser;
+  if (!SCRIPT_URL || !u) return;
+  try {
+    var cutiParams = u.status === 'Admin' ? {} : { idKaryawan: u.idPegawai };
+    var cutiResult = await callAPI('getPermohonan', cutiParams);
+    if (cutiResult && cutiResult.success) {
+      if (u.status === 'Admin') {
+        localPermohonan = cutiResult.data;
+      } else {
+        localPermohonan = localPermohonan.filter(function(p) { return p.ID_Karyawan !== u.idPegawai; });
+        localPermohonan = localPermohonan.concat(cutiResult.data);
+      }
+      localStorage.setItem('ppnpn_permohonan', JSON.stringify(localPermohonan));
+    }
+  } catch(err) {
+    console.log('Refresh permohonan error:', err);
+  }
+}
+
+// Ambil ulang daftar seluruh pegawai dari database (dipakai supaya kartu
+// rekap di dashboard admin (total pegawai per bagian, dll) selalu sinkron
+// dengan data pegawai/pemberhentian terbaru, bukan data demo statis.
+async function refreshAllPegawai() {
+  if (!SCRIPT_URL) return;
+  try {
+    var result = await callAPI('getPegawai', {});
+    if (result && result.success) {
+      localAllPegawai = result.data;
+      localStorage.setItem('ppnpn_all_pegawai', JSON.stringify(localAllPegawai));
+    }
+  } catch(err) {
+    console.log('Refresh pegawai error:', err);
+  }
+}
+
+// Kembalikan daftar pegawai yang siap dipakai untuk perhitungan dashboard.
+// Murni dari data real Supabase (localAllPegawai); tidak ada lagi fallback demo.
+function getPegawaiListForStats() {
+  if (localAllPegawai && localAllPegawai.length) {
+    return localAllPegawai
+      .filter(function(p){ return (p['STATUS']||'Pegawai') === 'Pegawai'; })
+      .map(function(p){
+        return { idPegawai: p['ID PEGAWAI'], namaPegawai: p['NAMA'], pekerjaan: p['PEKERJAAN'], Tim: p['Tim']||p['TIM'] };
+      });
+  }
+  return [];
+}
+
+// ============================================================
+// NAVIGATION
+// ============================================================
+function showPage(name) {
+  var u = currentUser;
+  var isAdmin = u && u.status === 'Admin';
+
+  // Access guard — pegawai tidak bisa akses halaman admin
+  var adminPages = ['adminAbsensi','adminCuti','adminIjinKeluar','adminPegawai','adminShift','adminHakCuti','adminPotongan','adminPengaturan', 'adminChecklistCS', 'adminLibur', 'adminLembur']; 
+  var pegawaiOnlyPages = ['absensi','cuti','ijinKeluar','profil','keluarga'];
+  if (!isAdmin && adminPages.indexOf(name) >= 0) {
+    alert('Akses ditolak. Halaman ini hanya untuk admin.');
+    return;
+  }
+  if (isAdmin && pegawaiOnlyPages.indexOf(name) >= 0) {
+    // Admin tidak perlu halaman pegawai — redirect ke dashboard
+    name = 'dashboard';
+  }
+
+  document.querySelectorAll('.page').forEach(function(p){ p.classList.remove('active'); });
+  document.querySelectorAll('.nav-item').forEach(function(n){ n.classList.remove('active'); });
+
+  var pageEl = document.getElementById('page-'+name);
+  if (pageEl) pageEl.classList.add('active');
+
+  var titles = {
+  adminChecklistCS: '🧹 Evaluasi Tugas CS',
+    dashboard: isAdmin ? '📊 Dashboard Admin' : '🏠 Dashboard',
+    checklist: '📝 Checklist Tugas CS',
+    absensi: '⏰ Absensi',
+    cuti: '🏖 Cuti & Ijin',
+    ijinKeluar: '🚪 Ijin Keluar',
+    profil: '👤 Profil Saya',
+    keluarga: '👨‍👩‍👧 Data Keluarga',
+    adminAbsensi: '📋 Rekap Absensi Pegawai',
+    adminCuti: '✅ Persetujuan Cuti & Ijin',
+    adminIjinKeluar: '🚪 Persetujuan Ijin Keluar',
+    adminPegawai: '👥 Data Seluruh Pegawai',
+    adminShift: '🔄 Jadwal Shift Security',
+    adminHakCuti: '🏖 Hak Cuti Pegawai',
+    adminLembur: '🔥 Penugasan & SPK Lembur',
+    adminPotongan: '💰 Rekapitulasi Potongan',
+    adminPengaturan: '⏰ Jam Kerja & Radius Absensi',
+    adminLibur: '🗓 Jadwal Hari Libur',
+    libur: '🗓 Jadwal Hari Libur'
+  };
+  document.getElementById('topbarTitle').textContent = titles[name] || name;
+
+  // Mark active nav
+  document.querySelectorAll('.nav-item').forEach(function(el){
+    if (el.getAttribute('onclick') && el.getAttribute('onclick').indexOf("'"+name+"'") >= 0) {
+      el.classList.add('active');
+    }
+  });
+
+  // Load page data
+  if (name === 'adminChecklistCS') {
+    document.getElementById('admFilterTglCS').value = today();
+    loadAdminChecklistCS();
+    loadDaftarTugasAdminTable();
+  }
+  if (name === 'absensi') initAbsensiPage();
+  if (name === 'cuti') loadCutiPage();
+  if (name === 'ijinKeluar') loadIjinKeluarPage();
+  if (name === 'adminIjinKeluar') { adminIjinCurrentTab='pending'; loadAdminIjinKeluar(); }
+  if (name === 'profil') loadProfil();
+  if (name === 'keluarga') loadKeluarga();
+  if (name === 'adminAbsensi') { initAdminAbsensiFilter(); loadAdminAbsensi(); }
+  if (name === 'adminCuti') { adminCutiCurrentTab='pending'; loadAdminCuti(); }
+  if (name === 'adminPegawai') loadAdminPegawai();
+  if (name === 'adminShift') { initShiftFilter(); switchShiftTab('generator'); loadShiftData(); renderShiftTimRoster(); }
+  if (name === 'adminHakCuti') loadAdminHakCuti();
+  if (name === 'adminLembur') initAdminLembur();
+  if (name === 'adminPotongan') initAdminPotongan();
+  if (name === 'adminPengaturan') loadPengaturanPage();
+  if (name === 'adminLibur') loadAdminLibur();
+  if (name === 'libur') loadLiburUserPage();
+  if (name === 'dashboard') loadDashboard();
+  if (name === 'checklist') loadChecklist();
+
+  // Aktifkan pengecekan berkala untuk efek berkedip card "Absen Pulang"
+  // hanya saat pegawai berada di halaman dashboard.
+  if (name === 'dashboard' && !isAdmin) startPulangCardWatcher(); else stopPulangCardWatcher();
+
+  // Mobile: update bottom nav & close sidebar drawer
+  updateBottomNavActive(name);
+  closeSidebar();
+  // Scroll to top on page change
+  window.scrollTo(0, 0);
+}
+
+// Navigasi dari kartu "Rekap Kehadiran Hari Ini" di dashboard admin ->
+// langsung buka Rekap Absensi Pegawai dengan filter pekerjaan & tanggal hari ini.
+function goToAdminAbsensiByJob(job) {
+  showPage('adminAbsensi');
+  var jabEl = document.getElementById('admFilterJab');
+  var fromEl = document.getElementById('admFilterFrom');
+  var toEl = document.getElementById('admFilterTo');
+  if (jabEl) jabEl.value = job;
+  if (fromEl) fromEl.value = today();
+  if (toEl) toEl.value = today();
+  loadAdminAbsensi();
+}
+
+
+// (Implementasi tambahPenugasanLemburBulk() ada di bagian "ADMIN: PENUGASAN
+// LEMBUR" di bawah, bersama initAdminLembur() & checkbox picker pegawai.)
+
+// ============================================================
+// DASHBOARD
+// ============================================================
+// Update card "Absen Pulang" di dashboard — dipanggil saat load dashboard
+// dan berkala (tiap 15 detik) supaya efek berkedip muncul tepat di jam pulang
+// tanpa perlu reload halaman.
+function updatePulangCard() {
+  var pdPulangCard = document.getElementById('pdPulangCard');
+  var pdPulangTag = document.getElementById('pdPulangTag');
+  var pdPulangVal = document.getElementById('pdAbsenPulangTime');
+  if (!pdPulangCard || !currentUser || currentUser.status === 'Admin') return;
+
+  var u = currentUser;
+  var todayAbsen = localAbsensi.find(function(a){ return a.idPegawai===u.idPegawai && a.tanggal===today(); });
+  var jamPulang = getJamPulangHariIni(u);
+
+  if (todayAbsen && todayAbsen.absenPulang) {
+    pdPulangVal.textContent = fmtTime(todayAbsen.absenPulang) + ' WIB';
+    pdPulangTag.textContent = todayAbsen.statusAbsenPulang || 'Selesai';
+    pdPulangCard.classList.add('done');
+    pdPulangCard.classList.remove('blinking');
+    return;
+  }
+
+  pdPulangCard.classList.remove('done');
+  pdPulangVal.textContent = jamPulang ? jamPulang + ' WIB' : '-- : --';
+
+  if (!jamPulang || !(todayAbsen && todayAbsen.absenMasuk)) {
+    pdPulangTag.textContent = jamPulang ? 'Terjadwal' : '-';
+    pdPulangCard.classList.remove('blinking');
+    return;
+  }
+
+  var now = new Date();
+  var nowHM = String(now.getHours()).padStart(2,'0') + ':' + String(now.getMinutes()).padStart(2,'0');
+  var sudahWaktunya = nowHM >= jamPulang;
+  pdPulangTag.textContent = sudahWaktunya ? '⏰ Waktunya Pulang!' : 'Terjadwal';
+  pdPulangCard.classList.toggle('blinking', sudahWaktunya);
+}
+
+function startPulangCardWatcher() {
+  if (pulangCardInterval) clearInterval(pulangCardInterval);
+  pulangCardInterval = setInterval(updatePulangCard, 15000);
+}
+function stopPulangCardWatcher() {
+  if (pulangCardInterval) { clearInterval(pulangCardInterval); pulangCardInterval = null; }
+}
+
+async function loadDashboard() {
+  var u = currentUser;
+  var isAdmin = u.status === 'Admin';
+
+  // Tarik status permohonan cuti & daftar pegawai terbaru dulu, supaya semua
+  // kartu dashboard selalu sinkron dengan data real di database (bukan data
+  // demo statis) tanpa harus logout-login ulang.
+  await refreshPermohonan();
+
+  var adminWrap = document.getElementById('adminDashboardWrap');
+  var pegawaiWrap = document.getElementById('pegawaiDashboardWrap');
+  var dashCards = document.getElementById('dashCards');
+
+  if (isAdmin) {
+    await refreshAllPegawai();
+
+    adminWrap.style.display = '';
+    pegawaiWrap.style.display = 'none';
+
+    // ---- ADMIN DASHBOARD ----
+    var pegawaiListDb = getPegawaiListForStats();
+    var todayAll = localAbsensi.filter(function(a){ return a.tanggal===today(); });
+    var totalPegawai = pegawaiListDb.length;
+    var pendingCuti = localPermohonan.filter(function(p){ return p.Status==='Menunggu'; }).length;
+    var cutiHariIni = localPermohonan.filter(function(p){
+      return p.Status==='Disetujui' && p.Tanggal_Mulai<=today() && p.Tanggal_Selesai>=today();
+    }).length;
+
+    document.getElementById('ds-hadir').textContent = todayAll.length;
+    document.getElementById('ds-late').textContent = todayAll.filter(function(a){ return a.statusAbsenMasuk==='Terlambat'; }).length;
+    document.getElementById('ds-absent').textContent = totalPegawai - todayAll.length - cutiHariIni;
+    document.getElementById('ds-cuti').textContent = pendingCuti;
+
+    // Update stat labels for admin context
+    document.querySelector('#ds-cuti').closest('.stat-card').querySelector('.label').textContent = 'CUTI PENDING';
+    document.querySelector('#ds-cuti').closest('.stat-card').querySelector('.sub').textContent = 'Menunggu persetujuan';
+
+    // Admin dashboard cards (data pegawai & absensi real dari database)
+    dashCards.innerHTML = `
+      <div class="card">
+        <div class="card-title">📊 Rekap Kehadiran Hari Ini</div>
+        <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px">
+          ${['Cleaning Service','Pramubakti','Security'].map(function(job, idx){
+            var hadir = todayAll.filter(function(a){
+              var peg = pegawaiListDb.find(function(u){ return u.idPegawai===a.idPegawai; });
+              return peg && peg.pekerjaan===job;
+            }).length;
+            var total = pegawaiListDb.filter(function(u){ return u.pekerjaan===job; }).length;
+            var themes = [
+              {bg:'linear-gradient(135deg,#0a3a2a 0%,#10241d 70%)', accent:'#34d399', label:'#8fd9bb'},
+              {bg:'linear-gradient(135deg,#2a1a4d 0%,#10241d 70%)', accent:'#a78bfa', label:'#c7b6f5'},
+              {bg:'linear-gradient(135deg,#0d2b4e 0%,#10241d 70%)', accent:'#7cb8ff', label:'#9ec4ee'}
+            ];
+            var t = themes[idx % themes.length];
+            return '<div onclick="goToAdminAbsensiByJob(\'' + job + '\')" style="cursor:pointer;background:' + t.bg + ';border-top:3px solid ' + t.accent + ';border-radius:12px;padding:14px;text-align:center;box-shadow:0 4px 14px rgba(0,0,0,0.25);transition:transform .15s" onmouseover="this.style.transform=\'translateY(-3px)\'" onmouseout="this.style.transform=\'none\'">' +
+              '<div style="font-size:11px;color:' + t.label + ';font-weight:700;letter-spacing:0.5px;margin-bottom:6px">' + job.toUpperCase() + '</div>' +
+              '<div style="font-size:28px;font-weight:800;font-family:Space Mono,monospace;color:' + t.accent + '">' + hadir + '<span style="font-size:14px;color:rgba(255,255,255,0.4)">/' + total + '</span></div>' +
+              '</div>';
+          }).join('')}
+        </div>
+      </div>
+      <div class="card" onclick="showPage('adminCuti')" style="cursor:pointer">
+        <div class="card-title">⏳ Permohonan Cuti Pending</div>
+        ${pendingCuti === 0
+          ? '<div class="alert alert-success">✅ Tidak ada permohonan yang menunggu persetujuan</div>'
+          : '<div class="alert alert-warn">⚠ Ada <strong>' + pendingCuti + '</strong> permohonan menunggu persetujuan Anda</div>' +
+            '<button class="btn btn-primary" onclick="event.stopPropagation();showPage(\'adminCuti\')" style="margin-top:10px;width:100%">Lihat & Proses →</button>'
+        }
+      </div>`;
+
+    // Recent absensi all pegawai — default 1 bulan
+    var now2 = new Date();
+    var defFrom = now2.getFullYear()+'-'+String(now2.getMonth()+1).padStart(2,'0')+'-01';
+    var defTo   = today();
+    if (!document.getElementById('dashAbsenFrom').value) {
+      document.getElementById('dashAbsenFrom').value = defFrom;
+      document.getElementById('dashAbsenTo').value   = defTo;
+    }
+    document.querySelector('#recentAbsenTable thead tr').innerHTML =
+      '<th>Tanggal</th><th>Nama</th><th>Masuk</th><th>Status</th><th>Pulang</th><th>Durasi</th>';
+    document.getElementById('recentAbsenTitle').textContent = '📅 Riwayat Absensi Semua Pegawai';
+    filterDashAbsen();
+    renderAdminPiketHariIni();
+
+  } else {
+    adminWrap.style.display = 'none';
+    pegawaiWrap.style.display = '';
+
+    // ---- PEGAWAI DASHBOARD (desain baru) ----
+    var todayAbsen = localAbsensi.find(function(a){ return a.idPegawai===u.idPegawai && a.tanggal===today(); });
+    var saldoCutiPd = hitungSaldoCuti(u.idPegawai);
+    var pakai = saldoCutiPd.pakai;
+    var sisa = saldoCutiPd.sisa;
+
+    // ---- Hero: sapaan & status ----
+    var jamSekarang = new Date().getHours();
+    var sapaan = jamSekarang < 11 ? 'Selamat Pagi' : (jamSekarang < 15 ? 'Selamat Siang' : (jamSekarang < 18 ? 'Selamat Sore' : 'Selamat Malam'));
+    var namaDepan = (u.namaPegawai || '').split(' ')[0];
+    document.getElementById('pdGreeting').textContent = sapaan + ', ' + namaDepan + '!';
+    document.getElementById('pdSubtitle').textContent = todayAbsen
+      ? 'Anda sudah melakukan absensi hari ini. Sisa cuti tahunan Anda ' + sisa + ' hari.'
+      : 'Jangan lupa untuk melakukan absensi hari ini. Anda memiliki ' + sisa + ' hari sisa cuti tahunan yang dapat digunakan.';
+
+    // ---- Anggota tim yang piket hari ini (khusus Security) ----
+    renderTimPiketHariIni(u);
+    if (u.pekerjaan === 'Security') {
+      renderPiketOverviewSecurity();
+    } else {
+      var povWrap = document.getElementById('pdPiketOverviewWrap');
+      if (povWrap) povWrap.style.display = 'none';
+    }
+
+    // ---- Side card: Absen Masuk ----
+    var pdMasukTag = document.getElementById('pdMasukTag');
+    var pdMasukCard = document.getElementById('pdMasukCard');
+    if (todayAbsen && todayAbsen.absenMasuk) {
+      document.getElementById('pdAbsenMasukTime').textContent = fmtTime(todayAbsen.absenMasuk) + ' WIB';
+      var telat = todayAbsen.statusAbsenMasuk === 'Terlambat';
+      pdMasukTag.textContent = telat ? 'Terlambat' : 'Tepat Waktu';
+      pdMasukTag.style.background = 'rgba(255,255,255,0.25)';
+      pdMasukTag.style.color = '#fff';
+      pdMasukCard.classList.toggle('ontime', !telat);
+    } else {
+      document.getElementById('pdAbsenMasukTime').textContent = '-- : --';
+      pdMasukTag.textContent = 'Belum Absen';
+      pdMasukTag.style.background = 'rgba(255,255,255,0.25)';
+      pdMasukTag.style.color = '#fff';
+      pdMasukCard.classList.remove('ontime');
+    }
+
+    // ---- Side card: Absen Pulang (berkedip persis di jam pulang sampai absen pulang) ----
+    updatePulangCard();
+
+    // ---- Side card: Sisa Cuti ----
+    document.getElementById('pdSisaCuti').textContent = sisa + ' Hari';
+
+    // ---- Side card: Status Pengajuan Cuti/Ijin (real dari database) ----
+    var myPermohonan = localPermohonan
+      .filter(function(p){ return p.ID_Karyawan === u.idPegawai; })
+      .sort(function(a,b){ return (b.Tanggal_Mulai||'').localeCompare(a.Tanggal_Mulai||''); });
+    var pendingList = myPermohonan.filter(function(p){ return p.Status==='Menunggu'; });
+    var pendingCutiSaya = pendingList.length;
+    var lastPermohonan = pendingCutiSaya > 0 ? pendingList[0] : myPermohonan[0];
+    var pdCutiTag = document.getElementById('pdCutiStatusTag');
+    var pdCutiVal = document.getElementById('pdCutiStatusValue');
+    if (!lastPermohonan) {
+      pdCutiTag.textContent = 'Belum Ada';
+      pdCutiVal.textContent = 'Belum ada pengajuan';
+    } else if (pendingCutiSaya > 0) {
+      pdCutiTag.textContent = pendingCutiSaya + ' Menunggu';
+      pdCutiVal.textContent = (lastPermohonan.Jenis_Cuti||'Pengajuan') + ' - Menunggu';
+    } else if (lastPermohonan.Status === 'Disetujui') {
+      pdCutiTag.textContent = 'Disetujui';
+      pdCutiVal.textContent = (lastPermohonan.Jenis_Cuti||'Pengajuan') + ' - Disetujui';
+    } else if (lastPermohonan.Status === 'Ditolak') {
+      pdCutiTag.textContent = 'Ditolak';
+      pdCutiVal.textContent = (lastPermohonan.Jenis_Cuti||'Pengajuan') + ' - Ditolak';
+    } else {
+      pdCutiTag.textContent = lastPermohonan.Status || '-';
+      pdCutiVal.textContent = lastPermohonan.Jenis_Cuti || '-';
+    }
+
+    // ---- Ringkasan kehadiran bulan ini ----
+    var nowM = new Date();
+    var bulanIni = nowM.getFullYear()+'-'+String(nowM.getMonth()+1).padStart(2,'0');
+    var absensiBulanIni = localAbsensi.filter(function(a){ return a.idPegawai===u.idPegawai && a.tanggal && a.tanggal.startsWith(bulanIni); });
+    var jumlahHadirBln = absensiBulanIni.length;
+    var jumlahTerlambatBln = absensiBulanIni.filter(function(a){ return a.statusAbsenMasuk==='Terlambat'; }).length;
+    var jumlahPulangCepatBln = absensiBulanIni.filter(function(a){ return a.statusAbsenPulang==='Pulang Cepat'; }).length;
+    var jumlahCutiIjinBln = localPermohonan.filter(function(p){
+      return p.ID_Karyawan===u.idPegawai && p.Status==='Disetujui' && p.Tanggal_Mulai && p.Tanggal_Mulai.startsWith(bulanIni);
+    }).length;
+    var hariBerjalan = nowM.getDate();
+    var jumlahAlpaBln = Math.max(0, hariBerjalan - jumlahHadirBln - jumlahCutiIjinBln);
+    var maxBar = Math.max(jumlahHadirBln, jumlahTerlambatBln, jumlahPulangCepatBln, jumlahCutiIjinBln, jumlahAlpaBln, 1);
+
+    document.getElementById('pdHadir').textContent = jumlahHadirBln;
+    document.getElementById('pdHadirBar').style.width = Math.min(100, (jumlahHadirBln/maxBar)*100) + '%';
+    document.getElementById('pdTerlambat').textContent = jumlahTerlambatBln;
+    document.getElementById('pdTerlambatBar').style.width = Math.min(100, (jumlahTerlambatBln/maxBar)*100) + '%';
+    document.getElementById('pdPulangCepat').textContent = jumlahPulangCepatBln;
+    document.getElementById('pdPulangCepatBar').style.width = Math.min(100, (jumlahPulangCepatBln/maxBar)*100) + '%';
+    document.getElementById('pdCutiIjin').textContent = jumlahCutiIjinBln;
+    document.getElementById('pdCutiIjinBar').style.width = Math.min(100, (jumlahCutiIjinBln/maxBar)*100) + '%';
+    document.getElementById('pdAlpa').textContent = jumlahAlpaBln;
+    document.getElementById('pdAlpaBar').style.width = Math.min(100, (jumlahAlpaBln/maxBar)*100) + '%';
+
+    // ---- Riwayat absensi terakhir (punya sendiri) — default 1 bulan ----
+    var now3 = new Date();
+    var defFrom2 = now3.getFullYear()+'-'+String(now3.getMonth()+1).padStart(2,'0')+'-01';
+    if (!document.getElementById('pdAbsenFrom').value) {
+      document.getElementById('pdAbsenFrom').value = defFrom2;
+      document.getElementById('pdAbsenTo').value   = today();
+    }
+    filterPdAbsen();
+  }
+}
+
+// ============================================================
+// DASHBOARD FILTER ABSENSI
+// ============================================================
+async function filterDashAbsen() {
+  var from   = document.getElementById('dashAbsenFrom').value;
+  var to     = document.getElementById('dashAbsenTo').value;
+  var u      = currentUser;
+  var isAdmin = u && u.status === 'Admin';
+  var tbody  = document.getElementById('recentAbsenBody');
+
+  tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;padding:20px;color:var(--text-muted)">⏳ Memuat...</td></tr>';
+
+  // Ambil dari Sheets jika tersedia
+  if (SCRIPT_URL) {
+    var params = {};
+    if (from) params.from = from;
+    if (to)   params.to   = to;
+    if (!isAdmin) params.idPegawai = u.idPegawai;
+    var res = await callAPI('getAbsensi', params);
+    if (res && res.success) {
+      if (isAdmin) {
+        // Merge ke local hanya untuk range ini
+        localAbsensi = localAbsensi.filter(function(a){
+          return !((from ? a.tanggal >= from : true) && (to ? a.tanggal <= to : true));
+        });
+        localAbsensi = localAbsensi.concat(res.data);
+      } else {
+        localAbsensi = localAbsensi.filter(function(a){ return a.idPegawai !== u.idPegawai; });
+        localAbsensi = localAbsensi.concat(res.data);
+      }
+      localStorage.setItem('ppnpn_absensi', JSON.stringify(localAbsensi));
+    }
+  }
+
+  // Filter dari local
+  var data = localAbsensi.filter(function(a){
+    if (!isAdmin && a.idPegawai !== u.idPegawai) return false;
+    if (from && a.tanggal < from) return false;
+    if (to   && a.tanggal > to)   return false;
+    return true;
+  }).sort(function(a,b){ return b.tanggal.localeCompare(a.tanggal); });
+
+  // Tampilkan summary mini
+  var summaryEl = document.getElementById('dashAbsenSummary');
+  if (data.length > 0) {
+    var jumlahHadir   = data.length;
+    var jumlahLambat  = data.filter(function(a){ return a.statusAbsenMasuk==='Terlambat'; }).length;
+    var jumlahCepat   = data.filter(function(a){ return a.statusAbsenPulang==='Pulang Cepat'; }).length;
+    var jumlahTepat   = jumlahHadir - jumlahLambat;
+    summaryEl.style.display = 'flex';
+    summaryEl.style.gap     = '10px';
+    summaryEl.style.flexWrap = 'wrap';
+    summaryEl.innerHTML =
+      '<div style="background:#dcfce7;color:#16a34a;padding:6px 14px;border-radius:20px;font-size:12px;font-weight:700">✅ Hadir: '+jumlahHadir+' hari</div>' +
+      '<div style="background:#fee2e2;color:#dc2626;padding:6px 14px;border-radius:20px;font-size:12px;font-weight:700">🔴 Terlambat: '+jumlahLambat+'×</div>' +
+      '<div style="background:#fef3c7;color:#d97706;padding:6px 14px;border-radius:20px;font-size:12px;font-weight:700">🟡 Pulang Cepat: '+jumlahCepat+'×</div>' +
+      '<div style="background:#dbeafe;color:#1d4ed8;padding:6px 14px;border-radius:20px;font-size:12px;font-weight:700">🟢 Tepat Waktu: '+jumlahTepat+' hari</div>';
+  } else {
+    summaryEl.style.display = 'none';
+  }
+
+  if (!data.length) {
+    tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;padding:30px;color:var(--text-muted)">Tidak ada data absensi pada periode ini</td></tr>';
+    return;
+  }
+
+  tbody.innerHTML = data.map(function(a){
+    if (isAdmin) {
+      return '<tr>' +
+        '<td>' + fmtDate(a.tanggal) + '</td>' +
+        '<td><strong>' + (a.namaPegawai||'-') + '</strong></td>' +
+        '<td>' + (fmtTime(a.absenMasuk)||'-') + '</td>' +
+        '<td>' + (a.statusAbsenMasuk ? '<span class="badge '+(a.statusAbsenMasuk==='Terlambat'?'badge-red':'badge-green')+'">'+a.statusAbsenMasuk+'</span>' : '-') + '</td>' +
+        '<td>' + (fmtTime(a.absenPulang)||'-') + '</td>' +
+        '<td>' + (a.durasiKerja||'-') + '</td>' +
+        '</tr>';
+    } else {
+      return '<tr>' +
+        '<td>' + fmtDate(a.tanggal) + '</td>' +
+        '<td><strong>' + (fmtTime(a.absenMasuk)||'-') + '</strong></td>' +
+        '<td>' + (a.statusAbsenMasuk ? '<span class="badge '+(a.statusAbsenMasuk==='Terlambat'?'badge-red':'badge-green')+'">'+a.statusAbsenMasuk+'</span>' : '-') + '</td>' +
+        '<td>' + (fmtTime(a.absenPulang)||'-') + '</td>' +
+        '<td>' + (a.statusAbsenPulang ? '<span class="badge '+(a.statusAbsenPulang==='Pulang Cepat'?'badge-amber':'badge-green')+'">'+a.statusAbsenPulang+'</span>' : '-') + '</td>' +
+        '<td>' + (a.durasiKerja||'-') + '</td>' +
+        '</tr>';
+    }
+  }).join('');
+}
+
+function resetDashAbsen() {
+  var now = new Date();
+  document.getElementById('dashAbsenFrom').value = now.getFullYear()+'-'+String(now.getMonth()+1).padStart(2,'0')+'-01';
+  document.getElementById('dashAbsenTo').value   = today();
+  filterDashAbsen();
+}
+
+
+
+
+// ============================================================
+// PEGAWAI DASHBOARD (baru) — FILTER RIWAYAT ABSENSI
+// ============================================================
+async function filterPdAbsen() {
+  var from = document.getElementById('pdAbsenFrom').value;
+  var to   = document.getElementById('pdAbsenTo').value;
+  var u    = currentUser;
+  var tbody = document.getElementById('pdRecentBody');
+
+  tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;padding:20px;color:var(--text-muted)">⏳ Memuat...</td></tr>';
+
+  if (SCRIPT_URL) {
+    var params = { idPegawai: u.idPegawai };
+    if (from) params.from = from;
+    if (to)   params.to   = to;
+    var res = await callAPI('getAbsensi', params);
+    if (res && res.success) {
+      localAbsensi = localAbsensi.filter(function(a){ return a.idPegawai !== u.idPegawai; });
+      localAbsensi = localAbsensi.concat(res.data);
+      localStorage.setItem('ppnpn_absensi', JSON.stringify(localAbsensi));
+    }
+  }
+
+  var data = localAbsensi.filter(function(a){
+    if (a.idPegawai !== u.idPegawai) return false;
+    if (from && a.tanggal < from) return false;
+    if (to   && a.tanggal > to)   return false;
+    return true;
+  }).sort(function(a,b){ return b.tanggal.localeCompare(a.tanggal); });
+
+  var summaryEl = document.getElementById('pdAbsenSummary');
+  if (data.length > 0) {
+    var jumlahHadir  = data.length;
+    var jumlahLambat = data.filter(function(a){ return a.statusAbsenMasuk==='Terlambat'; }).length;
+    var jumlahCepat  = data.filter(function(a){ return a.statusAbsenPulang==='Pulang Cepat'; }).length;
+    var jumlahTepat  = jumlahHadir - jumlahLambat;
+    summaryEl.style.display  = 'flex';
+    summaryEl.style.gap      = '10px';
+    summaryEl.style.flexWrap = 'wrap';
+    summaryEl.innerHTML =
+      '<div style="background:#dcfce7;color:#16a34a;padding:6px 14px;border-radius:20px;font-size:12px;font-weight:700">✅ Hadir: '+jumlahHadir+' hari</div>' +
+      '<div style="background:#fee2e2;color:#dc2626;padding:6px 14px;border-radius:20px;font-size:12px;font-weight:700">🔴 Terlambat: '+jumlahLambat+'×</div>' +
+      '<div style="background:#fef3c7;color:#d97706;padding:6px 14px;border-radius:20px;font-size:12px;font-weight:700">🟡 Pulang Cepat: '+jumlahCepat+'×</div>' +
+      '<div style="background:#dbeafe;color:#1d4ed8;padding:6px 14px;border-radius:20px;font-size:12px;font-weight:700">🟢 Tepat Waktu: '+jumlahTepat+' hari</div>';
+  } else {
+    summaryEl.style.display = 'none';
+  }
+
+  if (!data.length) {
+    tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;padding:30px;color:var(--text-muted)">Tidak ada data absensi pada periode ini</td></tr>';
+    return;
+  }
+
+  tbody.innerHTML = data.map(function(a){
+    return '<tr>' +
+      '<td>' + fmtDate(a.tanggal) + '</td>' +
+      '<td><strong>' + (fmtTime(a.absenMasuk)||'-') + '</strong></td>' +
+      '<td>' + (a.statusAbsenMasuk ? '<span class="badge '+(a.statusAbsenMasuk==='Terlambat'?'badge-red':'badge-green')+'">'+a.statusAbsenMasuk+'</span>' : '-') + '</td>' +
+      '<td>' + (fmtTime(a.absenPulang)||'-') + '</td>' +
+      '<td>' + (a.statusAbsenPulang ? '<span class="badge '+(a.statusAbsenPulang==='Pulang Cepat'?'badge-amber':'badge-green')+'">'+a.statusAbsenPulang+'</span>' : '-') + '</td>' +
+      '<td>' + (a.durasiKerja||'-') + '</td>' +
+      '</tr>';
+  }).join('');
+}
+
+function resetPdAbsen() {
+  var now = new Date();
+  document.getElementById('pdAbsenFrom').value = now.getFullYear()+'-'+String(now.getMonth()+1).padStart(2,'0')+'-01';
+  document.getElementById('pdAbsenTo').value   = today();
+  filterPdAbsen();
+}
+
+async function initAbsensiPage() {
+  const u = currentUser;
+  document.getElementById('absenNama').textContent = u.namaPegawai;
+  document.getElementById('absenJabatan').textContent = u.pekerjaan;
+
+  // Determine shift
+  let jamMasuk = '-', jamPulang = '-';
+  if (u.pekerjaan === 'Security') {
+    // Pastikan shiftData hari ini sudah ada — fetch dari Sheets jika belum
+    var shiftVal = getSecurityShiftToday();
+    if (shiftVal === null && SCRIPT_URL) {
+      // Belum ada di cache — ambil dari Sheets
+      var sRes = await callAPI('getShift', { from: today(), to: today() });
+      if (sRes && sRes.success && sRes.data.length > 0) {
+        sRes.data.forEach(function(r) {
+          var tgl = r['Tanggal'] || r['tanggal'] || '';
+          if (!tgl) return;
+          if (!shiftData[tgl]) shiftData[tgl] = {};
+          ['TIM 1','TIM 2','TIM 3','TIM 4'].forEach(function(t){
+            if (r[t]) shiftData[tgl][t] = r[t];
+          });
+        });
+        localStorage.setItem('ppnpn_shift', JSON.stringify(shiftData));
+        shiftVal = getSecurityShiftToday();
+      }
+    }
+    // Tampilkan hasil
+    if (shiftVal === null || shiftVal === undefined) {
+      // Data shift tidak tersedia
+      document.getElementById('offDayNotice').style.display='block';
+      document.getElementById('offDayNotice').textContent='⚠ Data jadwal shift hari ini belum tersedia. Hubungi admin.';
+      document.getElementById('absensiFormWrap').style.display='none';
+    } else if (shiftVal === '-') {
+      document.getElementById('offDayNotice').style.display='block';
+      document.getElementById('offDayNotice').textContent='😴 Anda sedang OFF hari ini sesuai jadwal shift. Tidak perlu absensi.';
+      document.getElementById('absensiFormWrap').style.display='none';
+    } else {
+      document.getElementById('offDayNotice').style.display='none';
+      document.getElementById('absensiFormWrap').style.display='block';
+      var jkSec = DEMO_JAM_KERJA.find(function(j){ return j.PEKERJAAN==='Security' && j.SHIFT==='Jaga'; });
+      jamMasuk  = jkSec ? jkSec.JAM_MASUK  : '07:00';
+      jamPulang = jkSec ? jkSec.JAM_PULANG : '07:00';
+      document.getElementById('absenShiftInfo').style.display='block';
+      document.getElementById('absenShiftLabel').textContent = 'Jaga 24 Jam (07:00 - 07:00 keesokan hari)';
+    }
+  } else {
+    await ensureLiburLoaded();
+    if (isHariLibur(today())) {
+      document.getElementById('holidayNotice').style.display = 'block';
+      document.getElementById('holidayNotice').textContent =
+        '🗓 Hari ini adalah hari libur' + (getKeteranganLibur(today()) ? ' (' + getKeteranganLibur(today()) + ')' : '') + '. Tidak perlu melakukan absensi.';
+      document.getElementById('absensiFormWrap').style.display = 'none';
+    } else {
+      document.getElementById('holidayNotice').style.display = 'none';
+      document.getElementById('absensiFormWrap').style.display = 'block';
+      const jk = DEMO_JAM_KERJA.find(j => j.PEKERJAAN===u.pekerjaan);
+      if (jk) { jamMasuk=jk.JAM_MASUK; jamPulang=jk.JAM_PULANG; }
+    }
+  }
+  document.getElementById('absenJamMasuk').textContent = jamMasuk;
+  document.getElementById('absenJamPulang').textContent = jamPulang;
+
+  // Clock
+  if (clockInterval) clearInterval(clockInterval);
+  clockInterval = setInterval(updateClock, 1000);
+  updateClock();
+  document.getElementById('absenDateDisplay').textContent = todayStr();
+
+  // Cek absensi hari ini dari Sheets (prioritas) supaya tidak dobel
+  todayAbsenData = null;
+  if (SCRIPT_URL) {
+    const res = await callAPI('getAbsensi', { idPegawai: u.idPegawai, from: today(), to: today() });
+    if (res && res.success && res.data.length > 0) {
+      // Ambil yang paling lengkap jika ada >1 (seharusnya tidak, tapi antisipasi)
+      todayAbsenData = res.data.reduce(function(best, cur){
+        return (cur.absenPulang && !best.absenPulang) ? cur : best;
+      }, res.data[0]);
+      upsertLocalAbsen(todayAbsenData);
+    }
+  }
+  if (!todayAbsenData) {
+    const existing = localAbsensi.filter(function(a){
+      return String(a.idPegawai||'').toUpperCase() === String(u.idPegawai||'').toUpperCase()
+          && a.tanggal === today();
+    });
+    if (existing.length > 0) {
+      todayAbsenData = existing.reduce(function(best, cur){
+        return (cur.absenPulang && !best.absenPulang) ? cur : best;
+      }, existing[0]);
+      upsertLocalAbsen(todayAbsenData);
+    }
+  }
+
+  updateAbsenButtons();
+  getLocation();
+  // Auto-start kamera saat halaman absensi dibuka
+  startCamera();
+
+  const d = new Date();
+  d.setDate(d.getDate()-30);
+  document.getElementById('filterAbsenFrom').value = d.toISOString().split('T')[0];
+  document.getElementById('filterAbsenTo').value = today();
+  loadAbsenHistory();
+}
+
+function getSecurityShiftToday() {
+  const tim    = currentUser.Tim;          // e.g. "TIM 4"
+  const tgl    = today();                  // "YYYY-MM-DD"
+
+  // Baca dari shiftData (sudah di-sync dari sheet Shift Satpam)
+  var val = shiftData[tgl] && shiftData[tgl][tim]
+    ? String(shiftData[tgl][tim]).trim().toUpperCase()
+    : null;
+
+  // Normalisasi: JAGA/J → 'J', LIBUR/L/- → '-'
+  if (val === 'JAGA'  || val === 'J') return 'J';
+  if (val === 'LIBUR' || val === 'L') return '-';
+
+  // Tidak ada data shift hari ini di localStorage → coba muat dari Sheets
+  return null; // ditangani di initAbsensiPage
+}
+
+// Pastikan data shift untuk hari ini sudah ada di cache lokal (shiftData),
+// fetch dari Sheets bila belum tersedia. Dipakai bersama oleh dashboard
+// admin & security serta halaman absensi.
+async function ensureShiftTodayLoaded() {
+  var tgl = today();
+  if (shiftData[tgl] && Object.keys(shiftData[tgl]).length) return;
+  if (!SCRIPT_URL) return;
+  try {
+    var sRes = await callAPI('getShift', { from: tgl, to: tgl });
+    if (sRes && sRes.success && sRes.data.length > 0) {
+      sRes.data.forEach(function(r) {
+        var t = r['Tanggal'] || r['tanggal'] || '';
+        if (!t) return;
+        if (!shiftData[t]) shiftData[t] = {};
+        ['TIM 1','TIM 2','TIM 3','TIM 4'].forEach(function(tm){
+          if (r[tm]) shiftData[t][tm] = r[tm];
+        });
+      });
+      localStorage.setItem('ppnpn_shift', JSON.stringify(shiftData));
+    }
+  } catch(err) { console.log('Gagal memuat shift hari ini:', err); }
+}
+
+// Kode shift (J/L) sebuah TIM untuk hari ini, dari cache shiftData atau
+// hasil hitung rotasi otomatis bila belum diatur manual.
+function getTimShiftToday(tim) {
+  var tgl = today();
+  var tims = ['TIM 1','TIM 2','TIM 3','TIM 4'];
+  var idx = tims.indexOf(tim);
+  var val = (shiftData[tgl] && shiftData[tgl][tim])
+    ? String(shiftData[tgl][tim]).toUpperCase()
+    : (idx >= 0 ? hitungShiftOtomatis(tgl, idx) : 'L');
+  if (val === 'JAGA') val = 'J';
+  if (val === 'LIBUR') val = 'L';
+  return val;
+}
+
+// Kumpulkan seluruh TIM security & anggotanya, dikelompokkan berdasarkan
+// shift hari ini: Jaga 24 Jam (J), Libur (L).
+async function buildPiketOverviewHariIni() {
+  await ensureShiftTodayLoaded();
+  if (SCRIPT_URL) await refreshAllPegawai();
+  var pegawaiList = getPegawaiListForStats().filter(function(p){ return p.pekerjaan === 'Security'; });
+  var tims = ['TIM 1','TIM 2','TIM 3','TIM 4'];
+  var groups = { J: [], L: [] };
+  tims.forEach(function(tim){
+    var val = getTimShiftToday(tim);
+    if (!groups[val]) groups[val] = [];
+    var anggota = pegawaiList.filter(function(p){ return (p.Tim||'').trim().toUpperCase() === tim; });
+    groups[val].push({ tim: tim, anggota: anggota });
+  });
+  return groups;
+}
+
+// Render HTML 2 kolom (Jaga 24 Jam / Libur) berisi tim & anggotanya,
+// dipakai bersama oleh dashboard admin & dashboard security.
+function renderPiketOverviewHtml(groups) {
+  var sections = [
+    { key:'J', label:'🔒 Jaga 24 Jam', sub:'07:00–07:00 keesokan hari', color:'#16a34a' },
+    { key:'L', label:'😴 Libur', sub:'Tidak piket hari ini', color:'#6b7280' }
+  ];
+  var html = '<div class="tim-roster-grid">';
+  sections.forEach(function(sec){
+    var teams = groups[sec.key] || [];
+    var totalOrang = teams.reduce(function(s,t){ return s + t.anggota.length; }, 0);
+    html += '<div class="tim-roster-card" style="border-top:3px solid ' + sec.color + '">';
+    html += '<div class="trc-head"><span class="trc-name" style="color:' + sec.color + '">' + sec.label + '</span>' +
+      '<span style="font-size:11px;color:var(--text-muted)">' + totalOrang + ' orang</span></div>';
+    html += '<div style="font-size:11px;color:var(--text-muted);margin-bottom:10px">' + sec.sub + '</div>';
+    if (!teams.length) {
+      html += '<div class="trc-empty">Tidak ada tim</div>';
+    } else {
+      teams.forEach(function(t){
+        html += '<div style="margin-bottom:10px">';
+        html += '<div style="font-weight:700;font-size:12.5px;color:var(--primary);margin-bottom:4px">' + t.tim + '</div>';
+        if (!t.anggota.length) {
+          html += '<div class="trc-empty">Belum ada anggota</div>';
+        } else {
+          html += '<ul class="trc-members">' + t.anggota.map(function(p){ return '<li>' + (p.namaPegawai||'-') + '</li>'; }).join('') + '</ul>';
+        }
+        html += '</div>';
+      });
+    }
+    html += '</div>';
+  });
+  html += '</div>';
+  return html;
+}
+
+
+
+// Isi kartu "Piket Security Hari Ini" di dashboard admin.
+async function renderAdminPiketHariIni() {
+  var body = document.getElementById('adminPiketBody');
+  if (!body) return;
+  body.innerHTML = '<div class="alert alert-info">⏳ Memuat data...</div>';
+  var groups = await buildPiketOverviewHariIni();
+  body.innerHTML = renderPiketOverviewHtml(groups);
+}
+
+// Isi kartu overview "Piket Security Hari Ini — Semua Tim" di dashboard
+// security (selain kartu tim milik sendiri yang sudah ada di renderTimPiketHariIni).
+async function renderPiketOverviewSecurity() {
+  var wrap = document.getElementById('pdPiketOverviewWrap');
+  var body = document.getElementById('pdPiketOverviewBody');
+  if (!wrap || !body) return;
+  wrap.style.display = '';
+  body.innerHTML = '<div class="alert alert-info">⏳ Memuat data...</div>';
+  var groups = await buildPiketOverviewHariIni();
+  body.innerHTML = renderPiketOverviewHtml(groups);
+}
+
+// Menampilkan daftar anggota tim security yang piket (sesuai jadwal shift)
+// pada hari ini di dashboard user security. Anggota satu tim selalu
+// mendapat shift yang sama tiap harinya, jadi cukup tampilkan seluruh
+// anggota tim milik user beserta info shift (Jaga 24 Jam/Libur) hari ini.
+async function renderTimPiketHariIni(u) {
+  var wrap  = document.getElementById('pdTimWrap');
+  var body  = document.getElementById('pdTimBody');
+  var title = document.getElementById('pdTimTitle');
+  if (!wrap || !body || !title) return;
+
+  if (u.pekerjaan !== 'Security') { wrap.style.display = 'none'; return; }
+  wrap.style.display = '';
+  body.innerHTML = '<div class="alert alert-info">⏳ Memuat data tim...</div>';
+
+  var tim = u.Tim;
+  var tgl = today();
+
+  // Pastikan data shift hari ini sudah ada di cache — fetch dari Sheets bila perlu
+  var shiftVal = getSecurityShiftToday();
+  if (shiftVal === null && SCRIPT_URL) {
+    try {
+      var sRes = await callAPI('getShift', { from: tgl, to: tgl });
+      if (sRes && sRes.success && sRes.data.length > 0) {
+        sRes.data.forEach(function(r) {
+          var t = r['Tanggal'] || r['tanggal'] || '';
+          if (!t) return;
+          if (!shiftData[t]) shiftData[t] = {};
+          ['TIM 1','TIM 2','TIM 3','TIM 4'].forEach(function(tm){
+            if (r[tm]) shiftData[t][tm] = r[tm];
+          });
+        });
+        localStorage.setItem('ppnpn_shift', JSON.stringify(shiftData));
+      }
+    } catch(err) { console.log('Gagal memuat shift hari ini:', err); }
+    shiftVal = getSecurityShiftToday();
+  }
+  if (shiftVal === null || shiftVal === undefined) shiftVal = '-';
+
+  if (SCRIPT_URL) await refreshAllPegawai();
+  var anggota = getPegawaiListForStats().filter(function(p){
+    return p.pekerjaan === 'Security' && (p.Tim||'').trim().toUpperCase() === (tim||'').trim().toUpperCase();
+  });
+
+  var shiftLabelTxt = shiftVal === 'J' ? 'Jaga 24 Jam (07:00–07:00 keesokan hari)' : 'Libur';
+  title.textContent = '👥 ' + (tim || 'Tim Anda') + ' — Piket ' + shiftLabelTxt + ' Hari Ini';
+
+  if (shiftVal === '-') {
+    body.innerHTML = '<div class="alert alert-info">😴 ' + (tim||'Tim Anda') + ' sedang OFF/libur hari ini. Tidak ada anggota yang piket.</div>';
+    return;
+  }
+  if (!anggota.length) {
+    body.innerHTML = '<div class="alert alert-info">Belum ada data anggota tim.</div>';
+    return;
+  }
+
+  body.innerHTML = anggota.map(function(p){
+    var initial = (p.namaPegawai||'?').trim().charAt(0).toUpperCase();
+    var isMe = p.idPegawai === u.idPegawai;
+    return '<div class="pd-tim-member"><div class="avatar">' + initial + '</div>' +
+      '<div class="info"><div class="nm">' + (p.namaPegawai||'-') + (isMe ? ' <span style="font-weight:400;color:var(--text-muted)">(Anda)</span>' : '') + '</div>' +
+      '<div class="id">' + (p.idPegawai||'-') + '</div></div></div>';
+  }).join('');
+}
+
+// Jam pulang pegawai untuk hari ini — dipakai untuk card "Absen Pulang" di
+// dashboard (Security dari shift, CS/Pramubakti dari jam kerja + jadwal libur).
+function getJamPulangHariIni(u) {
+  if (u.pekerjaan === 'Security') {
+    var shiftVal = getSecurityShiftToday();
+    if (!shiftVal || shiftVal === '-') return null;
+    var jkSec = DEMO_JAM_KERJA.find(function(j){ return j.PEKERJAAN==='Security' && j.SHIFT==='Jaga'; });
+    return jkSec ? jkSec.JAM_PULANG : '07:00';
+  }
+  if (isHariLibur(today())) return null;
+  var jk = DEMO_JAM_KERJA.find(function(j){ return j.PEKERJAAN===u.pekerjaan; });
+  return jk ? jk.JAM_PULANG : null;
+}
+
+function updateClock() {
+  const now = new Date();
+  const hh = String(now.getHours()).padStart(2,'0');
+  const mm = String(now.getMinutes()).padStart(2,'0');
+  const ss = String(now.getSeconds()).padStart(2,'0');
+  document.getElementById('absenClock').textContent = `${hh}:${mm}:${ss}`;
+}
+
+function updateAbsenButtons() {
+  const btnMasuk  = document.getElementById('btnAbsenMasuk');
+  const btnPulang = document.getElementById('btnAbsenPulang');
+  if (!btnMasuk || !btnPulang) return;
+  const cameraOk = !!cameraStream;
+  const allOk    = cameraOk && locationOk;
+
+  // Tombol MASUK — hanya bisa 1x
+  if (todayAbsenData && todayAbsenData.absenMasuk) {
+    btnMasuk.disabled    = true;
+    btnMasuk.textContent = '✅ Sudah Masuk (' + fmtTime(todayAbsenData.absenMasuk) + ')';
+  } else {
+    btnMasuk.disabled    = !allOk;
+    btnMasuk.textContent = allOk ? '✅ Absen Masuk' : '⏳ Menunggu kamera & lokasi...';
+  }
+
+  // Tombol PULANG — bisa berkali-kali, selalu pakai jam terakhir
+  const sudahMasuk = todayAbsenData && todayAbsenData.absenMasuk;
+  if (sudahMasuk) {
+    btnPulang.disabled    = !allOk;
+    btnPulang.textContent = todayAbsenData.absenPulang
+      ? '🔄 Perbarui Jam Pulang (terakhir: ' + fmtTime(todayAbsenData.absenPulang) + ')'
+      : '🏠 Absen Pulang';
+  } else {
+    btnPulang.disabled    = true;
+    btnPulang.textContent = '🏠 Absen Pulang';
+  }
+}
+
+async function startCamera() {
+  // Update status kamera
+  var camStatus = document.getElementById('cameraStatus');
+  var overlay   = document.getElementById('camOverlay');
+  var skipBtn   = document.getElementById('btnSkipCamera');
+  var placeholderText = document.getElementById('camPlaceholderText');
+  var startBtn  = document.getElementById('btnStartCamera');
+
+  if (camStatus) { camStatus.className = 'location-status loading'; camStatus.textContent = '⏳ Membuka kamera...'; }
+  if (placeholderText) placeholderText.textContent = '⏳ Membuka kamera...';
+  if (startBtn) startBtn.style.display = 'none';
+  if (skipBtn)  skipBtn.style.display  = 'none';
+
+  // Hentikan stream lama
+  if (cameraStream && cameraStream !== 'skip') {
+    try { cameraStream.getTracks().forEach(function(t){ t.stop(); }); } catch(e){}
+    cameraStream = null;
+    await new Promise(function(r){ setTimeout(r, 400); });
+  }
+
+  var configs = [
+    { video: { facingMode: 'user' }, audio: false },
+    { video: { facingMode: 'environment' }, audio: false },
+    { video: true, audio: false }
+  ];
+
+  var lastError = null;
+  for (var i = 0; i < configs.length; i++) {
+    try {
+      var stream = await navigator.mediaDevices.getUserMedia(configs[i]);
+      cameraStream = stream;
+      var video = document.getElementById('videoPreview');
+      video.srcObject = stream;
+      await video.play();
+      // Kamera berhasil — sembunyikan overlay, update status
+      if (overlay) overlay.style.display = 'none';
+      if (camStatus) { camStatus.className = 'location-status ok'; camStatus.textContent = '✅ Kamera aktif'; }
+      if (skipBtn)  skipBtn.style.display = 'none';
+      if (startBtn) { startBtn.textContent = '🔄 Ganti Kamera'; startBtn.style.display = 'inline-flex'; }
+      updateAbsenButtons();
+      return;
+    } catch(e) {
+      lastError = e;
+      await new Promise(function(r){ setTimeout(r, 300); });
+    }
+  }
+
+  // Semua gagal — tampilkan status error + tombol skip
+  var pesanError = lastError ? (lastError.name === 'NotAllowedError' ? 'Izin kamera ditolak' : lastError.message) : 'Kamera tidak tersedia';
+  if (camStatus) { camStatus.className = 'location-status error'; camStatus.textContent = '❌ ' + pesanError; }
+  if (placeholderText) placeholderText.textContent = '❌ ' + pesanError;
+  if (startBtn) { startBtn.textContent = '🔄 Coba Lagi'; startBtn.style.display = 'inline-flex'; }
+  if (skipBtn)  skipBtn.style.display = 'block';
+  if (overlay)  overlay.style.display = 'flex';
+  updateAbsenButtons();
+}
+
+function lanjutTanpaKamera() {
+  cameraStream = 'skip';
+  var overlay  = document.getElementById('camOverlay');
+  var skipBtn  = document.getElementById('btnSkipCamera');
+  var camStatus = document.getElementById('cameraStatus');
+  if (overlay)   overlay.style.display  = 'none';
+  if (skipBtn)   skipBtn.style.display  = 'none';
+  if (camStatus) { camStatus.className = 'location-status warn'; camStatus.textContent = '⚠ Mode tanpa foto'; }
+  updateAbsenButtons();
+  showAlert('absenAlert', 'warn', '⚠ Mode tanpa kamera aktif — absensi tetap tercatat tanpa foto.');
+}
+
+function getLocation() {
+  const el = document.getElementById('locationStatus');
+  el.className = 'location-status loading';
+  el.textContent = '⏳ Mendapatkan lokasi GPS...';
+  if (!navigator.geolocation) {
+    el.className = 'location-status error';
+    el.textContent = '❌ Browser tidak mendukung GPS';
+    return;
+  }
+  navigator.geolocation.getCurrentPosition(pos => {
+    userLat = pos.coords.latitude;
+    userLon = pos.coords.longitude;
+    const dist = haversine(userLat, userLon, officeLat, officeLon);
+    if (dist <= officeRadius) {
+      locationOk = true;
+      el.className = 'location-status ok';
+      el.textContent = `✅ Dalam radius kantor (${Math.round(dist)}m dari ${officeRadius}m)`;
+    } else {
+      locationOk = false;
+      el.className = 'location-status error';
+      el.textContent = `❌ Di luar radius kantor: ${Math.round(dist)}m (batas ${officeRadius}m) — absen tidak diizinkan`;
+    }
+    updateAbsenButtons();
+  }, err => {
+    locationOk = false;
+    el.className = 'location-status error';
+    el.textContent = '❌ Lokasi GPS tidak tersedia — aktifkan izin lokasi untuk bisa absen';
+    updateAbsenButtons();
+  });
+}
+
+function capturePhoto() {
+  if (!cameraStream || cameraStream === 'skip') return 'tanpa_foto';
+  const video  = document.getElementById('videoPreview');
+  const canvas = document.getElementById('captureCanvas');
+  canvas.width  = video.videoWidth  || 640;
+  canvas.height = video.videoHeight || 480;
+  canvas.getContext('2d').drawImage(video, 0, 0);
+  return canvas.toDataURL('image/jpeg', 0.7);
+}
+
+function getStatusMasuk(jamKerjaStr) {
+  const now = new Date();
+  const [h,m] = jamKerjaStr.split(':').map(Number);
+  const jamKerjaMs = h*60+m;
+  const nowMs = now.getHours()*60+now.getMinutes();
+  return nowMs > jamKerjaMs + 5 ? 'Terlambat' : 'Tepat Waktu';
+}
+
+function getStatusPulang(jamPulangStr) {
+  const now = new Date();
+  const [h,m] = jamPulangStr.split(':').map(Number);
+  const jamPulangMs = h*60+m;
+  const nowMs = now.getHours()*60+now.getMinutes();
+  return nowMs < jamPulangMs - 5 ? 'Pulang Cepat' : 'Tepat Waktu';
+}
+
+// Fungsi terpusat: selalu simpan 1 row per idPegawai per tanggal di localAbsensi
+function upsertLocalAbsen(record) {
+  var tgl = record.tanggal;
+  var pid = String(record.idPegawai || '').toUpperCase();
+  // Hapus semua entry yang sama (id+tanggal) — tidak ada duplikat
+  localAbsensi = localAbsensi.filter(function(a){
+    return !(String(a.idPegawai||'').toUpperCase() === pid && a.tanggal === tgl);
+  });
+  localAbsensi.push(record);
+  saveLocal();
+}
+
+async function doAbsen(type) {
+  const u = currentUser;
+
+  // ── Selalu ambil state terbaru dari Sheets sebelum aksi ──
+  if (SCRIPT_URL) {
+    const res = await callAPI('getAbsensi', { idPegawai: u.idPegawai, from: today(), to: today() });
+    if (res && res.success && res.data.length > 0) {
+      // Sheets bisa kembalikan >1 baris jika masih ada duplikat lama — ambil yang paling lengkap
+      todayAbsenData = res.data.reduce(function(best, cur){
+        return (cur.absenPulang && !best.absenPulang) ? cur : best;
+      }, res.data[0]);
+      upsertLocalAbsen(todayAbsenData);
+    }
+  }
+
+  // ── Fallback: cek local storage ──
+  if (!todayAbsenData) {
+    const existing = localAbsensi.filter(function(a){
+      return String(a.idPegawai||'').toUpperCase() === String(u.idPegawai||'').toUpperCase()
+          && a.tanggal === today();
+    });
+    if (existing.length > 0) {
+      todayAbsenData = existing.reduce(function(best, cur){
+        return (cur.absenPulang && !best.absenPulang) ? cur : best;
+      }, existing[0]);
+      upsertLocalAbsen(todayAbsenData); // bersihkan duplikat local sekaligus
+    }
+  }
+
+  const nowStr    = new Date().toTimeString().substring(0,5);
+  const lokasi    = 'Lat: ' + (userLat ? userLat.toFixed(6) : '-') + ', Lon: ' + (userLon ? userLon.toFixed(6) : '-');
+  const jamMasukEl  = document.getElementById('absenJamMasuk').textContent;
+  const jamPulangEl = document.getElementById('absenJamPulang').textContent;
+
+  // Ambil foto (jika kamera aktif) lalu unggah ke penyimpanan yang dipilih
+  // admin (Supabase Storage / Google Drive). Absensi tetap tercatat walau
+  // upload gagal atau kamera tidak aktif — fotoUrl akan kosong.
+  const fotoDataUrl = cameraStream ? capturePhoto() : 'tanpa_foto';
+  let fotoUrl = null;
+  let fotoUploadError = null;
+  if (fotoDataUrl && fotoDataUrl !== 'tanpa_foto') {
+    var fotoRes = await uploadFotoAbsen(fotoDataUrl, u.idPegawai, u.namaPegawai, u.username, today(), type);
+    fotoUrl = fotoRes.url;
+    fotoUploadError = fotoRes.error;
+  }
+
+  if (type === 'masuk') {
+    // Blok jika sudah masuk
+    if (todayAbsenData && todayAbsenData.absenMasuk) {
+      showAlert('absenAlert', 'warn', '⚠ Anda sudah absen masuk hari ini pukul ' + fmtTime(todayAbsenData.absenMasuk));
+      updateAbsenButtons(); return;
+    }
+
+    const statusMasuk = jamMasukEl !== '-' ? getStatusMasuk(jamMasukEl) : 'Tepat Waktu';
+
+    // Cek apakah pegawai ini ditugaskan lembur hari ini (mis. bertugas di
+    // hari libur atas penunjukan admin) — kalau iya, tandai absensinya.
+    if (SCRIPT_URL) {
+      var lRes = await callAPI('getLembur', { idPegawai: u.idPegawai, from: today(), to: today() });
+      if (lRes && lRes.success) {
+        localLembur = (localLembur||[]).filter(function(l){ return !(l.idPegawai===u.idPegawai && l.tanggal===today()); });
+        localLembur = localLembur.concat(lRes.data);
+        localStorage.setItem('ppnpn_lembur', JSON.stringify(localLembur));
+      }
+    }
+    const isLemburHariIni = isPenugasanLembur(u.idPegawai, today());
+
+    if (!todayAbsenData) {
+      // Belum ada record sama sekali — buat baru
+      todayAbsenData = {
+        IdAbsen: genId('ABS'),
+        idPegawai: u.idPegawai,
+        namaPegawai: u.namaPegawai,
+        pekerjaan: u.pekerjaan,
+        Tim: u.Tim || '',
+        tanggal: today(),
+        absenMasuk: nowStr, statusAbsenMasuk: statusMasuk,
+        lokasiMasuk: lokasi, latMasuk: userLat, lonMasuk: userLon,
+        absenPulang: '', statusAbsenPulang: '',
+        lokasiPulang: '', latPulang: '', lonPulang: '', durasiKerja: '',
+        isLembur: isLemburHariIni,
+        fotoMasuk: fotoUrl || '', fotoPulang: ''
+      };
+    } else {
+      // Record sudah ada tapi belum masuk (edge case) — update field masuk saja
+      todayAbsenData.absenMasuk        = nowStr;
+      todayAbsenData.statusAbsenMasuk  = statusMasuk;
+      todayAbsenData.lokasiMasuk       = lokasi;
+      todayAbsenData.latMasuk          = userLat;
+      todayAbsenData.lonMasuk          = userLon;
+      todayAbsenData.isLembur          = todayAbsenData.isLembur || isLemburHariIni;
+      if (fotoUrl) todayAbsenData.fotoMasuk = fotoUrl;
+    }
+
+    upsertLocalAbsen(todayAbsenData);
+    var pesanMasuk = '✅ Absen masuk berhasil! ' + nowStr + ' — Status: ' + statusMasuk + (isLemburHariIni ? ' 🔥 (Lembur)' : '');
+    showAlert('absenAlert', 'success', pesanMasuk);
+    if (SCRIPT_URL) {
+      var saveResMasuk = await postAPI('saveAbsensi', todayAbsenData);
+      if (!saveResMasuk || !saveResMasuk.success) {
+        showAlert('absenAlert', 'error', '⚠ Absen tercatat di perangkat ini, TAPI GAGAL tersimpan ke database: ' + (saveResMasuk ? saveResMasuk.error : 'Tidak ada respons dari server') + '. Data bisa hilang jika buka dari perangkat lain — hubungi admin.');
+      } else if (fotoUploadError) {
+        showAlert('absenAlert', 'warn', '✅ Absen masuk tersimpan, tapi foto gagal diunggah: ' + fotoUploadError);
+      }
+    } else if (fotoUploadError) {
+      showAlert('absenAlert', 'warn', '✅ Absen masuk tersimpan, tapi foto gagal diunggah: ' + fotoUploadError);
+    }
+
+  } else { // pulang
+    if (!todayAbsenData || !todayAbsenData.absenMasuk) {
+      showAlert('absenAlert', 'error', '❌ Harus absen masuk terlebih dahulu!'); return;
+    }
+    // Tidak diblokir meski sudah pulang sebelumnya — jam terakhir yang dipakai
+
+    const statusPulang = jamPulangEl !== '-' ? getStatusPulang(jamPulangEl) : 'Tepat Waktu';
+    const [hm, mm2]    = todayAbsenData.absenMasuk.split(':').map(Number);
+    const [hp, mp]     = nowStr.split(':').map(Number);
+    var diff = (hp*60+mp) - (hm*60+mm2);
+    if (diff < 0) diff += 24*60;
+    const durasi = Math.floor(diff/60) + 'j ' + (diff%60) + 'm';
+
+    const sudahPulangSebelumnya = !!todayAbsenData.absenPulang;
+
+    // Selalu overwrite dengan jam terbaru
+    todayAbsenData.absenPulang       = nowStr;
+    todayAbsenData.statusAbsenPulang = statusPulang;
+    todayAbsenData.lokasiPulang      = lokasi;
+    todayAbsenData.latPulang         = userLat;
+    todayAbsenData.lonPulang         = userLon;
+    todayAbsenData.durasiKerja       = durasi;
+    if (fotoUrl) todayAbsenData.fotoPulang = fotoUrl;
+
+    upsertLocalAbsen(todayAbsenData);
+    const pesanPulang = sudahPulangSebelumnya
+      ? '🔄 Jam pulang diperbarui: ' + nowStr + ' — Durasi: ' + durasi
+      : '🏠 Absen pulang berhasil! ' + nowStr + ' — Durasi: ' + durasi;
+    showAlert('absenAlert', 'success', pesanPulang);
+    if (SCRIPT_URL) {
+      var saveResPulang = await postAPI('saveAbsensi', todayAbsenData);
+      if (!saveResPulang || !saveResPulang.success) {
+        showAlert('absenAlert', 'error', '⚠ Absen tercatat di perangkat ini, TAPI GAGAL tersimpan ke database: ' + (saveResPulang ? saveResPulang.error : 'Tidak ada respons dari server') + '. Data bisa hilang jika buka dari perangkat lain — hubungi admin.');
+      } else if (fotoUploadError) {
+        showAlert('absenAlert', 'warn', '✅ Absen pulang tersimpan, tapi foto gagal diunggah: ' + fotoUploadError);
+      }
+    } else if (fotoUploadError) {
+      showAlert('absenAlert', 'warn', '✅ Absen pulang tersimpan, tapi foto gagal diunggah: ' + fotoUploadError);
+    }
+  }
+
+  updateAbsenButtons();
+  loadAbsenHistory();
+}
+
+function saveLocal() {
+  localStorage.setItem('ppnpn_absensi', JSON.stringify(localAbsensi));
+}
+
+async function loadAbsenHistory() {
+  const from = document.getElementById('filterAbsenFrom').value;
+  const to   = document.getElementById('filterAbsenTo').value;
+  const u    = currentUser;
+  const tbody = document.getElementById('absenHistoryBody');
+  tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;padding:20px;color:var(--text-muted)">⏳ Memuat...</td></tr>';
+
+  // Ambil dari Sheets jika tersedia
+  if (SCRIPT_URL) {
+    var params = { idPegawai: u.idPegawai };
+    if (from) params.from = from;
+    if (to)   params.to   = to;
+    var result = await callAPI('getAbsensi', params);
+    if (result && result.success) {
+      // Update local cache
+      localAbsensi = localAbsensi.filter(function(a){ return a.idPegawai !== u.idPegawai; });
+      localAbsensi = localAbsensi.concat(result.data);
+      localStorage.setItem('ppnpn_absensi', JSON.stringify(localAbsensi));
+    }
+  }
+
+  const data = localAbsensi
+    .filter(function(a){ return a.idPegawai===u.idPegawai && (!from||a.tanggal>=from) && (!to||a.tanggal<=to); })
+    .sort(function(a,b){ return b.tanggal.localeCompare(a.tanggal); });
+
+  // Mini summary
+  var summaryEl = document.getElementById('absenHistorySummary');
+  if (summaryEl) {
+    if (data.length > 0) {
+      var hadir    = data.length;
+      var lambat   = data.filter(function(a){ return a.statusAbsenMasuk === 'Terlambat'; }).length;
+      var cepat    = data.filter(function(a){ return a.statusAbsenPulang === 'Pulang Cepat'; }).length;
+      var tepat    = hadir - lambat;
+      summaryEl.style.display = 'flex';
+      summaryEl.style.cssText = 'display:flex;flex-wrap:wrap;gap:8px;margin-bottom:12px';
+      summaryEl.innerHTML =
+        '<span style="background:#dcfce7;color:#16a34a;padding:5px 12px;border-radius:20px;font-size:12px;font-weight:700">✅ Hadir: ' + hadir + ' hari</span>' +
+        '<span style="background:#fee2e2;color:#dc2626;padding:5px 12px;border-radius:20px;font-size:12px;font-weight:700">🔴 Terlambat: ' + lambat + '×</span>' +
+        '<span style="background:#fef3c7;color:#d97706;padding:5px 12px;border-radius:20px;font-size:12px;font-weight:700">🟡 Pulang Cepat: ' + cepat + '×</span>' +
+        '<span style="background:#dbeafe;color:#1d4ed8;padding:5px 12px;border-radius:20px;font-size:12px;font-weight:700">🟢 Tepat Waktu: ' + tepat + ' hari</span>';
+    } else {
+      summaryEl.style.display = 'none';
+    }
+  }
+
+  if (!data.length) {
+    tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;padding:24px;color:var(--text-muted)">Tidak ada data</td></tr>';
+    document.getElementById('pgAbsenHistory').innerHTML = ''; return;
+  }
+  renderPaged('absenHistory', data, 'absenHistoryBody', 'pgAbsenHistory', function(a) { return `
+    <tr>
+      <td>${fmtDate(a.tanggal)}</td>
+      <td><strong>${fmtTime(a.absenMasuk)||'-'}</strong></td>
+      <td>${a.statusAbsenMasuk ? `<span class="badge ${a.statusAbsenMasuk==='Terlambat'?'badge-red':'badge-green'}">${a.statusAbsenMasuk}</span>` : '-'}</td>
+      <td>${fmtTime(a.absenPulang)||'-'}</td>
+      <td>${a.statusAbsenPulang ? `<span class="badge ${a.statusAbsenPulang==='Pulang Cepat'?'badge-amber':'badge-green'}">${a.statusAbsenPulang}</span>` : '-'}</td>
+      <td>${a.durasiKerja||'-'}</td>
+      <td style="font-size:12px;color:var(--text-muted)">${a.lokasiMasuk||'-'}</td>
+    </tr>`; }, 7, 'Tidak ada data');
+}
+
+// ============================================================
+// CUTI PAGE
+// ============================================================
+function switchCutiTab(tab) {
+  document.querySelectorAll('#page-cuti .tab').forEach((t,i) => t.classList.toggle('active', (tab==='form'&&i===0)||(tab==='history'&&i===1)));
+  document.getElementById('cutiTabForm').style.display = tab==='form'?'block':'none';
+  document.getElementById('cutiTabHistory').style.display = tab==='history'?'block':'none';
+  if (tab==='history') loadCutiHistory();
+}
+
+async function loadCutiPage() {
+  const u = currentUser;
+
+  // Default dates (langsung tampil dulu supaya form tidak kosong saat menunggu fetch)
+  const d = new Date();
+  document.getElementById('cutiMulai').value = d.toISOString().split('T')[0];
+  document.getElementById('cutiSelesai').value = d.toISOString().split('T')[0];
+
+  const elSaldo = document.getElementById('cutiSaldoInfo');
+  elSaldo.textContent = '⏳ Memuat saldo cuti...';
+  elSaldo.className = 'alert alert-info';
+
+  // Tarik data permohonan terbaru dulu supaya saldo selalu akurat, termasuk
+  // permohonan yang baru saja disetujui/ditolak admin.
+  await refreshPermohonan();
+
+  // Saldo info (otomatis reset tiap 1 Jan / 1 Jul mengikuti periode kontrak)
+  const saldoCuti = hitungSaldoCuti(u.idPegawai);
+  const pakai = saldoCuti.pakai, sisa = saldoCuti.sisa;
+  elSaldo.textContent = `🏖 Saldo Cuti Tahunan: ${sisa} hari tersisa (${pakai} terpakai dari 6 hari) — Periode ${saldoCuti.periode.label}, reset otomatis ${fmtDate(saldoCuti.periode.resetBerikutnya)}`;
+  elSaldo.className = `alert alert-${sisa>0?'info':'warn'}`;
+}
+
+function onJenisCutiChange() {
+  const jenis = document.getElementById('cutiJenis').value;
+  document.getElementById('halfDayField').style.display = jenis==='Cuti Tahunan' ? 'block' : 'none';
+  document.getElementById('lampiranField').style.display = (jenis==='Cuti Sakit'||jenis==='Cuti Alasan Penting') ? 'block' : 'none';
+  if (jenis!=='Cuti Tahunan') document.getElementById('cutiHalfDay').value = 'full';
+  hitungHariCuti();
+}
+
+// Hitung jumlah hari cuti kerja (Senin-Jumat saja) untuk satu rentang tanggal.
+// Mengembalikan { hari } jika valid, atau { error } jika rentang/pilihan tidak valid.
+// Ditangani terpusat di sini supaya perhitungan pratinjau (hitungHariCuti) dan
+// perhitungan saat submit (ajukanCuti) selalu konsisten.
+function hitungCutiInfo(mulai, selesai, jenis, halfDay) {
+  if (!mulai || !selesai) return { error: null };
+  const d1 = new Date(mulai), d2 = new Date(selesai);
+  if (d1 > d2) return { error: 'Tanggal mulai harus sebelum atau sama dengan tanggal selesai!' };
+
+  const isHalfDay = jenis==='Cuti Tahunan' && (halfDay==='pagi' || halfDay==='siang');
+
+  if (isHalfDay) {
+    // Cuti setengah hari hanya berlaku untuk satu tanggal yang sama, dan
+    // tanggalnya harus hari kerja (bukan Sabtu/Minggu) — dihitung langsung
+    // 0.5 hari, tidak lagi bergantung pada hasil loop hari kerja.
+    if (mulai !== selesai) {
+      return { error: 'Cuti setengah hari (pagi/siang) hanya berlaku untuk 1 tanggal yang sama. Samakan tanggal mulai & selesai, atau pilih "Satu Hari Penuh".' };
+    }
+    const dow = d1.getDay();
+    if (dow===0 || dow===6) {
+      return { error: 'Tanggal yang dipilih jatuh di akhir pekan (Sabtu/Minggu) — cuti setengah hari tidak bisa diajukan untuk hari libur.' };
+    }
+    return { hari: 0.5 };
+  }
+
+  let hari = 0;
+  for (let d=new Date(d1); d<=d2; d.setDate(d.getDate()+1)) {
+    if (d.getDay()!==0 && d.getDay()!==6) hari++;
+  }
+  if (hari === 0) {
+    return { error: 'Rentang tanggal yang dipilih tidak mengandung hari kerja (semua jatuh di Sabtu/Minggu). Pilih tanggal lain.' };
+  }
+  return { hari: hari };
+}
+
+function hitungHariCuti() {
+  const mulai = document.getElementById('cutiMulai').value;
+  const selesai = document.getElementById('cutiSelesai').value;
+  const halfDay = document.getElementById('cutiHalfDay').value;
+  const jenis = document.getElementById('cutiJenis').value;
+  const el = document.getElementById('cutiHitungInfo');
+  if (!mulai || !selesai || !jenis) { el.style.display='none'; return; }
+
+  const res = hitungCutiInfo(mulai, selesai, jenis, halfDay);
+  if (res.error) {
+    el.style.display='block'; el.className='alert alert-error'; el.textContent='❌ ' + res.error; return;
+  }
+  el.style.display='block';
+  el.className='alert alert-info';
+  el.textContent = `📅 Jumlah hari cuti kerja: ${res.hari} hari (tidak termasuk Sabtu-Minggu)`;
+}
+
+async function ajukanCuti() {
+  const jenis = document.getElementById('cutiJenis').value;
+  const mulai = document.getElementById('cutiMulai').value;
+  const selesai = document.getElementById('cutiSelesai').value;
+  const alasan = document.getElementById('cutiAlasan').value.trim();
+  const halfDay = document.getElementById('cutiHalfDay').value;
+  const u = currentUser;
+
+  if (!jenis||!mulai||!selesai||!alasan) {
+    showAlert('cutiFormAlert','error','❌ Lengkapi semua field!'); return;
+  }
+
+  // Check if lampiran required
+  if ((jenis==='Cuti Sakit'||jenis==='Cuti Alasan Penting') && !document.getElementById('cutiLampiran').files.length) {
+    showAlert('cutiFormAlert','error','❌ Wajib upload lampiran untuk cuti sakit/alasan penting!'); return;
+  }
+
+  // Hitung hari (pakai fungsi yang sama dengan pratinjau supaya hasilnya konsisten)
+  const hasilHari = hitungCutiInfo(mulai, selesai, jenis, halfDay);
+  if (hasilHari.error) {
+    showAlert('cutiFormAlert','error','❌ ' + hasilHari.error); return;
+  }
+  const hari = hasilHari.hari;
+
+  // Pastikan saldo cuti terbaru (bukan cache lama) sebelum submit & sebelum cek saldo
+  await refreshPermohonan();
+
+  // Check saldo
+  if (jenis==='Cuti Tahunan') {
+    const saldoCek = hitungSaldoCuti(u.idPegawai);
+    if (hari > saldoCek.sisa) {
+      showAlert('cutiFormAlert','error',`❌ Saldo cuti tidak cukup! Sisa: ${saldoCek.sisa} hari (periode ${saldoCek.periode.label}), Diajukan: ${hari} hari`); return;
+    }
+  }
+
+  const permohonan = {
+    ID_Pengajuan: genId('CUT'),
+    ID_Karyawan: u.idPegawai,
+    Nama_Karyawan: u.namaPegawai,
+    Jenis_Cuti: jenis + (jenis==='Cuti Tahunan'&&halfDay!=='full' ? ` (${halfDay})` : ''),
+    Tanggal_Mulai: mulai,
+    Tanggal_Selesai: selesai,
+    Jumlah_Hari: hari,
+    Alasan: alasan,
+    Status: 'Menunggu',
+    Lampiran: document.getElementById('cutiLampiran').files.length ? 'uploaded' : '-',
+    created_at: new Date().toISOString()
+  };
+
+  localPermohonan.push(permohonan);
+  localStorage.setItem('ppnpn_permohonan', JSON.stringify(localPermohonan));
+
+  showAlert('cutiFormAlert','success','✅ Permohonan berhasil diajukan! Menunggu persetujuan admin.');
+  if (SCRIPT_URL) postAPI('savePermohonan', permohonan);
+  loadCutiPage();
+  document.getElementById('cutiAlasan').value = '';
+}
+
+async function loadCutiHistory() {
+  const u = currentUser;
+  const tbody = document.getElementById('cutiHistoryBody');
+  tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;padding:20px;color:var(--text-muted)">⏳ Memuat...</td></tr>';
+
+  if (SCRIPT_URL) {
+    var result = await callAPI('getPermohonan', { idKaryawan: u.idPegawai });
+    if (result && result.success) {
+      localPermohonan = localPermohonan.filter(function(p){ return p.ID_Karyawan !== u.idPegawai; });
+      localPermohonan = localPermohonan.concat(result.data);
+      localStorage.setItem('ppnpn_permohonan', JSON.stringify(localPermohonan));
+    }
+  }
+
+  const data = localPermohonan
+    .filter(function(p){ return p.ID_Karyawan===u.idPegawai; })
+    .sort(function(a,b){ return (b.Tanggal_Mulai||'').localeCompare(a.Tanggal_Mulai||''); });
+
+  if (!data.length) { tbody.innerHTML='<tr><td colspan="7" style="text-align:center;padding:24px;color:var(--text-muted)">Belum ada permohonan</td></tr>'; document.getElementById('pgCutiHistory').innerHTML=''; return; }
+  renderPaged('cutiHistory', data, 'cutiHistoryBody', 'pgCutiHistory', function(p){ return `
+    <tr>
+      <td>${data.indexOf(p)+1}</td>
+      <td>${p.Jenis_Cuti}</td>
+      <td>${fmtDate(p.Tanggal_Mulai)}</td>
+      <td>${fmtDate(p.Tanggal_Selesai)}</td>
+      <td>${p.Jumlah_Hari}</td>
+      <td style="max-width:200px;font-size:12px">${p.Alasan}</td>
+      <td><span class="badge ${p.Status==='Disetujui'?'badge-green':p.Status==='Ditolak'?'badge-red':'badge-amber'}">${p.Status}</span></td>
+    </tr>`; }, 7, 'Belum ada permohonan');
+}
+
+// ============================================================
+// PROFIL
+// ============================================================
+function loadProfil() {
+  const u = currentUser;
+  // Check local storage for edits
+  const saved = localPegawai && localPegawai[u.idPegawai];
+  document.getElementById('pf-id').value = u.idPegawai;
+  document.getElementById('pf-nama').value = saved?.NAMA || u.namaPegawai;
+  document.getElementById('pf-nik').value = saved?.NIK || '';
+  document.getElementById('pf-nohp').value = saved?.NO_HP || '';
+  document.getElementById('pf-ttl').value = saved?.TEMPAT_LAHIR || '';
+  document.getElementById('pf-tgl').value = saved?.TGL_LAHIR || '';
+  document.getElementById('pf-jk').value = saved?.JENIS_KELAMIN || 'Laki-laki';
+  document.getElementById('pf-pendidikan').value = saved?.PENDIDIKAN || 'SLTA';
+  document.getElementById('pf-alamat').value = saved?.ALAMAT || '';
+  document.getElementById('pf-pekerjaan').value = u.pekerjaan;
+  document.getElementById('pf-tim').value = u.Tim;
+}
+
+function saveProfil() {
+  const u = currentUser;
+  if (!localPegawai) localPegawai = {};
+  localPegawai[u.idPegawai] = {
+    NAMA: document.getElementById('pf-nama').value,
+    NIK: document.getElementById('pf-nik').value,
+    NO_HP: document.getElementById('pf-nohp').value,
+    TEMPAT_LAHIR: document.getElementById('pf-ttl').value,
+    TGL_LAHIR: document.getElementById('pf-tgl').value,
+    JENIS_KELAMIN: document.getElementById('pf-jk').value,
+    PENDIDIKAN: document.getElementById('pf-pendidikan').value,
+    ALAMAT: document.getElementById('pf-alamat').value,
+  };
+  localStorage.setItem('ppnpn_pegawai', JSON.stringify(localPegawai));
+  showAlert('profilAlert','success','✅ Data profil berhasil disimpan!');
+  if (SCRIPT_URL) postAPI('savePegawai', {idPegawai: u.idPegawai, ...localPegawai[u.idPegawai]});
+}
+
+// ============================================================
+// KELUARGA
+// ============================================================
+function loadKeluarga() {
+  const u = currentUser;
+  const data = localKeluarga[u.idPegawai] || [];
+  const tbody = document.getElementById('keluargaBody');
+  if (!data.length) { tbody.innerHTML='<tr><td colspan="6" style="text-align:center;padding:24px;color:var(--text-muted)">Belum ada data keluarga</td></tr>'; return; }
+  tbody.innerHTML = data.map(k => `
+    <tr>
+      <td><strong>${k.nama}</strong></td>
+      <td><span class="badge badge-blue">${k.hubungan}</span></td>
+      <td>${k.ttl||'-'}</td>
+      <td>${fmtDate(k.tgl)||'-'}</td>
+      <td>${k.pendidikan||'-'}</td>
+      <td><span class="badge ${k.tanggungan==='Ya'?'badge-green':'badge-gray'}">${k.tanggungan}</span></td>
+    </tr>`).join('');
+}
+
+function openAddKeluarga() { document.getElementById('keluargaModal').classList.add('open'); }
+function closeModal(id) { document.getElementById(id).classList.remove('open'); }
+
+function saveKeluarga() {
+  const u = currentUser;
+  if (!localKeluarga[u.idPegawai]) localKeluarga[u.idPegawai] = [];
+  const newMember = {
+    nama: document.getElementById('kl-nama').value,
+    hubungan: document.getElementById('kl-hub').value,
+    ttl: document.getElementById('kl-ttl').value,
+    tgl: document.getElementById('kl-tgl').value,
+    nik: document.getElementById('kl-nik').value,
+    kk: document.getElementById('kl-kk').value,
+    pendidikan: document.getElementById('kl-pend').value,
+    tanggungan: document.getElementById('kl-tanggungan').value,
+  };
+  localKeluarga[u.idPegawai].push(newMember);
+  localStorage.setItem('ppnpn_keluarga', JSON.stringify(localKeluarga));
+  closeModal('keluargaModal');
+  loadKeluarga();
+  if (SCRIPT_URL) postAPI('saveKeluarga', {idPegawai: u.idPegawai, ...newMember});
+}
+
+// ============================================================
+// ADMIN: ABSENSI
+// ============================================================
+function initAdminAbsensiFilter() {
+  const d = new Date();
+  document.getElementById('admFilterFrom').value = d.toISOString().split('T')[0];
+  document.getElementById('admFilterTo').value = d.toISOString().split('T')[0];
+}
+
+async function loadAdminAbsensi() {
+  const from = document.getElementById('admFilterFrom').value;
+  const to   = document.getElementById('admFilterTo').value;
+  const jab  = document.getElementById('admFilterJab').value;
+  const statusMasukF  = document.getElementById('admFilterStatusMasuk').value;
+  const statusPulangF = document.getElementById('admFilterStatusPulang').value;
+  const tbody = document.getElementById('adminAbsenBody');
+  tbody.innerHTML = '<tr><td colspan="11" style="text-align:center;padding:20px;color:var(--text-muted)">⏳ Memuat dari Google Sheets...</td></tr>';
+
+  if (SCRIPT_URL) {
+    var params = {};
+    if (from) params.from = from;
+    if (to)   params.to   = to;
+    var result = await callAPI('getAbsensi', params);
+    if (result && result.success) {
+      localAbsensi = result.data;
+      localStorage.setItem('ppnpn_absensi', JSON.stringify(localAbsensi));
+    }
+  }
+
+  var data = localAbsensi.filter(function(a){
+    if (from && a.tanggal < from) return false;
+    if (to   && a.tanggal > to)   return false;
+    if (jab) {
+      var pegJab = a.pekerjaan || (DEMO_USERS.find(function(u){ return u.idPegawai===a.idPegawai; })||{}).pekerjaan;
+      if (pegJab !== jab) return false;
+    }
+    if (statusMasukF && a.statusAbsenMasuk !== statusMasukF) return false;
+    if (statusPulangF) {
+      if (statusPulangF === 'Belum Pulang') {
+        if (!a.absenMasuk || a.absenPulang) return false;
+      } else if (a.statusAbsenPulang !== statusPulangF) return false;
+    }
+    return true;
+  }).sort(function(a,b){ return b.tanggal.localeCompare(a.tanggal)||a.namaPegawai.localeCompare(b.namaPegawai); });
+
+  var todayData = data.filter(function(a){ return a.tanggal===today(); });
+  document.getElementById('adm-hadir').textContent  = todayData.length;
+  document.getElementById('adm-late').textContent   = todayData.filter(function(a){ return a.statusAbsenMasuk==='Terlambat'; }).length;
+  var pegawaiListDbAdm = getPegawaiListForStats();
+  document.getElementById('adm-absent').textContent = pegawaiListDbAdm.length - todayData.length;
+  document.getElementById('adm-total').textContent  = pegawaiListDbAdm.length;
+
+  if (!data.length) { tbody.innerHTML='<tr><td colspan="11" style="text-align:center;padding:24px;color:var(--text-muted)">Tidak ada data</td></tr>'; document.getElementById('pgAdminAbsensi').innerHTML=''; return; }
+  renderPaged('adminAbsensi', data, 'adminAbsenBody', 'pgAdminAbsensi', function(a){
+    var peg = DEMO_USERS.find(function(u){ return u.idPegawai===a.idPegawai; });
+    var rid = a.IdAbsen || (a.idPegawai+'_'+a.tanggal);
+    var lemburTag = a.isLembur ? ' <span class="badge" style="background:#ede9fe;color:#7c3aed">🔥 Lembur</span>' : '';
+    return `<tr>
+      <td><input type="checkbox" class="row-chk-absensi" value="${rid}" onchange="toggleSelectAbsensi('${rid}', this.checked)" ${selectedAbsensi.has(rid)?'checked':''}></td>
+      <td>${fmtDate(a.tanggal)}</td>
+      <td><strong>${a.namaPegawai||a['namaPegawai']||'-'}</strong></td>
+      <td><span class="badge badge-blue">${a.pekerjaan||(peg?peg.pekerjaan:'-')}</span></td>
+      <td>${fmtTime(a.absenMasuk)||'-'}</td>
+      <td>${a.statusAbsenMasuk?`<span class="badge ${a.statusAbsenMasuk==='Terlambat'?'badge-red':'badge-green'}">${a.statusAbsenMasuk}</span>`:'-'}${lemburTag}</td>
+      <td>${fmtTime(a.absenPulang)||'-'}</td>
+      <td>${a.statusAbsenPulang?`<span class="badge ${a.statusAbsenPulang==='Pulang Cepat'?'badge-amber':'badge-green'}">${a.statusAbsenPulang}</span>`:(a.absenMasuk?`<span class="badge badge-red">Belum Absen Pulang</span>`:'-')}</td>
+      <td>${a.durasiKerja||'-'}</td>
+      <td>${(a.fotoMasuk||a.fotoPulang) ? (
+        (a.fotoMasuk ? `<a href="${a.fotoMasuk}" target="_blank" title="Foto Masuk" style="margin-right:6px">🖼 Masuk</a>` : '') +
+        (a.fotoPulang ? `<a href="${a.fotoPulang}" target="_blank" title="Foto Pulang">🖼 Pulang</a>` : '')
+      ) : '<span style="color:var(--text-muted);font-size:12px">-</span>'}</td>
+      <td><button class="btn btn-outline btn-sm" style="padding:4px 10px;font-size:12px" onclick='openEditAbsensiModal(${JSON.stringify(a).replace(/'/g,"&#39;")})'>✏️ Edit</button></td>
+    </tr>`;
+  }, 10, 'Tidak ada data');
+  updateBulkDeleteBtn('Absensi');
+}
+
+// Menampilkan pegawai yang belum absen masuk, atau sudah masuk tapi belum absen pulang,
+// pada tanggal yang dipilih di filter "Dari" (default hari ini jika kosong).
+function bukaBelumAbsen() {
+  var tgl = document.getElementById('admFilterFrom').value || today();
+  var jab = document.getElementById('admFilterJab').value;
+
+  // Pakai data pegawai REAL dari database (getPegawaiListForStats), bukan
+  // DEMO_USERS statis, supaya daftar & jumlahnya selalu sinkron dengan total
+  // pegawai yang sebenarnya. Contoh: total 22 pegawai, 3 sudah absen masuk
+  // -> 19 pegawai otomatis muncul di daftar "Belum Absen Masuk".
+  var aktif = getPegawaiListForStats().filter(function(u){
+    return (!jab || u.pekerjaan === jab);
+  });
+  var recHariIni = localAbsensi.filter(function(a){ return a.tanggal === tgl; });
+
+  // Pegawai yang sedang cuti/ijin disetujui pada tanggal ini tidak dihitung
+  // sebagai "belum absen" karena memang tidak wajib masuk kerja.
+  var cutiAktif = (typeof localPermohonan !== 'undefined' ? localPermohonan : []).filter(function(p){
+    return p.Status === 'Disetujui' && p.Tanggal_Mulai <= tgl && p.Tanggal_Selesai >= tgl;
+  });
+  var idCuti = cutiAktif.map(function(p){ return p.ID_Karyawan; });
+
+  var belumMasuk = aktif.filter(function(u){
+    if (idCuti.indexOf(u.idPegawai) >= 0) return false;
+    var r = recHariIni.find(function(a){ return a.idPegawai === u.idPegawai; });
+    return !r || !r.absenMasuk;
+  });
+  var belumPulang = aktif.filter(function(u){
+    if (idCuti.indexOf(u.idPegawai) >= 0) return false;
+    var r = recHariIni.find(function(a){ return a.idPegawai === u.idPegawai; });
+    return r && r.absenMasuk && !r.absenPulang;
+  });
+
+  document.getElementById('belumAbsenTanggal').textContent = fmtDate(tgl);
+  document.getElementById('belumAbsenJab').textContent = jab ? '— ' + jab : '';
+
+  var belumMasukCountEl = document.getElementById('belumMasukCount');
+  if (belumMasukCountEl) belumMasukCountEl.textContent = belumMasuk.length;
+  var belumPulangCountEl = document.getElementById('belumPulangCount');
+  if (belumPulangCountEl) belumPulangCountEl.textContent = belumPulang.length;
+
+  document.getElementById('belumMasukList').innerHTML = belumMasuk.length
+    ? belumMasuk.map(function(u){ return '<tr><td>'+u.namaPegawai+'</td><td><span class="badge badge-blue">'+(u.pekerjaan||'-')+'</span></td></tr>'; }).join('')
+    : '<tr><td colspan="2" style="text-align:center;padding:14px;color:var(--text-muted)">🎉 Semua pegawai sudah absen masuk</td></tr>';
+
+  document.getElementById('belumPulangList').innerHTML = belumPulang.length
+    ? belumPulang.map(function(u){ return '<tr><td>'+u.namaPegawai+'</td><td><span class="badge badge-blue">'+(u.pekerjaan||'-')+'</span></td></tr>'; }).join('')
+    : '<tr><td colspan="2" style="text-align:center;padding:14px;color:var(--text-muted)">🎉 Semua pegawai yang masuk sudah absen pulang</td></tr>';
+
+  document.getElementById('belumAbsenModal').classList.add('open');
+}
+
+// ============================================================
+// CHECKLIST HAPUS BANYAK DATA (bulk delete) — Pegawai/Absensi/Cuti
+// ============================================================
+function updateBulkDeleteBtn(name) {
+  var set = name === 'Pegawai' ? selectedPegawai : name === 'Absensi' ? selectedAbsensi : name === 'Ijin' ? selectedIjin : selectedCuti;
+  var btn = document.getElementById('btnBulkDelete' + name);
+  if (!btn) return;
+  var n = set.size;
+  btn.style.display = n > 0 ? 'inline-flex' : 'none';
+  btn.textContent = '🗑 Hapus Terpilih (' + n + ')';
+}
+
+// --- Pegawai ---
+function toggleSelectPegawai(id, checked) {
+  if (checked) selectedPegawai.add(id); else selectedPegawai.delete(id);
+  var all = document.getElementById('chkAllPegawai');
+  if (all) all.checked = document.querySelectorAll('.row-chk-pegawai').length > 0 &&
+    document.querySelectorAll('.row-chk-pegawai:checked').length === document.querySelectorAll('.row-chk-pegawai').length;
+  updateBulkDeleteBtn('Pegawai');
+}
+function toggleAllPegawai(cb) {
+  document.querySelectorAll('.row-chk-pegawai').forEach(function(el){
+    el.checked = cb.checked;
+    if (cb.checked) selectedPegawai.add(el.value); else selectedPegawai.delete(el.value);
+  });
+  updateBulkDeleteBtn('Pegawai');
+}
+async function hapusPegawaiBulk() {
+  if (!selectedPegawai.size) return;
+  var ids = Array.from(selectedPegawai);
+  if (!confirm('Hapus ' + ids.length + ' data pegawai terpilih? Tindakan ini tidak bisa dibatalkan.')) return;
+
+  if (SCRIPT_URL) {
+    var res = await callAPI('deletePegawai', { idPegawai: ids });
+    if (!(res && res.success)) { alert('❌ Gagal menghapus: ' + (res && res.error || 'Unknown Error')); return; }
+  }
+  // Bersihkan juga cache import lokal supaya tidak muncul lagi
+  var imported = JSON.parse(localStorage.getItem('ppnpn_pegawai_import') || '[]');
+  imported = imported.filter(function(p){ return ids.indexOf(p['ID PEGAWAI']) < 0; });
+  localStorage.setItem('ppnpn_pegawai_import', JSON.stringify(imported));
+
+  alert('✅ ' + ids.length + ' data pegawai berhasil dihapus!');
+  selectedPegawai.clear();
+  loadAdminPegawai();
+}
+
+// --- Edit Absensi (Admin) ---
+var editAbsensiCurrent = null;
+function openEditAbsensiModal(a) {
+  editAbsensiCurrent = a;
+  document.getElementById('ea-nama').textContent = a.namaPegawai || '-';
+  document.getElementById('ea-tanggal').textContent = fmtDate(a.tanggal);
+  document.getElementById('ea-jam-masuk').value = a.absenMasuk || '';
+  document.getElementById('ea-status-masuk').value = a.statusAbsenMasuk || '';
+  document.getElementById('ea-jam-pulang').value = a.absenPulang || '';
+  document.getElementById('ea-status-pulang').value = a.statusAbsenPulang || '';
+  document.getElementById('ea-lembur').checked = !!a.isLembur;
+  document.getElementById('editAbsensiModal').classList.add('open');
+}
+
+async function simpanEditAbsensi() {
+  if (!editAbsensiCurrent) return;
+  var a = editAbsensiCurrent;
+  var jamMasuk  = document.getElementById('ea-jam-masuk').value;
+  var jamPulang = document.getElementById('ea-jam-pulang').value;
+
+  a.absenMasuk       = jamMasuk;
+  a.statusAbsenMasuk  = document.getElementById('ea-status-masuk').value;
+  a.absenPulang       = jamPulang;
+  a.statusAbsenPulang = document.getElementById('ea-status-pulang').value;
+  a.isLembur = document.getElementById('ea-lembur').checked;
+
+  // Hitung ulang durasi kerja jika kedua jam terisi
+  if (jamMasuk && jamPulang) {
+    var mm = jamMasuk.split(':').map(Number), pp = jamPulang.split(':').map(Number);
+    var diff = (pp[0]*60+pp[1]) - (mm[0]*60+mm[1]);
+    if (diff < 0) diff += 24*60;
+    a.durasiKerja = Math.floor(diff/60) + 'j ' + (diff%60) + 'm';
+  }
+
+  if (SCRIPT_URL) {
+    var res = await callAPI('saveAbsensi', a);
+    if (!(res && res.success)) { alert('❌ Gagal menyimpan perubahan: ' + (res && res.error || 'Unknown error')); return; }
+  }
+  upsertLocalAbsen(a);
+  closeModal('editAbsensiModal');
+  editAbsensiCurrent = null;
+  showAlert('absenAlert','success','✅ Data absensi berhasil diperbarui.');
+  loadAdminAbsensi();
+}
+
+// --- Absensi ---
+function toggleSelectAbsensi(id, checked) {
+  if (checked) selectedAbsensi.add(id); else selectedAbsensi.delete(id);
+  var all = document.getElementById('chkAllAbsensi');
+  if (all) all.checked = document.querySelectorAll('.row-chk-absensi').length > 0 &&
+    document.querySelectorAll('.row-chk-absensi:checked').length === document.querySelectorAll('.row-chk-absensi').length;
+  updateBulkDeleteBtn('Absensi');
+}
+function toggleAllAbsensi(cb) {
+  document.querySelectorAll('.row-chk-absensi').forEach(function(el){
+    el.checked = cb.checked;
+    if (cb.checked) selectedAbsensi.add(el.value); else selectedAbsensi.delete(el.value);
+  });
+  updateBulkDeleteBtn('Absensi');
+}
+async function hapusAbsensiBulk() {
+  if (!selectedAbsensi.size) return;
+  var ids = Array.from(selectedAbsensi);
+  if (!confirm('Hapus ' + ids.length + ' data absensi terpilih? Tindakan ini tidak bisa dibatalkan.')) return;
+
+  if (SCRIPT_URL) {
+    var res = await callAPI('deleteAbsensi', { idAbsen: ids });
+    if (!(res && res.success)) { alert('❌ Gagal menghapus: ' + (res && res.error || 'Unknown Error')); return; }
+  }
+  // Bersihkan juga cache lokal
+  localAbsensi = localAbsensi.filter(function(a){
+    var rid = a.IdAbsen || (a.idPegawai + '_' + a.tanggal);
+    return ids.indexOf(rid) < 0;
+  });
+  saveLocal();
+
+  alert('✅ ' + ids.length + ' data absensi berhasil dihapus!');
+  selectedAbsensi.clear();
+  loadAdminAbsensi();
+}
+
+// --- Cuti ---
+function toggleSelectCuti(id, checked) {
+  if (checked) selectedCuti.add(id); else selectedCuti.delete(id);
+  var all = document.getElementById('chkAllCuti');
+  if (all) all.checked = document.querySelectorAll('.row-chk-cuti').length > 0 &&
+    document.querySelectorAll('.row-chk-cuti:checked').length === document.querySelectorAll('.row-chk-cuti').length;
+  updateBulkDeleteBtn('Cuti');
+}
+function toggleAllCuti(cb) {
+  document.querySelectorAll('.row-chk-cuti').forEach(function(el){
+    el.checked = cb.checked;
+    if (cb.checked) selectedCuti.add(el.value); else selectedCuti.delete(el.value);
+  });
+  updateBulkDeleteBtn('Cuti');
+}
+async function hapusCutiBulk() {
+  if (!selectedCuti.size) return;
+  var ids = Array.from(selectedCuti);
+  if (!confirm('Hapus ' + ids.length + ' data cuti/ijin terpilih? Tindakan ini tidak bisa dibatalkan.')) return;
+
+  if (SCRIPT_URL) {
+    var res = await callAPI('deletePermohonan', { idPengajuan: ids });
+    if (!(res && res.success)) { alert('❌ Gagal menghapus: ' + (res && res.error || 'Unknown Error')); return; }
+  }
+  // Bersihkan juga cache lokal
+  localPermohonan = localPermohonan.filter(function(p){ return ids.indexOf(p.ID_Pengajuan) < 0; });
+  localStorage.setItem('ppnpn_permohonan', JSON.stringify(localPermohonan));
+
+  alert('✅ ' + ids.length + ' data cuti/ijin berhasil dihapus!');
+  selectedCuti.clear();
+  loadAdminCuti();
+}
+
+// ============================================================
+// ADMIN: CUTI
+// ============================================================
+function switchAdminCutiTab(tab) {
+  adminCutiCurrentTab = tab;
+  document.querySelectorAll('#page-adminCuti .tab').forEach((t,i)=>t.classList.toggle('active',(tab==='pending'&&i===0)||(tab==='all'&&i===1)));
+  loadAdminCuti();
+}
+async function loadAdminCuti() {
+  const tbody = document.getElementById('adminCutiBody');
+  tbody.innerHTML = '<tr><td colspan="10" style="text-align:center;padding:20px;color:var(--text-muted)">⏳ Memuat...</td></tr>';
+
+  if (SCRIPT_URL) {
+    var result = await callAPI('getPermohonan', {});
+    if (result && result.success) {
+      localPermohonan = result.data;
+      localStorage.setItem('ppnpn_permohonan', JSON.stringify(localPermohonan));
+    }
+  }
+
+  var data = adminCutiCurrentTab==='pending'
+    ? localPermohonan.filter(function(p){ return p.Status==='Menunggu'; })
+    : localPermohonan;
+  data = data.slice().sort(function(a,b){ return (b.Tanggal_Mulai||'').localeCompare(a.Tanggal_Mulai||''); });
+
+  var pending = localPermohonan.filter(function(p){ return p.Status==='Menunggu'; }).length;
+  var badge = document.getElementById('pendingBadge');
+  badge.style.display = pending>0 ? 'inline' : 'none';
+  badge.textContent = pending;
+
+  if (!data.length) { tbody.innerHTML='<tr><td colspan="10" style="text-align:center;padding:24px;color:var(--text-muted)">Tidak ada permohonan</td></tr>'; document.getElementById('pgAdminCuti').innerHTML=''; return; }
+  renderPaged('adminCuti', data, 'adminCutiBody', 'pgAdminCuti', function(p){ return `
+    <tr>
+      <td><input type="checkbox" class="row-chk-cuti" value="${p.ID_Pengajuan}" onchange="toggleSelectCuti('${p.ID_Pengajuan}', this.checked)" ${selectedCuti.has(p.ID_Pengajuan)?'checked':''}></td>
+      <td style="font-size:11px;font-family:'Space Mono',monospace">${p.ID_Pengajuan}</td>
+      <td><strong>${p.Nama_Karyawan}</strong><br><span style="font-size:11px;color:var(--text-muted)">${p.ID_Karyawan}</span></td>
+      <td>${p.Jenis_Cuti}</td>
+      <td>${fmtDate(p.Tanggal_Mulai)}</td>
+      <td>${fmtDate(p.Tanggal_Selesai)}</td>
+      <td>${p.Jumlah_Hari}</td>
+      <td style="max-width:150px;font-size:12px">${p.Alasan}</td>
+      <td><span class="badge ${p.Status==='Disetujui'?'badge-green':p.Status==='Ditolak'?'badge-red':'badge-amber'}">${p.Status}</span></td>
+      <td>${p.Status==='Menunggu'?`
+        <button class="btn btn-success btn-sm" onclick="approveReject('${p.ID_Pengajuan}','Disetujui')">✓</button>
+        <button class="btn btn-danger btn-sm" onclick="approveReject('${p.ID_Pengajuan}','Ditolak')" style="margin-left:4px">✗</button>`:'-'}
+      </td>
+    </tr>`; }, 10, 'Tidak ada permohonan');
+  updateBulkDeleteBtn('Cuti');
+}
+
+async function approveReject(id, status) {
+  const idx = localPermohonan.findIndex(function(p){ return p.ID_Pengajuan===id; });
+  if (idx < 0) return;
+  localPermohonan[idx].Status = status;
+  localStorage.setItem('ppnpn_permohonan', JSON.stringify(localPermohonan));
+  if (SCRIPT_URL) await callAPI('updatePermohonan', { ID_Pengajuan: id, Status: status });
+  loadAdminCuti();
+}
+
+// ============================================================
+// MODAL BERSAMA: CATATAN & PERSETUJUAN
+// Dipakai oleh Persetujuan Ijin Keluar & Evaluasi Checklist Tugas CS
+// ============================================================
+async function submitApprovalNote() {
+  var type = document.getElementById('anType').value;
+  var id = document.getElementById('anId').value;
+  var status = document.getElementById('anStatus').value;
+  var catatan = document.getElementById('anCatatan').value.trim();
+  var btn = document.getElementById('anSubmitBtn');
+  btn.disabled = true;
+
+  if (type === 'ijin') {
+    await updateIjinKeluar(id, status, catatan);
+    closeModal('approvalNoteModal');
+    loadAdminIjinKeluar();
+  } else if (type === 'checklist') {
+    var parts = id.split('|');
+    var idPegawai = parts[0], tanggal = parts[1];
+    var row = (cachedCSPegawaiList||[]).find(function(p){ return p.idPegawai === idPegawai; });
+    var nama = row ? row.namaPegawai : idPegawai;
+    await saveChecklistApproval(idPegawai, nama, tanggal, status, catatan);
+    closeModal('approvalNoteModal');
+    loadAdminChecklistCS();
+  }
+  btn.disabled = false;
+}
+
+// ============================================================
+// IJIN KELUAR (Pengajuan izin keluar sementara pada jam kerja)
+// ============================================================
+var adminIjinCurrentTab = 'pending';
+var selectedIjin = new Set();
+
+function switchIjinTab(tab) {
+  document.querySelectorAll('#page-ijinKeluar .tab').forEach(function(t,i){ t.classList.toggle('active', (tab==='form'&&i===0)||(tab==='history'&&i===1)); });
+  document.getElementById('ijinTabForm').style.display = tab==='form' ? '' : 'none';
+  document.getElementById('ijinTabHistory').style.display = tab==='history' ? '' : 'none';
+  if (tab === 'history') loadIjinKeluarHistory();
+}
+
+function loadIjinKeluarPage() {
+  if (!document.getElementById('ijinTanggal').value) document.getElementById('ijinTanggal').value = today();
+  switchIjinTab('form');
+}
+
+async function ajukanIjinKeluar() {
+  const u = currentUser;
+  const tanggal = document.getElementById('ijinTanggal').value;
+  const keperluanSingkat = document.getElementById('ijinKeperluanSingkat').value.trim();
+  const jamKeluar = document.getElementById('ijinJamKeluar').value;
+  const jamKembali = document.getElementById('ijinJamKembali').value;
+  const alasan = document.getElementById('ijinAlasan').value.trim();
+
+  if (!tanggal || !keperluanSingkat || !jamKeluar || !jamKembali || !alasan) {
+    showAlert('ijinFormAlert','error','❌ Lengkapi semua field!'); return;
+  }
+  if (jamKembali <= jamKeluar) {
+    showAlert('ijinFormAlert','error','❌ Jam kembali harus setelah jam keluar!'); return;
+  }
+
+  const payload = {
+    idIjin: genId('IJK'),
+    idPegawai: u.idPegawai,
+    namaPegawai: u.namaPegawai,
+    tanggal: tanggal,
+    keperluan: keperluanSingkat,
+    jamKeluar: jamKeluar,
+    jamKembali: jamKembali,
+    alasan: alasan,
+    status: 'Menunggu',
+    catatanAdmin: ''
+  };
+
+  if (SCRIPT_URL) await callAPI('saveIjinKeluar', payload);
+  localIjinKeluar.push(payload);
+  localStorage.setItem('ppnpn_ijin_keluar', JSON.stringify(localIjinKeluar));
+
+  showAlert('ijinFormAlert','success','✅ Permohonan ijin keluar berhasil diajukan! Menunggu persetujuan admin.');
+  document.getElementById('ijinKeperluanSingkat').value = '';
+  document.getElementById('ijinJamKeluar').value = '';
+  document.getElementById('ijinJamKembali').value = '';
+  document.getElementById('ijinAlasan').value = '';
+}
+
+async function loadIjinKeluarHistory() {
+  const u = currentUser;
+  const tbody = document.getElementById('ijinHistoryBody');
+  tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;padding:20px;color:var(--text-muted)">⏳ Memuat...</td></tr>';
+
+  if (SCRIPT_URL) {
+    var result = await callAPI('getIjinKeluar', { idPegawai: u.idPegawai });
+    if (result && result.success) {
+      localIjinKeluar = (localIjinKeluar||[]).filter(function(p){ return p.idPegawai !== u.idPegawai; }).concat(result.data);
+      localStorage.setItem('ppnpn_ijin_keluar', JSON.stringify(localIjinKeluar));
+    }
+  }
+
+  const data = (localIjinKeluar||[])
+    .filter(function(p){ return p.idPegawai===u.idPegawai; })
+    .sort(function(a,b){ return (b.tanggal||'').localeCompare(a.tanggal||''); });
+
+  if (!data.length) { tbody.innerHTML='<tr><td colspan="7" style="text-align:center;padding:24px;color:var(--text-muted)">Belum ada permohonan ijin keluar</td></tr>'; document.getElementById('pgIjinHistory').innerHTML=''; return; }
+  renderPaged('ijinHistory', data, 'ijinHistoryBody', 'pgIjinHistory', function(p){ return `
+    <tr>
+      <td>${data.indexOf(p)+1}</td>
+      <td>${fmtDate(p.tanggal)}</td>
+      <td style="max-width:180px;font-size:12px">${p.keperluan}</td>
+      <td>${fmtTime(p.jamKeluar)}</td>
+      <td>${fmtTime(p.jamKembali)}</td>
+      <td><span class="badge ${p.status==='Disetujui'?'badge-green':p.status==='Ditolak'?'badge-red':'badge-amber'}">${p.status}</span></td>
+      <td style="max-width:160px;font-size:12px;color:var(--text-muted)">${p.catatanAdmin || '-'}</td>
+    </tr>`; }, 7, 'Belum ada permohonan ijin keluar');
+}
+
+function switchAdminIjinTab(tab) {
+  adminIjinCurrentTab = tab;
+  document.querySelectorAll('#page-adminIjinKeluar .tab').forEach(function(t,i){ t.classList.toggle('active', (tab==='pending'&&i===0)||(tab==='all'&&i===1)); });
+  loadAdminIjinKeluar();
+}
+
+async function loadAdminIjinKeluar() {
+  const tbody = document.getElementById('adminIjinBody');
+  tbody.innerHTML = '<tr><td colspan="10" style="text-align:center;padding:20px;color:var(--text-muted)">⏳ Memuat...</td></tr>';
+
+  if (SCRIPT_URL) {
+    var result = await callAPI('getIjinKeluar', {});
+    if (result && result.success) {
+      localIjinKeluar = result.data;
+      localStorage.setItem('ppnpn_ijin_keluar', JSON.stringify(localIjinKeluar));
+    }
+  }
+
+  var data = adminIjinCurrentTab==='pending'
+    ? (localIjinKeluar||[]).filter(function(p){ return p.status==='Menunggu'; })
+    : (localIjinKeluar||[]);
+  data = data.slice().sort(function(a,b){ return (b.tanggal||'').localeCompare(a.tanggal||''); });
+
+  var pending = (localIjinKeluar||[]).filter(function(p){ return p.status==='Menunggu'; }).length;
+  var badge = document.getElementById('pendingBadgeIjin');
+  if (badge) { badge.style.display = pending>0 ? 'inline' : 'none'; badge.textContent = pending; }
+
+  if (!data.length) { tbody.innerHTML='<tr><td colspan="10" style="text-align:center;padding:24px;color:var(--text-muted)">Tidak ada permohonan ijin keluar</td></tr>'; document.getElementById('pgAdminIjin').innerHTML=''; return; }
+  renderPaged('adminIjin', data, 'adminIjinBody', 'pgAdminIjin', function(p){ return `
+    <tr>
+      <td><input type="checkbox" class="row-chk-ijin" value="${p.idIjin}" onchange="toggleSelectIjin('${p.idIjin}', this.checked)" ${selectedIjin.has(p.idIjin)?'checked':''}></td>
+      <td style="font-size:11px;font-family:'Space Mono',monospace">${p.idIjin}</td>
+      <td><strong>${p.namaPegawai}</strong><br><span style="font-size:11px;color:var(--text-muted)">${p.idPegawai}</span></td>
+      <td>${fmtDate(p.tanggal)}</td>
+      <td style="max-width:150px;font-size:12px">${p.keperluan}</td>
+      <td>${fmtTime(p.jamKeluar)}</td>
+      <td>${fmtTime(p.jamKembali)}</td>
+      <td><span class="badge ${p.status==='Disetujui'?'badge-green':p.status==='Ditolak'?'badge-red':'badge-amber'}">${p.status}</span></td>
+      <td style="max-width:140px;font-size:12px;color:var(--text-muted)">${p.catatanAdmin || '-'}</td>
+      <td>${p.status==='Menunggu'?`
+        <button class="btn btn-success btn-sm" onclick="openIjinApprovalNote('${p.idIjin}','${String(p.namaPegawai).replace(/'/g,"\\'")}','${p.tanggal}','Disetujui')">✓</button>
+        <button class="btn btn-danger btn-sm" onclick="openIjinApprovalNote('${p.idIjin}','${String(p.namaPegawai).replace(/'/g,"\\'")}','${p.tanggal}','Ditolak')" style="margin-left:4px">✗</button>`:'-'}
+      </td>
+    </tr>`; }, 10, 'Tidak ada permohonan ijin keluar');
+  updateBulkDeleteBtn('Ijin');
+}
+
+function openIjinApprovalNote(idIjin, namaPegawai, tanggal, status) {
+  document.getElementById('approvalNoteTitle').textContent = (status==='Disetujui' ? '✅ Setujui Ijin Keluar' : '❌ Tolak Ijin Keluar');
+  document.getElementById('approvalNoteSubtitle').textContent = namaPegawai + ' — ' + fmtDate(tanggal);
+  document.getElementById('anType').value = 'ijin';
+  document.getElementById('anId').value = idIjin;
+  document.getElementById('anStatus').value = status;
+  document.getElementById('anCatatan').value = '';
+  var btn = document.getElementById('anSubmitBtn');
+  btn.className = 'btn btn-sm ' + (status==='Disetujui' ? 'btn-success' : 'btn-danger');
+  btn.textContent = status==='Disetujui' ? '✓ Setujui' : '✗ Tolak';
+  document.getElementById('approvalNoteModal').classList.add('open');
+}
+
+async function updateIjinKeluar(idIjin, status, catatan) {
+  const idx = (localIjinKeluar||[]).findIndex(function(p){ return p.idIjin===idIjin; });
+  if (idx >= 0) {
+    localIjinKeluar[idx].status = status;
+    localIjinKeluar[idx].catatanAdmin = catatan || '';
+    localStorage.setItem('ppnpn_ijin_keluar', JSON.stringify(localIjinKeluar));
+  }
+  if (SCRIPT_URL) await callAPI('updateIjinKeluar', { idIjin: idIjin, status: status, catatanAdmin: catatan || '' });
+}
+
+function toggleSelectIjin(id, checked) {
+  if (checked) selectedIjin.add(id); else selectedIjin.delete(id);
+  var all = document.getElementById('chkAllIjin');
+  if (all) all.checked = document.querySelectorAll('.row-chk-ijin').length > 0 &&
+    document.querySelectorAll('.row-chk-ijin:checked').length === document.querySelectorAll('.row-chk-ijin').length;
+  updateBulkDeleteBtn('Ijin');
+}
+function toggleAllIjin(cb) {
+  document.querySelectorAll('.row-chk-ijin').forEach(function(el){
+    el.checked = cb.checked;
+    if (cb.checked) selectedIjin.add(el.value); else selectedIjin.delete(el.value);
+  });
+  updateBulkDeleteBtn('Ijin');
+}
+async function hapusIjinBulk() {
+  if (!selectedIjin.size) return;
+  var ids = Array.from(selectedIjin);
+  if (!confirm('Hapus ' + ids.length + ' data ijin keluar terpilih? Tindakan ini tidak bisa dibatalkan.')) return;
+  if (SCRIPT_URL) await callAPI('deleteIjinKeluar', { idIjin: ids });
+  localIjinKeluar = (localIjinKeluar||[]).filter(function(p){ return ids.indexOf(p.idIjin) < 0; });
+  localStorage.setItem('ppnpn_ijin_keluar', JSON.stringify(localIjinKeluar));
+  selectedIjin.clear();
+  alert('✅ ' + ids.length + ' data ijin keluar berhasil dihapus!');
+  loadAdminIjinKeluar();
+}
+
+// ============================================================
+// ADMIN: PEGAWAI
+// ============================================================
+async function loadAdminPegawai() {
+  const filter = document.getElementById('filterPegawai').value;
+  const tbody  = document.getElementById('adminPegawaiBody');
+  tbody.innerHTML = '<tr><td colspan="9" style="text-align:center;padding:20px;color:var(--text-muted)">⏳ Memuat...</td></tr>';
+
+  var pegawaiList = [];
+  if (SCRIPT_URL) {
+    var params = {};
+    if (filter) params.pekerjaan = filter;
+    var result = await callAPI('getPegawai', params);
+    if (result && result.success) pegawaiList = result.data;
+  }
+
+  // Kosong jika data pegawai di Supabase belum tersedia
+  if (!pegawaiList.length) {
+    pegawaiList = DEMO_USERS.filter(function(u){ return u.status==='Pegawai' && (!filter||u.pekerjaan===filter); })
+      .map(function(u){ return { 'ID PEGAWAI': u.idPegawai, 'NAMA': u.namaPegawai, 'NIK': '-', 'PEKERJAAN': u.pekerjaan, 'Tim': u.Tim, 'NO HP': '-' }; });
+  }
+
+  // Gabungkan dengan data pegawai hasil import lokal (jika ada)
+  var imported = JSON.parse(localStorage.getItem('ppnpn_pegawai_import') || '[]');
+  if (imported.length) {
+    var existingIds = pegawaiList.map(function(p){ return p['ID PEGAWAI']||p['idPegawai']; });
+    imported.forEach(function(imp){
+      if (existingIds.indexOf(imp['ID PEGAWAI']) < 0 && (!filter || imp['PEKERJAAN']===filter)) pegawaiList.push(imp);
+    });
+  }
+
+  // Sync saldo cuti
+  if (SCRIPT_URL) {
+    var cutiResult = await callAPI('getPermohonan', {});
+    if (cutiResult && cutiResult.success) {
+      localPermohonan = cutiResult.data;
+      localStorage.setItem('ppnpn_permohonan', JSON.stringify(localPermohonan));
+    }
+  }
+
+  if (!pegawaiList.length) { tbody.innerHTML='<tr><td colspan="9" style="text-align:center;padding:24px;color:var(--text-muted)">Tidak ada data</td></tr>'; document.getElementById('pgAdminPegawai').innerHTML=''; return; }
+  renderPaged('adminPegawai', pegawaiList, 'adminPegawaiBody', 'pgAdminPegawai', function(p){
+    var idPeg = p['ID PEGAWAI'] || p['idPegawai'] || '';
+    
+    // Saldo cuti periode berjalan (reset otomatis tiap 1 Jan / 1 Jul)
+    var saldoAdmPeg = hitungSaldoCuti(idPeg);
+    var pakai = saldoAdmPeg.pakai;
+    var sisa  = saldoAdmPeg.sisa;
+    
+    // Konversi object ke string yang aman untuk fungsi edit
+    var dataSafe = encodeURIComponent(JSON.stringify(p));
+
+    return `<tr>
+      <td><input type="checkbox" class="row-chk-pegawai" value="${idPeg}" onchange="toggleSelectPegawai('${idPeg}', this.checked)" ${selectedPegawai.has(idPeg)?'checked':''}></td>
+      <td style="font-family:'Space Mono',monospace;font-size:12px">${idPeg}</td>
+      <td><strong>${p['NAMA']||'-'}</strong></td>
+      <td style="font-family:'Space Mono',monospace;font-size:12px">${p['NIK']||'-'}</td>
+      <td><span class="badge badge-blue">${p['PEKERJAAN']||'-'}</span></td>
+      <td><span class="badge badge-gray">${p['Tim']||'-'}</span></td>
+      <td style="font-family:'Space Mono',monospace;font-size:12px;color:var(--danger)">${p['PASSWORD']||'-'}</td>
+      <td><span style="font-weight:700;color:${sisa>0?'var(--accent2)':'var(--danger)'}">Sisa ${sisa}/6</span></td>
+      <td style="display:flex;gap:4px;">
+        <button class="btn btn-amber btn-sm" onclick="editPegawai('${dataSafe}')">✏️</button>
+        <button class="btn btn-danger btn-sm" onclick="hapusPegawai('${idPeg}')">🗑</button>
+      </td>
+    </tr>`;
+  }, 9, 'Tidak ada data');
+  updateBulkDeleteBtn('Pegawai');
+}
+
+// ============================================================
+// ADMIN: SHIFT
+// ============================================================
+function initShiftFilter() {
+  var now = new Date();
+  var monthVal = now.getFullYear() + '-' + String(now.getMonth()+1).padStart(2,'0');
+  document.getElementById('filterShiftMonth').value = monthVal;
+  if (document.getElementById('filterShiftGenMonth')) document.getElementById('filterShiftGenMonth').value = monthVal;
+}
+
+// Pindah antar tab "Generator Jadwal" dan "Data Jadwal" pada halaman Jadwal Shift
+function switchShiftTab(tab) {
+  document.querySelectorAll('#page-adminShift .tab').forEach(function(t,i){
+    t.classList.toggle('active', (tab==='generator'&&i===0)||(tab==='data'&&i===1));
+  });
+  document.getElementById('shiftTabGenerator').style.display = tab==='generator' ? 'block' : 'none';
+  document.getElementById('shiftTabData').style.display = tab==='data' ? 'block' : 'none';
+}
+
+// Daftar anggota tim security, dikelompokkan per TIM (TIM 1-4), ditampilkan
+// di bawah judul "Jadwal Shift Security" supaya admin bisa langsung lihat
+// siapa saja anggota tiap tim sebelum mengatur jadwal.
+async function renderShiftTimRoster() {
+  var wrap = document.getElementById('shiftTimRoster');
+  if (!wrap) return;
+  wrap.innerHTML = '<div style="font-size:13px;color:var(--text-muted);padding:8px 0">⏳ Memuat anggota tim...</div>';
+
+  if (SCRIPT_URL) await refreshAllPegawai();
+
+  var pegawaiList = getPegawaiListForStats().filter(function(p){ return p.pekerjaan === 'Security'; });
+  var tims = ['TIM 1','TIM 2','TIM 3','TIM 4'];
+
+  var html = '<div class="tim-roster-grid">';
+  tims.forEach(function(tim){
+    var anggota = pegawaiList.filter(function(p){ return (p.Tim||'').trim().toUpperCase() === tim; });
+    html += '<div class="tim-roster-card">';
+    html += '<div class="trc-head"><span class="trc-name">👤 ' + tim + '</span><span style="font-size:11.5px;color:var(--text-muted)">' + anggota.length + ' orang</span></div>';
+    if (!anggota.length) {
+      html += '<div class="trc-empty">Belum ada anggota</div>';
+    } else {
+      html += '<ul class="trc-members">' + anggota.map(function(p){
+        return '<li>' + (p.namaPegawai || '-') + '</li>';
+      }).join('') + '</ul>';
+    }
+    html += '</div>';
+  });
+  html += '</div>';
+  wrap.innerHTML = html;
+}
+
+// Data jadwal shift disimpan di sini: { 'YYYY-MM-DD': { 'TIM 1':'P', 'TIM 2':'M', ... } }
+var shiftData = JSON.parse(localStorage.getItem('ppnpn_shift') || '{}');
+var shiftEditMode = false;
+var shiftOriginalData = {};
+// true = bulan yang sedang ditampilkan di tab "Data Jadwal" memang punya baris
+// di database (tabel shift_jadwal). false = belum ada satu pun baris tersimpan
+// untuk bulan ini, jadi tabel tidak boleh menampilkan hasil hitung rotasi
+// otomatis seolah-olah itu data asli — harus tampil pesan "belum dibuat".
+var shiftMonthHasData = true;
+
+function shiftLabel(s) {
+  s = (s||'L').toUpperCase();
+  if (s === 'J') return '<span class="shift-badge-J">JAGA 24 JAM</span>';
+  return '<span class="shift-badge-L">LIBUR</span>';
+}
+
+function shiftSelect(dateStr, tim, val) {
+  val = (val||'L').toUpperCase();
+  return '<select class="shift-select" data-date="'+dateStr+'" data-tim="'+tim+'" onchange="onShiftChange(this)">' +
+    '<option value="J"'+(val==='J'?' selected':'')+'>JAGA 24 JAM</option>' +
+    '<option value="L"'+(val==='L'?' selected':'')+'>LIBUR</option>' +
+  '</select>';
+}
+
+function onShiftChange(el) {
+  var date = el.getAttribute('data-date');
+  var tim  = el.getAttribute('data-tim');
+  if (!shiftData[date]) shiftData[date] = {};
+  shiftData[date][tim] = el.value;
+}
+
+// Hitung otomatis shift berdasarkan rotasi
+// Hitung jadwal 1 hari untuk seluruh TIM sekaligus, mengikuti pola shift
+// 24 jam: setiap hari hanya 1 TIM yang Jaga (24 jam penuh, 07:00–07:00
+// keesokan hari), 3 TIM lainnya Libur. Giliran tim yang kebagian jaga
+// dirotasi tiap hari (round-robin) supaya adil bergantian, dan berlaku
+// sama baik hari kerja maupun hari libur.
+function hitungShiftHarianOtomatis(dateStr) {
+  var tims = ['TIM 1','TIM 2','TIM 3','TIM 4'];
+  var d = new Date(dateStr + 'T00:00:00');
+  var dayOfYear = Math.floor((d - new Date(d.getFullYear(),0,0)) / 86400000);
+  var timJagaIdx = dayOfYear % tims.length;
+
+  var hasil = {};
+  tims.forEach(function(tim, idx) {
+    hasil[tim] = (idx === timJagaIdx) ? 'J' : 'L';
+  });
+  return hasil;
+}
+
+function hitungShiftOtomatis(dateStr, timIdx) {
+  var tims = ['TIM 1','TIM 2','TIM 3','TIM 4'];
+  var hasil = hitungShiftHarianOtomatis(dateStr);
+  return hasil[tims[timIdx]] || 'L';
+}
+
+async function loadShiftData() {
+  var monthVal = document.getElementById('filterShiftMonth').value;
+  if (!monthVal) return;
+  await ensureLiburLoaded();
+  var parts = monthVal.split('-').map(Number);
+  var year = parts[0], month = parts[1];
+  var daysInMonth = new Date(year, month, 0).getDate();
+  var tbody = document.getElementById('shiftBody');
+  tbody.innerHTML = '<tr><td colspan="5" style="text-align:center;padding:20px;color:var(--text-muted)">⏳ Memuat...</td></tr>';
+
+  shiftMonthHasData = true; // default aman kalau Supabase belum dikonfigurasi
+
+  // Ambil dari Sheets jika tersedia
+  if (SCRIPT_URL) {
+    var from = year+'-'+String(month).padStart(2,'0')+'-01';
+    var to   = year+'-'+String(month).padStart(2,'0')+'-'+String(daysInMonth).padStart(2,'0');
+    var res  = await callAPI('getShift', { from: from, to: to });
+    if (res && res.success) {
+      // Bulan ini benar-benar belum punya baris di database sama sekali
+      shiftMonthHasData = res.data.length > 0;
+      if (res.data.length > 0) {
+        res.data.forEach(function(r) {
+          var tgl = r['Tanggal'] || r['tanggal'] || '';
+          if (!tgl) return;
+          if (!shiftData[tgl]) shiftData[tgl] = {};
+          if (r['TIM 1']) shiftData[tgl]['TIM 1'] = r['TIM 1'];
+          if (r['TIM 2']) shiftData[tgl]['TIM 2'] = r['TIM 2'];
+          if (r['TIM 3']) shiftData[tgl]['TIM 3'] = r['TIM 3'];
+          if (r['TIM 4']) shiftData[tgl]['TIM 4'] = r['TIM 4'];
+        });
+        localStorage.setItem('ppnpn_shift', JSON.stringify(shiftData));
+      }
+    } else {
+      // Gagal memuat (bukan berarti kosong) — jangan tampilkan pesan "belum
+      // dibuat" yang menyesatkan, tampilkan alert error saja.
+      shiftMonthHasData = true;
+      showAlert('shiftAlert','error','❌ Gagal memuat data jadwal dari database: '+(res && res.error ? res.error : 'Tidak ada respons dari server.'));
+    }
+  }
+
+  renderShiftTable(year, month, daysInMonth);
+}
+
+function renderShiftTable(year, month, daysInMonth) {
+  // Bulan ini belum punya data tersimpan di database sama sekali, dan kita
+  // sedang di mode lihat (bukan sedang Mode Edit) — jangan tampilkan hasil
+  // hitung rotasi otomatis seolah itu data asli. Tampilkan pesan yang jelas
+  // dan arahkan admin ke tab Generator Jadwal.
+  if (!shiftEditMode && !shiftMonthHasData) {
+    renderShiftEmptyState(year, month);
+    return;
+  }
+
+  var tims  = ['TIM 1','TIM 2','TIM 3','TIM 4'];
+  var days  = ['Min','Sen','Sel','Rab','Kam','Jum','Sab'];
+
+  var dayList = [];
+  for (var day = 1; day <= daysInMonth; day++) dayList.push(day);
+
+  renderPaged('adminShift', dayList, 'shiftBody', 'pgAdminShift', function(day) {
+    var d       = new Date(year, month-1, day);
+    var dateStr = year+'-'+String(month).padStart(2,'0')+'-'+String(day).padStart(2,'0');
+    var dayName = days[d.getDay()];
+    var isWeekend = d.getDay()===0 || d.getDay()===6;
+    var bgStyle = isWeekend ? 'background:#fef9c3' : '';
+
+    var row = '<tr style="'+bgStyle+'">';
+    row += '<td><strong>'+day+'</strong> <span style="font-size:12px;color:var(--text-muted)">'+dayName+'</span></td>';
+
+    tims.forEach(function(tim, idx) {
+      var val = (shiftData[dateStr] && shiftData[dateStr][tim])
+        ? shiftData[dateStr][tim].toUpperCase()
+        : hitungShiftOtomatis(dateStr, idx);
+
+      if (shiftEditMode) {
+        row += '<td style="text-align:center">'+shiftSelect(dateStr, tim, val)+'</td>';
+      } else {
+        row += '<td style="text-align:center">'+shiftLabel(val)+'</td>';
+      }
+    });
+    row += '</tr>';
+    return row;
+  }, 5, 'Tidak ada data');
+}
+
+// Tampilan khusus saat bulan yang dipilih di tab "Data Jadwal" belum punya
+// satu pun baris jadwal di database — supaya admin tidak salah kira jadwal
+// hasil hitungan otomatis di layar ini sudah tersimpan, padahal belum.
+function renderShiftEmptyState(year, month) {
+  var namaBulan = ['Januari','Februari','Maret','April','Mei','Juni','Juli','Agustus','September','Oktober','November','Desember'][month-1] + ' ' + year;
+  var tbody = document.getElementById('shiftBody');
+  if (tbody) {
+    tbody.innerHTML =
+      '<tr><td colspan="5" style="text-align:center;padding:40px 20px">' +
+        '<div style="font-size:32px;margin-bottom:8px">📭</div>' +
+        '<div style="font-size:15px;font-weight:700;color:var(--text);margin-bottom:6px">Jadwal shift bulan ' + namaBulan + ' belum dibuat</div>' +
+        '<div style="font-size:13px;color:var(--text-muted);max-width:420px;margin:0 auto 16px">Belum ada data jadwal shift bulan ini yang tersimpan di database. Silakan buat terlebih dahulu di tab Generator Jadwal.</div>' +
+        '<button class="btn" style="background:#8b5cf6;border-color:#8b5cf6;color:#fff" onclick="bukaGeneratorUntukBulanIni()">🪄 Buka Generator Jadwal</button>' +
+      '</td></tr>';
+  }
+  var pg = document.getElementById('pgAdminShift');
+  if (pg) pg.innerHTML = '';
+}
+
+// Pindah ke tab Generator dengan bulan yang sama seperti yang sedang dipilih
+// di tab Data Jadwal, supaya admin tidak perlu memilih ulang bulannya.
+function bukaGeneratorUntukBulanIni() {
+  var monthVal = document.getElementById('filterShiftMonth').value;
+  if (monthVal && document.getElementById('filterShiftGenMonth')) {
+    document.getElementById('filterShiftGenMonth').value = monthVal;
+  }
+  switchShiftTab('generator');
+}
+
+// ============================================================
+// TAB 1: GENERATOR JADWAL (pratinjau — belum tersimpan ke database)
+// ============================================================
+// Hasil generate ditampung di variabel terpisah (shiftGenData), TIDAK
+// langsung ditulis ke shiftData/localStorage seperti sebelumnya. Ini supaya
+// jadwal hasil generate tidak "keliru dianggap tersimpan" padahal baru
+// tersimpan di memori browser. Baru setelah admin klik tombol
+// "💾 Simpan ke Database" (simpanJadwalShiftGenerator), data ini benar-benar
+// dikirim ke Supabase lewat callAPI('saveShift', ...).
+var shiftGenData = {};
+
+function shiftSelectGen(dateStr, tim, val) {
+  val = (val||'L').toUpperCase();
+  return '<select class="shift-gen-select" data-date="'+dateStr+'" data-tim="'+tim+'" onchange="onShiftGenChange(this)">' +
+    '<option value="J"'+(val==='J'?' selected':'')+'>JAGA 24 JAM</option>' +
+    '<option value="L"'+(val==='L'?' selected':'')+'>LIBUR</option>' +
+  '</select>';
+}
+
+function onShiftGenChange(el) {
+  var date = el.getAttribute('data-date');
+  var tim  = el.getAttribute('data-tim');
+  if (!shiftGenData[date]) shiftGenData[date] = {};
+  shiftGenData[date][tim] = el.value;
+}
+
+function renderShiftGenTable(year, month, daysInMonth) {
+  var tims = ['TIM 1','TIM 2','TIM 3','TIM 4'];
+  var days = ['Min','Sen','Sel','Rab','Kam','Jum','Sab'];
+  var dayList = [];
+  for (var day = 1; day <= daysInMonth; day++) dayList.push(day);
+
+  renderPaged('shiftGen', dayList, 'shiftGenBody', 'pgShiftGen', function(day) {
+    var d       = new Date(year, month-1, day);
+    var dateStr = year+'-'+String(month).padStart(2,'0')+'-'+String(day).padStart(2,'0');
+    var dayName = days[d.getDay()];
+    var isWeekend = d.getDay()===0 || d.getDay()===6;
+    var bgStyle = isWeekend ? 'background:#fef9c3' : '';
+
+    var row = '<tr style="'+bgStyle+'">';
+    row += '<td><strong>'+day+'</strong> <span style="font-size:12px;color:var(--text-muted)">'+dayName+'</span></td>';
+    tims.forEach(function(tim, idx) {
+      var val = (shiftGenData[dateStr] && shiftGenData[dateStr][tim])
+        ? shiftGenData[dateStr][tim].toUpperCase()
+        : hitungShiftOtomatis(dateStr, idx);
+      row += '<td style="text-align:center">'+shiftSelectGen(dateStr, tim, val)+'</td>';
+    });
+    row += '</tr>';
+    return row;
+  }, 5, 'Tidak ada data');
+}
+
+// Menghitung rotasi 1 bulan penuh dan menampilkannya sebagai PRATINJAU.
+// Belum menyentuh database maupun shiftData — murni tampilan sementara.
+async function generateJadwalShiftOtomatis() {
+  var monthVal = document.getElementById('filterShiftGenMonth').value;
+  if (!monthVal) { alert('Pilih bulan terlebih dahulu'); return; }
+  await ensureLiburLoaded();
+  var p = monthVal.split('-').map(Number);
+  var year = p[0], month = p[1];
+  var daysInMonth = new Date(year, month, 0).getDate();
+
+  var tims = ['TIM 1','TIM 2','TIM 3','TIM 4'];
+  shiftGenData = {};
+  for (var day = 1; day <= daysInMonth; day++) {
+    var dateStr = year+'-'+String(month).padStart(2,'0')+'-'+String(day).padStart(2,'0');
+    shiftGenData[dateStr] = {};
+    tims.forEach(function(tim, idx) {
+      shiftGenData[dateStr][tim] = hitungShiftOtomatis(dateStr, idx);
+    });
+  }
+
+  document.getElementById('shiftGenTableWrap').style.display = 'block';
+  document.getElementById('btnSimpanShiftGen').style.display = 'inline-flex';
+  document.getElementById('btnBatalShiftGen').style.display  = 'inline-flex';
+  renderShiftGenTable(year, month, daysInMonth);
+  showAlert('shiftGenAlert','warn','🪄 Pratinjau jadwal 1 bulan berhasil dibuat. Ini <strong>belum tersimpan ke database</strong> — sesuaikan bila perlu, lalu klik "Simpan ke Database".');
+}
+
+// Membatalkan pratinjau generator (tidak menghapus apa pun di database,
+// karena pratinjau memang belum pernah dikirim ke database).
+function batalGeneratorShift() {
+  shiftGenData = {};
+  document.getElementById('shiftGenTableWrap').style.display = 'none';
+  document.getElementById('btnSimpanShiftGen').style.display = 'none';
+  document.getElementById('btnBatalShiftGen').style.display  = 'none';
+  document.getElementById('shiftGenBody').innerHTML = '';
+  document.getElementById('pgShiftGen').innerHTML = '';
+}
+
+// Mengirim hasil pratinjau generator ke database (tabel shift_jadwal di
+// Supabase) lewat callAPI('saveShift', ...) — ini langkah yang sebelumnya
+// terlewat kalau admin cuma klik "Generator Jadwal" tanpa klik "Simpan".
+async function simpanJadwalShiftGenerator() {
+  if (!SCRIPT_URL) { alert('⚠ Supabase belum dikonfigurasi!'); return; }
+
+  var btn = document.getElementById('btnSimpanShiftGen');
+  btn.textContent = '⏳ Menyimpan...';
+  btn.disabled = true;
+
+  // Kumpulkan nilai terbaru dari select pratinjau yang ada di DOM
+  document.querySelectorAll('.shift-gen-select').forEach(function(sel) {
+    var date = sel.getAttribute('data-date');
+    var tim  = sel.getAttribute('data-tim');
+    if (!shiftGenData[date]) shiftGenData[date] = {};
+    shiftGenData[date][tim] = sel.value;
+  });
+
+  var rows = [];
+  Object.keys(shiftGenData).forEach(function(tgl) {
+    rows.push({
+      Tanggal: tgl,
+      'TIM 1': shiftGenData[tgl]['TIM 1'] || 'L',
+      'TIM 2': shiftGenData[tgl]['TIM 2'] || 'L',
+      'TIM 3': shiftGenData[tgl]['TIM 3'] || 'L',
+      'TIM 4': shiftGenData[tgl]['TIM 4'] || 'L'
+    });
+  });
+
+  if (!rows.length) {
+    showAlert('shiftGenAlert','warn','⚠ Belum ada pratinjau untuk disimpan. Klik "Generate Otomatis" dulu.');
+    btn.textContent = '💾 Simpan ke Database';
+    btn.disabled = false;
+    return;
+  }
+
+  var res = await callAPI('saveShift', { rows: rows });
+  btn.textContent = '💾 Simpan ke Database';
+  btn.disabled = false;
+
+  if (res && res.success) {
+    // Gabungkan ke cache lokal (shiftData) supaya tab "Data Jadwal" ikut ter-update
+    Object.keys(shiftGenData).forEach(function(tgl) {
+      shiftData[tgl] = Object.assign({}, shiftData[tgl], shiftGenData[tgl]);
+    });
+    localStorage.setItem('ppnpn_shift', JSON.stringify(shiftData));
+
+    showAlert('shiftGenAlert','success','✅ Jadwal berhasil disimpan ke database!');
+    batalGeneratorShift();
+
+    // Sinkronkan bulan di tab "Data Jadwal" lalu langsung tampilkan hasilnya
+    // supaya admin bisa langsung lihat buktinya sudah masuk database.
+    var monthVal = document.getElementById('filterShiftGenMonth').value;
+    document.getElementById('filterShiftMonth').value = monthVal;
+    switchShiftTab('data');
+    loadShiftData();
+  } else {
+    showAlert('shiftGenAlert','error','❌ Gagal menyimpan ke database: '+(res && res.error ? res.error : 'Tidak ada respons dari server. Silakan coba lagi.'));
+  }
+}
+
+function toggleEditShift() {
+  shiftEditMode = true;
+  // Simpan backup
+  shiftOriginalData = JSON.parse(JSON.stringify(shiftData));
+  document.getElementById('btnEditShift').style.display   = 'none';
+  document.getElementById('btnSimpanShift').style.display = 'inline-flex';
+  document.getElementById('btnBatalShift').style.display  = 'inline-flex';
+  var monthVal = document.getElementById('filterShiftMonth').value;
+  if (monthVal) {
+    var p = monthVal.split('-').map(Number);
+    renderShiftTable(p[0], p[1], new Date(p[0], p[1], 0).getDate());
+  }
+}
+
+function batalEditShift() {
+  shiftEditMode = false;
+  shiftData = shiftOriginalData;
+  document.getElementById('btnEditShift').style.display   = 'inline-flex';
+  document.getElementById('btnSimpanShift').style.display = 'none';
+  document.getElementById('btnBatalShift').style.display  = 'none';
+  var monthVal = document.getElementById('filterShiftMonth').value;
+  if (monthVal) {
+    var p = monthVal.split('-').map(Number);
+    renderShiftTable(p[0], p[1], new Date(p[0], p[1], 0).getDate());
+  }
+}
+
+async function simpanJadwalShift() {
+  var btn = document.getElementById('btnSimpanShift');
+  btn.textContent = '⏳ Menyimpan...';
+  btn.disabled = true;
+
+  // Kumpulkan nilai dari select yang ada di DOM
+  document.querySelectorAll('.shift-select').forEach(function(sel) {
+    var date = sel.getAttribute('data-date');
+    var tim  = sel.getAttribute('data-tim');
+    if (!shiftData[date]) shiftData[date] = {};
+    shiftData[date][tim] = sel.value;
+  });
+
+  localStorage.setItem('ppnpn_shift', JSON.stringify(shiftData));
+
+  // Kirim ke Sheets
+  if (SCRIPT_URL) {
+    var rows = [];
+    Object.keys(shiftData).forEach(function(tgl) {
+      rows.push({
+        Tanggal: tgl,
+        'TIM 1': shiftData[tgl]['TIM 1'] || 'L',
+        'TIM 2': shiftData[tgl]['TIM 2'] || 'L',
+        'TIM 3': shiftData[tgl]['TIM 3'] || 'L',
+        'TIM 4': shiftData[tgl]['TIM 4'] || 'L'
+      });
+    });
+    var res = await callAPI('saveShift', { rows: rows });
+    if (res && res.success) {
+      shiftMonthHasData = true; // bulan yang sedang dilihat sekarang sudah punya data di database
+      showAlert('shiftAlert','success','✅ Jadwal shift berhasil disimpan ke database!');
+    } else {
+      showAlert('shiftAlert','warn','⚠ Tersimpan lokal, gagal sync ke database: '+(res?res.error:'no response'));
+    }
+  } else {
+    showAlert('shiftAlert','success','✅ Jadwal shift tersimpan secara lokal!');
+  }
+
+  shiftEditMode = false;
+  btn.textContent = '💾 Simpan Jadwal';
+  btn.disabled = false;
+  document.getElementById('btnEditShift').style.display   = 'inline-flex';
+  document.getElementById('btnSimpanShift').style.display = 'none';
+  document.getElementById('btnBatalShift').style.display  = 'none';
+
+  var monthVal = document.getElementById('filterShiftMonth').value;
+  if (monthVal) {
+    var p = monthVal.split('-').map(Number);
+    renderShiftTable(p[0], p[1], new Date(p[0], p[1], 0).getDate());
+  }
+}
+
+// Menghapus SELURUH jadwal shift (TIM 1-4) untuk bulan yang dipilih di tab
+// "Data Jadwal" — baik dari database maupun cache lokal. Dipakai kalau
+// misalnya jadwal sebulan penuh perlu digenerate ulang dari awal.
+async function hapusJadwalShiftBulan() {
+  var monthVal = document.getElementById('filterShiftMonth').value;
+  if (!monthVal) { alert('Pilih bulan terlebih dahulu'); return; }
+  if (!SCRIPT_URL) { alert('⚠ Supabase belum dikonfigurasi!'); return; }
+
+  var p = monthVal.split('-').map(Number);
+  var year = p[0], month = p[1];
+  var daysInMonth = new Date(year, month, 0).getDate();
+  var namaBulan = ['Januari','Februari','Maret','April','Mei','Juni','Juli','Agustus','September','Oktober','November','Desember'][month-1] + ' ' + year;
+
+  if (!shiftMonthHasData) {
+    alert('Tidak ada jadwal tersimpan di database untuk bulan ' + namaBulan + '.');
+    return;
+  }
+
+  if (!confirm('Hapus SELURUH jadwal shift (TIM 1-4) bulan ' + namaBulan + ' dari database? Tindakan ini tidak bisa dibatalkan.')) return;
+
+  var from = year+'-'+String(month).padStart(2,'0')+'-01';
+  var to   = year+'-'+String(month).padStart(2,'0')+'-'+String(daysInMonth).padStart(2,'0');
+
+  var res = await callAPI('deleteShift', { from: from, to: to });
+  if (res && res.success) {
+    // Bersihkan cache lokal untuk bulan ini juga supaya tidak nyangkut
+    for (var day = 1; day <= daysInMonth; day++) {
+      var dateStr = year+'-'+String(month).padStart(2,'0')+'-'+String(day).padStart(2,'0');
+      delete shiftData[dateStr];
+    }
+    localStorage.setItem('ppnpn_shift', JSON.stringify(shiftData));
+
+    shiftEditMode = false;
+    document.getElementById('btnEditShift').style.display   = 'inline-flex';
+    document.getElementById('btnSimpanShift').style.display = 'none';
+    document.getElementById('btnBatalShift').style.display  = 'none';
+
+    showAlert('shiftAlert','success','🗑️ Jadwal shift bulan ' + namaBulan + ' berhasil dihapus dari database.');
+    loadShiftData(); // muat ulang -> otomatis tampil pesan "belum dibuat" karena sudah kosong
+  } else {
+    showAlert('shiftAlert','error','❌ Gagal menghapus jadwal: '+(res && res.error ? res.error : 'Tidak ada respons dari server.'));
+  }
+}
+
+// Upload jadwal dari Excel/CSV
+function uploadJadwalShift(event) {
+  var file = event.target.files[0];
+  if (!file) return;
+  document.getElementById('shiftUploadInfo').style.display = 'block';
+
+  var reader = new FileReader();
+  reader.onload = function(e) {
+    try {
+      var text = '';
+      // Coba parse sebagai CSV dulu
+      if (file.name.endsWith('.csv')) {
+        text = e.target.result;
+        parseShiftCSV(text);
+      } else {
+        // XLSX — gunakan SheetJS
+        var data = new Uint8Array(e.target.result);
+        var workbook = XLSX.read(data, { type: 'array' });
+        var sheet = workbook.Sheets[workbook.SheetNames[0]];
+        var csv = XLSX.utils.sheet_to_csv(sheet);
+        parseShiftCSV(csv);
+      }
+    } catch(err) {
+      alert('Gagal membaca file: ' + err.message);
+    }
+  };
+  if (file.name.endsWith('.csv')) {
+    reader.readAsText(file);
+  } else {
+    reader.readAsArrayBuffer(file);
+  }
+  event.target.value = '';
+}
+
+function parseShiftCSV(csv) {
+  var lines = csv.replace(/\r/g,'').trim().split('\n');
+  if (lines.length < 2) { alert('File kosong atau format tidak valid'); return; }
+
+  // Deteksi otomatis pemisah kolom: koma (,) atau titik-koma (;).
+  // File CSV hasil "Save As" dari Excel versi region Indonesia biasanya
+  // memakai titik-koma, bukan koma — kalau ini tidak dideteksi, seluruh
+  // baris akan "menempel" jadi satu kolom dan gagal disimpan ke database.
+  var headerLine = lines[0];
+  var countComma = (headerLine.match(/,/g) || []).length;
+  var countSemi  = (headerLine.match(/;/g) || []).length;
+  var delim = countSemi > countComma ? ';' : ',';
+
+  var headers = headerLine.split(delim).map(function(h){ return h.trim().replace(/"/g,''); });
+  var tglIdx  = headers.findIndex(function(h){ return h.toLowerCase().includes('tanggal') || h.toLowerCase().includes('date'); });
+  var tim1Idx = headers.findIndex(function(h){ return h.replace(/ /g,'').toLowerCase() === 'tim1'; });
+  var tim2Idx = headers.findIndex(function(h){ return h.replace(/ /g,'').toLowerCase() === 'tim2'; });
+  var tim3Idx = headers.findIndex(function(h){ return h.replace(/ /g,'').toLowerCase() === 'tim3'; });
+  var tim4Idx = headers.findIndex(function(h){ return h.replace(/ /g,'').toLowerCase() === 'tim4'; });
+
+  if (tglIdx < 0) { alert('Kolom Tanggal tidak ditemukan. Pastikan format file sesuai template (kolom: Tanggal, TIM 1, TIM 2, TIM 3, TIM 4).'); return; }
+
+  var count = 0;
+  var skipped = 0;
+  lines.slice(1).forEach(function(line) {
+    if (!line.trim()) return;
+    var cols = line.split(delim).map(function(c){ return c.trim().replace(/"/g,''); });
+    var tglRaw = cols[tglIdx] || '';
+    // Ambil hanya pola YYYY-MM-DD murni, tolak baris yang tidak valid
+    // (mencegah key tanggal rusak masuk ke database).
+    var m = tglRaw.match(/^(\d{4}-\d{2}-\d{2})/);
+    if (!m) { skipped++; return; }
+    var tgl = m[1];
+    if (!shiftData[tgl]) shiftData[tgl] = {};
+    if (tim1Idx >= 0 && cols[tim1Idx]) shiftData[tgl]['TIM 1'] = cols[tim1Idx].toUpperCase();
+    if (tim2Idx >= 0 && cols[tim2Idx]) shiftData[tgl]['TIM 2'] = cols[tim2Idx].toUpperCase();
+    if (tim3Idx >= 0 && cols[tim3Idx]) shiftData[tgl]['TIM 3'] = cols[tim3Idx].toUpperCase();
+    if (tim4Idx >= 0 && cols[tim4Idx]) shiftData[tgl]['TIM 4'] = cols[tim4Idx].toUpperCase();
+    count++;
+  });
+
+  localStorage.setItem('ppnpn_shift', JSON.stringify(shiftData));
+  var msg = '✅ Berhasil memuat ' + count + ' baris jadwal.';
+  if (skipped > 0) msg += ' (' + skipped + ' baris dilewati karena format tanggal tidak valid.)';
+  msg += ' Klik "💾 Simpan Jadwal" untuk menyimpan ke database.';
+  alert(msg);
+
+  // File yang diupload berisi baris untuk bulan ini -> tampilkan sebagai
+  // pratinjau (bukan pesan "belum dibuat"), supaya admin bisa cek lalu
+  // klik Simpan Jadwal.
+  if (count > 0) shiftMonthHasData = true;
+
+  var monthVal = document.getElementById('filterShiftMonth').value;
+  if (monthVal) {
+    var p = monthVal.split('-').map(Number);
+    renderShiftTable(p[0], p[1], new Date(p[0], p[1], 0).getDate());
+  }
+}
+
+// Download template Excel
+function downloadTemplateShift() {
+  var monthVal = document.getElementById('filterShiftMonth').value;
+  var year, month, daysInMonth;
+  if (monthVal) {
+    var p = monthVal.split('-').map(Number);
+    year = p[0]; month = p[1];
+  } else {
+    var now = new Date();
+    year = now.getFullYear(); month = now.getMonth()+1;
+  }
+  daysInMonth = new Date(year, month, 0).getDate();
+
+  var csv = 'Tanggal,TIM 1,TIM 2,TIM 3,TIM 4\n';
+  for (var day = 1; day <= daysInMonth; day++) {
+    var dateStr = year+'-'+String(month).padStart(2,'0')+'-'+String(day).padStart(2,'0');
+    var vals = ['TIM 1','TIM 2','TIM 3','TIM 4'].map(function(tim, idx){
+      return (shiftData[dateStr] && shiftData[dateStr][tim])
+        ? shiftData[dateStr][tim]
+        : hitungShiftOtomatis(dateStr, idx);
+    });
+    csv += dateStr+','+vals.join(',')+'\n';
+  }
+
+  var blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
+  var url  = URL.createObjectURL(blob);
+  var a    = document.createElement('a');
+  a.href = url;
+  a.download = 'Template_Jadwal_Shift_'+year+'-'+String(month).padStart(2,'0')+'.csv';
+  document.body.appendChild(a); a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
+// Export jadwal ke Excel
+function exportShiftExcel() {
+  var monthVal = document.getElementById('filterShiftMonth').value;
+  if (!monthVal) { alert('Pilih bulan terlebih dahulu'); return; }
+  var p = monthVal.split('-').map(Number);
+  var year = p[0], month = p[1];
+  var daysInMonth = new Date(year, month, 0).getDate();
+  var days = ['Minggu','Senin','Selasa','Rabu','Kamis','Jumat','Sabtu'];
+  var bulanNames = ['','Januari','Februari','Maret','April','Mei','Juni','Juli','Agustus','September','Oktober','November','Desember'];
+
+  var html = '<html xmlns:o="urn:schemas-microsoft-com:office:office">';
+  html += '<head><meta charset="UTF-8"><' + 'style>';
+  html += 'body{font-family:Arial,sans-serif;font-size:10pt}';
+  html += 'table{border-collapse:collapse;width:100%}';
+  html += 'th{background:#0b3d2e;color:#fff;padding:8px;border:1px solid #888;text-align:center}';
+  html += 'td{padding:6px 8px;border:1px solid #ccc;text-align:center}';
+  html += '.jaga{background:#dcfce7;color:#16a34a;font-weight:bold}';
+  html += '.libur{background:#f1f5f9;color:#6b7280}';
+  html += '.weekend{background:#fef9c3}';
+  html += '<' + '/style><' + '/head><body>';
+  html += '<h2 style="color:#0b3d2e">JADWAL SHIFT SECURITY</h2>';
+  html += '<p style="color:#666">Bulan: <strong>' + bulanNames[month] + ' ' + year + '</strong></p>';
+  html += '<table><thead><tr><th>Tgl</th><th>Hari</th><th>TIM 1</th><th>TIM 2</th><th>TIM 3</th><th>TIM 4</th></tr><' + '/thead><tbody>';
+
+  for (var day = 1; day <= daysInMonth; day++) {
+    var d       = new Date(year, month-1, day);
+    var dateStr = year+'-'+String(month).padStart(2,'0')+'-'+String(day).padStart(2,'0');
+    var isWeekend = d.getDay()===0||d.getDay()===6;
+    var rowClass = isWeekend ? ' class="weekend"' : '';
+    html += '<tr'+rowClass+'>';
+    html += '<td><strong>'+day+'</strong></td><td>'+days[d.getDay()]+'</td>';
+    ['TIM 1','TIM 2','TIM 3','TIM 4'].forEach(function(tim, idx) {
+      var val = (shiftData[dateStr] && shiftData[dateStr][tim])
+        ? shiftData[dateStr][tim].toUpperCase()
+        : hitungShiftOtomatis(dateStr, idx);
+      var cls = val==='J' ? 'jaga' : 'libur';
+      var label = val==='J' ? 'JAGA 24 JAM' : 'LIBUR';
+      html += '<td class="'+cls+'">'+label+'</td>';
+    });
+    html += '</tr>';
+  }
+  html += '<' + '/tbody><' + '/table><' + '/body><' + '/html>';
+
+  var blob = new Blob([html], { type: 'application/vnd.ms-excel;charset=utf-8' });
+  var url  = URL.createObjectURL(blob);
+  var a    = document.createElement('a');
+  a.href = url;
+  a.download = 'Jadwal_Shift_'+year+'-'+String(month).padStart(2,'0')+'.xls';
+  document.body.appendChild(a); a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
+// ============================================================
+// ADMIN: PENUGASAN LEMBUR
+// ============================================================
+async function initAdminLembur() {
+  try {
+    // 1. Set default tanggal ke hari ini
+    if (document.getElementById('lb-tanggal')) document.getElementById('lb-tanggal').value = today();
+    if (document.getElementById('lbFilterFrom')) document.getElementById('lbFilterFrom').value = today();
+    if (document.getElementById('lbFilterTo')) document.getElementById('lbFilterTo').value = today();
+    if (document.getElementById('spk-tanggal-surat') && !document.getElementById('spk-tanggal-surat').value) document.getElementById('spk-tanggal-surat').value = today();
+    if (document.getElementById('spk-tahun-anggaran') && !document.getElementById('spk-tahun-anggaran').value) document.getElementById('spk-tahun-anggaran').value = String(new Date().getFullYear());
+
+    // 1b. Isi default Nama & Jabatan Penandatangan dari Pengaturan SPK Lembur
+    if (SCRIPT_URL) {
+      var sres = await callAPI('getSpkSettings', {});
+      if (sres && sres.success && sres.data) {
+        spkSetting = Object.assign({}, SPK_SETTING_DEFAULT, sres.data);
+        localStorage.setItem('ppnpn_spk_setting', JSON.stringify(spkSetting));
+      }
+    }
+    if (document.getElementById('spk-nama-ttd'))    document.getElementById('spk-nama-ttd').value    = spkSetting.namaTtd || '';
+    if (document.getElementById('spk-jabatan-ttd')) document.getElementById('spk-jabatan-ttd').value = spkSetting.jabatanTtd || '';
+
+    const listEl = document.getElementById('lb-pegawai-list');
+    if (!listEl) return; // Mencegah error jika elemen HTML belum ada
+
+    // Beri indikator loading di dalam kotak
+    listEl.innerHTML = '<div style="grid-column:1/-1;text-align:center;padding:20px;color:var(--text-muted)">⏳ Sedang menarik data pegawai...</div>';
+
+    // 2. Tarik data pegawai langsung dari API/Database
+    let pegawaiList = [];
+    if (SCRIPT_URL) {
+      const result = await callAPI('getPegawai', {});
+      if (result && result.success) {
+        pegawaiList = result.data;
+      }
+    }
+
+    if (!pegawaiList || pegawaiList.length === 0) {
+      listEl.innerHTML = '<div style="grid-column:1/-1;text-align:center;padding:20px;color:var(--text-muted)">⚠ Data pegawai kosong / periksa koneksi internet.</div>';
+    } else {
+      // Ambil hanya yang berstatus 'Pegawai' aktif, lalu urutkan sesuai abjad (A-Z)
+      const pegawaiAktif = pegawaiList
+        .filter(p => (p['STATUS'] || 'Pegawai') === 'Pegawai')
+        .sort((a, b) => (a['NAMA'] || '').localeCompare(b['NAMA'] || ''));
+
+      listEl.innerHTML = pegawaiAktif.map(function(p){
+        var id   = p['ID PEGAWAI'] || p['idPegawai'] || '';
+        var nama = p['NAMA'] || '-';
+        var job  = p['PEKERJAAN'] || '-';
+        var tim  = p['Tim'] || p['TIM'] || '';
+        return '<label class="peg-pick-item" data-nama="'+nama.toLowerCase()+'" data-job="'+job+'">'+
+          '<input type="checkbox" class="lb-peg-checkbox" value="'+id+'" data-id="'+id+'" data-nama="'+encodeURIComponent(nama)+'" onchange="lbUpdateSelectedCount()">'+
+          '<span class="ppi-info"><span class="ppi-nama">'+nama+'</span><span class="ppi-sub">'+job+(tim?(' • '+tim):'')+'</span></span>'+
+        '</label>';
+      }).join('');
+    }
+    lbUpdateSelectedCount();
+
+    // 3. Muat ulang tabel jika fungsinya ada
+    if (typeof loadAdminLembur === 'function') {
+      loadAdminLembur();
+    }
+
+  } catch (err) {
+    console.error("Error saat inisiasi halaman lembur:", err);
+    const listEl = document.getElementById('lb-pegawai-list');
+    if (listEl) listEl.innerHTML = '<div style="grid-column:1/-1;text-align:center;padding:20px;color:var(--danger)">❌ Terjadi kesalahan sistem. Cek konsol (F12).</div>';
+  }
+}
+
+// Filter daftar pegawai (checkbox picker) berdasarkan kata kunci nama & pekerjaan
+function filterLbPegawaiList() {
+  var q = (document.getElementById('lb-peg-search').value || '').toLowerCase().trim();
+  var job = document.getElementById('lb-peg-filter-job').value;
+  document.querySelectorAll('#lb-pegawai-list .peg-pick-item').forEach(function(item){
+    var matchNama = !q || (item.getAttribute('data-nama')||'').indexOf(q) >= 0;
+    var matchJob  = !job || item.getAttribute('data-job') === job;
+    item.style.display = (matchNama && matchJob) ? 'flex' : 'none';
+  });
+}
+
+// Centang / batal-centang semua pegawai yang sedang tampil (setelah difilter)
+function lbSelectAllVisible(checked) {
+  document.querySelectorAll('#lb-pegawai-list .peg-pick-item').forEach(function(item){
+    if (item.style.display === 'none') return;
+    var cb = item.querySelector('.lb-peg-checkbox');
+    if (cb) cb.checked = checked;
+  });
+  lbUpdateSelectedCount();
+}
+
+function lbUpdateSelectedCount() {
+  var n = document.querySelectorAll('.lb-peg-checkbox:checked').length;
+  var el = document.getElementById('lbSelectedCount');
+  if (el) el.textContent = n + ' pegawai dipilih';
+}
+
+async function loadAdminLembur() {
+  var from = document.getElementById('lbFilterFrom').value;
+  var to   = document.getElementById('lbFilterTo').value;
+  var tbody = document.getElementById('adminLemburBody');
+  tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;padding:20px;color:var(--text-muted)">⏳ Memuat...</td></tr>';
+
+  if (SCRIPT_URL) {
+    var params = {};
+    if (from) params.from = from;
+    if (to)   params.to   = to;
+    var res = await callAPI('getLembur', params);
+    if (res && res.success) {
+      localLembur = res.data;
+      localStorage.setItem('ppnpn_lembur', JSON.stringify(localLembur));
+    }
+  }
+
+  var data = (localLembur||[]).filter(function(l){
+    if (from && l.tanggal < from) return false;
+    if (to   && l.tanggal > to)   return false;
+    return true;
+  }).sort(function(a,b){ return b.tanggal.localeCompare(a.tanggal); });
+
+  renderPaged('adminLembur', data, 'adminLemburBody', 'pgAdminLembur', function(l){
+    var jam = (l.jamMulai || l.jamSelesai) ? ((l.jamMulai||'-')+'–'+(l.jamSelesai||'-')) : '-';
+    // Checkbox di kolom pertama dipakai untuk memilih pegawai yang akan
+    // dimasukkan ke dokumen SPK Lembur (lihat generateSpkLemburDocx()).
+return `<tr>
+  <td><input type="checkbox" class="row-chk-lembur" value="${encodeURIComponent(JSON.stringify(l))}"></td>
+  <td>${fmtDate(l.tanggal)}</td>
+  <td>${l.idPegawai}</td>
+  <td>${l.namaPegawai}</td>
+  <td>${jam}</td>
+  <td>${l.keterangan||'-'}</td>
+  <td><button class="btn btn-outline btn-sm" onclick="hapusPenugasanLembur('${l.tanggal}','${l.idPegawai}')">🗑 Hapus</button></td>
+</tr>`;
+  }, 7, 'Belum ada penugasan lembur');
+}
+
+function toggleAllLembur(cb) {
+  document.querySelectorAll('.row-chk-lembur').forEach(el => el.checked = cb.checked);
+}
+
+// Menugaskan lembur ke seluruh pegawai yang dicentang pada daftar pemilihan
+// (checkbox picker) sekaligus, dengan tanggal & uraian tugas yang sama.
+async function tambahPenugasanLemburBulk() {
+  const checks = Array.from(document.querySelectorAll('.lb-peg-checkbox:checked'));
+  const tgl = document.getElementById('lb-tanggal').value;
+  const jMulai = document.getElementById('lb-jam-mulai').value;
+  const jSelesai = document.getElementById('lb-jam-selesai').value;
+  const ket = document.getElementById('lb-keterangan').value.trim();
+
+  if (checks.length === 0) { alert('⚠ Pilih minimal satu pegawai terlebih dahulu.'); return; }
+  if (!tgl) { alert('⚠ Tanggal lembur wajib diisi.'); return; }
+  if (!ket) { alert('⚠ Uraian tugas wajib diisi.'); return; }
+
+  const rows = checks.map(function(cb){
+    return {
+      tanggal: tgl,
+      idPegawai: cb.getAttribute('data-id'),
+      namaPegawai: decodeURIComponent(cb.getAttribute('data-nama')),
+      jamMulai: jMulai,
+      jamSelesai: jSelesai,
+      keterangan: ket
+    };
+  });
+
+  var btn = (typeof event !== 'undefined' && event) ? event.currentTarget : null;
+  var btnOrig = btn ? btn.innerHTML : null;
+  if (btn) { btn.disabled = true; btn.innerHTML = '⏳ Menyimpan...'; }
+
+  if (SCRIPT_URL) {
+    const res = await callAPI('saveLembur', { rows: rows });
+    if (res && res.success) {
+      rows.forEach(function(r){
+        localLembur = (localLembur||[]).filter(function(l){ return !(l.idPegawai===r.idPegawai && l.tanggal===r.tanggal); });
+        localLembur.push(r);
+      });
+      localStorage.setItem('ppnpn_lembur', JSON.stringify(localLembur));
+      showAlert('lbLemburAlert','success','✅ '+rows.length+' pegawai berhasil ditugaskan lembur pada '+fmtDate(tgl)+'.');
+
+      // Bersihkan form & pilihan
+      document.getElementById('lb-keterangan').value = '';
+      checks.forEach(function(cb){ cb.checked = false; });
+      lbUpdateSelectedCount();
+      loadAdminLembur();
+    } else {
+      alert('❌ Gagal menyimpan penugasan: ' + (res ? res.error : 'Unknown error'));
+    }
+  } else {
+    alert('⚠ Supabase belum dikonfigurasi!');
+  }
+  if (btn) { btn.disabled = false; btn.innerHTML = btnOrig || '🔥 Tugaskan Lembur'; }
+}
+
+async function hapusPenugasanLembur(tgl, idPeg) {
+  if (!confirm('Hapus penugasan lembur ini?')) return;
+  if (SCRIPT_URL) await callAPI('deleteLembur', { tanggal: tgl, idPegawai: idPeg });
+  localLembur = (localLembur||[]).filter(function(l){ return !(l.tanggal===tgl && l.idPegawai===idPeg); });
+  localStorage.setItem('ppnpn_lembur', JSON.stringify(localLembur));
+  loadAdminLembur();
+}
+
+// ============================================================
+// SPK LEMBUR (Surat Perintah Kerja Lembur) — generate .docx dari template
+// ============================================================
+var SPK_SETTING_DEFAULT = { namaTtd: '', jabatanTtd: 'Kepala Kantor Pelayanan Pajak Pratama Subang', kota: 'Subang', formatNomor: '' };
+var spkSetting = JSON.parse(localStorage.getItem('ppnpn_spk_setting') || 'null') || SPK_SETTING_DEFAULT;
+
+function fmtHariTanggalIndo(isoDateStr) {
+  if (!isoDateStr) return '-';
+  var days = ['Minggu','Senin','Selasa','Rabu','Kamis','Jumat','Sabtu'];
+  var months = ['Januari','Februari','Maret','April','Mei','Juni','Juli','Agustus','September','Oktober','November','Desember'];
+  var parts = isoDateStr.split('-');
+  var dt = new Date(parseInt(parts[0],10), parseInt(parts[1],10)-1, parseInt(parts[2],10));
+  if (isNaN(dt)) return isoDateStr;
+  return days[dt.getDay()] + ', ' + dt.getDate() + ' ' + months[dt.getMonth()] + ' ' + dt.getFullYear();
+}
+
+// Catatan: pemilihan tanggal & pengambilan kandidat pegawai untuk SPK Lembur
+// sekarang memakai tabel "Daftar Penugasan Lembur" (checkbox .row-chk-lembur)
+// pada halaman Penugasan Lembur — lihat initAdminLembur()/loadAdminLembur()
+// di atas, dan generateSpkLemburDocx() di bawah.
+
+async function fetchSpkTemplateArrayBuffer() {
+  if (!supabaseClient) throw new Error('Supabase belum terhubung.');
+  var dl = await supabaseClient.storage.from('templates-surat').download('spk-lembur.docx');
+  if (dl && dl.data) return await dl.data.arrayBuffer();
+  // fallback: coba lewat public URL jika bucket bersifat public
+  var pub = supabaseClient.storage.from('templates-surat').getPublicUrl('spk-lembur.docx');
+  if (pub && pub.data && pub.data.publicUrl) {
+    var r = await fetch(pub.data.publicUrl);
+    if (r.ok) return await r.arrayBuffer();
+  }
+  throw new Error((dl && dl.error && dl.error.message) || 'Template spk-lembur.docx tidak ditemukan di Storage (bucket templates-surat).');
+}
+
+async function generateSpkLemburDocx() {
+  // Sumber data pegawai = baris yang dicentang pada tabel "Daftar Penugasan
+  // Lembur" (kolom checkbox paling kiri, class .row-chk-lembur), bukan lagi
+  // daftar kandidat terpisah — jadi cukup 1 tabel untuk pilih & generate SPK.
+  var checks = Array.from(document.querySelectorAll('.row-chk-lembur:checked'));
+  if (!checks.length) { alert('⚠ Centang minimal satu pegawai pada tabel Daftar Penugasan Lembur di atas.'); return; }
+
+  var nomor   = document.getElementById('spk-nomor').value.trim();
+  var tglSurat = document.getElementById('spk-tanggal-surat').value;
+  var tahun   = document.getElementById('spk-tahun-anggaran').value.trim();
+  var namaTtd = document.getElementById('spk-nama-ttd').value.trim();
+  var jabatanTtd = document.getElementById('spk-jabatan-ttd').value.trim();
+  var kota = spkSetting.kota || 'Subang';
+
+  if (!nomor)   { alert('⚠ Nomor Surat wajib diisi.'); return; }
+  if (!tglSurat){ alert('⚠ Tanggal Surat wajib diisi.'); return; }
+  if (!namaTtd || !jabatanTtd) { alert('⚠ Nama & Jabatan Penandatangan wajib diisi.'); return; }
+
+  // Kelompokkan pegawai yang punya hari/tanggal, waktu, & uraian tugas yang
+  // sama persis ke dalam satu baris (nama-nama digabung), supaya tabel SPK
+  // tidak menampilkan baris duplikat untuk penugasan yang identik.
+  var groupMap = {};
+  var groupedList = [];
+  checks.forEach(function(cb){
+    var l = JSON.parse(decodeURIComponent(cb.value));
+    var hariTgl = fmtHariTanggalIndo(l.tanggal);
+    var waktu = (l.jamMulai||l.jamSelesai) ? ((l.jamMulai||'-')+'-'+(l.jamSelesai||'-')+' WIB') : '-';
+    var uraian = l.keterangan || '-';
+    var key = hariTgl + '||' + waktu + '||' + uraian;
+    if (!groupMap[key]) {
+      groupMap[key] = { hari_tanggal: hariTgl, waktu: waktu, uraian_tugas: uraian, namaList: [] };
+      groupedList.push(groupMap[key]);
+    }
+    groupMap[key].namaList.push(l.namaPegawai || '-');
+  });
+  // Penomoran tetap mengikuti jumlah pegawai (bukan jumlah baris hasil
+  // merge) — tiap nama tetap dapat nomor urutnya sendiri, ditumpuk sejajar
+  // dengan namanya di baris yang sama.
+  var nomorUrut = 0;
+  var pegawaiRows = groupedList.map(function(row){
+    var noList = row.namaList.map(function(){ nomorUrut++; return nomorUrut; });
+    return {
+      no: noList.join('\n'),
+      nama: row.namaList.join('\n'),
+      hari_tanggal: row.hari_tanggal,
+      waktu: row.waktu,
+      uraian_tugas: row.uraian_tugas
+    };
+  });
+
+  var tglSuratFormatted = fmtHariTanggalIndo(tglSurat).split(', ')[1] || tglSurat;
+
+  try {
+    var arrBuf = await fetchSpkTemplateArrayBuffer();
+    var zip = new PizZip(arrBuf);
+    var doc = new window.docxtemplater(zip, { paragraphLoop: true, linebreaks: true });
+    doc.render({
+      nomor_surat: nomor,
+      tahun_anggaran: tahun,
+      kota: kota,
+      tanggal_surat: tglSuratFormatted,
+      jabatan_penandatangan: jabatanTtd,
+      nama_penandatangan: namaTtd,
+      pegawai: pegawaiRows
+    });
+    var out = doc.getZip().generate({
+      type: 'blob',
+      mimeType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+    });
+    var fileName = 'SPK Lembur - ' + nomor.replace(/[\\/:*?"<>|]/g,'-') + ' - ' + tglSuratFormatted.replace(/[\\/:*?"<>|]/g,'-') + '.docx';
+    var a = document.createElement('a');
+    a.href = URL.createObjectURL(out);
+    a.download = fileName;
+    document.body.appendChild(a); a.click(); a.remove();
+    showAlert && showAlert('lbLemburAlert','success','✅ SPK Lembur berhasil diterbitkan: '+fileName);
+  } catch (err) {
+    alert('❌ Gagal membuat SPK Lembur: ' + err.message);
+  }
+}
+
+async function saveSpkLemburSettings() {
+  var namaTtd    = document.getElementById('setSpkNamaTtd').value.trim();
+  var jabatanTtd = document.getElementById('setSpkJabatanTtd').value.trim();
+  var kota       = document.getElementById('setSpkKota').value.trim() || 'Subang';
+  var formatNomor= document.getElementById('setSpkFormatNomor').value.trim();
+
+  spkSetting = { namaTtd: namaTtd, jabatanTtd: jabatanTtd, kota: kota, formatNomor: formatNomor };
+  localStorage.setItem('ppnpn_spk_setting', JSON.stringify(spkSetting));
+
+  if (SCRIPT_URL) {
+    var res = await callAPI('saveSpkSettings', spkSetting);
+    if (!res || !res.success) {
+      alert('❌ Gagal menyimpan ke database: ' + (res?res.error:'Unknown Error'));
+      return;
+    }
+  }
+
+  var notif = document.createElement('div');
+  notif.textContent = '✅ Pengaturan SPK Lembur tersimpan';
+  notif.style.cssText = 'position:fixed;top:80px;right:20px;z-index:9999;background:#16a34a;color:#fff;padding:12px 20px;border-radius:12px;font-size:13px;font-weight:600;box-shadow:0 4px 20px rgba(0,0,0,0.2)';
+  document.body.appendChild(notif);
+  setTimeout(function(){ notif.remove(); }, 2500);
+}
+
+// ============================================================
+// ADMIN: HAK CUTI
+// ============================================================
+// Isi dropdown filter periode (Semester berjalan + beberapa periode
+// sebelumnya) sekali saja, supaya pilihan admin tidak ke-reset tiap render.
+function isiFilterPeriodeHakCuti() {
+  var sel = document.getElementById('filterHakCutiPeriode');
+  if (!sel || sel.options.length) return; // sudah pernah diisi
+  var daftar = getDaftarPeriodeCuti(6); // periode aktif + 5 periode sebelumnya
+  daftar.forEach(function(pr, i) {
+    var opt = document.createElement('option');
+    opt.value = pr.start + '|' + pr.end;
+    opt.textContent = pr.label + (i === 0 ? ' — Aktif' : '');
+    sel.appendChild(opt);
+  });
+  sel.value = daftar[0].start + '|' + daftar[0].end;
+}
+
+async function loadAdminHakCuti() {
+  isiFilterPeriodeHakCuti();
+
+  var filter = document.getElementById('filterHakCutiJab').value;
+  var periodeSel = document.getElementById('filterHakCutiPeriode').value.split('|');
+  var periodeAktif = getPeriodeCuti();
+  var periode = { start: periodeSel[0], end: periodeSel[1], label: '' };
+  // Cari label yang cocok dari daftar periode (untuk ditampilkan di banner/export)
+  getDaftarPeriodeCuti(6).forEach(function(pr) {
+    if (pr.start === periode.start && pr.end === periode.end) periode = pr;
+  });
+  var sedangLihatPeriodeAktif = periode.start === periodeAktif.start && periode.end === periodeAktif.end;
+
+  var tbody  = document.getElementById('adminHakCutiBody');
+  tbody.innerHTML = '<tr><td colspan="8" style="text-align:center;padding:20px;color:var(--text-muted)">⏳ Memuat data pegawai...</td></tr>';
+
+  // Banner info periode & reset otomatis
+  var infoEl = document.getElementById('hakCutiPeriodeInfo');
+  if (infoEl) {
+    infoEl.textContent = sedangLihatPeriodeAktif
+      ? '📅 Menampilkan periode aktif: ' + periodeAktif.label + '. Saldo direset otomatis menjadi 6 hari setiap 1 Januari & 1 Juli (mengikuti pembaharuan kontrak 6 bulanan) — reset berikutnya ' + fmtDate(periodeAktif.resetBerikutnya) + ' (' + hariMenujuReset(periodeAktif) + ' hari lagi).'
+      : '🕘 Menampilkan riwayat periode: ' + periode.label + '. Ini bukan periode aktif — saldo di bawah adalah rekap historis, bukan saldo yang bisa dipakai pegawai sekarang.';
+  }
+
+  // Ambil semua pegawai dari Sheets
+  var pegawaiList = [];
+  if (SCRIPT_URL) {
+    var pResult = await callAPI('getPegawai', filter ? {pekerjaan: filter} : {});
+    if (pResult && pResult.success) pegawaiList = pResult.data;
+
+    // Ambil semua permohonan untuk hitung saldo
+    var cResult = await callAPI('getPermohonan', {});
+    if (cResult && cResult.success) {
+      localPermohonan = cResult.data;
+      localStorage.setItem('ppnpn_permohonan', JSON.stringify(localPermohonan));
+    }
+  }
+
+  if (!pegawaiList.length) {
+    tbody.innerHTML = '<tr><td colspan="8" style="text-align:center;padding:24px;color:var(--text-muted)">Tidak ada data pegawai</td></tr>';
+    document.getElementById('pgAdminHakCuti').innerHTML = '';
+    ['hc-total','hc-pakai','hc-sisa','hc-warn'].forEach(function(id){ document.getElementById(id).textContent = '0'; });
+    window._lastHakCutiRows = [];
+    window._lastHakCutiPeriode = periode;
+    return;
+  }
+
+  // Hitung saldo semua pegawai untuk periode terpilih + kumpulkan untuk kartu ringkasan & export
+  var totalPakai = 0, totalSisa = 0, totalWarn = 0;
+  var exportRows = [];
+  var dataRows = pegawaiList.map(function(p) {
+    var idPeg = p['ID PEGAWAI'] || '';
+    var saldo = hitungSaldoCuti(idPeg, periode);
+    totalPakai += saldo.pakai;
+    totalSisa  += saldo.sisa;
+    if (saldo.sisa <= 2) totalWarn++;
+    exportRows.push({ idPeg: idPeg, nama: p['NAMA']||'-', job: p['PEKERJAAN']||'-', tim: p['Tim']||p['TIM']||'-', hak: saldo.hak, pakai: saldo.pakai, sisa: saldo.sisa });
+    return { p: p, saldo: saldo };
+  });
+  document.getElementById('hc-total').textContent = pegawaiList.length;
+  document.getElementById('hc-pakai').textContent = totalPakai;
+  document.getElementById('hc-sisa').textContent  = totalSisa;
+  document.getElementById('hc-warn').textContent  = totalWarn;
+  window._lastHakCutiRows = exportRows;
+  window._lastHakCutiPeriode = periode;
+
+  renderPaged('adminHakCuti', dataRows, 'adminHakCutiBody', 'pgAdminHakCuti', function(row) {
+    var p = row.p, saldo = row.saldo;
+    var idPeg = p['ID PEGAWAI'] || '';
+    var nama  = p['NAMA'] || '-';
+    var job   = p['PEKERJAAN'] || '-';
+    var tim   = p['Tim'] || p['TIM'] || '-';
+    var pakai = saldo.pakai;
+    var sisa  = saldo.sisa;
+    var statusLabel = sisa === 0
+      ? '<span class="badge badge-red">Habis</span>'
+      : sisa <= 2
+        ? '<span class="badge badge-amber">Hampir Habis</span>'
+        : '<span class="badge badge-green">Tersedia</span>';
+    return '<tr>' +
+      '<td style="font-family:Space Mono,monospace;font-size:12px">' + idPeg + '</td>' +
+      '<td><strong>' + nama + '</strong></td>' +
+      '<td><span class="badge badge-blue">' + job + '</span></td>' +
+      '<td><span class="badge badge-gray">' + tim + '</span></td>' +
+      '<td style="text-align:center;font-weight:700">' + saldo.hak + '</td>' +
+      '<td style="text-align:center;font-weight:700;color:var(--danger)">' + pakai + '</td>' +
+      '<td style="text-align:center;font-weight:800;font-family:Space Mono,monospace;color:' +
+        (sisa > 2 ? 'var(--accent2)' : sisa > 0 ? 'var(--accent)' : 'var(--danger)') + '">' + sisa + '</td>' +
+      '<td>' + statusLabel + '</td>' +
+      '</tr>';
+  }, 8, 'Tidak ada data pegawai');
+}
+
+// Export rekap hak cuti (sesuai filter & periode yang sedang ditampilkan) ke Excel
+function exportHakCutiExcel() {
+  var rows = window._lastHakCutiRows;
+  var periode = window._lastHakCutiPeriode || getPeriodeCuti();
+  if (!rows || !rows.length) { alert('Tidak ada data untuk diekspor. Muat data terlebih dahulu.'); return; }
+
+  var html = '<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel">';
+  html += '<head><meta charset="UTF-8"><' + 'style>';
+  html += 'body{font-family:Arial,sans-serif;font-size:10pt}';
+  html += 'table{border-collapse:collapse;width:100%}';
+  html += 'th{background:#0b3d2e;color:#fff;padding:7px 9px;border:1px solid #888;font-size:9pt;text-align:center}';
+  html += 'td{padding:5px 8px;border:1px solid #ccc;font-size:10pt;vertical-align:middle}';
+  html += 'tr:nth-child(even)td{background:#f8fafc}';
+  html += '.red{color:#dc2626;font-weight:bold} .green{color:#16a34a;font-weight:bold} .amber{color:#d97706;font-weight:bold}';
+  html += '<' + '/style><' + '/head><body>';
+
+  html += '<h2 style="color:#0b3d2e;margin-bottom:4px">HAK CUTI PEGAWAI PPNPN</h2>';
+  html += '<p style="color:#666;font-size:10pt">Periode: ' + periode.label + ' (' + fmtDate(periode.start) + ' s/d ' + fmtDate(periode.end) + ')</p>';
+  html += '<p style="color:#666;font-size:9pt;margin-bottom:12px">Diekspor: ' + todayStr() + '</p>';
+
+  html += '<table><thead><tr><th>No</th><th>ID Pegawai</th><th>Nama</th><th>Jabatan</th><th>Tim</th><th>Hak Cuti</th><th>Terpakai</th><th>Sisa</th></tr></' + 'thead><tbody>';
+  rows.forEach(function(r, i) {
+    html += '<tr><td style="text-align:center">' + (i+1) + '</td>' +
+      '<td style="font-family:monospace">' + r.idPeg + '</td>' +
+      '<td><b>' + r.nama + '</b></td>' +
+      '<td>' + r.job + '</td>' +
+      '<td>' + r.tim + '</td>' +
+      '<td style="text-align:center">' + r.hak + '</td>' +
+      '<td style="text-align:center" class="' + (r.pakai>0?'red':'green') + '">' + r.pakai + '</td>' +
+      '<td style="text-align:center;font-size:12pt" class="' + (r.sisa===0?'red':r.sisa<=2?'amber':'green') + '">' + r.sisa + '</td></tr>';
+  });
+  html += '<' + '/tbody><' + '/table>';
+  html += '<' + '/body><' + '/html>';
+
+  var blob = new Blob([html], { type: 'application/vnd.ms-excel;charset=utf-8' });
+  var url  = URL.createObjectURL(blob);
+  var a    = document.createElement('a');
+  a.href     = url;
+  a.download = 'Hak_Cuti_Pegawai_' + periode.start + '_sd_' + periode.end + '.xls';
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
+// ============================================================
+// IMPORT DATA — helper umum baca file CSV/XLSX jadi teks CSV
+// ============================================================
+function readFileAsCSV(file, callback) {
+  var reader = new FileReader();
+  reader.onload = function(e) {
+    try {
+      if (file.name.toLowerCase().endsWith('.csv')) {
+        callback(e.target.result);
+      } else {
+        var data = new Uint8Array(e.target.result);
+        var workbook = XLSX.read(data, { type: 'array' });
+        var sheet = workbook.Sheets[workbook.SheetNames[0]];
+        callback(XLSX.utils.sheet_to_csv(sheet));
+      }
+    } catch(err) {
+      alert('Gagal membaca file: ' + err.message);
+    }
+  };
+  if (file.name.toLowerCase().endsWith('.csv')) reader.readAsText(file);
+  else reader.readAsArrayBuffer(file);
+}
+
+function csvToRows(csv) {
+  // Buang BOM (jika ada) dan normalisasi CRLF -> LF supaya \r tidak ikut jadi bagian nilai kolom terakhir
+  csv = csv.replace(/^\uFEFF/, '').replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+  var lines = csv.trim().split('\n').filter(function(l){ return l.trim().length; });
+  if (lines.length < 2) return { headers: [], rows: [] };
+
+  // Deteksi otomatis pemisah kolom: sebagian CSV hasil "Save As" Excel versi Indonesia
+  // memakai titik-koma (;) sebagai pemisah, bukan koma (,)
+  var firstLine = lines[0];
+  var commaCount = (firstLine.match(/,/g) || []).length;
+  var semicolonCount = (firstLine.match(/;/g) || []).length;
+  var delimiter = semicolonCount > commaCount ? ';' : ',';
+
+  var headers = lines[0].split(delimiter).map(function(h){ return h.trim().replace(/"/g,''); });
+  var rows = lines.slice(1).map(function(line){
+    var cols = line.split(delimiter).map(function(c){ return c.trim().replace(/"/g,''); });
+    var obj = {};
+    headers.forEach(function(h, i){ obj[h] = cols[i] !== undefined ? cols[i] : ''; });
+    return obj;
+  });
+  return { headers: headers, rows: rows };
+}
+function findCol(row, names) {
+  var keys = Object.keys(row);
+  for (var i=0;i<names.length;i++) {
+    var target = names[i].toLowerCase().replace(/[^a-z0-9]/g,'');
+    for (var j=0;j<keys.length;j++) {
+      if (keys[j].toLowerCase().replace(/[^a-z0-9]/g,'') === target) return row[keys[j]];
+    }
+  }
+  return '';
+}
+
+// ============================================================
+// IMPORT: DATA PEGAWAI
+// ============================================================
+async function importPegawaiFile(event) {
+  var file = event.target.files[0];
+  if (!file) return;
+  readFileAsCSV(file, async function(csv){
+    var parsed = csvToRows(csv);
+    if (!parsed.rows.length) { alert('File kosong atau format tidak dikenali'); return; }
+
+    // Ambil data pegawai yang sudah ada di Supabase, supaya username/password
+    // pegawai lama tidak tertimpa kosong saat re-import
+    var existingMap = {};
+    if (SCRIPT_URL) {
+      var exRes = await callAPI('getPegawai', {});
+      if (exRes && exRes.success) {
+        exRes.data.forEach(function(p){
+          var id = p['ID PEGAWAI'] || p['idPegawai'];
+          if (id) existingMap[id] = p;
+        });
+      }
+    }
+
+    var existingLocal = JSON.parse(localStorage.getItem('ppnpn_pegawai_import') || '[]');
+    var count = 0, failed = 0;
+    var rowsToImport = parsed.rows.map(function(r){
+      var idPeg = findCol(r, ['ID PEGAWAI','idPegawai','ID']);
+      return { idPeg: idPeg, r: r };
+    }).filter(function(x){ return x.idPeg; });
+
+    for (var i = 0; i < rowsToImport.length; i++) {
+      var idPeg = rowsToImport[i].idPeg;
+      var r = rowsToImport[i].r;
+      var ex = existingMap[idPeg] || {};
+      var obj = {
+        'ID PEGAWAI': idPeg,
+        'NAMA': findCol(r, ['NAMA','Nama']) || ex['NAMA'] || '',
+        'NIK': findCol(r, ['NIK']) || ex['NIK'] || '',
+        'PEKERJAAN': findCol(r, ['PEKERJAAN','Pekerjaan','Jabatan']) || ex['PEKERJAAN'] || '',
+        'Tim': findCol(r, ['Tim','TIM']) || ex['Tim'] || '',
+        'NO HP': findCol(r, ['NO HP','No HP','NoHP','Telepon']) || ex['NO HP'] || ''
+      };
+
+      // Simpan cache lokal (untuk tampilan cepat / mode offline)
+      var idx = existingLocal.findIndex(function(e){ return e['ID PEGAWAI']===idPeg; });
+      if (idx >= 0) existingLocal[idx] = obj; else existingLocal.push(obj);
+
+      if (SCRIPT_URL) {
+        var payload = {
+          idPegawai: idPeg,
+          NAMA: obj['NAMA'],
+          USERNAME: ex['USERNAME'] || idPeg.toLowerCase(),
+          PASSWORD: ex['PASSWORD'] || idPeg,
+          NIK: obj['NIK'],
+          NO_HP: obj['NO HP'],
+          PEKERJAAN: obj['PEKERJAAN'],
+          TIM: obj['Tim'],
+          STATUS: obj['PEKERJAAN'] === 'Admin' ? 'Admin' : 'Pegawai'
+        };
+        var res = await callAPI('savePegawaiAdmin', payload);
+        if (res && res.success) count++; else failed++;
+      } else {
+        count++;
+      }
+    }
+
+    localStorage.setItem('ppnpn_pegawai_import', JSON.stringify(existingLocal));
+    if (SCRIPT_URL) {
+      alert('✅ Berhasil mengimpor ' + count + ' data pegawai ke database.' + (failed ? (' ⚠ ' + failed + ' baris gagal.') : ''));
+    } else {
+      alert('⚠ Supabase belum terhubung — ' + count + ' data hanya tersimpan sementara di perangkat ini.');
+    }
+    loadAdminPegawai();
+  });
+  event.target.value = '';
+}
+
+function downloadTemplatePegawai() {
+  var csv = 'ID PEGAWAI,NAMA,NIK,PEKERJAAN,Tim,NO HP\n';
+  csv += 'CS2,Contoh Nama,3273xxxxxxxxxxxx,Cleaning Service,CS,08123456789\n';
+  var blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
+  var url = URL.createObjectURL(blob);
+  var a = document.createElement('a');
+  a.href = url; a.download = 'Template_Import_Pegawai.csv';
+  document.body.appendChild(a); a.click(); document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
+// ============================================================
+// IMPORT: DATA ABSENSI
+// ============================================================
+async function importAbsensiFile(event) {
+  var file = event.target.files[0];
+  if (!file) return;
+  readFileAsCSV(file, async function(csv){
+    var parsed = csvToRows(csv);
+    if (!parsed.rows.length) { alert('File kosong atau format tidak dikenali'); return; }
+    var count = 0, failed = 0;
+    for (var i = 0; i < parsed.rows.length; i++) {
+      var r = parsed.rows[i];
+      var tgl = findCol(r, ['Tanggal','tanggal','Date']);
+      var idPegawai = findCol(r, ['ID Pegawai','idPegawai','ID']);
+      if (!tgl || !idPegawai || !tgl.match(/\d{4}-\d{2}-\d{2}/)) continue;
+      var nama = findCol(r, ['Nama','namaPegawai','NAMA']);
+      var jamMasuk = findCol(r, ['Jam Masuk','absenMasuk','JamMasuk']);
+      var jamPulang = findCol(r, ['Jam Pulang','absenPulang','JamPulang']);
+      var peg = DEMO_USERS.find(function(u){ return u.idPegawai===idPegawai; });
+      var record = {
+        IdAbsen: genId('ABS'),
+        tanggal: tgl,
+        idPegawai: idPegawai,
+        namaPegawai: nama || (peg ? peg.namaPegawai : idPegawai),
+        pekerjaan: peg ? peg.pekerjaan : '',
+        Tim: peg ? peg.Tim : '',
+        absenMasuk: jamMasuk || null,
+        absenPulang: jamPulang || null,
+        statusAbsenMasuk: jamMasuk ? getStatusMasuk(jamMasuk) : null,
+        statusAbsenPulang: jamPulang ? getStatusPulang(jamPulang) : null,
+        lokasiMasuk: '', latMasuk: null, lonMasuk: null,
+        lokasiPulang: '', latPulang: null, lonPulang: null,
+        durasiKerja: ''
+      };
+      upsertLocalAbsen(record);
+      if (SCRIPT_URL) {
+        var res = await postAPI('saveAbsensi', record);
+        if (res && res.success) count++; else failed++;
+      } else {
+        count++;
+      }
+    }
+    if (SCRIPT_URL) {
+      alert('✅ Berhasil mengimpor ' + count + ' baris data absensi ke database.' + (failed ? (' ⚠ ' + failed + ' baris gagal.') : ''));
+    } else {
+      alert('⚠ Supabase belum terhubung — ' + count + ' baris hanya tersimpan sementara di perangkat ini.');
+    }
+    loadAdminAbsensi();
+  });
+  event.target.value = '';
+}
+
+function downloadTemplateAbsensi() {
+  var csv = 'Tanggal,ID Pegawai,Nama,Jam Masuk,Jam Pulang\n';
+  csv += today()+',CS1,Contoh Nama,06:00,17:30\n';
+  var blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
+  var url = URL.createObjectURL(blob);
+  var a = document.createElement('a');
+  a.href = url; a.download = 'Template_Import_Absensi.csv';
+  document.body.appendChild(a); a.click(); document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
+// ============================================================
+// IMPORT: DATA CUTI / IJIN
+// ============================================================
+async function importCutiFile(event) {
+  var file = event.target.files[0];
+  if (!file) return;
+  readFileAsCSV(file, async function(csv){
+    var parsed = csvToRows(csv);
+    if (!parsed.rows.length) { alert('File kosong atau format tidak dikenali'); return; }
+    var count = 0, failed = 0;
+    for (var i = 0; i < parsed.rows.length; i++) {
+      var r = parsed.rows[i];
+      var idKar = findCol(r, ['ID Karyawan','ID_Karyawan','idPegawai']);
+      var mulai = findCol(r, ['Tanggal Mulai','Tanggal_Mulai']);
+      if (!idKar || !mulai) continue;
+      var peg = DEMO_USERS.find(function(u){ return u.idPegawai===idKar; });
+      var obj = {
+        ID_Pengajuan: genId('CT'),
+        ID_Karyawan: idKar,
+        Nama_Karyawan: findCol(r, ['Nama','Nama Karyawan','Nama_Karyawan']) || (peg?peg.namaPegawai:idKar),
+        Jenis_Cuti: findCol(r, ['Jenis Cuti','Jenis_Cuti']) || 'Cuti Tahunan',
+        Tanggal_Mulai: mulai,
+        Tanggal_Selesai: findCol(r, ['Tanggal Selesai','Tanggal_Selesai']) || mulai,
+        Jumlah_Hari: findCol(r, ['Jumlah Hari','Jumlah_Hari']) || '1',
+        Alasan: findCol(r, ['Alasan']) || '-',
+        Status: findCol(r, ['Status']) || 'Menunggu'
+      };
+      localPermohonan.push(obj);
+      if (SCRIPT_URL) {
+        var res = await postAPI('savePermohonan', obj);
+        if (res && res.success) count++; else failed++;
+      } else {
+        count++;
+      }
+    }
+    localStorage.setItem('ppnpn_permohonan', JSON.stringify(localPermohonan));
+    if (SCRIPT_URL) {
+      alert('✅ Berhasil mengimpor ' + count + ' data cuti/ijin ke database.' + (failed ? (' ⚠ ' + failed + ' baris gagal.') : ''));
+    } else {
+      alert('⚠ Supabase belum terhubung — ' + count + ' data hanya tersimpan sementara di perangkat ini.');
+    }
+    loadAdminCuti();
+  });
+  event.target.value = '';
+}
+
+function downloadTemplateCuti() {
+  var csv = 'ID Karyawan,Nama,Jenis Cuti,Tanggal Mulai,Tanggal Selesai,Jumlah Hari,Alasan,Status\n';
+  csv += 'CS1,Contoh Nama,Cuti Tahunan,'+today()+','+today()+',1,Keperluan keluarga,Menunggu\n';
+  var blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
+  var url = URL.createObjectURL(blob);
+  var a = document.createElement('a');
+  a.href = url; a.download = 'Template_Import_Cuti.csv';
+  document.body.appendChild(a); a.click(); document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
+// ============================================================
+// ADMIN: PENGATURAN JAM KERJA & RADIUS/JARAK ABSENSI
+// ============================================================
+function loadPengaturanPage() {
+  renderJamKerjaSettingsTable();
+  document.getElementById('setOfficeLat').value = officeLat != null ? officeLat : DEMO_RADIUS.officeLat;
+  document.getElementById('setOfficeLon').value = officeLon != null ? officeLon : DEMO_RADIUS.officeLon;
+  document.getElementById('setOfficeRadius').value = officeRadius != null ? officeRadius : DEMO_RADIUS.radiusTolerance;
+  loadStorageSettingsUI();
+  document.getElementById('setSpkNamaTtd').value     = spkSetting.namaTtd || '';
+  document.getElementById('setSpkJabatanTtd').value  = spkSetting.jabatanTtd || '';
+  document.getElementById('setSpkKota').value        = spkSetting.kota || 'Subang';
+  document.getElementById('setSpkFormatNomor').value = spkSetting.formatNomor || '';
+}
+
+function renderJamKerjaSettingsTable() {
+  var tbody = document.getElementById('jamKerjaBody');
+  tbody.innerHTML = DEMO_JAM_KERJA.map(function(jk, idx){
+    return '<tr>' +
+      '<td><input type="text" value="'+(jk.PEKERJAAN||'')+'" onchange="updateJamKerjaField('+idx+',\'PEKERJAAN\',this.value)"></td>' +
+      '<td>' +
+        '<select onchange="updateJamKerjaField('+idx+',\'SHIFT\',this.value)">' +
+          '<option value="Jaga" '+(jk.SHIFT==='Jaga'?'selected':'')+'>Jaga (24 Jam)</option>' +
+          '<option value="Pagi" '+(jk.SHIFT==='Pagi'?'selected':'')+'>Pagi</option>' +
+          '<option value="Malam" '+(jk.SHIFT==='Malam'?'selected':'')+'>Malam</option>' +
+        '</select>' +
+      '</td>' +
+      '<td><input type="time" value="'+(jk.JAM_MASUK||'')+'" onchange="updateJamKerjaField('+idx+',\'JAM_MASUK\',this.value)"></td>' +
+      '<td><input type="time" value="'+(jk.JAM_PULANG||'')+'" onchange="updateJamKerjaField('+idx+',\'JAM_PULANG\',this.value)"></td>' +
+      '<td><button class="btn btn-danger btn-sm" onclick="removeJamKerjaRow('+idx+')">✕</button></td>' +
+    '</tr>';
+  }).join('');
+}
+
+function updateJamKerjaField(idx, field, value) {
+  if (DEMO_JAM_KERJA[idx]) DEMO_JAM_KERJA[idx][field] = value;
+}
+
+function addJamKerjaRow() {
+  DEMO_JAM_KERJA.push({ PEKERJAAN: '', SHIFT: 'Pagi', JAM_MASUK: '06:00', JAM_PULANG: '17:30' });
+  renderJamKerjaSettingsTable();
+}
+
+function removeJamKerjaRow(idx) {
+  if (!confirm('Hapus baris jam kerja ini?')) return;
+  DEMO_JAM_KERJA.splice(idx, 1);
+  renderJamKerjaSettingsTable();
+}
+
+async function saveJamKerjaSettings() {
+  var valid = DEMO_JAM_KERJA.every(function(jk){ return jk.PEKERJAAN && jk.JAM_MASUK && jk.JAM_PULANG; });
+  if (!valid) { alert('⚠ Pastikan semua baris pekerjaan, jam masuk & jam pulang terisi.'); return; }
+  localStorage.setItem('ppnpn_jamkerja_setting', JSON.stringify(DEMO_JAM_KERJA));
+  
+  if (SCRIPT_URL) {
+    var res = await postAPI('saveJamKerja', { data: DEMO_JAM_KERJA });
+    if (!res || !res.success) {
+      alert('❌ Gagal menyimpan ke database: ' + (res?res.error:'Unknown Error'));
+      return;
+    }
+  }
+
+  var notif = document.createElement('div');
+  notif.textContent = '✅ Pengaturan jam kerja tersimpan di database';
+  notif.style.cssText = 'position:fixed;top:80px;right:20px;z-index:9999;background:#16a34a;color:#fff;padding:12px 20px;border-radius:12px;font-size:13px;font-weight:600;box-shadow:0 4px 20px rgba(0,0,0,0.2)';
+  document.body.appendChild(notif);
+  setTimeout(function(){ notif.remove(); }, 2500);
+}
+
+function useCurrentLocationForOffice() {
+  var statusEl = document.getElementById('geoStatus');
+  statusEl.style.display = 'block';
+  statusEl.className = 'geo-status location-status loading';
+  statusEl.textContent = '⏳ Mengambil lokasi saat ini...';
+  if (!navigator.geolocation) {
+    statusEl.className = 'geo-status location-status error';
+    statusEl.textContent = '❌ Perangkat/browser tidak mendukung geolokasi.';
+    return;
+  }
+  navigator.geolocation.getCurrentPosition(function(pos){
+    document.getElementById('setOfficeLat').value = pos.coords.latitude.toFixed(7);
+    document.getElementById('setOfficeLon').value = pos.coords.longitude.toFixed(7);
+    statusEl.className = 'geo-status location-status ok';
+    statusEl.textContent = '✅ Lokasi berhasil didapat (akurasi ±' + Math.round(pos.coords.accuracy) + 'm). Klik Simpan untuk menerapkan.';
+  }, function(err){
+    statusEl.className = 'geo-status location-status error';
+    statusEl.textContent = '❌ Gagal mengambil lokasi: ' + err.message;
+  }, { enableHighAccuracy: true, timeout: 10000 });
+}
+
+async function saveRadiusSettings() {
+  var lat = parseFloat(document.getElementById('setOfficeLat').value);
+  var lon = parseFloat(document.getElementById('setOfficeLon').value);
+  var rad = parseFloat(document.getElementById('setOfficeRadius').value);
+  if (isNaN(lat) || isNaN(lon) || isNaN(rad) || rad <= 0) {
+    alert('⚠ Latitude, Longitude, dan Radius wajib diisi dengan angka yang valid.');
+    return;
+  }
+  officeLat = lat; officeLon = lon; officeRadius = rad;
+  DEMO_RADIUS.officeLat = lat; DEMO_RADIUS.officeLon = lon; DEMO_RADIUS.radiusTolerance = rad;
+  localStorage.setItem('ppnpn_radius_setting', JSON.stringify({ officeLat: lat, officeLon: lon, radiusTolerance: rad }));
+  
+  if (SCRIPT_URL) {
+    var res = await postAPI('saveRadius', { officeLat: lat, officeLon: lon, radiusTolerance: rad });
+    if (!res || !res.success) {
+      alert('❌ Gagal menyimpan ke database: ' + (res?res.error:'Unknown Error'));
+      return;
+    }
+  }
+
+  var notif = document.createElement('div');
+  notif.textContent = '✅ Pengaturan radius & lokasi tersimpan di database';
+  notif.style.cssText = 'position:fixed;top:80px;right:20px;z-index:9999;background:#16a34a;color:#fff;padding:12px 20px;border-radius:12px;font-size:13px;font-weight:600;box-shadow:0 4px 20px rgba(0,0,0,0.2)';
+  document.body.appendChild(notif);
+  setTimeout(function(){ notif.remove(); }, 2500);
+}
+
+// ============================================================
+// PENGATURAN PENYIMPANAN FOTO & DOKUMEN (Supabase Storage / Google Drive)
+// ============================================================
+var STORAGE_SETTING_DEFAULT = { provider: 'supabase', bucket: 'absensi-foto', gdriveUrl: '', gdriveFolder: '1D1HXn-CMVWYzyFRVwQOdrgbT1xReXZAU' };
+var storageSetting = JSON.parse(localStorage.getItem('ppnpn_storage_setting') || 'null') || STORAGE_SETTING_DEFAULT;
+
+function toggleStorageProviderFields() {
+  var provider = document.getElementById('setStorageProvider').value;
+  document.getElementById('storageFieldsSupabase').style.display = provider === 'supabase' ? '' : 'none';
+  document.getElementById('storageFieldsGdrive').style.display   = provider === 'gdrive'   ? '' : 'none';
+}
+
+function loadStorageSettingsUI() {
+  var elProvider = document.getElementById('setStorageProvider');
+  if (!elProvider) return;
+  elProvider.value = storageSetting.provider || 'supabase';
+  document.getElementById('setStorageBucket').value = storageSetting.bucket || 'absensi-foto';
+  document.getElementById('setGdriveUrl').value      = storageSetting.gdriveUrl || '';
+  document.getElementById('setGdriveFolder').value   = storageSetting.gdriveFolder || '';
+  toggleStorageProviderFields();
+  updateStorageStatusText();
+}
+
+function updateStorageStatusText() {
+  var el = document.getElementById('storageStatus');
+  if (!el) return;
+  if (storageSetting.provider === 'gdrive') {
+    el.textContent = storageSetting.gdriveUrl
+      ? '✅ Foto absensi akan diunggah ke Google Drive melalui Web App yang dikonfigurasi.'
+      : '⚠ URL Web App Google Drive belum diisi — foto tidak akan tersimpan sampai diisi.';
+  } else {
+    el.textContent = supabaseClient
+      ? '✅ Foto absensi akan disimpan di Supabase Storage, bucket "' + (storageSetting.bucket||'absensi-foto') + '".'
+      : '⚠ Supabase belum terhubung — hubungkan lewat Konfigurasi Sistem terlebih dahulu.';
+  }
+}
+
+function saveStorageSettings() {
+  var provider     = document.getElementById('setStorageProvider').value;
+  var bucket       = document.getElementById('setStorageBucket').value.trim() || 'absensi-foto';
+  var gdriveUrl    = document.getElementById('setGdriveUrl').value.trim();
+  var gdriveFolder = document.getElementById('setGdriveFolder').value.trim();
+
+  if (provider === 'gdrive' && !gdriveUrl) {
+    alert('⚠ Isi URL Web App Google Apps Script terlebih dahulu untuk menggunakan Google Drive.');
+    return;
+  }
+
+  storageSetting = { provider: provider, bucket: bucket, gdriveUrl: gdriveUrl, gdriveFolder: gdriveFolder };
+  localStorage.setItem('ppnpn_storage_setting', JSON.stringify(storageSetting));
+  updateStorageStatusText();
+
+  var notif = document.createElement('div');
+  notif.textContent = '✅ Pengaturan penyimpanan foto tersimpan (' + (provider === 'supabase' ? 'Supabase Storage' : 'Google Drive') + ')';
+  notif.style.cssText = 'position:fixed;top:80px;right:20px;z-index:9999;background:#16a34a;color:#fff;padding:12px 20px;border-radius:12px;font-size:13px;font-weight:600;box-shadow:0 4px 20px rgba(0,0,0,0.2)';
+  document.body.appendChild(notif);
+  setTimeout(function(){ notif.remove(); }, 2500);
+}
+
+// Konversi dataURL base64 (hasil capturePhoto) menjadi Blob — dipakai untuk
+// upload file ke Supabase Storage.
+function dataUrlToBlob(dataUrl) {
+  var parts = dataUrl.split(',');
+  var mimeMatch = parts[0].match(/:(.*?);/);
+  var mime = mimeMatch ? mimeMatch[1] : 'image/jpeg';
+  var bstr = atob(parts[1]);
+  var n = bstr.length;
+  var u8arr = new Uint8Array(n);
+  while (n--) { u8arr[n] = bstr.charCodeAt(n); }
+  return new Blob([u8arr], { type: mime });
+}
+
+// Upload foto absensi (dataURL base64 hasil capturePhoto) ke penyimpanan
+// yang dipilih admin di menu Konfigurasi Sistem > Penyimpanan Foto &
+// Dokumen Absensi (Supabase Storage atau Google Drive). Mengembalikan URL
+// publik foto, atau null bila gagal / belum dikonfigurasi — absensi tetap
+// tercatat normal walau tanpa foto.
+// Upload foto absensi (dataURL base64 hasil capturePhoto) ke penyimpanan
+// yang dipilih admin di menu Konfigurasi Sistem > Penyimpanan Foto &
+// Dokumen Absensi. Foto dikompres & diperkecil dulu sebelum diunggah
+// supaya hemat ukuran/kuota penyimpanan.
+// - Supabase Storage: folder terpisah "absensi/{nama-pegawai}-{idPegawai}/"
+// - Google Drive: folder utama "UploadFoto" > sub-folder "absen/", dengan
+//   nama file diawali "{nama pegawai}_{username}_{tanggal}" supaya gampang
+//   dikenali pemiliknya langsung dari nama filenya.
+// Mengembalikan { url, error } — url berisi link publik jika berhasil, error
+// berisi pesan penyebab kegagalan (supaya bisa ditampilkan ke pegawai/admin,
+// bukan hanya disembunyikan di console). Absensi tetap tercatat normal
+// walau upload foto gagal.
+async function uploadFotoAbsen(dataUrl, idPegawai, namaPegawai, username, tanggal, jenis) {
+  if (!dataUrl || dataUrl === 'tanpa_foto') return { url: null, error: null };
+  var namaSlug = slugifyNamaPegawai(namaPegawai);
+  var folderPegawai = namaSlug + '-' + idPegawai;
+  var fileName = idPegawai + '_' + tanggal + '_' + jenis + '_' + Date.now() + '.jpg';
+
+  try {
+    dataUrl = await compressImageDataUrl(dataUrl, 1280, 0.7); // kompres -> selalu JPEG
+
+    if (storageSetting.provider === 'gdrive') {
+      if (!storageSetting.gdriveUrl) return { url: null, error: 'URL Web App Google Drive belum diisi di Konfigurasi Sistem.' };
+      // Nama file khusus Drive: nama pegawai_username_tanggal_jenis_waktu.jpg
+      var gdriveFileName = namaSlug + '_' + slugifyNamaPegawai(username) + '_' + tanggal + '_' + jenis + '_' + Date.now() + '.jpg';
+      var resp = await fetch(storageSetting.gdriveUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+        body: JSON.stringify({
+          action: 'uploadFoto', fileName: gdriveFileName, folderId: storageSetting.gdriveFolder || '',
+          subFolder: 'absen',
+          base64: dataUrl.split(',')[1], mimeType: 'image/jpeg'
+        })
+      });
+      var json = await resp.json();
+      if (json && json.success && json.url) return { url: json.url, error: null };
+      return { url: null, error: (json && json.error) ? json.error : 'Upload ke Google Drive gagal (cek URL Web App & deployment-nya).' };
+    } else {
+      if (!supabaseClient) return { url: null, error: 'Supabase belum terhubung.' };
+      var bucket = storageSetting.bucket || 'absensi-foto';
+      var blob = dataUrlToBlob(dataUrl);
+      var path = 'absensi/' + folderPegawai + '/' + fileName;
+      var up = await supabaseClient.storage.from(bucket).upload(path, blob, { contentType: 'image/jpeg', upsert: true });
+      if (up.error) {
+        console.log('Upload Supabase Storage gagal:', up.error.message);
+        return { url: null, error: 'Gagal upload ke bucket "' + bucket + '": ' + up.error.message };
+      }
+      var pub = supabaseClient.storage.from(bucket).getPublicUrl(path);
+      var publicUrl = (pub && pub.data) ? pub.data.publicUrl : null;
+      return { url: publicUrl, error: publicUrl ? null : 'Upload berhasil tapi gagal mendapatkan URL publik.' };
+    }
+  } catch (err) {
+    console.log('Gagal upload foto absensi:', err);
+    return { url: null, error: err.message || 'Terjadi kesalahan tak terduga saat upload foto.' };
+  }
+}
+
+// ============================================================
+// ADMIN: REKAPITULASI POTONGAN
+// ============================================================
+function initAdminPotongan() {
+  // Set default periode: bulan ini
+  var now   = new Date();
+  var y     = now.getFullYear();
+  var m     = String(now.getMonth()+1).padStart(2,'0');
+  var firstDay = y + '-' + m + '-01';
+  var lastDay  = y + '-' + m + '-' + String(new Date(y, now.getMonth()+1, 0).getDate()).padStart(2,'0');
+  document.getElementById('potFilterFrom').value = firstDay;
+  document.getElementById('potFilterTo').value   = lastDay;
+}
+
+async function loadAdminPotongan() {
+  var from   = document.getElementById('potFilterFrom').value;
+  var to     = document.getElementById('potFilterTo').value;
+  var jab    = document.getElementById('potFilterJab').value;
+  var tbody  = document.getElementById('adminPotonganBody');
+
+  if (!from || !to) {
+    alert('Pilih periode terlebih dahulu!');
+    return;
+  }
+
+  tbody.innerHTML = '<tr><td colspan="14" style="text-align:center;padding:30px;color:var(--text-muted)">⏳ Menghitung data...</td></tr>';
+
+  // Ambil data pegawai dari Sheets
+  var pegawaiList = [];
+  if (SCRIPT_URL) {
+    var pRes = await callAPI('getPegawai', jab ? {pekerjaan: jab} : {});
+    if (pRes && pRes.success) pegawaiList = pRes.data;
+
+    // Ambil semua absensi periode ini
+    var aRes = await callAPI('getAbsensi', {from: from, to: to});
+    if (aRes && aRes.success) {
+      localAbsensi = localAbsensi.filter(function(a){ return a.tanggal < from || a.tanggal > to; });
+      localAbsensi = localAbsensi.concat(aRes.data);
+      localStorage.setItem('ppnpn_absensi', JSON.stringify(localAbsensi));
+    }
+
+    // Ambil permohonan cuti disetujui periode ini (untuk hitung tidak masuk sah)
+    var cRes = await callAPI('getPermohonan', {});
+    if (cRes && cRes.success) {
+      localPermohonan = cRes.data;
+      localStorage.setItem('ppnpn_permohonan', JSON.stringify(localPermohonan));
+    }
+
+    // Ambil jadwal shift periode ini (dibutuhkan untuk menentukan hari libur
+    // Security per TIM) dan penugasan lembur (supaya absen di hari libur
+    // yang ditugaskan lembur tetap dikecualikan dengan benar).
+    var sRes = await callAPI('getShift', {from: from, to: to});
+    if (sRes && sRes.success) {
+      sRes.data.forEach(function(r){
+        var tgl = r['Tanggal'] || r['tanggal'] || '';
+        if (!tgl) return;
+        if (!shiftData[tgl]) shiftData[tgl] = {};
+        ['TIM 1','TIM 2','TIM 3','TIM 4'].forEach(function(t){ if (r[t]) shiftData[tgl][t] = r[t]; });
+      });
+      localStorage.setItem('ppnpn_shift', JSON.stringify(shiftData));
+    }
+
+    var lRes = await callAPI('getLembur', {from: from, to: to});
+    if (lRes && lRes.success) {
+      localLembur = (localLembur||[]).filter(function(l){ return l.tanggal < from || l.tanggal > to; });
+      localLembur = localLembur.concat(lRes.data);
+      localStorage.setItem('ppnpn_lembur', JSON.stringify(localLembur));
+    }
+  }
+  await ensureLiburLoaded();
+
+  if (!pegawaiList.length) {
+    tbody.innerHTML = '<tr><td colspan="14" style="text-align:center;padding:30px;color:var(--text-muted)">Tidak ada data pegawai</td></tr>';
+    return;
+  }
+
+  // Hitung hari kerja dalam periode (Senin-Jumat)
+  var hariKerja = hitungHariKerja(from, to);
+
+  var rows = [];
+  var totalLambatAll = 0, totalCepatAll = 0, totalAbsenAll = 0;
+
+  pegawaiList.forEach(function(p) {
+    var idPeg = p['ID PEGAWAI'] || '';
+    var nama  = p['NAMA']       || '-';
+    var job   = p['PEKERJAAN']  || '-';
+    var tim   = p['Tim']        || '-';
+
+    // Absensi pegawai ini dalam periode
+    var absensiPeg = localAbsensi.filter(function(a) {
+      return a.idPegawai === idPeg && a.tanggal >= from && a.tanggal <= to;
+    });
+
+    var jumlahHadir    = absensiPeg.length;
+
+    // Absen di hari libur/off (bagi pegawai ybs) yang TIDAK ditugaskan lembur
+    // tidak dihitung sebagai potongan keterlambatan/pulang cepat — misal
+    // pegawai lupa absen masuk hari Sabtu (libur) berstatus "Terlambat"
+    // tidak seharusnya kena potongan, karena hari itu bukan hari kerja wajib.
+    var absensiKenaPotongan = absensiPeg.filter(function(a) {
+      var liburHariItu = isPegawaiLiburOnDate(p, a.tanggal);
+      var ditugaskanLembur = a.isLembur || isPenugasanLembur(idPeg, a.tanggal);
+      return !(liburHariItu && !ditugaskanLembur);
+    });
+
+    var jumlahTerlambat = absensiKenaPotongan.filter(function(a){ return a.statusAbsenMasuk === 'Terlambat'; }).length;
+    var jumlahCepat    = absensiKenaPotongan.filter(function(a){ return a.statusAbsenPulang === 'Pulang Cepat'; }).length;
+
+    // Cuti/ijin disetujui dalam periode ini
+    var hariCutiDisetujui = 0;
+    localPermohonan.filter(function(pm) {
+      return pm.ID_Karyawan === idPeg && pm.Status === 'Disetujui';
+    }).forEach(function(pm) {
+      var mulai  = pm.Tanggal_Mulai   || '';
+      var selesai = pm.Tanggal_Selesai || '';
+      if (!mulai || !selesai) return;
+      // Hitung overlap dengan periode filter
+      var start = mulai  > from ? mulai  : from;
+      var end   = selesai < to  ? selesai : to;
+      if (start <= end) hariCutiDisetujui += hitungHariKerja(start, end);
+    });
+
+    // Tidak masuk tanpa ijin = hari kerja - hadir - cuti disetujui
+    var tidakMasukTanpaIjin = Math.max(0, hariKerja - jumlahHadir - hariCutiDisetujui);
+
+    // Hitung potongan
+    var potTerlambat = jumlahTerlambat * 1;   // 1% per kejadian
+    var potCepat     = jumlahCepat     * 1;   // 1% per kejadian
+    var potAbsen     = tidakMasukTanpaIjin * 4; // 4% per hari
+    var totalPotongan = potTerlambat + potCepat + potAbsen;
+
+    totalLambatAll += jumlahTerlambat;
+    totalCepatAll  += jumlahCepat;
+    totalAbsenAll  += tidakMasukTanpaIjin;
+
+    rows.push({
+      idPeg: idPeg, nama: nama, job: job, tim: tim,
+      hariKerja: hariKerja, hadir: jumlahHadir,
+      cutiDisetujui: hariCutiDisetujui,
+      terlambat: jumlahTerlambat, cepat: jumlahCepat,
+      tidakMasuk: tidakMasukTanpaIjin,
+      potTerlambat: potTerlambat, potCepat: potCepat, potAbsen: potAbsen,
+      totalPotongan: totalPotongan
+    });
+  });
+
+  // Tampilkan summary cards
+  document.getElementById('potonganSummaryCards').style.display = 'block';
+  document.getElementById('pot-late').textContent   = totalLambatAll;
+  document.getElementById('pot-early').textContent  = totalCepatAll;
+  document.getElementById('pot-absent').textContent = totalAbsenAll;
+  var avgPotongan = rows.length > 0
+    ? (rows.reduce(function(s,r){ return s+r.totalPotongan; },0) / rows.length).toFixed(1)
+    : 0;
+  document.getElementById('pot-avg').textContent = avgPotongan + '%';
+
+  // Render tabel (dengan paging)
+  renderPaged('adminPotongan', rows, 'adminPotonganBody', 'pgAdminPotongan', function(r) {
+    var i = rows.indexOf(r);
+    var potonganColor = r.totalPotongan === 0 ? '#16a34a' : r.totalPotongan <= 5 ? '#d97706' : '#dc2626';
+    return '<tr>' +
+      '<td style="text-align:center">' + (i+1) + '</td>' +
+      '<td style="font-family:Space Mono,monospace;font-size:12px">' + r.idPeg + '</td>' +
+      '<td><strong>' + r.nama + '</strong></td>' +
+      '<td><span class="badge badge-blue">' + r.job + '</span></td>' +
+      '<td style="text-align:center">' + r.hariKerja + '</td>' +
+      '<td style="text-align:center;font-weight:600;color:#16a34a">' + r.hadir + '</td>' +
+      '<td style="text-align:center;font-weight:700;color:' + (r.cutiDisetujui>0?'#16a34a':'#94a3b8') + '">' +
+        (r.cutiDisetujui > 0 ? '<span style="background:#dcfce7;color:#16a34a;padding:2px 10px;border-radius:20px;font-size:12px;font-weight:700">'+r.cutiDisetujui+' hari</span>' : '-') +
+      '</td>' +
+      '<td style="text-align:center;font-weight:700;color:' + (r.terlambat>0?'#dc2626':'#16a34a') + '">' + r.terlambat + '</td>' +
+      '<td style="text-align:center;font-weight:700;color:' + (r.cepat>0?'#d97706':'#16a34a') + '">' + r.cepat + '</td>' +
+      '<td style="text-align:center;font-weight:700;color:' + (r.tidakMasuk>0?'#dc2626':'#16a34a') + '">' + r.tidakMasuk + '</td>' +
+      '<td style="text-align:center">' + (r.potTerlambat>0?'<span style="color:#dc2626;font-weight:700">-'+r.potTerlambat+'%</span>':'<span style="color:#16a34a">0%</span>') + '</td>' +
+      '<td style="text-align:center">' + (r.potCepat>0?'<span style="color:#d97706;font-weight:700">-'+r.potCepat+'%</span>':'<span style="color:#16a34a">0%</span>') + '</td>' +
+      '<td style="text-align:center">' + (r.potAbsen>0?'<span style="color:#dc2626;font-weight:700">-'+r.potAbsen+'%</span>':'<span style="color:#16a34a">0%</span>') + '</td>' +
+      '<td style="text-align:center;font-size:16px;font-weight:900;font-family:Space Mono,monospace;color:' + potonganColor + '">' +
+        (r.totalPotongan > 0 ? '-' + r.totalPotongan + '%' : '<span style="color:#16a34a">✓ 0%</span>') +
+      '</td>' +
+      '</tr>';
+  }, 14, 'Tidak ada data');
+
+  // Simpan rows ke global untuk export
+  window._lastPotonganRows = rows;
+  window._lastPotonganPeriode = { from: from, to: to, jab: jab, hariKerja: hariKerja };
+}
+
+// Hitung jumlah hari kerja (Senin-Jumat) antara dua tanggal
+function hitungHariKerja(from, to) {
+  var count = 0;
+  var cur   = new Date(from);
+  var end   = new Date(to);
+  while (cur <= end) {
+    var day = cur.getDay();
+    if (day !== 0 && day !== 6) count++;
+    cur.setDate(cur.getDate() + 1);
+  }
+  return count;
+}
+
+function exportPotonganExcel() {
+  var rows    = window._lastPotonganRows;
+  var periode = window._lastPotonganPeriode;
+
+  if (!rows || !rows.length) {
+    alert('Hitung rekapitulasi terlebih dahulu!');
+    return;
+  }
+
+  var html = '<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel">';
+  html += '<head><meta charset="UTF-8"><' + 'style>';
+  html += 'body{font-family:Arial,sans-serif;font-size:10pt}';
+  html += 'table{border-collapse:collapse;width:100%}';
+  html += 'th{background:#0b3d2e;color:#fff;padding:7px 9px;border:1px solid #888;font-size:9pt;text-align:center}';
+  html += 'td{padding:5px 8px;border:1px solid #ccc;font-size:10pt;vertical-align:middle}';
+  html += 'tr:nth-child(even)td{background:#f8fafc}';
+  html += '.red{color:#dc2626;font-weight:bold} .green{color:#16a34a;font-weight:bold} .amber{color:#d97706;font-weight:bold}';
+  html += '.total-row td{background:#fef3c7;font-weight:bold;border-top:2px solid #d97706}';
+  html += '<' + '/style><' + '/head><body>';
+
+  html += '<h2 style="color:#0b3d2e;margin-bottom:4px">REKAPITULASI POTONGAN PEGAWAI PPNPN</h2>';
+  html += '<p style="color:#666;font-size:10pt">Periode: ' + fmtDate(periode.from) + ' s/d ' + fmtDate(periode.to);
+  html += ' &nbsp;|&nbsp; Jabatan: ' + (periode.jab||'Semua');
+  html += ' &nbsp;|&nbsp; Hari Kerja: ' + periode.hariKerja + ' hari</p>';
+  html += '<p style="color:#666;font-size:9pt;margin-bottom:12px">Diekspor: ' + todayStr() + '</p>';
+
+  html += '<table><thead><tr>';
+  html += '<th>No</th><th>ID Pegawai</th><th>Nama</th><th>Jabatan</th>';
+  html += '<th>Hari Kerja</th><th>Hadir</th><th style="background:#166534;color:#fff">Ijin/Cuti Disetujui</th><th>Terlambat</th><th>Pulang Cepat</th><th>Tidak Masuk</th>';
+  html += '<th>Pot. Terlambat (1%)</th><th>Pot. Pulang Cepat (1%)</th><th>Pot. Tidak Masuk (4%)</th>';
+  html += '<th>TOTAL POTONGAN (%)</th>';
+  html += '</tr><' + '/thead><tbody>';
+
+  var totalPot = 0;
+  rows.forEach(function(r, i) {
+    totalPot += r.totalPotongan;
+    html += '<tr>';
+    html += '<td style="text-align:center">' + (i+1) + '</td>';
+    html += '<td style="font-family:monospace">' + r.idPeg + '</td>';
+    html += '<td><b>' + r.nama + '</b></td>';
+    html += '<td>' + r.job + '</td>';
+    html += '<td style="text-align:center">' + r.hariKerja + '</td>';
+    html += '<td style="text-align:center" class="green">' + r.hadir + '</td>';
+    html += '<td style="text-align:center;background:#f0fdf4;color:#16a34a;font-weight:bold">' + (r.cutiDisetujui > 0 ? r.cutiDisetujui + ' hari' : '-') + '</td>';
+    html += '<td style="text-align:center" class="' + (r.terlambat>0?'red':'green') + '">' + r.terlambat + '</td>';
+    html += '<td style="text-align:center" class="' + (r.cepat>0?'amber':'green') + '">' + r.cepat + '</td>';
+    html += '<td style="text-align:center" class="' + (r.tidakMasuk>0?'red':'green') + '">' + r.tidakMasuk + '</td>';
+    html += '<td style="text-align:center" class="' + (r.potTerlambat>0?'red':'green') + '">' + (r.potTerlambat>0?'-'+r.potTerlambat+'%':'0%') + '</td>';
+    html += '<td style="text-align:center" class="' + (r.potCepat>0?'amber':'green') + '">' + (r.potCepat>0?'-'+r.potCepat+'%':'0%') + '</td>';
+    html += '<td style="text-align:center" class="' + (r.potAbsen>0?'red':'green') + '">' + (r.potAbsen>0?'-'+r.potAbsen+'%':'0%') + '</td>';
+    html += '<td style="text-align:center;font-size:12pt;font-weight:bold" class="' + (r.totalPotongan>0?'red':'green') + '">';
+    html += (r.totalPotongan > 0 ? '-' + r.totalPotongan + '%' : '0%') + '</td>';
+    html += '</tr>';
+  });
+
+  // Baris total
+  var avgPot = rows.length > 0 ? (totalPot/rows.length).toFixed(1) : 0;
+  html += '<tr class="total-row">';
+  html += '<td colspan="4" style="text-align:right"><b>RATA-RATA POTONGAN:</b></td>';
+  html += '<td colspan="9"></td>';
+  html += '<td style="text-align:center;font-size:12pt;font-weight:bold;color:#dc2626">-' + avgPot + '%</td>';
+  html += '</tr>';
+
+  html += '<' + '/tbody><' + '/table>';
+  html += '<p style="font-size:9pt;color:#888;margin-top:12px">Keterangan: Terlambat = masuk &gt;5 menit setelah jam kerja | Pulang Cepat = pulang &gt;5 menit sebelum jam kerja | Tidak Masuk = tidak hadir tanpa cuti/ijin yang disetujui</p>';
+  html += '<' + '/body><' + '/html>';
+
+  var blob = new Blob([html], { type: 'application/vnd.ms-excel;charset=utf-8' });
+  var url  = URL.createObjectURL(blob);
+  var a    = document.createElement('a');
+  a.href     = url;
+  a.download = 'Rekapitulasi_Potongan_' + (periode.from||'') + '_sd_' + (periode.to||'') + '.xls';
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+function exportAbsensiExcel() {
+  var from = document.getElementById('admFilterFrom').value;
+  var to   = document.getElementById('admFilterTo').value;
+  var jab  = document.getElementById('admFilterJab').value;
+
+  var data = localAbsensi.filter(function(a) {
+    if (from && a.tanggal < from) return false;
+    if (to   && a.tanggal > to)   return false;
+    if (jab  && a.pekerjaan !== jab && !localAbsensi.find(function(x){
+      return x.idPegawai===a.idPegawai;
+    })) return false;
+    return true;
+  }).sort(function(a,b) {
+    return a.tanggal.localeCompare(b.tanggal) || (a.namaPegawai||'').localeCompare(b.namaPegawai||'');
+  });
+
+  if (!data.length) {
+    alert('Tidak ada data untuk di-export. Tampilkan data terlebih dahulu.');
+    return;
+  }
+
+  // Build HTML table untuk Excel
+  var periodLabel = (from || '...') + ' s/d ' + (to || '...');
+  var jabLabel    = jab || 'Semua';
+
+  var html = '<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel">';
+  html += '<head><meta charset="UTF-8">';
+  html += '<style>';
+  html += 'body{font-family:Arial,sans-serif;font-size:11pt}';
+  html += 'table{border-collapse:collapse;width:100%}';
+  html += 'th{background:#0b3d2e;color:#fff;padding:8px 10px;border:1px solid #ddd;font-size:10pt;text-align:center}';
+  html += 'td{padding:6px 10px;border:1px solid #ddd;font-size:10pt;vertical-align:middle}';
+  html += 'tr:nth-child(even)td{background:#f8fafc}';
+  html += '.title{font-size:14pt;font-weight:bold;color:#0b3d2e;margin-bottom:4px}';
+  html += '.subtitle{font-size:10pt;color:#666;margin-bottom:12px}';
+  html += '.late{color:#dc2626;font-weight:bold}';
+  html += '.ontime{color:#16a34a;font-weight:bold}';
+  html += '.early{color:#d97706;font-weight:bold}';
+  html += '<' + '/style><' + '/head><body>';
+
+  html += '<p class="title">REKAP ABSENSI PEGAWAI PPNPN</p>';
+  html += '<p class="subtitle">Periode: ' + periodLabel + ' &nbsp;|&nbsp; Jabatan: ' + jabLabel + '</p>';
+  html += '<p class="subtitle">Diekspor: ' + todayStr() + '</p>';
+
+  html += '<table>';
+  html += '<thead><tr>';
+  html += '<th>No</th><th>Tanggal</th><th>ID Pegawai</th><th>Nama</th><th>Jabatan</th><th>Tim</th>';
+  html += '<th>Jam Masuk</th><th>Status Masuk</th><th>Jam Pulang</th><th>Status Pulang</th><th>Durasi Kerja</th><th>Lokasi Masuk</th>';
+  html += '</tr></thead><tbody>';
+
+  data.forEach(function(a, i) {
+    var statusMasukClass = a.statusAbsenMasuk === 'Terlambat' ? 'late' : 'ontime';
+    var statusPulangClass = a.statusAbsenPulang === 'Pulang Cepat' ? 'early' : 'ontime';
+    html += '<tr>';
+    html += '<td style="text-align:center">' + (i+1) + '</td>';
+    html += '<td>' + fmtDate(a.tanggal) + '</td>';
+    html += '<td style="font-family:monospace">' + (a.idPegawai||'-') + '</td>';
+    html += '<td><b>' + (a.namaPegawai||'-') + '</b></td>';
+    html += '<td>' + (a.pekerjaan||'-') + '</td>';
+    html += '<td>' + (a.Tim||'-') + '</td>';
+    html += '<td style="text-align:center;font-family:monospace">' + (fmtTime(a.absenMasuk)||'-') + '</td>';
+    html += '<td class="' + statusMasukClass + '" style="text-align:center">' + (a.statusAbsenMasuk||'-') + '</td>';
+    html += '<td style="text-align:center;font-family:monospace">' + (fmtTime(a.absenPulang)||'-') + '</td>';
+    html += '<td class="' + statusPulangClass + '" style="text-align:center">' + (a.statusAbsenPulang||'-') + '</td>';
+    html += '<td style="text-align:center">' + (a.durasiKerja||'-') + '</td>';
+    html += '<td style="font-size:9pt;color:#666">' + (a.lokasiMasuk||'-') + '</td>';
+    html += '</tr>';
+  });
+
+  // Summary row
+  var totalHadir  = data.length;
+  var totalLambat = data.filter(function(a){ return a.statusAbsenMasuk==='Terlambat'; }).length;
+  var totalTepat  = totalHadir - totalLambat;
+  html += '<tr style="background:#e0f2fe;font-weight:bold">';
+  html += '<td colspan="6" style="text-align:right">TOTAL:</td>';
+  html += '<td style="text-align:center">' + totalHadir + ' hari</td>';
+  html += '<td style="text-align:center">' + totalLambat + ' terlambat / ' + totalTepat + ' tepat</td>';
+  html += '<td colspan="4"></td>';
+  html += '</tr>';
+
+  html += '<' + '/tbody><' + '/table><' + '/body><' + '/html>';
+
+  // Download
+  var blob = new Blob([html], { type: 'application/vnd.ms-excel;charset=utf-8' });
+  var url  = URL.createObjectURL(blob);
+  var a    = document.createElement('a');
+  var filename = 'Rekap_Absensi_' + (from||'') + '_sd_' + (to||'') + (jab?'_'+jab.replace(/ /g,'_'):'') + '.xls';
+  a.href     = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
+// ============================================================
+// MOBILE: SIDEBAR TOGGLE & BOTTOM NAV
+// ============================================================
+function toggleSidebar() {
+  var sidebar = document.getElementById('sidebar');
+  var overlay = document.getElementById('sidebarOverlay');
+  var isOpen  = sidebar.classList.contains('open');
+  sidebar.classList.toggle('open', !isOpen);
+  overlay.classList.toggle('show', !isOpen);
+}
+
+function closeSidebar() {
+  document.getElementById('sidebar').classList.remove('open');
+  document.getElementById('sidebarOverlay').classList.remove('show');
+}
+
+function buildBottomNav() {
+  var u       = currentUser;
+  var isAdmin = u && u.status === 'Admin';
+  var nav     = document.getElementById('bottomNavItems');
+  var bnav    = document.getElementById('bottomNav');
+
+  if (isAdmin) {
+    nav.innerHTML =
+      '<div class="bottom-nav-item-wrap"><button class="bottom-nav-item" id="bn-dashboard" onclick="showPage(\'dashboard\')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/></svg>Dashboard</button></div>' +
+      '<div class="bottom-nav-item-wrap"><button class="bottom-nav-item" id="bn-adminAbsensi" onclick="showPage(\'adminAbsensi\')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>Absensi</button></div>' +
+      '<div class="bottom-nav-item-wrap" style="position:relative"><button class="bottom-nav-item" id="bn-adminCuti" onclick="showPage(\'adminCuti\')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 11 12 14 22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>Cuti</button><span class="bnav-dot" id="bnavDot" style="display:none;position:absolute;top:4px;right:14px"></span></div>' +
+      '<div class="bottom-nav-item-wrap"><button class="bottom-nav-item" id="bn-adminPegawai" onclick="showPage(\'adminPegawai\')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/></svg>Pegawai</button></div>' +
+      '<div class="bottom-nav-item-wrap"><button class="bottom-nav-item" id="bn-more" onclick="toggleSidebar()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="18" x2="21" y2="18"/></svg>Menu</button></div>';
+  } else {
+    var extraNav = '';
+    if (u.pekerjaan === 'Cleaning Service') {
+      extraNav = '<div class="bottom-nav-item-wrap"><button class="bottom-nav-item" id="bn-checklist" onclick="showPage(\'checklist\')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>Tugas</button></div>';
+    }
+    nav.innerHTML =
+      '<div class="bottom-nav-item-wrap"><button class="bottom-nav-item" id="bn-dashboard" onclick="showPage(\'dashboard\')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/></svg>Beranda</button></div>' +
+      '<div class="bottom-nav-item-wrap"><button class="bottom-nav-item" id="bn-absensi" onclick="showPage(\'absensi\')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12,6 12,12 16,14"/></svg>Absensi</button></div>' + extraNav +
+      '<div class="bottom-nav-item-wrap"><button class="bottom-nav-item" id="bn-cuti" onclick="showPage(\'cuti\')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>Cuti</button></div>' +
+      '<div class="bottom-nav-item-wrap"><button class="bottom-nav-item" id="bn-more" onclick="toggleSidebar()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="18" x2="21" y2="18"/></svg>Menu</button></div>';
+  }
+  bnav.style.display = window.innerWidth <= 768 ? 'block' : 'none';
+}
+
+function updateBottomNavActive(pageName) {
+  document.querySelectorAll('.bottom-nav-item').forEach(function(btn){
+    btn.classList.remove('active');
+  });
+  var key = pageName;
+  // map sub-pages to bottom nav items
+  if (pageName === 'keluarga') key = 'profil';
+  if (pageName === 'ijinKeluar') key = 'cuti';
+  if (pageName === 'adminShift' || pageName === 'adminHakCuti' || pageName === 'adminPotongan' || pageName === 'adminPengaturan' || pageName === 'adminIjinKeluar') key = 'more';
+  var target = document.getElementById('bn-' + key);
+  if (target) target.classList.add('active');
+}
+
+window.addEventListener('resize', function(){
+  var bnav = document.getElementById('bottomNav');
+  if (bnav) bnav.style.display = window.innerWidth <= 768 ? 'block' : 'none';
+});
+
+// ============================================================
+// INIT ON LOAD
+// ============================================================
+// Membuka modal tambah pegawai
+function openAddPegawai() {
+  document.getElementById('modalPegawaiTitle').textContent = 'Tambah Pegawai Baru';
+  document.getElementById('adm-peg-id').value = genId('PEG');
+  document.getElementById('adm-peg-id').disabled = false;
+  document.getElementById('adm-peg-nama').value = '';
+  document.getElementById('adm-peg-user').value = '';
+  document.getElementById('adm-peg-pass').value = '';
+  document.getElementById('adm-peg-nik').value = '';
+  document.getElementById('adm-peg-hp').value = '';
+  document.getElementById('adm-peg-tim').value = '';
+  document.getElementById('pegawaiAdminModal').classList.add('open');
+}
+
+// Membuka modal edit dengan data eksisting
+function editPegawai(dataStr) {
+  var p = JSON.parse(decodeURIComponent(dataStr));
+  document.getElementById('modalPegawaiTitle').textContent = 'Edit Pegawai';
+  document.getElementById('adm-peg-id').value = p['ID PEGAWAI'] || p['idPegawai'];
+  document.getElementById('adm-peg-id').disabled = true; // ID tidak boleh diubah
+  document.getElementById('adm-peg-nama').value = p['NAMA'] || '';
+  document.getElementById('adm-peg-user').value = p['USERNAME'] || '';
+  document.getElementById('adm-peg-pass').value = p['PASSWORD'] || '';
+  document.getElementById('adm-peg-nik').value = p['NIK'] || '';
+  document.getElementById('adm-peg-hp').value = p['NO HP'] || '';
+  document.getElementById('adm-peg-job').value = p['PEKERJAAN'] || 'Cleaning Service';
+  document.getElementById('adm-peg-tim').value = p['Tim'] || '';
+  document.getElementById('pegawaiAdminModal').classList.add('open');
+}
+
+// Menyimpan data pegawai (Insert/Update)
+async function simpanPegawaiAdmin() {
+  const idPeg = document.getElementById('adm-peg-id').value;
+  if (!idPeg) return alert('ID Pegawai tidak boleh kosong!');
+
+  const payload = {
+    idPegawai: idPeg,
+    NAMA: document.getElementById('adm-peg-nama').value,
+    USERNAME: document.getElementById('adm-peg-user').value.toLowerCase(),
+    PASSWORD: document.getElementById('adm-peg-pass').value,
+    NIK: document.getElementById('adm-peg-nik').value,
+    NO_HP: document.getElementById('adm-peg-hp').value,
+    PEKERJAAN: document.getElementById('adm-peg-job').value,
+    TIM: document.getElementById('adm-peg-tim').value,
+    STATUS: document.getElementById('adm-peg-job').value === 'Admin' ? 'Admin' : 'Pegawai'
+  };
+
+  if (SCRIPT_URL) {
+    const res = await callAPI('savePegawaiAdmin', payload);
+    if (res && res.success) {
+      alert('✅ Data pegawai berhasil disimpan!');
+      closeModal('pegawaiAdminModal');
+      loadAdminPegawai(); // Refresh tabel
+    } else {
+      alert('❌ Gagal menyimpan data: ' + (res.error || 'Unknown Error'));
+    }
+  } else {
+    alert('⚠ Supabase belum dikonfigurasi!');
+  }
+}
+
+// Menghapus data pegawai
+async function hapusPegawai(idPeg) {
+  if (!confirm('Apakah Anda yakin ingin menghapus data pegawai dengan ID: ' + idPeg + '?')) return;
+  
+  if (SCRIPT_URL) {
+    const res = await callAPI('deletePegawai', { idPegawai: idPeg });
+    if (res && res.success) {
+      alert('✅ Pegawai berhasil dihapus!');
+      loadAdminPegawai(); // Refresh tabel
+    } else {
+      alert('❌ Gagal menghapus: ' + (res.error || 'Unknown Error'));
+    }
+  } else {
+    alert('⚠ Supabase belum dikonfigurasi!');
+  }
+}
+
+// Desktop Toggle Sidebar
+function toggleDesktopSidebar() {
+  document.body.classList.toggle('sidebar-minimized');
+  localStorage.setItem('ppnpn_sidebar_minimized', document.body.classList.contains('sidebar-minimized'));
+}
+
+window.onload = () => {
+  // Skrip eksternal (xlsx, supabase-js) di <head> sekarang dimuat dengan
+  // `defer` supaya tidak memblokir render halaman login (mempercepat
+  // waktu buka aplikasi). Karena itu, inisialisasi ulang koneksi
+  // Supabase di sini — pada titik ini skrip eksternal dipastikan sudah
+  // selesai dimuat & dieksekusi.
+  initSupabaseClient();
+  SCRIPT_URL = supabaseClient ? 'supabase' : '';
+
+  if (localStorage.getItem('ppnpn_sidebar_minimized') === 'true') {
+    document.body.classList.add('sidebar-minimized');
+  }
+  // Isi kembali username/password jika "ingat saya" pernah dicentang
+  loadRememberedLogin();
+
+  // Cek apakah sudah login sebelumnya (localStorage tetap ada walau di-refresh)
+  const session = localStorage.getItem('ppnpn_session');
+  if (session) {
+    try {
+      currentUser = JSON.parse(session);
+      initApp();
+    } catch(e) {}
+  }
+};
+document.addEventListener('keypress', e => {
+  if (e.key==='Enter' && document.getElementById('loginPage').style.display!=='none') doLogin();
+});
+
+
+
+

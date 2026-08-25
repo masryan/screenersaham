@@ -1,0 +1,16 @@
+{
+  "manifest_version": 3,
+  "name": "Stockbit Token Syncer (IHSG Screener Pro)",
+  "version": "1.0",
+  "description": "Menangkap Bearer token dari stockbit.com dan sinkron otomatis ke tabel stockbit_session di Supabase project IHSG Screener Pro.",
+  "permissions": [
+    "webRequest"
+  ],
+  "host_permissions": [
+    "https://*.stockbit.com/*",
+    "https://vditwqgiqlvkpdxhocuh.supabase.co/*"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  }
+}

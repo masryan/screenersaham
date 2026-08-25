@@ -45,6 +45,7 @@
   <button class="tab-btn" data-tab="portfolio">💼 Portofolio</button>
   <button class="tab-btn" data-tab="chart">📈 Grafik</button>
   <button class="tab-btn" data-tab="brokersum">📊 Broker Summary</button>
+  <button class="tab-btn" data-tab="target">🎯 Target Bandar</button>
   <button class="tab-btn" data-tab="about">ℹ️ Info</button>
 </div>
 
@@ -52,7 +53,7 @@
 
 <!-- Modal Form Pengaturan -->
 <div class="modal-overlay" id="settingsModalOverlay">
-  <div class="modal">
+  <div class="modal" style="max-height:85vh;overflow-y:auto;">
     <div class="modal-top">
       <h3>⚙️ Pengaturan Koneksi</h3>
       <button class="close-btn" onclick="closeSettings()">✕</button>
@@ -65,11 +66,55 @@
       <label>Supabase Anon Key</label>
       <input id="setSupaKey" type="password" placeholder="eyJhbG...">
     </div>
-    <div style="margin-bottom:12px; font-size: 11.5px; color: var(--teal); background: rgba(6,182,212,0.1); padding: 10px; border-radius: 8px; border: 1px solid rgba(6,182,212,0.2);">
+    <div class="field">
+      <label>Kolom Frequency Analyzer (opsional)</label>
+      <input id="setFreqAnalyzerCol" type="text" placeholder="freq_ma20">
+    </div>
+    <div style="margin-bottom:16px; font-size: 11.5px; color: var(--teal); background: rgba(6,182,212,0.1); padding: 10px; border-radius: 8px; border: 1px solid rgba(6,182,212,0.2);">
       ℹ️ Kredensial disimpan lokal di browser Anda (Local Storage). <b>Pakai anon key saja</b> —
       jangan pernah masukkan service_role key di sini: halaman ini publik dan bisa dibaca siapa saja
       lewat "View Source", sedangkan service_role bisa menulis/menghapus seluruh database.
     </div>
+
+    <div style="border-top:1px solid var(--border); padding-top:14px; margin-bottom:8px;">
+      <h3 style="font-size:14px; margin:0 0 4px;">🔴 Live Data Stockbit (opsional)</h3>
+      <div style="font-size:11.5px; color:var(--muted); margin-bottom:10px; line-height:1.5;">
+        Pakai token dari extension Chrome Stockbit milikmu sendiri untuk menarik harga/orderbook <b>live</b>
+        untuk saham yang lolos filter Screener saat ini. Ini API tidak resmi (bukan API publik Stockbit) —
+        endpoint bisa berubah kapan saja, dan token disimpan HANYA di Local Storage browser ini (tidak
+        dikirim ke server manapun selain langsung ke Stockbit/proxy yang kamu tentukan sendiri).
+      </div>
+    </div>
+    <div class="field">
+      <label>Stockbit Token</label>
+      <input id="setStockbitToken" type="password" placeholder="Bearer token dari extension">
+    </div>
+    <div id="stockbitTokenStatus" style="font-size:11px;color:var(--muted);margin:-8px 0 12px;">Belum ada token.</div>
+    <div class="field">
+      <label>Endpoint Quote/Orderbook (pakai {ticker} sebagai placeholder)</label>
+      <input id="setStockbitQuoteEndpoint" type="text" placeholder="https://exodus.stockbit.com/stream/v3/symbol/{ticker}">
+    </div>
+    <div class="field">
+      <label>Endpoint Broker Summary (sudah terisi default — timpa hanya kalau Stockbit ganti skemanya)</label>
+      <input id="setStockbitBrokerEndpoint" type="text" placeholder="https://exodus.stockbit.com/marketdetectors/{ticker}?from={from}&to={to}&transaction_type=TRANSACTION_TYPE_NET&market_board=MARKET_BOARD_REGULER&investor_type=INVESTOR_TYPE_ALL&limit=200">
+    </div>
+    <div class="field">
+      <label>Proxy URL (opsional — isi kalau permintaan langsung gagal karena CORS)</label>
+      <input id="setStockbitProxyUrl" type="text" placeholder="https://xxxx.supabase.co/functions/v1/stockbit-proxy">
+    </div>
+    <div style="margin-bottom:12px; font-size: 11.5px; color: var(--gold); background: rgba(234,179,8,0.08); padding: 10px; border-radius: 8px; border: 1px solid rgba(234,179,8,0.2);">
+      ⚠️ Endpoint di atas belum terverifikasi 100% (hasil pengamatan komunitas, bukan dokumentasi resmi
+      Stockbit) dan browser <b>kemungkinan besar akan memblokirnya karena CORS</b> kalau dipanggil langsung
+      dari halaman ini. Kalau muncul error CORS, isi "Proxy URL" dengan Supabase Edge Function kecil yang
+      meneruskan request + header Authorization dari sisi server (lihat file <code>stockbit-proxy</code>
+      yang disediakan terpisah). Pakai token akunmu sendiri secara bertanggung jawab dan hormati rate limit.
+    </div>
+    <div style="margin-bottom:12px; font-size: 11.5px; color: var(--teal); background: rgba(6,182,212,0.1); padding: 10px; border-radius: 8px; border: 1px solid rgba(6,182,212,0.2);">
+      🔄 Field Token di atas bisa terisi <b>otomatis</b> lewat extension Chrome <code>stockbit-token-extension</code>
+      (jalankan dulu <code>sql/05_stockbit_token_sync.sql</code> di Supabase). Kalau sudah terpasang & kamu
+      pernah buka stockbit.com dalam kondisi login, token akan tersinkron sendiri setiap kali modal ini dibuka.
+    </div>
+
     <div class="modal-actions">
       <button class="btn btn-primary" onclick="saveSettings()">Simpan & Reload</button>
       <button class="btn btn-outline" onclick="closeSettings()">Batal</button>

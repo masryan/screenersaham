@@ -59,6 +59,324 @@ function getSupaHeaders() {
 // res.ok === false, supaya pemanggil bisa menampilkannya ke user lewat
 // showError()/alert() alih-alih diam-diam gagal.
 // ==========================================
+// ==========================================
+// LIVE DATA STOCKBIT (tidak resmi, pakai token extension milik user)
+//
+// PENTING: exodus.stockbit.com/stream/v3/symbol/{ticker} adalah endpoint
+// yang diamati dari traffic stockbit.com sendiri (bukan API publik
+// terdokumentasi resmi) — jadi bisa berubah/rusak kapan saja, dan skema
+// response-nya belum 100% terverifikasi. mapStockbitQuote() di bawah
+// mencoba beberapa nama field yang umum (last/close/price, bid/offer,
+// volume) secara defensif; kalau tidak cocok, JSON mentah tetap
+// ditampilkan apa adanya di UI (lihat renderStockbitPanel) supaya tidak
+// ada data yang salah tafsir atau hilang diam-diam.
+//
+// CORS: karena dipanggil langsung dari browser di origin lain (bukan
+// stockbit.com), permintaan LANGSUNG ke exodus.stockbit.com kemungkinan
+// besar diblokir browser. Kalau state.stockbitProxyUrl diisi (Supabase
+// Edge Function dsb.), request dikirim ke situ sebagai POST {url, token}
+// dan proxy itu yang meneruskan ke Stockbit dari sisi server (tidak kena
+// CORS) — lihat contoh proxy terpisah yang disediakan.
+// ==========================================
+async function stockbitFetch(endpointTemplate, ticker){
+  if(!state.stockbitToken) return { error: 'Token Stockbit belum diisi. Buka "⚙️ Pengaturan" → Live Data Stockbit.' };
+  if(!endpointTemplate) return { error: "Endpoint belum diisi di Pengaturan." };
+  const url = endpointTemplate.replace("{ticker}", encodeURIComponent(ticker));
+  try{
+    let res;
+    if(state.stockbitProxyUrl){
+      res = await fetch(state.stockbitProxyUrl, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ url, token: state.stockbitToken })
+      });
+    } else {
+      res = await fetch(url, { headers: { "Authorization": `Bearer ${state.stockbitToken}` } });
+    }
+    const text = await res.text();
+    let json = null;
+    try{ json = JSON.parse(text); }catch(e){ /* bukan JSON, biarkan null */ }
+    if(!res.ok){
+      return { error: `HTTP ${res.status}${json && json.message ? " — " + json.message : ""}`, raw: json ?? text };
+    }
+    return { raw: json ?? text };
+  }catch(e){
+    const hint = state.stockbitProxyUrl ? "" : " — kemungkinan diblokir CORS oleh browser karena dipanggil langsung tanpa Proxy URL. Coba isi \"Proxy URL\" di Pengaturan.";
+    return { error: e.message + hint };
+  }
+}
+// ==========================================================
+// BROKER SUMMARY OTOMATIS DARI STOCKBIT (top 5 buy/sell per hari bursa)
+//
+// BEDA dari fitur live quote di atas: ini bisa memicu BANYAK request
+// sekaligus (N ticker x M hari), jadi SENGAJA hanya jalan untuk ticker
+// yang dicentang manual oleh user (state.selectedForBacktest) — tidak
+// ada opsi "semua yang lolos filter" supaya tidak sengaja membombardir
+// akun Stockbit sendiri dengan ratusan request.
+//
+// SKEMA RESPONS BELUM DIKETAHUI: endpoint broker summary Stockbit belum
+// diverifikasi (field "Endpoint Broker Summary" di Pengaturan memang
+// masih kosong by default, diisi sendiri oleh user dari tab Network).
+// mapStockbitBrokerSummary() di bawah ini mencoba beberapa nama field
+// yang umum secara defensif. Kalau skemanya tidak cocok, request itu
+// ditandai gagal dengan JSON mentah tetap disimpan di
+// state.stockbitBrokerBulkResults supaya user bisa lihat & laporkan
+// balik nama field yang benar (baru mapping-nya disesuaikan).
+// ==========================================================
+function tradingDaysBack(n, fromDate = new Date()){
+  // Hari bursa = Senin-Jumat. BELUM memperhitungkan libur nasional/cuti
+  // bersama IDX — kalau endpoint mengembalikan "tidak ada data" untuk
+  // tanggal tertentu, kemungkinan itu memang hari libur bursa.
+  const days = [];
+  let d = new Date(fromDate);
+  while(days.length < n){
+    d.setDate(d.getDate() - 1);
+    const dow = d.getDay();
+    if(dow !== 0 && dow !== 6) days.push(d.toISOString().slice(0,10));
+  }
+  return days.reverse(); // urut lama -> baru
+}
+
+async function stockbitFetchMarketDetector(ticker, fromDate, toDate){
+  if(!state.stockbitToken) return { error: 'Token Stockbit belum diisi. Buka "⚙️ Pengaturan" → Live Data Stockbit.' };
+  if(!state.stockbitBrokerEndpoint) return { error: 'Endpoint Broker Summary belum diisi di Pengaturan.' };
+  const url = state.stockbitBrokerEndpoint
+    .replace("{ticker}", encodeURIComponent(ticker))
+    .replace("{from}", fromDate)   // format YYYY-MM-DD, sesuai contoh URL yang diverifikasi manual
+    .replace("{to}", toDate);
+  try{
+    let res;
+    if(state.stockbitProxyUrl){
+      res = await fetch(state.stockbitProxyUrl, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ url, token: state.stockbitToken })
+      });
+    } else {
+      res = await fetch(url, { headers: { "Authorization": `Bearer ${state.stockbitToken}` } });
+    }
+    const text = await res.text();
+    let json = null;
+    try{ json = JSON.parse(text); }catch(e){ /* bukan JSON, biarkan null */ }
+    if(!res.ok){
+      return { error: `HTTP ${res.status}${json && json.message ? " — " + json.message : ""}`, raw: json ?? text };
+    }
+    return { raw: json ?? text };
+  }catch(e){
+    const hint = state.stockbitProxyUrl ? "" : " — kemungkinan diblokir CORS. Coba isi \"Proxy URL\" di Pengaturan.";
+    return { error: e.message + hint };
+  }
+}
+
+// Endpoint /marketdetectors/{ticker} mengembalikan broker_summary.brokers_buy /
+// .brokers_sell sebagai daftar baris CAMPUR banyak tanggal sekaligus (field
+// netbs_date per baris, format YYYYMMDD) — bukan sudah dikelompokkan per hari.
+// Fungsi ini mengelompokkan per tanggal lalu ambil top 5 net value per sisi
+// (buy/sell) untuk tiap tanggal. Field asli (blot/bval untuk buy,
+// slot/sval untuk sell) diverifikasi manual dari DevTools tanggal 25 Agu 2026 —
+// kalau Stockbit ganti skema respons di masa depan, sesuaikan lagi di sini.
+function parseStockbitMarketDetector(raw){
+  if(!raw || typeof raw !== "object") return null;
+  const bs = (raw.data && raw.data.broker_summary) || raw.broker_summary || null;
+  if(!bs) return null;
+  const buyRows = Array.isArray(bs.brokers_buy) ? bs.brokers_buy : [];
+  const sellRows = Array.isArray(bs.brokers_sell) ? bs.brokers_sell : [];
+  if(!buyRows.length && !sellRows.length) return null;
+
+  const fmtDate = (d8) => {
+    const s = String(d8 || "");
+    return s.length === 8 ? `${s.slice(0,4)}-${s.slice(4,6)}-${s.slice(6,8)}` : null;
+  };
+
+  const byDate = {}; // "YYYY-MM-DD" -> { buy:[{broker_code,lot,value_idr}], sell:[...] }
+  const ensure = (date) => (byDate[date] ||= { buy: [], sell: [] });
+
+  buyRows.forEach(r => {
+    const date = fmtDate(r.netbs_date);
+    if(!date) return;
+    ensure(date).buy.push({
+      broker_code: String(r.netbs_broker_code || "").toUpperCase(),
+      lot: Number(r.blot) || null,
+      value_idr: Number(r.bval) || 0,
+    });
+  });
+  sellRows.forEach(r => {
+    const date = fmtDate(r.netbs_date);
+    if(!date) return;
+    ensure(date).sell.push({
+      broker_code: String(r.netbs_broker_code || "").toUpperCase(),
+      lot: Number(r.slot) || null,
+      value_idr: Number(r.sval) || 0,
+    });
+  });
+
+  Object.values(byDate).forEach(d => {
+    // Urut ulang defensif berdasarkan nilai (descending) — endpoint biasanya
+    // sudah terurut, tapi karena baris tercampur antar-tanggal gara-gara
+    // rentang from/to, aman untuk urutkan ulang per tanggal di sini.
+    d.buy.sort((a,b) => b.value_idr - a.value_idr);
+    d.sell.sort((a,b) => b.value_idr - a.value_idr);
+    d.buy = d.buy.slice(0,5).filter(r=>r.broker_code).map((r,i) => ({ ...r, rank: i+1 }));
+    d.sell = d.sell.slice(0,5).filter(r=>r.broker_code).map((r,i) => ({ ...r, rank: i+1 }));
+  });
+
+  return byDate;
+}
+
+async function fetchAndSaveBrokerSummaryBulk(tickers, days = 10){
+  if(state.stockbitBrokerBulkLoading) return;
+  if(!tickers || !tickers.length){
+    state.stockbitBrokerBulkResults = [{ ticker:"-", date:"-", ok:false, msg:"Centang minimal 1 saham di tab Screener dulu." }];
+    render(); return;
+  }
+  if(!state.stockbitToken){ openSettings(); return; }
+  if(!state.stockbitBrokerEndpoint){
+    state.stockbitBrokerBulkResults = [{ ticker:"-", date:"-", ok:false, msg:'Isi dulu "Endpoint Broker Summary" di ⚙️ Pengaturan.' }];
+    render(); return;
+  }
+  if(!SUPABASE_URL || !SUPABASE_KEY){ openSettings(); return; }
+
+  const tradingDates = tradingDaysBack(days); // urut lama -> baru
+  const fromDate = tradingDates[0];
+  const toDate = tradingDates[tradingDates.length - 1];
+
+  state.stockbitBrokerBulkLoading = true;
+  state.stockbitBrokerBulkProgress = { done: 0, total: tickers.length }; // 1 request per SAHAM sekarang, bukan per hari
+  state.stockbitBrokerBulkResults = [];
+  render();
+
+  for(const ticker of tickers){
+    const res = await stockbitFetchMarketDetector(ticker, fromDate, toDate);
+    if(res.error){
+      state.stockbitBrokerBulkResults.push({ ticker, date: `${fromDate}..${toDate}`, ok:false, msg: res.error });
+    } else {
+      const byDate = parseStockbitMarketDetector(res.raw);
+      if(!byDate || !Object.keys(byDate).length){
+        state.stockbitBrokerBulkResults.push({ ticker, date: `${fromDate}..${toDate}`, ok:false, msg: "Skema respons tidak dikenali / tidak ada data (cek raw JSON manual dulu)." });
+      } else {
+        const rows = [];
+        tradingDates.forEach(d => {
+          const dd = byDate[d];
+          if(!dd) return;
+          dd.buy.forEach(r => rows.push({ stock_code:ticker, trade_date:d, side:"buy", rank:r.rank, broker_code:r.broker_code, lot:r.lot, value_idr:r.value_idr }));
+          dd.sell.forEach(r => rows.push({ stock_code:ticker, trade_date:d, side:"sell", rank:r.rank, broker_code:r.broker_code, lot:r.lot, value_idr:r.value_idr }));
+        });
+        const missingDates = tradingDates.filter(d => !byDate[d]);
+        if(!rows.length){
+          state.stockbitBrokerBulkResults.push({ ticker, date: `${fromDate}..${toDate}`, ok:false, msg: "Tidak ada baris broker valid di respons ini." });
+        } else {
+          try{
+            await supaFetch(`${SUPABASE_URL}/broker_summary?on_conflict=stock_code,trade_date,side,rank`, {
+              method: "POST",
+              headers: { ...getSupaHeaders(), "Prefer": "resolution=merge-duplicates,return=minimal" },
+              body: JSON.stringify(rows)
+            });
+            let msg = `Tersimpan ${rows.length} baris untuk ${Object.keys(byDate).length}/${tradingDates.length} hari bursa.`;
+            // "limit" di URL endpoint membatasi TOTAL baris gabungan semua
+            // tanggal, jadi kalau sahamnya sangat aktif & rentang harinya
+            // lebar, sebagian hari bisa kepotong (tidak ikut ke-return).
+            // Kalau itu terjadi, kelihatan di sini supaya user tahu perlu
+            // naikkan "limit" di Endpoint Pengaturan atau pakai rentang lebih pendek.
+            if(missingDates.length) msg += ` ⚠️ ${missingDates.length} hari tidak ada data (kemungkinan libur bursa, ATAU "limit" di endpoint kurang besar untuk saham seaktif ini — coba naikkan limit di Pengaturan): ${missingDates.join(", ")}`;
+            state.stockbitBrokerBulkResults.push({ ticker, date: `${fromDate}..${toDate}`, ok:true, msg });
+          }catch(e){
+            state.stockbitBrokerBulkResults.push({ ticker, date: `${fromDate}..${toDate}`, ok:false, msg: "Gagal simpan ke DB: " + e.message });
+          }
+        }
+      }
+    }
+    state.stockbitBrokerBulkProgress.done++;
+    render();
+    await new Promise(r => setTimeout(r, 350)); // tetap jaga jeda antar-SAHAM (bukan antar-hari lagi)
+  }
+
+  state.stockbitBrokerBulkLoading = false;
+  render();
+  if(state.bsStockCode && state.bsDate) loadBrokerSummary();
+}
+
+function mapStockbitQuote(raw){
+  if(!raw || typeof raw !== "object") return null;
+  const d = raw.data || raw.result || raw;
+  const pick = (...keys) => { for(const k of keys){ if(d && d[k]!=null && d[k]!=="") return d[k]; } return null; };
+  return {
+    last: pick("last","close","price","c"),
+    change: pick("change","chg"),
+    changePct: pick("change_percent","changePercent","percentage_change","pct"),
+    bid: pick("bid","best_bid","bid_price"),
+    offer: pick("offer","ask","best_offer","offer_price"),
+    volume: pick("volume","vol"),
+    frequency: pick("frequency","freq"),
+    time: pick("timestamp","time","updated_at","last_update"),
+  };
+}
+// ==========================================================
+// AUTO-SYNC TOKEN dari tabel `stockbit_session` (diisi oleh extension
+// Chrome stockbit-token-extension via sql/05_stockbit_token_sync.sql).
+// Kalau tabelnya belum dibuat (migration SQL belum dijalankan), fetch ini
+// gagal diam-diam — fitur live Stockbit tetap jalan dengan token manual.
+// ==========================================================
+async function syncStockbitTokenFromSupabase(){
+  if(!SUPABASE_URL || !SUPABASE_KEY) return false;
+  try{
+    const res = await fetch(`${SUPABASE_URL}/stockbit_session?id=eq.1&select=token,expires_at,updated_at`, { headers: getSupaHeaders(), cache: "no-store" });
+    if(!res.ok) return false;
+    const rows = await res.json();
+    const row = Array.isArray(rows) ? rows[0] : null;
+    if(row && row.token){
+      state.stockbitToken = row.token;
+      state.stockbitTokenExpiresAt = row.expires_at || null;
+      state.stockbitTokenSyncedAt = row.updated_at || null;
+      state.stockbitTokenSource = "auto";
+      localStorage.setItem(LS_STOCKBIT_TOKEN, state.stockbitToken);
+      return true;
+    }
+  }catch(e){ /* tabel belum ada / offline — biarkan token manual yang dipakai */ }
+  return false;
+}
+function stockbitTokenStatus(){
+  if(!state.stockbitToken) return { text: "Belum ada token.", color: "var(--muted)" };
+  const nowSec = Date.now()/1000;
+  let expiryTxt = "";
+  if(state.stockbitTokenExpiresAt){
+    if(state.stockbitTokenExpiresAt < nowSec){
+      return { text: "⚠️ Token kadaluarsa — buka stockbit.com & login ulang supaya extension menyinkron token baru.", color: "var(--down)" };
+    }
+    const minsLeft = Math.round((state.stockbitTokenExpiresAt - nowSec)/60);
+    expiryTxt = ` · berlaku ~${minsLeft} menit lagi`;
+  }
+  const src = state.stockbitTokenSource === "auto" ? "🔄 Auto-sync dari extension" : "✍️ Diisi manual";
+  return { text: `${src}${expiryTxt}`, color: "var(--up)" };
+}
+
+async function fetchStockbitLive(ticker){
+  state.stockbitLive[ticker] = { ...(state.stockbitLive[ticker]||{}), loading: true, error: null };
+  render();
+  const res = await stockbitFetch(state.stockbitQuoteEndpoint, ticker);
+  const mapped = res.raw ? mapStockbitQuote(res.raw) : null;
+  state.stockbitLive[ticker] = { loading: false, error: res.error || null, raw: res.raw ?? null, mapped, fetchedAt: Date.now() };
+  render();
+}
+// Tarik live data berurutan (bukan paralel) dengan jeda antar-request,
+// KHUSUS untuk ticker yang lolos filter Screener saat ini — supaya tidak
+// membombardir Stockbit dengan puluhan request sekaligus pakai 1 token
+// akun pribadi (rawan rate-limit/flag oleh sistem mereka).
+async function fetchStockbitLiveBulk(tickers){
+  if(state.stockbitBulkLoading) return;
+  state.stockbitBulkLoading = true;
+  state.stockbitBulkProgress = { done: 0, total: tickers.length };
+  render();
+  for(const t of tickers){
+    await fetchStockbitLive(t);
+    state.stockbitBulkProgress = { done: state.stockbitBulkProgress.done + 1, total: tickers.length };
+    render();
+    await new Promise(r => setTimeout(r, 350)); // jeda 350ms antar-request
+  }
+  state.stockbitBulkLoading = false;
+  state.stockbitBulkProgress = null;
+  render();
+}
+
 async function supaFetch(url, options) {
   const res = await fetch(url, options);
   if (!res.ok) {
@@ -83,13 +401,35 @@ async function supaFetch(url, options) {
 // ==========================================
 // PENGATURAN UI KONEKSI
 // ==========================================
-function openSettings() {
+async function openSettings() {
   let urlDisp = SUPABASE_URL;
   if(urlDisp.endsWith("/rest/v1")) urlDisp = urlDisp.replace("/rest/v1", "");
   document.getElementById("setSupaUrl").value = urlDisp;
   document.getElementById("setSupaKey").value = SUPABASE_KEY;
-  document.getElementById("setFreqAnalyzerCol").value = state.freqAnalyzerCol;
+  const freqEl = document.getElementById("setFreqAnalyzerCol");
+  if(freqEl) freqEl.value = state.freqAnalyzerCol;
+  const stbToken = document.getElementById("setStockbitToken");
+  if(stbToken) stbToken.value = state.stockbitToken || "";
+  const stbQuote = document.getElementById("setStockbitQuoteEndpoint");
+  if(stbQuote) stbQuote.value = state.stockbitQuoteEndpoint || STOCKBIT_DEFAULT_QUOTE_EP;
+  const stbBroker = document.getElementById("setStockbitBrokerEndpoint");
+  if(stbBroker) stbBroker.value = state.stockbitBrokerEndpoint || STOCKBIT_DEFAULT_BROKER_EP;
+  const stbProxy = document.getElementById("setStockbitProxyUrl");
+  if(stbProxy) stbProxy.value = state.stockbitProxyUrl || "";
   document.getElementById("settingsModalOverlay").classList.add("open");
+  updateStockbitTokenStatusUI();
+  // Coba tarik token terbaru dari Supabase di background — kalau berhasil,
+  // timpa field token yang baru saja ditampilkan supaya selalu yang terbaru.
+  const synced = await syncStockbitTokenFromSupabase();
+  if(synced && stbToken) stbToken.value = state.stockbitToken;
+  updateStockbitTokenStatusUI();
+}
+function updateStockbitTokenStatusUI(){
+  const el = document.getElementById("stockbitTokenStatus");
+  if(!el) return;
+  const st = stockbitTokenStatus();
+  el.textContent = st.text;
+  el.style.color = st.color;
 }
 
 function closeSettings() {
@@ -110,9 +450,19 @@ function saveSettings() {
   localStorage.setItem("ihsg_supa_url", SUPABASE_URL);
   localStorage.setItem("ihsg_supa_key", SUPABASE_KEY);
 
-  const freqColInput = (document.getElementById("setFreqAnalyzerCol").value || "").trim();
+  const freqColInput = (document.getElementById("setFreqAnalyzerCol")?.value || "").trim();
   state.freqAnalyzerCol = freqColInput || "freq_ma20";
   localStorage.setItem(LS_FREQ_ANALYZER_COL, state.freqAnalyzerCol);
+
+  state.stockbitToken = (document.getElementById("setStockbitToken")?.value || "").trim();
+  state.stockbitTokenSource = "manual"; // ditimpa balik ke "auto" oleh syncStockbitTokenFromSupabase() kalau memang datang dari situ
+  state.stockbitQuoteEndpoint = (document.getElementById("setStockbitQuoteEndpoint")?.value || "").trim() || STOCKBIT_DEFAULT_QUOTE_EP;
+  state.stockbitBrokerEndpoint = (document.getElementById("setStockbitBrokerEndpoint")?.value || "").trim() || STOCKBIT_DEFAULT_BROKER_EP;
+  state.stockbitProxyUrl = (document.getElementById("setStockbitProxyUrl")?.value || "").trim();
+  localStorage.setItem(LS_STOCKBIT_TOKEN, state.stockbitToken);
+  localStorage.setItem(LS_STOCKBIT_QUOTE_EP, state.stockbitQuoteEndpoint);
+  localStorage.setItem(LS_STOCKBIT_BROKER_EP, state.stockbitBrokerEndpoint);
+  localStorage.setItem(LS_STOCKBIT_PROXY, state.stockbitProxyUrl);
   
   closeSettings();
   
@@ -129,6 +479,23 @@ function saveSettings() {
 const LS_WATCHLIST = "ihsg_watchlist", LS_BACKTEST = "ihsg_backtest", LS_PORTO = "ihsg_portofolio", LS_STOCK_CACHE = "ihsg_stock_cache";
 const LS_FREQ_ANALYZER_COL = "ihsg_freq_analyzer_col";
 const LS_CUSTOM_RULES = "ihsg_custom_rules_v1";
+const LS_STOCKBIT_TOKEN = "ihsg_stockbit_token", LS_STOCKBIT_QUOTE_EP = "ihsg_stockbit_quote_ep",
+      LS_STOCKBIT_BROKER_EP = "ihsg_stockbit_broker_ep", LS_STOCKBIT_PROXY = "ihsg_stockbit_proxy";
+const STOCKBIT_DEFAULT_QUOTE_EP = "https://exodus.stockbit.com/stream/v3/symbol/{ticker}";
+// NOTE (25 Agu 2026): endpoint di atas TERBUKTI SALAH — itu API "Stream"
+// (linimasa komentar komunitas), bukan API harga. Endpoint quote/orderbook
+// yang benar belum ketemu (sempat ditelusuri sampai ke WebSocket Primus
+// ws-gen.stockbit.com, tapi dihentikan karena rawan trigger rate-limit kalau
+// dipakai ganti-ganti ticker cepat). Dibiarkan seperti ini dulu — field
+// "Endpoint Quote/Orderbook" di Pengaturan tetap bisa ditimpa manual kalau
+// endpoint yang benar sudah ketemu.
+const STOCKBIT_DEFAULT_BROKER_EP = "https://exodus.stockbit.com/marketdetectors/{ticker}?from={from}&to={to}&transaction_type=TRANSACTION_TYPE_NET&market_board=MARKET_BOARD_REGULER&investor_type=INVESTOR_TYPE_ALL&limit=200";
+// Diverifikasi manual dari DevTools tanggal 25 Agu 2026 (menu "Bandar
+// Detector" stockbit.com) — {ticker} di path URL, {from}/{to} format
+// YYYY-MM-DD. limit dinaikkan dari default Stockbit (25) ke 200 supaya lebih
+// besar peluang semua hari dalam rentang 10 hari kebagian baris; kalau ada
+// saham yang sangat aktif dan masih ada hari kosong, naikkan lagi manual di
+// Pengaturan (field ini bisa ditimpa, defaultnya cuma dipakai kalau kosong).
 
 let state = {
   demoMode: false, stocks: [], watchlist: new Set(), backtests: [],
@@ -182,7 +549,34 @@ let state = {
   // ticker yang sedang dibuka, tabel Supabase sama dengan di atas).
   detailBsDate: new Date().toISOString().slice(0,10),
   detailBsRows: [], detailBsEditRows: [], detailBsLoading: false,
-  detailBsEditorOpen: false, detailBsMsg: "", detailBsMsgError: false, detailBsCsvText: ""
+  detailBsEditorOpen: false, detailBsMsg: "", detailBsMsgError: false, detailBsCsvText: "",
+  // ==========================================
+  // Tab "🎯 Target Bandar": dibangun DI ATAS data broker_summary yang
+  // sudah ada (top 5 buy/sell manual per hari). Tiga bagian:
+  // 1) Top 5 Bandar per emiten (agregat & klasifikasi selama N hari)
+  // 2) Kalkulator Target Harga (Avg Bandar + ATR14 -> R1 / Max)
+  // 3) Summary & Performance (hit-rate dari riwayat kalkulasi vs
+  //    histori harga close asli di tabel `flows`)
+  // ==========================================
+  targetStockCode: "", targetWindowDays: 20,
+  targetLoading: false, targetMsg: "", targetMsgError: false,
+  targetBandarRows: [], targetTopBandar: [], targetWindowActualDays: 0,
+  targetAvgBandar: null, targetCurrentPrice: null, targetAtr14: null, targetLevels: null,
+  targetSummaryScope: "ticker", // "ticker" = emiten ini saja, "all" = semua emiten
+  targetHistory: [], targetHistoryLoading: false,
+  // ==========================================
+  // Live Data Stockbit (opsional, via token extension Chrome milik user).
+  // stockbitLive: map ticker -> {loading, error, raw, mapped, fetchedAt}
+  // Hanya diisi kalau user menekan tombol "Tarik" — tidak otomatis, supaya
+  // tidak menghabiskan rate limit/kena banned dari akun Stockbit sendiri.
+  // ==========================================
+  stockbitToken: "", stockbitQuoteEndpoint: STOCKBIT_DEFAULT_QUOTE_EP,
+  stockbitBrokerEndpoint: STOCKBIT_DEFAULT_BROKER_EP, stockbitProxyUrl: "",
+  stockbitTokenExpiresAt: null, stockbitTokenSyncedAt: null, stockbitTokenSource: "manual",
+  stockbitLive: {}, stockbitBulkLoading: false, stockbitBulkProgress: null,
+  // Tarik otomatis Top 5 Broker Buy/Sell (10 hari bursa) HANYA untuk ticker
+  // yang dicentang (state.selectedForBacktest) — lihat fetchAndSaveBrokerSummaryBulk().
+  stockbitBrokerBulkLoading: false, stockbitBrokerBulkProgress: null, stockbitBrokerBulkResults: []
 };
 
 function fmtNum(n){ if(n===null||n===undefined) return "-"; return new Intl.NumberFormat("id-ID").format(n); }
@@ -240,6 +634,12 @@ function loadSettings(){
     state.visibleCols = new Set(Array.isArray(saved) ? saved : DEFAULT_VISIBLE_COLS);
   }catch(e){ state.visibleCols = new Set(DEFAULT_VISIBLE_COLS); }
   try{ state.freqAnalyzerCol = localStorage.getItem(LS_FREQ_ANALYZER_COL) || "freq_ma20"; }catch(e){ state.freqAnalyzerCol = "freq_ma20"; }
+  try{
+    state.stockbitToken = localStorage.getItem(LS_STOCKBIT_TOKEN) || "";
+    state.stockbitQuoteEndpoint = localStorage.getItem(LS_STOCKBIT_QUOTE_EP) || STOCKBIT_DEFAULT_QUOTE_EP;
+    state.stockbitBrokerEndpoint = localStorage.getItem(LS_STOCKBIT_BROKER_EP) || STOCKBIT_DEFAULT_BROKER_EP;
+    state.stockbitProxyUrl = localStorage.getItem(LS_STOCKBIT_PROXY) || "";
+  }catch(e){}
   try{
     const savedRules = JSON.parse(localStorage.getItem(LS_CUSTOM_RULES)||"[]");
     state.customRules = Array.isArray(savedRules) ? savedRules : [];
@@ -323,6 +723,74 @@ function keyakinanToneFromLabel(label){
   return "muted";
 }
 
+// ==========================================
+// SKOR BAGGER — implementasi persis dari formula_screening_saham_bagger.md
+//
+// Composite score 0-100 = Fundamental (40) + Momentum Teknikal (35) +
+// Volume/Smart Money (25). Tiap sub-kriteria pass/fail sesuai section 2
+// file .md tsb (tidak ada nilai parsial), supaya hasilnya bisa diaudit
+// satu-satu lewat breakdown di Detail Emiten > tab Analisa.
+//
+// ≥75 = kandidat kuat, 50-74 = menarik tunggu konfirmasi, <50 = skip.
+// Red flag (section 4 file .md) dihitung terpisah dari skor — dipakai
+// sebagai peringatan tambahan, bukan pengurang skor.
+// ==========================================
+function computeBaggerScore(s){
+  const num = v => (v===null || v===undefined || v==="" || isNaN(v)) ? null : Number(v);
+  const rsi14 = num(s.rsi14);
+  const rsiCrossUp = String(s.cekRsi||"").toLowerCase().includes("cross up");
+
+  const fundItems = [
+    { label:"Revenue Growth > 15%", pass: num(s.revenueGrowth) > 15, points:10 },
+    { label:"Earnings Growth > 20%", pass: num(s.earningsGrowth) > 20, points:10 },
+    { label:"ROE > 15%", pass: num(s.roe) > 15, points:10 },
+    { label:"DER < 0,8", pass: num(s.der) != null && num(s.der) < 0.8, points:5 },
+    { label:"PEG < 1", pass: num(s.peg) != null && num(s.peg) > 0 && num(s.peg) < 1, points:5 },
+  ];
+
+  const momItems = [
+    { label:"RSI7 cross up RSI21 (RSI14 < 70)", pass: rsiCrossUp && rsi14 != null && rsi14 < 70, points:10 },
+    { label:"MACD Histogram negatif → positif", pass: num(s.prevMacdHist) != null && num(s.hist) != null && num(s.prevMacdHist) <= 0 && num(s.hist) > 0, points:10 },
+    { label:"Harga > MA21 > MA50 > MA200", pass: [s.cClose,s.ma21,s.ma50,s.ma200].every(v=>v!=null) && s.cClose > s.ma21 && s.ma21 > s.ma50 && s.ma50 > s.ma200, points:10 },
+    { label:"Stoch K cross up Stoch D dari oversold", pass: [s.prevStochK,s.prevStochD,s.stochK,s.stochD].every(v=>v!=null) && s.prevStochK < s.prevStochD && s.stochK > s.stochD && s.prevStochK <= 30, points:5 },
+  ];
+
+  const volItems = [
+    { label:"Volume Ratio > 1,5x", pass: num(s.volRatio) > 1.5, points:10 },
+    { label:"Foreign Net 5D > 0 & Hari Asing+ ≥ 3", pass: num(s.foreignNet5D) > 0 && num(s.foreignUpDays) >= 3, points:10 },
+    { label:"BB Squeeze lalu breakout EMA21 H", pass: String(s.isBBSqueeze||"").includes("Ya") && s.cClose != null && s.ema21H != null && s.cClose > s.ema21H, points:5 },
+  ];
+
+  const sum = items => items.reduce((a,i)=> a + (i.pass ? i.points : 0), 0);
+  const fundScore = sum(fundItems), momScore = sum(momItems), volScore = sum(volItems);
+  const total = fundScore + momScore + volScore;
+
+  let tier, tone;
+  if (total >= 75) { tier = "Kandidat Kuat"; tone = "up"; }
+  else if (total >= 50) { tier = "Menarik, Tunggu Konfirmasi"; tone = "gold"; }
+  else { tier = "Skip"; tone = "down"; }
+
+  // Red flag — section 4 formula.md
+  const flags = [];
+  if (String(s.valuasi||"").includes("Kemahalan") && rsi14 != null && rsi14 > 80) {
+    flags.push("Valuasi Overvalued + RSI14 > 80 → rawan profit taking, hati-hati entry baru (pola ini persis kasus AADI di contoh formula).");
+  }
+  const der = num(s.der), currentRatio = num(s.currentRatio);
+  if (der != null && der > 1 && currentRatio != null && currentRatio < 1) {
+    flags.push("DER tinggi (>1) & Current Ratio < 1 → risiko keuangan, gain teknikal bisa berbalik cepat kalau ada bad news.");
+  }
+  const fn5 = num(s.foreignNet5D), fn20 = num(s.foreignNet20D);
+  if (num(s.volRatio) > 1.5 && fn5 != null && fn5 < 0 && fn20 != null && fn20 < 0) {
+    flags.push("Volume breakout tapi Net Asing negatif terus → kemungkinan cuma ritel/bandar lokal, lebih rawan distribusi.");
+  }
+  const pola = String(s.polaCandle||"");
+  if (/bearish|shooting star|hanging man/i.test(pola) && s.resistance != null && s.cClose != null && s.cClose >= s.resistance*0.98) {
+    flags.push("Pola candle bearish reversal di area resisten kuat → tunda entry meski skor fundamental tinggi.");
+  }
+
+  return { total, fundScore, momScore, volScore, fundItems, momItems, volItems, tier, tone, flags };
+}
+
 async function loadLive(){
   if (!SUPABASE_URL || !SUPABASE_KEY) {
     openSettings();
@@ -335,11 +803,11 @@ async function loadLive(){
       // Ambil dari VIEW gabungan, bukan tabel stocks mentah: stocks_screener
       // sudah menggabungkan fundamental+teknikal (tabel stocks) dengan
       // bandarmologi asli dari IDX (view flow_summary), lewat left join.
-      fetch(`${SUPABASE_URL}/stocks_screener?select=*`, { headers: getSupaHeaders() }).then(r => r.json()),
-      fetch(`${SUPABASE_URL}/portfolios?select=*`, { headers: getSupaHeaders() }).then(r => r.json()),
-      fetch(`${SUPABASE_URL}/backtest_sessions?select=*,backtest_items(*)`, { headers: getSupaHeaders() }).then(r => r.json()),
-      fetch(`${SUPABASE_URL}/watchlists?select=ticker`, { headers: getSupaHeaders() }).then(r => r.json()),
-      fetch(`${SUPABASE_URL}/custom_presets?select=*&order=created_at.desc`, { headers: getSupaHeaders() }).then(r => r.json())
+      fetch(`${SUPABASE_URL}/stocks_screener?select=*`, { headers: getSupaHeaders(), cache: "no-store" }).then(r => r.json()),
+      fetch(`${SUPABASE_URL}/portfolios?select=*`, { headers: getSupaHeaders(), cache: "no-store" }).then(r => r.json()),
+      fetch(`${SUPABASE_URL}/backtest_sessions?select=*,backtest_items(*)`, { headers: getSupaHeaders(), cache: "no-store" }).then(r => r.json()),
+      fetch(`${SUPABASE_URL}/watchlists?select=ticker`, { headers: getSupaHeaders(), cache: "no-store" }).then(r => r.json()),
+      fetch(`${SUPABASE_URL}/custom_presets?select=*&order=created_at.desc`, { headers: getSupaHeaders(), cache: "no-store" }).then(r => r.json())
     ]);
 
     if (stocksRes.message) throw new Error(stocksRes.message);
@@ -543,6 +1011,12 @@ function setDetailTab(tab){
 
 function dItem(label, valueHtml, isText){
   return `<div class="detail-item"><div class="lbl">${label}</div><div class="val ${isText?'text':''}">${valueHtml==null||valueHtml===""?'-':valueHtml}</div></div>`;
+}
+function baggerBreakdownRows(items){
+  return items.map(i => `<div style="display:flex;align-items:center;justify-content:space-between;gap:8px;padding:3px 0;font-size:11.5px;line-height:1.3;">
+    <span style="color:${i.pass?'var(--up)':'var(--muted)'};">${i.pass?'✅':'▫️'} ${i.label}</span>
+    <span class="mono" style="color:${i.pass?'var(--up)':'var(--muted)'};white-space:nowrap;">${i.pass?'+':''}${i.pass?i.points:0}/${i.points}</span>
+  </div>`).join("");
 }
 function dNum(n, opts){
   opts = opts || {};
@@ -783,6 +1257,48 @@ function renderDetailFundamental(s){
   `;
 }
 
+function renderStockbitPanel(s){
+  const live = state.stockbitLive[s.ticker];
+  const hasToken = !!state.stockbitToken;
+  let body;
+  if(!hasToken){
+    body = `<div style="font-size:12px;color:var(--muted);">Token Stockbit belum diisi. Buka <button type="button" onclick="closeDetail();openSettings();" style="background:none;border:none;color:var(--teal);text-decoration:underline;cursor:pointer;padding:0;font-size:12px;">⚙️ Pengaturan</button> untuk mengisi token dari extension Chrome-mu.</div>`;
+  } else if(!live){
+    body = `<button type="button" class="btn btn-outline" data-stockbit-live="${s.ticker}" style="color:#f87171;border-color:rgba(239,68,68,0.4);">🔴 Tarik Live Sekarang</button>`;
+  } else if(live.loading){
+    body = `<div style="font-size:12px;color:var(--muted);">Menarik data dari Stockbit...</div>`;
+  } else if(live.error){
+    body = `<div style="font-size:12px;color:var(--down);margin-bottom:8px;">⚠️ ${escapeHtml(live.error)}</div>
+      <button type="button" class="btn btn-outline" data-stockbit-live="${s.ticker}" style="color:#f87171;border-color:rgba(239,68,68,0.4);">↻ Coba Lagi</button>`;
+  } else {
+    const m = live.mapped || {};
+    const secAgo = Math.max(0, Math.round((Date.now()-live.fetchedAt)/1000));
+    body = `
+      <div class="detail-grid" style="margin-bottom:8px;">
+        ${dItem("Last Price", m.last!=null ? fmtNum(m.last) : "-", true)}
+        ${dItem("Bid", m.bid!=null ? fmtNum(m.bid) : "-", true)}
+        ${dItem("Offer", m.offer!=null ? fmtNum(m.offer) : "-", true)}
+        ${dItem("Volume", m.volume!=null ? fmtNum(m.volume) : "-", true)}
+      </div>
+      <div style="font-size:10.5px;color:var(--muted);margin-bottom:8px;">Ditarik ${secAgo} detik lalu · field yang tidak muncul berarti nama field-nya belum cocok dengan skema respons Stockbit (lihat JSON mentah).</div>
+      <details style="margin-bottom:8px;">
+        <summary style="cursor:pointer;font-size:11px;color:var(--teal);">Lihat JSON mentah</summary>
+        <pre style="font-size:10.5px;background:rgba(0,0,0,0.3);padding:8px;border-radius:6px;overflow-x:auto;max-height:200px;">${escapeHtml(JSON.stringify(live.raw, null, 2))}</pre>
+      </details>
+      <button type="button" class="btn btn-outline" data-stockbit-live="${s.ticker}" style="font-size:11px;color:#f87171;border-color:rgba(239,68,68,0.4);">↻ Refresh</button>
+    `;
+  }
+  return `
+    <div style="background: linear-gradient(135deg, rgba(30,41,59,0.9), rgba(15,23,42,0.95)); border: 1px solid rgba(239,68,68,0.35); border-radius: 12px; padding: 16px; margin-bottom: 16px;">
+      <div style="display:flex; align-items:center; gap: 8px; margin-bottom: 10px;">
+        <span style="font-size: 18px;">🔴</span>
+        <div style="font-size: 12.5px; font-weight: 700; color: var(--text);">Live Data Stockbit <span style="font-weight:400;color:var(--muted);font-size:10.5px;">(tidak resmi — pakai token akunmu sendiri)</span></div>
+      </div>
+      ${body}
+    </div>
+  `;
+}
+
 function renderDetailAnalisa(s){
   const bandLabel = s.band ? s.band.label : "-";
   const bandTone = s.band ? s.band.tone : "muted";
@@ -897,6 +1413,42 @@ function renderDetailAnalisa(s){
   const newsUrl = `https://www.google.com/search?q=saham+${s.ticker}+berita+terbaru&tbm=nws`;
 
   return `
+    <!-- LIVE DATA STOCKBIT (opsional, tidak resmi) -->
+    ${renderStockbitPanel(s)}
+
+    <!-- SKOR BAGGER — formula_screening_saham_bagger.md -->
+    <div style="background: linear-gradient(135deg, rgba(30,41,59,0.9), rgba(15,23,42,0.95)); border: 1px solid var(--${s.bagger.tone}); border-radius: 12px; padding: 16px; margin-bottom: 16px; box-shadow: 0 4px 15px rgba(0,0,0,0.2);">
+      <div style="display:flex; align-items:center; gap: 8px; margin-bottom: 12px; border-bottom: 1px dashed var(--border); padding-bottom: 12px;">
+        <span style="font-size: 20px;">🎯</span>
+        <div>
+          <div style="font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.05em; font-weight: 600;">Skor Bagger (Formula Multibagger)</div>
+          <div style="font-size: 20px; font-weight: 800; color: var(--${s.bagger.tone});">${s.bagger.total}<span style="font-size:12px;color:var(--muted);font-weight:500;"> /100 · ${s.bagger.tier}</span></div>
+        </div>
+      </div>
+      <div style="display:flex; flex-wrap:wrap; gap: 16px;">
+        <div style="flex:1; min-width:180px;">
+          <div style="font-size:10.5px; color:var(--muted); text-transform:uppercase; letter-spacing:.04em; margin-bottom:2px;">Fundamental (40%) — <b class="mono" style="color:var(--text);">${s.bagger.fundScore}/40</b></div>
+          ${baggerBreakdownRows(s.bagger.fundItems)}
+        </div>
+        <div style="flex:1; min-width:180px;">
+          <div style="font-size:10.5px; color:var(--muted); text-transform:uppercase; letter-spacing:.04em; margin-bottom:2px;">Momentum Teknikal (35%) — <b class="mono" style="color:var(--text);">${s.bagger.momScore}/35</b></div>
+          ${baggerBreakdownRows(s.bagger.momItems)}
+        </div>
+        <div style="flex:1; min-width:180px;">
+          <div style="font-size:10.5px; color:var(--muted); text-transform:uppercase; letter-spacing:.04em; margin-bottom:2px;">Volume/Smart Money (25%) — <b class="mono" style="color:var(--text);">${s.bagger.volScore}/25</b></div>
+          ${baggerBreakdownRows(s.bagger.volItems)}
+        </div>
+      </div>
+      ${s.bagger.flags.length ? `
+      <div style="margin-top: 12px; padding-top: 12px; border-top: 1px dashed var(--border);">
+        <div style="font-size: 11px; color: var(--down); font-weight: 700; margin-bottom: 6px;">⚠️ Red Flag (Bagian 4 Formula)</div>
+        ${s.bagger.flags.map(f=>`<div style="font-size:11.5px; color:var(--down); margin-bottom:4px; line-height:1.4;">• ${f}</div>`).join("")}
+      </div>` : ""}
+      <div style="margin-top:10px; font-size:10.5px; color:var(--muted); line-height:1.4;">
+        ≥75 kandidat kuat (worth watchlist utama) · 50–74 menarik tapi tunggu konfirmasi tambahan · &lt;50 skip, belum ada "bahan bakar" cukup. Sesuai <i>formula_screening_saham_bagger.md</i>.
+      </div>
+    </div>
+
     <!-- PANEL AI BARU -->
     <div style="background: linear-gradient(135deg, rgba(30,41,59,0.9), rgba(15,23,42,0.95)); border: 1px solid var(--${aiTone}); border-radius: 12px; padding: 16px; margin-bottom: 24px; box-shadow: 0 4px 15px rgba(0,0,0,0.2);">
       <div style="display:flex; align-items:center; gap: 8px; margin-bottom: 12px; border-bottom: 1px dashed var(--border); padding-bottom: 12px;">
@@ -1137,7 +1689,7 @@ async function loadDetailBrokerSummary(){
   state.detailBsLoading = true; state.detailBsMsg = ""; render();
   try {
     const qs = new URLSearchParams({ stock_code: `eq.${ticker}`, trade_date: `eq.${date}`, order: "side.asc,rank.asc" });
-    const res = await fetch(`${SUPABASE_URL}/broker_summary?${qs}`, { headers: getSupaHeaders() });
+    const res = await fetch(`${SUPABASE_URL}/broker_summary?${qs}`, { headers: getSupaHeaders(), cache: "no-store" });
     if(!res.ok) throw new Error(`HTTP ${res.status} ${res.statusText}`);
     const rows = await res.json();
     state.detailBsRows = rows;
@@ -1785,12 +2337,18 @@ function enriched(){
     if (isBreakout) { rekomendasi = "🚀 Breakout"; rekTone = "up"; } 
     else if (isPullback) { rekomendasi = "🧲 Pullback"; rekTone = "gold"; }
 
+    // Skor Bagger dihitung setelah volRatio "asli" (ratio) sudah dipastikan,
+    // karena formula.md butuh vol_ratio yang sama dipakai sinyal Bandarmologi
+    // di atas, bukan volRatio mentah dari DB yang bisa null.
+    const bagger = computeBaggerScore({ ...s, volRatio: ratio });
+
     return { 
       ...s, band, volRatio: ratio, sinyalVolume, volTone: vol.tone, 
       freqRatio, sinyalFrekuensi, freqTone: freq.tone, volChangePct,
       keyakinanNaik: keyakinan, keyakinanScore: s.keyakinanScore ?? conf.score, 
       keyakinanTone: kTone, syariahLabel: boolLabel(s.syariah),
-      rekomendasi, rekTone
+      rekomendasi, rekTone,
+      bagger, baggerScoreTotal: bagger.total, baggerTier: bagger.tier, baggerTone: bagger.tone
     };
   });
 }
@@ -1800,7 +2358,11 @@ function getFiltered(){
     if(state.search && !s.ticker.toLowerCase().includes(state.search.toLowerCase())) return false;
     
     // --- PRESET DSI ---
-    if(state.activePreset === 'eri') {
+    if(state.activePreset === 'bagger') {
+      // Skor Bagger — composite formula.md (Fundamental 40% + Momentum 35%
+      // + Volume/Smart Money 25%). ≥75 = kandidat kuat.
+      if ((s.baggerScoreTotal||0) < 75) return false;
+    } else if(state.activePreset === 'eri') {
       if (!(s.rsi7 >= 58 && s.rsi7 <= 70 && s.rsi21 >= 50 && s.rsi21 <= 70 && s.rsi7 > s.rsi21)) return false;
       if (!(s.cClose > s.ema21H && s.cClose <= s.ema21H * 1.03 && s.cClose > s.ema89)) return false;
       if (!(s.cHigh > s.prevHigh && s.cLow > s.prevLow && s.cVol > s.prevVol)) return false;
@@ -1923,6 +2485,7 @@ function render(){
   else if(state.tab==="portfolio") content.innerHTML = renderPortfolio();
   else if(state.tab==="chart") content.innerHTML = renderChart();
   else if(state.tab==="brokersum") content.innerHTML = renderBrokerSummary();
+  else if(state.tab==="target") content.innerHTML = renderTargetBandar();
   else if(state.tab==="about") content.innerHTML = renderAbout();
 
   attachContentEvents();
@@ -2021,7 +2584,7 @@ const FILTER_LABELS = {
   statusRsi:"Status RSI", band:"Bandarmologi", uangGedeMasuk:"Uang Gede", isBBSqueeze:"BB Squeeze", valuasi:"Valuasi",
   bbWidth:"BB Width", atr14:"ATR 14", clv:"CLV", rsi7:"RSI 7", rsi21:"RSI 21", frequency:"Frekuensi"
 };
-const PRESET_LABELS = { eri:"Eri Ginanjar", rsicross:"RSI & Harga Cross", golden:"Golden Cross DSI", uptrend:"Super Uptrend", breakout:"Volatility Breakout", pullback:"Pullback Uptrend", custom_bandar:"BPJS", asing_akumulasi:"Akumulasi Asing (IDX)", freq_spike:"Lonjakan Frekuensi" };
+const PRESET_LABELS = { bagger:"Skor Bagger ≥75", eri:"Eri Ginanjar", rsicross:"RSI & Harga Cross", golden:"Golden Cross DSI", uptrend:"Super Uptrend", breakout:"Volatility Breakout", pullback:"Pullback Uptrend", custom_bandar:"BPJS", asing_akumulasi:"Akumulasi Asing (IDX)", freq_spike:"Lonjakan Frekuensi" };
 function clearChip(kind, key, value){
   if(kind==="search") state.search="";
   else if(kind==="preset") state.activePreset=null;
@@ -2134,6 +2697,21 @@ const SCREENER_COLUMNS = [
   { key:"bbWidth", label:"BB Width", group:"Teknikal", cell:s=>`<td class="mono">${s.bbWidth??"-"}</td>` },
   { key:"atr14", label:"ATR 14", group:"Teknikal", cell:s=>`<td class="mono">${s.atr14??"-"}</td>` },
   { key:"clv", label:"CLV", group:"Teknikal", cell:s=>`<td class="mono">${s.clv??"-"}</td>` },
+  { key:"baggerScoreTotal", label:"🎯 Skor Bagger", group:"Analisa", cell:s=>`<td><div style="display:flex;align-items:center;gap:7px;flex-wrap:wrap;"><span class="mono" style="font-weight:800;font-size:13.5px;color:var(--${s.baggerTone});">${s.baggerScoreTotal}<span style="font-size:10px;font-weight:500;color:var(--muted);">/100</span></span>${pillHtml(s.baggerTier, s.baggerTone)}</div></td>` },
+  { key:"stockbitLive", label:"🔴 Live Stockbit", group:"Analisa", sortable:false, cell:s=>{
+      const live = state.stockbitLive[s.ticker];
+      if(!live) return `<td><button type="button" class="btn btn-outline" data-stockbit-live="${s.ticker}" style="font-size:11px;padding:4px 8px;color:#f87171;border-color:rgba(239,68,68,0.35);">Tarik</button></td>`;
+      if(live.loading) return `<td><span class="mono" style="font-size:11px;color:var(--muted);">Menarik...</span></td>`;
+      if(live.error) return `<td><span style="font-size:10.5px;color:var(--down);" title="${escapeHtml(live.error)}">⚠️ Error</span> <button type="button" class="btn btn-outline" data-stockbit-live="${s.ticker}" style="font-size:10px;padding:2px 6px;margin-left:4px;">↻</button></td>`;
+      const m = live.mapped || {};
+      const secAgo = Math.max(0, Math.round((Date.now()-live.fetchedAt)/1000));
+      return `<td><div class="mono" style="font-size:11.5px;line-height:1.5;">
+        ${m.last!=null ? `Last: <b>${fmtNum(m.last)}</b>` : "-"}
+        ${m.bid!=null||m.offer!=null ? `<br>Bid/Offer: ${fmtNum(m.bid)}/${fmtNum(m.offer)}` : ""}
+        <br><span style="color:var(--muted);font-size:10px;">${secAgo}s lalu</span>
+        <button type="button" class="btn btn-outline" data-stockbit-live="${s.ticker}" style="font-size:10px;padding:1px 5px;margin-left:4px;">↻</button>
+      </div></td>`;
+    } },
   { key:"keyakinanNaik", label:"Keyakinan Naik", group:"Analisa", cell:s=>`<td>${pillHtml(s.keyakinanNaik, s.keyakinanTone)}</td>` },
   { key:"rekomendasi", label:"Rekomendasi Setup", group:"Analisa", cell:s=>`<td>${s.rekomendasi !== "-" ? pillHtml(s.rekomendasi, s.rekTone) : '<span style="color:var(--muted)">-</span>'}</td>` }
 ];
@@ -2282,7 +2860,7 @@ function saveCustomRules(){ localStorage.setItem(LS_CUSTOM_RULES, JSON.stringify
 async function refreshCustomPresets(){
   if(!SUPABASE_URL || !SUPABASE_KEY) return;
   try{
-    const res = await fetch(`${SUPABASE_URL}/custom_presets?select=*&order=created_at.desc`, { headers: getSupaHeaders() });
+    const res = await fetch(`${SUPABASE_URL}/custom_presets?select=*&order=created_at.desc`, { headers: getSupaHeaders(), cache: "no-store" });
     const data = await res.json();
     if(Array.isArray(data)) state.customPresets = data;
   }catch(e){}
@@ -2472,7 +3050,7 @@ function renderRuleBuilder(){
 // horizontal panjang. Sisanya disembunyikan sampai dipilih lewat panel
 // "🧩 Kolom", supaya tabel nyaman dilihat begitu halaman dibuka.
 const DEFAULT_VISIBLE_COLS = [
-  "sektor", "cClose", "changePct", "cVol", "frequency",
+  "sektor", "baggerScoreTotal", "stockbitLive", "cClose", "changePct", "cVol", "frequency",
   "per", "pbv", "roe", "divYield", "valuasi",
   "trendHarga", "rsi7", "cekMacd",
   "foreignNet20D", "keyakinanNaik", "rekomendasi"
@@ -2557,6 +3135,7 @@ function renderScreener(){
         <div class="field" style="flex:0 0 auto;">
           <label>Screener DSI (Preset Siap Pakai)</label>
           <div style="display:flex; gap:10px; flex-wrap:wrap;">
+            <button class="pill ${state.activePreset === 'bagger' ? 'pill-up' : 'pill-muted'}" onclick="state.activePreset = state.activePreset === 'bagger' ? null : 'bagger'; state.page=1; render();" title="Skor komposit dari formula_screening_saham_bagger.md: Fundamental 40% + Momentum Teknikal 35% + Volume/Smart Money 25%, total ≥75" style="font-weight:700;box-shadow:0 0 10px rgba(16,185,129,0.15);">🎯 Skor Bagger ≥75</button>
             <button class="pill ${state.activePreset === 'eri' ? 'pill-gold' : 'pill-muted'}" onclick="state.activePreset = state.activePreset === 'eri' ? null : 'eri'; state.page=1; render();">Eri Ginanjar</button>
             <button class="pill ${state.activePreset === 'rsicross' ? 'pill-gold' : 'pill-muted'}" onclick="state.activePreset = state.activePreset === 'rsicross' ? null : 'rsicross'; state.page=1; render();">RSI & Harga Cross</button>
             <button class="pill ${state.activePreset === 'golden' ? 'pill-gold' : 'pill-muted'}" onclick="state.activePreset = state.activePreset === 'golden' ? null : 'golden'; state.page=1; render();">Golden Cross DSI</button>
@@ -2585,6 +3164,14 @@ function renderScreener(){
         <div class="field" style="flex:0 0 auto;">
           <label>&nbsp;</label>
           <button type="button" class="btn btn-outline" id="exportScreenerBtn" style="color:#22d3ee;border-color:rgba(6,182,212,0.4);white-space:nowrap;" title="Ekspor hasil screener yang sedang difilter/diurutkan ke file Excel (.xlsx)">📊 Ekspor Excel (${sorted.length})</button>
+        </div>
+        <div class="field" style="flex:0 0 auto;">
+          <label>&nbsp;</label>
+          <button type="button" class="btn btn-outline" id="stockbitBulkBtn" ${state.stockbitBulkLoading ? "disabled" : ""} style="color:#f87171;border-color:rgba(239,68,68,0.4);white-space:nowrap;" title="${state.selectedForBacktest.size>0 ? 'Tarik harga/orderbook live dari Stockbit HANYA untuk saham yang dicentang' : 'Tarik harga/orderbook live dari Stockbit untuk semua saham yang lolos filter saat ini (centang baris tertentu untuk membatasi hanya itu saja)'} — butuh Token diisi di Pengaturan">
+            ${state.stockbitBulkLoading
+              ? `🔴 Menarik ${state.stockbitBulkProgress?.done||0}/${state.stockbitBulkProgress?.total||0}...`
+              : (state.selectedForBacktest.size>0 ? `🔴 Live Stockbit (${state.selectedForBacktest.size} dicentang)` : `🔴 Live Stockbit (${sorted.length} lolos)`)}
+          </button>
         </div>
       </div>
 
@@ -3462,6 +4049,33 @@ function renderBrokerSummary(){
 
       ${state.bsMsg ? `<div class="bs-msg ${state.bsMsgError?"bs-msg-error":"bs-msg-ok"}">${escapeHtml(state.bsMsg)}</div>` : ""}
 
+      <div style="margin:14px 0; padding:12px; border:1px solid rgba(239,68,68,0.25); border-radius:10px; background:rgba(239,68,68,0.06);">
+        <div style="display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:10px;">
+          <div style="font-size:12px; color:var(--muted); max-width:560px; line-height:1.5;">
+            🔴 Tarik otomatis Top 5 Buy/Sell dari Stockbit untuk
+            <b>${state.selectedForBacktest.size} saham yang dicentang</b> di tab 📋 Screener,
+            selama <b>10 hari bursa terakhir</b> (Senin&ndash;Jumat, belum menghitung libur bursa nasional).
+            Butuh "Endpoint Broker Summary" &amp; Token terisi di ⚙️ Pengaturan. Hasil otomatis disimpan
+            langsung ke database yang sama seperti input manual di bawah.
+          </div>
+          <button type="button" class="btn btn-outline" id="bsAutoBulkBtn"
+            ${state.stockbitBrokerBulkLoading || state.selectedForBacktest.size===0 ? "disabled" : ""}
+            style="color:#f87171;border-color:rgba(239,68,68,0.4);white-space:nowrap;"
+            title="${state.selectedForBacktest.size===0 ? 'Centang minimal 1 saham di tab Screener dulu' : ''}">
+            ${state.stockbitBrokerBulkLoading
+              ? `Menarik ${state.stockbitBrokerBulkProgress?.done||0}/${state.stockbitBrokerBulkProgress?.total||0}...`
+              : `Tarik Otomatis (${state.selectedForBacktest.size} dicentang &times; 10 hari)`}
+          </button>
+        </div>
+        ${state.stockbitBrokerBulkResults && state.stockbitBrokerBulkResults.length ? `
+          <div class="mono" style="margin-top:10px; max-height:220px; overflow-y:auto; font-size:11.5px;">
+            ${state.stockbitBrokerBulkResults.map(r => `
+              <div style="padding:4px 0; border-bottom:1px solid var(--border); color:${r.ok ? 'var(--up)' : 'var(--down)'};">
+                ${r.ok ? '✅' : '❌'} ${escapeHtml(r.ticker)} &middot; ${escapeHtml(r.date)} — ${escapeHtml(r.msg||"")}
+              </div>`).join("")}
+          </div>` : ""}
+      </div>
+
       ${bsStatusRowHtml(dRows)}
 
       <div class="bs-display-grid">
@@ -3513,7 +4127,7 @@ async function loadBrokerSummary(){
   state.bsLoading = true; state.bsMsg = ""; render();
   try {
     const qs = new URLSearchParams({ stock_code: `eq.${code}`, trade_date: `eq.${date}`, order: "side.asc,rank.asc" });
-    const res = await fetch(`${SUPABASE_URL}/broker_summary?${qs}`, { headers: getSupaHeaders() });
+    const res = await fetch(`${SUPABASE_URL}/broker_summary?${qs}`, { headers: getSupaHeaders(), cache: "no-store" });
     if(!res.ok) throw new Error(`HTTP ${res.status} ${res.statusText}`);
     const rows = await res.json();
     state.bsRows = rows;
@@ -3599,6 +4213,372 @@ function fillBsFromCsv(){
     state.bsMsgError = true;
   }
   render();
+}
+
+// ==========================================
+// TARGET BANDAR — dibangun di atas tabel broker_summary yang sudah ada.
+//
+// PENTING (baca ini dulu): formula di bawah adalah HEURISTIK yang kami
+// rancang sendiri berdasarkan data yang tersedia di app ini (Avg Bandar
+// dari broker_summary + ATR14 dari stocks_screener + histori close dari
+// flows). ITU BUKAN replikasi rumus rahasia aplikasi Adimology (kami
+// tidak pernah melihat source code perhitungan mereka) dan BUKAN
+// jaminan harga akan benar-benar tercapai — anggap sebagai alat bantu,
+// bukan rekomendasi investasi. Semua konstanta (ATR_MULT_R1,
+// ATR_MULT_MAX, dst) sengaja dijadikan variabel supaya gampang
+// disesuaikan sendiri.
+// ==========================================
+
+const TB_ATR_MULT_R1 = 1;    // Target R1 = Avg Bandar + 1x ATR14
+const TB_ATR_MULT_MAX = 2;   // Target Max = Avg Bandar + 2x ATR14
+const TB_ATR_FALLBACK_PCT = 0.03; // kalau ATR14 kosong, pakai 3% dari Avg Bandar (selaras dg fallback SL di detail modal)
+const TB_HIT_HORIZON_DAYS = 20;   // batas hari bursa untuk menilai "belum tercapai" vs "masih berjalan"
+
+// Kelompokkan baris broker_summary (buy+sell, beberapa tanggal) per kode
+// broker, lalu klasifikasikan relatif terhadap broker LAIN di jendela
+// waktu & saham yang sama (bukan angka Rupiah absolut — skala transaksi
+// saham blue-chip vs saham kecil bisa beda jauh).
+function aggregateTopBandar(rows){
+  const byBroker = {};
+  rows.forEach(r=>{
+    const code = (r.broker_code||"").trim();
+    if(!code) return;
+    if(!byBroker[code]) byBroker[code] = { broker_code: code, buyValue:0, sellValue:0, days: new Set() };
+    const val = Number(r.value_idr)||0;
+    if(r.side === "buy") byBroker[code].buyValue += val;
+    else if(r.side === "sell") byBroker[code].sellValue += val;
+    byBroker[code].days.add(r.trade_date);
+  });
+
+  const totalWindowDays = new Set(rows.map(r=>r.trade_date)).size || 1;
+
+  const list = Object.values(byBroker).map(b=>{
+    const netValue = b.buyValue - b.sellValue;
+    const totalValue = b.buyValue + b.sellValue;
+    const daysAppeared = b.days.size;
+    return {
+      broker_code: b.broker_code, buyValue: b.buyValue, sellValue: b.sellValue,
+      netValue, totalValue, daysAppeared,
+      avgPerAppearance: daysAppeared ? totalValue/daysAppeared : 0
+    };
+  });
+
+  const sortedAvg = list.map(b=>b.avgPerAppearance).sort((a,b)=>a-b);
+  const pctile = (p) => sortedAvg.length ? sortedAvg[Math.min(sortedAvg.length-1, Math.floor(p*sortedAvg.length))] : 0;
+  const p80 = pctile(0.8), p40 = pctile(0.4);
+
+  list.forEach(b=>{
+    const freqRatio = b.daysAppeared / totalWindowDays;
+    const consistentDirection = b.totalValue > 0 && (Math.abs(b.netValue)/b.totalValue) >= 0.6;
+    if(b.avgPerAppearance > 0 && b.avgPerAppearance >= p80){
+      b.type = "Whale"; b.typeIcon = "🐋"; b.typeTone = "gold";
+    } else if(freqRatio >= 0.5 && consistentDirection){
+      b.type = "Smart Money"; b.typeIcon = "🧠"; b.typeTone = "up";
+    } else if(b.avgPerAppearance <= p40){
+      b.type = "Ritel"; b.typeIcon = "🐣"; b.typeTone = "muted";
+    } else {
+      b.type = "Mix"; b.typeIcon = "➖"; b.typeTone = "teal";
+    }
+  });
+
+  list.sort((a,b)=> Math.abs(b.netValue) - Math.abs(a.netValue));
+  return { top5: list.slice(0,5), totalWindowDays };
+}
+
+// Avg Bandar = harga beli rata-rata tertimbang dari Top 5 Buy pada
+// tanggal PALING BARU yang ada datanya di jendela waktu (bukan
+// dirata-rata lintas banyak tanggal, supaya mencerminkan akumulasi
+// terkini). Baris tanpa "lot" terisi dilewati karena tidak bisa
+// dikonversi ke harga per lembar.
+function computeAvgBandarBuyPrice(rows){
+  if(!rows.length) return null;
+  const latestDate = rows.reduce((max,r)=> r.trade_date > max ? r.trade_date : max, rows[0].trade_date);
+  const buyRows = rows.filter(r=> r.side==="buy" && r.trade_date===latestDate && Number(r.lot)>0);
+  const totalValue = buyRows.reduce((a,r)=>a+(Number(r.value_idr)||0), 0);
+  const totalShares = buyRows.reduce((a,r)=>a+(Number(r.lot)||0)*100, 0); // 1 lot = 100 lembar
+  if(!totalShares) return null;
+  return { avgPrice: totalValue/totalShares, latestDate, buyRowsCount: buyRows.length };
+}
+
+function computeTargetLevels(avgBandarPrice, atr14){
+  const hasAtr = atr14 !== null && atr14 !== undefined && atr14 > 0;
+  const atr = hasAtr ? atr14 : avgBandarPrice * TB_ATR_FALLBACK_PCT;
+  return {
+    r1: avgBandarPrice + atr * TB_ATR_MULT_R1,
+    max: avgBandarPrice + atr * TB_ATR_MULT_MAX,
+    atrUsed: atr,
+    atrIsFallback: !hasAtr
+  };
+}
+
+async function loadTargetWindow(){
+  const codeEl = document.getElementById("tbStockCode");
+  const winEl = document.getElementById("tbWindowDays");
+  const code = (codeEl?.value || state.targetStockCode || "").trim().toUpperCase();
+  const windowDays = Number(winEl?.value || state.targetWindowDays || 20) || 20;
+  state.targetStockCode = code; state.targetWindowDays = windowDays;
+  if(!code){ state.targetMsg = "Isi kode saham dulu."; state.targetMsgError = true; render(); return; }
+  if(!SUPABASE_URL || !SUPABASE_KEY){ openSettings(); return; }
+
+  state.targetLoading = true; state.targetMsg = ""; render();
+  try{
+    const cutoff = new Date(); cutoff.setDate(cutoff.getDate() - windowDays);
+    const cutoffStr = cutoff.toISOString().slice(0,10);
+    const qs = new URLSearchParams({
+      stock_code: `eq.${code}`, trade_date: `gte.${cutoffStr}`,
+      order: "trade_date.asc,side.asc,rank.asc"
+    });
+    const res = await fetch(`${SUPABASE_URL}/broker_summary?${qs}`, { headers: getSupaHeaders(), cache: "no-store" });
+    if(!res.ok) throw new Error(`HTTP ${res.status} ${res.statusText}`);
+    const rows = await res.json();
+    if(rows.message) throw new Error(rows.message);
+    state.targetBandarRows = rows;
+
+    if(rows.length){
+      const agg = aggregateTopBandar(rows);
+      state.targetTopBandar = agg.top5;
+      state.targetWindowActualDays = agg.totalWindowDays;
+
+      const avgRes = computeAvgBandarBuyPrice(rows);
+      state.targetAvgBandar = avgRes;
+
+      const s = enriched().find(x=>x.ticker===code);
+      state.targetCurrentPrice = s ? s.cClose : null;
+      state.targetAtr14 = s ? s.atr14 : null;
+
+      state.targetLevels = avgRes ? computeTargetLevels(avgRes.avgPrice, state.targetAtr14) : null;
+
+      state.targetMsg = avgRes
+        ? `Ditemukan ${rows.length} baris dalam ${agg.totalWindowDays} hari bursa dengan data.`
+        : `Ditemukan ${rows.length} baris, tapi tidak ada baris Top Buy tanggal terbaru dengan kolom "Lot" terisi — Avg Bandar tidak bisa dihitung. Lengkapi Lot di tab Broker Summary.`;
+      state.targetMsgError = !avgRes;
+    } else {
+      state.targetTopBandar = []; state.targetAvgBandar = null; state.targetLevels = null;
+      state.targetMsg = "Belum ada data broker_summary untuk saham/periode ini. Isi dulu di tab 📊 Broker Summary.";
+      state.targetMsgError = true;
+    }
+  } catch(e){
+    state.targetMsg = "Gagal memuat: " + e.message;
+    state.targetMsgError = true;
+  }
+  state.targetLoading = false;
+  render();
+}
+
+async function saveTargetCalculation(){
+  const code = state.targetStockCode;
+  if(!code || !state.targetLevels || !state.targetAvgBandar){
+    state.targetMsg = "Muat data dulu (perlu Avg Bandar & Target berhasil dihitung).";
+    state.targetMsgError = true; render(); return;
+  }
+  if(!SUPABASE_URL || !SUPABASE_KEY){ openSettings(); return; }
+
+  const today = new Date().toISOString().slice(0,10);
+  const payload = {
+    stock_code: code, calc_date: today, window_days: state.targetWindowDays,
+    avg_bandar_price: state.targetAvgBandar.avgPrice,
+    target_r1: state.targetLevels.r1, target_max: state.targetLevels.max,
+    price_at_calc: state.targetCurrentPrice, atr14_at_calc: state.targetAtr14
+  };
+  try{
+    await supaFetch(`${SUPABASE_URL}/target_calculations?on_conflict=stock_code,calc_date`, {
+      method: "POST",
+      headers: { ...getSupaHeaders(), "Prefer": "resolution=merge-duplicates,return=representation" },
+      body: JSON.stringify(payload)
+    });
+    state.targetMsg = "Perhitungan hari ini tersimpan ke riwayat (Summary & Performance).";
+    state.targetMsgError = false;
+    render();
+    loadTargetHistory();
+  } catch(e){
+    state.targetMsg = "Gagal menyimpan (jalankan dulu SQL migration 05_target_bandar.sql?): " + e.message;
+    state.targetMsgError = true;
+    render();
+  }
+}
+
+// Muat riwayat kalkulasi + cek hit-rate terhadap histori close ASLI di
+// tabel `flows`. Flows di-fetch SEKALI per ticker unik (bukan per baris
+// riwayat) supaya jumlah request tetap kecil.
+async function loadTargetHistory(){
+  if(!SUPABASE_URL || !SUPABASE_KEY){ openSettings(); return; }
+  state.targetHistoryLoading = true; render();
+  try{
+    const qs = new URLSearchParams({ order: "calc_date.desc" });
+    if(state.targetSummaryScope === "ticker" && state.targetStockCode){
+      qs.set("stock_code", `eq.${state.targetStockCode}`);
+    }
+    const res = await fetch(`${SUPABASE_URL}/target_calculations?${qs}`, { headers: getSupaHeaders(), cache: "no-store" });
+    if(!res.ok) throw new Error(`HTTP ${res.status} ${res.statusText}`);
+    const rows = await res.json();
+    if(rows.message) throw new Error(rows.message);
+
+    const tickers = [...new Set(rows.map(r=>r.stock_code))];
+    const flowsByTicker = {};
+    await Promise.all(tickers.map(async (tk)=>{
+      const minDate = rows.filter(r=>r.stock_code===tk).reduce((min,r)=> r.calc_date < min ? r.calc_date : min, rows.find(r=>r.stock_code===tk).calc_date);
+      const fq = new URLSearchParams({ ticker: `eq.${tk}`, date: `gt.${minDate}`, select: "date,close", order: "date.asc" });
+      const frows = await fetch(`${SUPABASE_URL}/flows?${fq}`, { headers: getSupaHeaders(), cache: "no-store" }).then(r=>r.json());
+      flowsByTicker[tk] = Array.isArray(frows) ? frows : [];
+    }));
+
+    state.targetHistory = rows.map(r=>{
+      const closes = (flowsByTicker[r.stock_code]||[]).filter(f=> f.date > r.calc_date && f.close != null);
+      let hitR1 = null, hitMax = null, daysToR1 = null, daysToMax = null;
+      closes.forEach((f,i)=>{
+        if(hitR1===null && r.target_r1!=null && f.close >= r.target_r1){ hitR1 = true; daysToR1 = i+1; }
+        if(hitMax===null && r.target_max!=null && f.close >= r.target_max){ hitMax = true; daysToMax = i+1; }
+      });
+      const elapsedDays = closes.length;
+      // null = masih berjalan (belum sampai horizon & belum kena target)
+      if(hitR1===null) hitR1 = elapsedDays >= TB_HIT_HORIZON_DAYS ? false : null;
+      if(hitMax===null) hitMax = elapsedDays >= TB_HIT_HORIZON_DAYS ? false : null;
+      return { ...r, hitR1, hitMax, daysToR1, daysToMax, elapsedDays };
+    });
+    state.targetMsg = `Riwayat dimuat: ${rows.length} kalkulasi.`;
+    state.targetMsgError = false;
+  } catch(e){
+    state.targetMsg = "Gagal memuat riwayat (jalankan dulu SQL migration 05_target_bandar.sql?): " + e.message;
+    state.targetMsgError = true;
+  }
+  state.targetHistoryLoading = false;
+  render();
+}
+
+function computeTargetSummaryStats(history){
+  const finishedR1 = history.filter(h=>h.hitR1 !== null);
+  const finishedMax = history.filter(h=>h.hitMax !== null);
+  const hitR1Count = finishedR1.filter(h=>h.hitR1).length;
+  const hitMaxCount = finishedMax.filter(h=>h.hitMax).length;
+  const daysR1List = history.filter(h=>h.daysToR1!=null).map(h=>h.daysToR1);
+  const avgDaysR1 = daysR1List.length ? daysR1List.reduce((a,b)=>a+b,0)/daysR1List.length : null;
+  return {
+    total: history.length,
+    hitRateR1: finishedR1.length ? (hitR1Count/finishedR1.length*100) : null,
+    hitRateMax: finishedMax.length ? (hitMaxCount/finishedMax.length*100) : null,
+    finishedR1Count: finishedR1.length,
+    finishedMaxCount: finishedMax.length,
+    avgDaysR1
+  };
+}
+
+function targetStatusPill(hit){
+  if(hit === true) return pillHtml("Tercapai", "up");
+  if(hit === false) return pillHtml("Belum Tercapai", "down");
+  return pillHtml("Berjalan", "gold");
+}
+
+function renderTargetBandar(){
+  const rows = state.targetBandarRows;
+  const top5 = state.targetTopBandar;
+  const avgB = state.targetAvgBandar;
+  const lv = state.targetLevels;
+  const curPrice = state.targetCurrentPrice;
+
+  const distPct = (target) => (curPrice && target) ? ((target - curPrice) / curPrice * 100) : null;
+
+  const calcSection = avgB && lv ? `
+    <div class="porto-summary" style="margin-bottom:8px;">
+      <div class="porto-stat"><div class="lbl">Avg Bandar (Beli)</div><div class="val mono">${fmtNum(Math.round(avgB.avgPrice))}</div></div>
+      <div class="porto-stat"><div class="lbl">Harga Sekarang</div><div class="val mono">${curPrice!=null?fmtNum(Math.round(curPrice)):"-"}</div></div>
+      <div class="porto-stat tone-up" style="border-top-color:var(--up);"><div class="lbl">Target R1</div><div class="val mono" style="color:var(--up);">${fmtNum(Math.round(lv.r1))}${distPct(lv.r1)!=null?` <span style="font-size:11px;color:var(--muted);">(${distPct(lv.r1)>=0?"+":""}${distPct(lv.r1).toFixed(1)}%)</span>`:""}</div></div>
+      <div class="porto-stat tone-gold" style="border-top-color:var(--gold);"><div class="lbl">Target Max</div><div class="val mono" style="color:var(--gold);">${fmtNum(Math.round(lv.max))}${distPct(lv.max)!=null?` <span style="font-size:11px;color:var(--muted);">(${distPct(lv.max)>=0?"+":""}${distPct(lv.max).toFixed(1)}%)</span>`:""}</div></div>
+    </div>
+    <div style="font-size:11.5px;color:var(--muted);margin-bottom:16px;">
+      Avg Bandar dihitung tertimbang dari Top Buy tanggal <b class="mono">${avgB.latestDate}</b> (${avgB.buyRowsCount} baris broker).
+      ATR14 dipakai: <span class="mono">${fmtNum(lv.atrUsed.toFixed(2))}</span>${lv.atrIsFallback?' <span style="color:var(--gold);">(fallback 3% — ATR14 kosong di stocks_screener)</span>':""}.
+      Formula: R1 = Avg Bandar + ${TB_ATR_MULT_R1}×ATR14, Max = Avg Bandar + ${TB_ATR_MULT_MAX}×ATR14 — silakan disesuaikan (konstanta TB_ATR_MULT_* di app.js) sesuai gaya trading Anda.
+    </div>
+    <button class="btn btn-primary" id="tbSaveCalcBtn">💾 Simpan Perhitungan Hari Ini ke Riwayat</button>
+  ` : `<div class="empty-box" style="padding:16px;font-size:12px;">Muat data dulu di atas untuk melihat Avg Bandar & Target.</div>`;
+
+  const maxNet = Math.max(1, ...top5.map(b=>Math.abs(b.netValue)));
+  const top5Html = top5.length ? `
+    <div class="table-wrap">
+      <table class="mono">
+        <thead><tr><th>Broker</th><th>Muncul</th><th>Net Value</th><th>Avg/Muncul</th><th>Tipe</th></tr></thead>
+        <tbody>
+          ${top5.map(b=>`
+            <tr>
+              <td>${escapeHtml(b.broker_code)}</td>
+              <td>${b.daysAppeared}/${state.targetWindowActualDays} hari</td>
+              <td style="color:${b.netValue>=0?'var(--up)':'var(--down)'};">${b.netValue>=0?'+':''}${fmtNum(Math.round(b.netValue))}</td>
+              <td>${fmtNum(Math.round(b.avgPerAppearance))}</td>
+              <td>${pillHtml(b.typeIcon+" "+b.type, b.typeTone)}</td>
+            </tr>`).join("")}
+        </tbody>
+      </table>
+    </div>` : `<div class="empty-box" style="padding:16px;font-size:12px;">Belum ada data untuk dianalisis.</div>`;
+
+  const history = state.targetHistory;
+  const stats = computeTargetSummaryStats(history);
+  const summaryStatsHtml = `
+    <div class="porto-summary">
+      <div class="porto-stat"><div class="lbl">Total Kalkulasi</div><div class="val mono">${stats.total}</div></div>
+      <div class="porto-stat tone-up" style="border-top-color:var(--up);"><div class="lbl">Hit Rate R1</div><div class="val mono">${stats.hitRateR1!=null?stats.hitRateR1.toFixed(0)+"%":"-"}</div></div>
+      <div class="porto-stat tone-gold" style="border-top-color:var(--gold);"><div class="lbl">Hit Rate Max</div><div class="val mono">${stats.hitRateMax!=null?stats.hitRateMax.toFixed(0)+"%":"-"}</div></div>
+      <div class="porto-stat"><div class="lbl">Rata² Hari ke R1</div><div class="val mono">${stats.avgDaysR1!=null?stats.avgDaysR1.toFixed(1):"-"}</div></div>
+    </div>
+    <div style="font-size:11px;color:var(--muted);margin-bottom:16px;">
+      Hit Rate hanya dihitung dari kalkulasi yang sudah lewat ${TB_HIT_HORIZON_DAYS} hari bursa sejak tanggal kalkulasi (atau sudah kena target lebih cepat) — kalkulasi yang masih baru berstatus "Berjalan" dan belum masuk hitungan.
+    </div>`;
+
+  const historyRowsHtml = history.length ? `
+    <div class="table-wrap">
+      <table class="mono">
+        <thead><tr><th>Tgl Kalkulasi</th><th>Emiten</th><th>Avg Bandar</th><th>R1</th><th>Max</th><th>Status R1</th><th>Status Max</th></tr></thead>
+        <tbody>
+          ${history.map(h=>`
+            <tr>
+              <td>${escapeHtml(h.calc_date)}</td>
+              <td>${escapeHtml(h.stock_code)}</td>
+              <td>${fmtNum(Math.round(h.avg_bandar_price))}</td>
+              <td>${fmtNum(Math.round(h.target_r1))}</td>
+              <td>${fmtNum(Math.round(h.target_max))}</td>
+              <td>${targetStatusPill(h.hitR1)}${h.daysToR1!=null?` <span style="font-size:10.5px;color:var(--muted);">(H+${h.daysToR1})</span>`:""}</td>
+              <td>${targetStatusPill(h.hitMax)}${h.daysToMax!=null?` <span style="font-size:10.5px;color:var(--muted);">(H+${h.daysToMax})</span>`:""}</td>
+            </tr>`).join("")}
+        </tbody>
+      </table>
+    </div>` : `<div class="empty-box" style="padding:16px;font-size:12px;">Belum ada riwayat. Simpan perhitungan dari Kalkulator di atas dulu.</div>`;
+
+  return `
+    <div class="panel">
+      <div class="filter-section-title">🎯 Target Bandar<span class="line"></span></div>
+      <div style="font-size:12px;color:var(--muted);margin-bottom:14px;">
+        Dibangun dari data 📊 Broker Summary yang sudah Anda isi. Bukan data resmi otomatis dari Stockbit — dan Target R1/Max adalah heuristik, bukan jaminan.
+      </div>
+      <div class="bs-toolbar">
+        <input id="tbStockCode" class="bs-input" placeholder="Kode saham (mis. BBCA)" maxlength="6" style="text-transform:uppercase" value="${escapeHtml(state.targetStockCode||"")}">
+        <input id="tbWindowDays" class="bs-input" type="number" min="5" max="120" placeholder="Hari" value="${state.targetWindowDays}" style="max-width:100px;">
+        <button class="btn btn-outline" id="tbLoadBtn" ${state.targetLoading?"disabled":""}>${state.targetLoading?"Memuat...":"Muat Data"}</button>
+      </div>
+      ${state.targetMsg ? `<div class="bs-msg ${state.targetMsgError?"bs-msg-error":"bs-msg-ok"}">${escapeHtml(state.targetMsg)}</div>` : ""}
+    </div>
+
+    <div class="panel">
+      <div class="filter-section-title">🐋 Top 5 Bandar (${state.targetWindowActualDays || state.targetWindowDays} hari terakhir)<span class="line"></span></div>
+      ${top5Html}
+    </div>
+
+    <div class="panel">
+      <div class="filter-section-title">🧮 Kalkulator Target Harga<span class="line"></span></div>
+      ${calcSection}
+    </div>
+
+    <div class="panel">
+      <div class="filter-section-title">📈 Summary & Performance<span class="line"></span></div>
+      <div class="bs-toolbar" style="margin-bottom:14px;">
+        <select id="tbScopeSelect" style="background:rgba(0,0,0,0.2);border:1px solid var(--border);color:var(--text);font-size:13px;border-radius:8px;padding:9.5px 12px;">
+          <option value="ticker" ${state.targetSummaryScope==="ticker"?"selected":""}>Emiten ini (${escapeHtml(state.targetStockCode||"-")})</option>
+          <option value="all" ${state.targetSummaryScope==="all"?"selected":""}>Semua Emiten</option>
+        </select>
+        <button class="btn btn-outline" id="tbHistoryBtn" ${state.targetHistoryLoading?"disabled":""}>${state.targetHistoryLoading?"Memuat...":"🔄 Muat Riwayat & Hit Rate"}</button>
+      </div>
+      ${summaryStatsHtml}
+      ${historyRowsHtml}
+    </div>
+  `;
 }
 
 function attachContentEvents(){
@@ -3769,6 +4749,16 @@ function attachContentEvents(){
 
   const exportScreenerBtn = document.getElementById("exportScreenerBtn");
   if(exportScreenerBtn) exportScreenerBtn.onclick = exportScreenerToExcel;
+  const stockbitBulkBtn = document.getElementById("stockbitBulkBtn");
+  if(stockbitBulkBtn) stockbitBulkBtn.onclick = () => {
+    if(!state.stockbitToken){ openSettings(); return; }
+    // Kalau ada baris yang dicentang (kolom checkbox), pakai itu saja.
+    // Kalau tidak ada yang dicentang, fallback ke semua yang lolos filter
+    // (perilaku lama) supaya tombol tetap berguna tanpa harus centang dulu.
+    const checked = [...state.selectedForBacktest];
+    const tickers = checked.length ? checked : getSorted(getFiltered()).map(s=>s.ticker);
+    if(tickers.length) fetchStockbitLiveBulk(tickers);
+  };
   
   document.querySelectorAll("[data-sektor-toggle]").forEach(el=>{
     el.onclick = ()=>{
@@ -3796,6 +4786,7 @@ function attachContentEvents(){
   document.querySelectorAll("[data-detail]").forEach(b=> b.onclick=()=>openDetail(b.dataset.detail));
   document.querySelectorAll("[data-fav]").forEach(b=> b.onclick=()=>toggleFav(b.dataset.fav));
   document.querySelectorAll("[data-chart]").forEach(b=> b.onclick=()=>loadChart(b.dataset.chart));
+  document.querySelectorAll("[data-stockbit-live]").forEach(b=> b.onclick=(e)=>{ e.stopPropagation(); fetchStockbitLive(b.dataset.stockbitLive); });
   document.querySelectorAll("[data-expand]").forEach(b=> b.onclick=()=>{
     const t = b.dataset.expand;
     state.expanded.has(t) ? state.expanded.delete(t) : state.expanded.add(t);
@@ -3869,8 +4860,24 @@ function attachContentEvents(){
   if(bsSaveBtn) bsSaveBtn.onclick = saveBrokerSummaryRows;
   const bsCsvFillBtn = document.getElementById("bsCsvFillBtn");
   if(bsCsvFillBtn) bsCsvFillBtn.onclick = fillBsFromCsv;
+  const bsAutoBulkBtn = document.getElementById("bsAutoBulkBtn");
+  if(bsAutoBulkBtn) bsAutoBulkBtn.onclick = () => fetchAndSaveBrokerSummaryBulk([...state.selectedForBacktest], 10);
   const bsEditorPanel = document.getElementById("bsEditorPanel");
   if(bsEditorPanel) bsEditorPanel.ontoggle = (e) => { state.bsEditorOpen = e.target.open; };
+
+  // --- Target Bandar ---
+  const tbStockCodeInput = document.getElementById("tbStockCode");
+  if(tbStockCodeInput) tbStockCodeInput.onchange = (e) => { state.targetStockCode = e.target.value.trim().toUpperCase(); };
+  const tbWindowDaysInput = document.getElementById("tbWindowDays");
+  if(tbWindowDaysInput) tbWindowDaysInput.onchange = (e) => { state.targetWindowDays = Number(e.target.value)||20; };
+  const tbLoadBtn = document.getElementById("tbLoadBtn");
+  if(tbLoadBtn) tbLoadBtn.onclick = loadTargetWindow;
+  const tbSaveCalcBtn = document.getElementById("tbSaveCalcBtn");
+  if(tbSaveCalcBtn) tbSaveCalcBtn.onclick = saveTargetCalculation;
+  const tbScopeSelect = document.getElementById("tbScopeSelect");
+  if(tbScopeSelect) tbScopeSelect.onchange = (e) => { state.targetSummaryScope = e.target.value; };
+  const tbHistoryBtn = document.getElementById("tbHistoryBtn");
+  if(tbHistoryBtn) tbHistoryBtn.onclick = loadTargetHistory;
 }
 
 document.addEventListener("click", (e) => {
@@ -3895,4 +4902,5 @@ document.getElementById("detailModalClose").onclick = ()=> closeDetail();
 document.getElementById("detailModalOverlay").onclick = (e)=>{ if(e.target.id==="detailModalOverlay") closeDetail(); };
 
 loadSettings();
+syncStockbitTokenFromSupabase();
 loadLive();
