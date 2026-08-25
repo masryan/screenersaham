@@ -223,7 +223,8 @@ function parseStockbitMarketDetector(raw){
   return byDate;
 }
 
-async function fetchAndSaveBrokerSummaryBulk(tickers, days = 10){
+async function fetchAndSaveBrokerSummaryBulk(tickers, days){
+  days = Number.isFinite(days) && days >= 1 ? days : (state.bsBulkDays || 10);
   if(state.stockbitBrokerBulkLoading) return;
   if(!tickers || !tickers.length){
     state.stockbitBrokerBulkResults = [{ ticker:"-", date:"-", ok:false, msg:"Centang minimal 1 saham di tab Screener dulu." }];
@@ -481,6 +482,7 @@ const LS_FREQ_ANALYZER_COL = "ihsg_freq_analyzer_col";
 const LS_CUSTOM_RULES = "ihsg_custom_rules_v1";
 const LS_STOCKBIT_TOKEN = "ihsg_stockbit_token", LS_STOCKBIT_QUOTE_EP = "ihsg_stockbit_quote_ep",
       LS_STOCKBIT_BROKER_EP = "ihsg_stockbit_broker_ep", LS_STOCKBIT_PROXY = "ihsg_stockbit_proxy";
+const LS_BS_BULK_DAYS = "ihsg_bs_bulk_days"; // periode "Tarik Otomatis" (hari bursa), diset user di tab Broker Summary
 const STOCKBIT_DEFAULT_QUOTE_EP = "https://exodus.stockbit.com/stream/v3/symbol/{ticker}";
 // NOTE (25 Agu 2026): endpoint di atas TERBUKTI SALAH — itu API "Stream"
 // (linimasa komentar komunitas), bukan API harga. Endpoint quote/orderbook
@@ -574,9 +576,12 @@ let state = {
   stockbitBrokerEndpoint: STOCKBIT_DEFAULT_BROKER_EP, stockbitProxyUrl: "",
   stockbitTokenExpiresAt: null, stockbitTokenSyncedAt: null, stockbitTokenSource: "manual",
   stockbitLive: {}, stockbitBulkLoading: false, stockbitBulkProgress: null,
-  // Tarik otomatis Top 5 Broker Buy/Sell (10 hari bursa) HANYA untuk ticker
-  // yang dicentang (state.selectedForBacktest) — lihat fetchAndSaveBrokerSummaryBulk().
-  stockbitBrokerBulkLoading: false, stockbitBrokerBulkProgress: null, stockbitBrokerBulkResults: []
+  // Tarik otomatis Top 5 Broker Buy/Sell HANYA untuk ticker yang dicentang
+  // (state.selectedForBacktest) — lihat fetchAndSaveBrokerSummaryBulk().
+  // bsBulkDays = jumlah hari bursa yang ditarik, bisa diatur user langsung
+  // di tab Broker Summary (disimpan ke localStorage lewat LS_BS_BULK_DAYS).
+  stockbitBrokerBulkLoading: false, stockbitBrokerBulkProgress: null, stockbitBrokerBulkResults: [],
+  bsBulkDays: 10
 };
 
 function fmtNum(n){ if(n===null||n===undefined) return "-"; return new Intl.NumberFormat("id-ID").format(n); }
@@ -640,6 +645,10 @@ function loadSettings(){
     state.stockbitBrokerEndpoint = localStorage.getItem(LS_STOCKBIT_BROKER_EP) || STOCKBIT_DEFAULT_BROKER_EP;
     state.stockbitProxyUrl = localStorage.getItem(LS_STOCKBIT_PROXY) || "";
   }catch(e){}
+  try{
+    const savedDays = parseInt(localStorage.getItem(LS_BS_BULK_DAYS), 10);
+    state.bsBulkDays = (Number.isFinite(savedDays) && savedDays >= 1 && savedDays <= 60) ? savedDays : 10;
+  }catch(e){ state.bsBulkDays = 10; }
   try{
     const savedRules = JSON.parse(localStorage.getItem(LS_CUSTOM_RULES)||"[]");
     state.customRules = Array.isArray(savedRules) ? savedRules : [];
@@ -4054,18 +4063,27 @@ function renderBrokerSummary(){
           <div style="font-size:12px; color:var(--muted); max-width:560px; line-height:1.5;">
             🔴 Tarik otomatis Top 5 Buy/Sell dari Stockbit untuk
             <b>${state.selectedForBacktest.size} saham yang dicentang</b> di tab 📋 Screener,
-            selama <b>10 hari bursa terakhir</b> (Senin&ndash;Jumat, belum menghitung libur bursa nasional).
-            Butuh "Endpoint Broker Summary" &amp; Token terisi di ⚙️ Pengaturan. Hasil otomatis disimpan
-            langsung ke database yang sama seperti input manual di bawah.
+            selama periode hari bursa terakhir yang kamu atur di samping (Senin&ndash;Jumat, belum
+            menghitung libur bursa nasional). Butuh "Endpoint Broker Summary" &amp; Token terisi di
+            ⚙️ Pengaturan. Hasil otomatis disimpan langsung ke database yang sama seperti input manual
+            di bawah. Makin banyak hari, makin besar juga "limit" yang perlu diisi di endpoint (lihat
+            ⚙️ Pengaturan) supaya data tidak kepotong.
           </div>
-          <button type="button" class="btn btn-outline" id="bsAutoBulkBtn"
-            ${state.stockbitBrokerBulkLoading || state.selectedForBacktest.size===0 ? "disabled" : ""}
-            style="color:#f87171;border-color:rgba(239,68,68,0.4);white-space:nowrap;"
-            title="${state.selectedForBacktest.size===0 ? 'Centang minimal 1 saham di tab Screener dulu' : ''}">
-            ${state.stockbitBrokerBulkLoading
-              ? `Menarik ${state.stockbitBrokerBulkProgress?.done||0}/${state.stockbitBrokerBulkProgress?.total||0}...`
-              : `Tarik Otomatis (${state.selectedForBacktest.size} dicentang &times; 10 hari)`}
-          </button>
+          <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
+            <label for="bsBulkDaysInput" style="font-size:11.5px; color:var(--muted); white-space:nowrap;">Periode (hari bursa)</label>
+            <input type="number" id="bsBulkDaysInput" min="1" max="60" step="1"
+              value="${state.bsBulkDays}"
+              ${state.stockbitBrokerBulkLoading ? "disabled" : ""}
+              style="width:64px; padding:6px 8px; border-radius:8px; border:1px solid var(--border); background:var(--bg-input, rgba(255,255,255,0.03)); color:var(--text); font-size:12.5px;">
+            <button type="button" class="btn btn-outline" id="bsAutoBulkBtn"
+              ${state.stockbitBrokerBulkLoading || state.selectedForBacktest.size===0 ? "disabled" : ""}
+              style="color:#f87171;border-color:rgba(239,68,68,0.4);white-space:nowrap;"
+              title="${state.selectedForBacktest.size===0 ? 'Centang minimal 1 saham di tab Screener dulu' : ''}">
+              ${state.stockbitBrokerBulkLoading
+                ? `Menarik ${state.stockbitBrokerBulkProgress?.done||0}/${state.stockbitBrokerBulkProgress?.total||0}...`
+                : `Tarik Otomatis (${state.selectedForBacktest.size} dicentang &times; ${state.bsBulkDays} hari)`}
+            </button>
+          </div>
         </div>
         ${state.stockbitBrokerBulkResults && state.stockbitBrokerBulkResults.length ? `
           <div class="mono" style="margin-top:10px; max-height:220px; overflow-y:auto; font-size:11.5px;">
@@ -4860,8 +4878,17 @@ function attachContentEvents(){
   if(bsSaveBtn) bsSaveBtn.onclick = saveBrokerSummaryRows;
   const bsCsvFillBtn = document.getElementById("bsCsvFillBtn");
   if(bsCsvFillBtn) bsCsvFillBtn.onclick = fillBsFromCsv;
+  const bsBulkDaysInput = document.getElementById("bsBulkDaysInput");
+  if(bsBulkDaysInput) bsBulkDaysInput.onchange = (e) => {
+    let v = parseInt(e.target.value, 10);
+    if(!Number.isFinite(v) || v < 1) v = 1;
+    if(v > 60) v = 60; // batas wajar supaya tidak kebablasan menghajar rate limit Stockbit
+    state.bsBulkDays = v;
+    localStorage.setItem(LS_BS_BULK_DAYS, String(v));
+    render();
+  };
   const bsAutoBulkBtn = document.getElementById("bsAutoBulkBtn");
-  if(bsAutoBulkBtn) bsAutoBulkBtn.onclick = () => fetchAndSaveBrokerSummaryBulk([...state.selectedForBacktest], 10);
+  if(bsAutoBulkBtn) bsAutoBulkBtn.onclick = () => fetchAndSaveBrokerSummaryBulk([...state.selectedForBacktest], state.bsBulkDays);
   const bsEditorPanel = document.getElementById("bsEditorPanel");
   if(bsEditorPanel) bsEditorPanel.ontoggle = (e) => { state.bsEditorOpen = e.target.open; };
 
