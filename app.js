@@ -521,7 +521,7 @@ let state = {
   tab: "screener", search: "", activePreset: null,
   visibleCols: new Set(), // diisi loadSettings() dari localStorage atau DEFAULT_VISIBLE_COLS
   colPickerOpen: false,
-  filters: {sektor:[], syariahLabel:[], cekHarga:[], cekRsi:[], statusRsi:[], cekMacd:[], band:[], sinyalVolume:[], sinyalFrekuensi:[], keyakinanNaik:[], trendHarga:[], polaCandle:[], uangGedeMasuk:[], isBBSqueeze:[], valuasi:[]},
+  filters: {sektor:[], syariahLabel:[], cekHarga:[], cekRsi:[], statusRsi:[], cekMacd:[], band:[], sinyalVolume:[], sinyalFrekuensi:[], keyakinanNaik:[], trendHarga:[], polaCandle:[], uangGedeMasuk:[], isBBSqueeze:[], valuasi:[], capCategory:[], freqSpike:[], rekomendasi:[]},
   showAdvancedFilters: false,
   rangeFilters: { 
     bbWidth:{min:"",max:""}, 
@@ -564,7 +564,8 @@ let state = {
   bsEditorOpen: false, bsMsg: "", bsMsgError: false, bsCsvText: "",
   // Broker Summary versi di dalam modal Detail Emiten (terkunci ke
   // ticker yang sedang dibuka, tabel Supabase sama dengan di atas).
-  detailBsDate: new Date().toISOString().slice(0,10),
+  detailBsDateFrom: new Date().toISOString().slice(0,10), detailBsDateTo: new Date().toISOString().slice(0,10),
+  detailBsEditDate: new Date().toISOString().slice(0,10),
   detailBsRows: [], detailBsEditRows: [], detailBsLoading: false,
   detailBsEditorOpen: false, detailBsMsg: "", detailBsMsgError: false, detailBsCsvText: "",
   // ==========================================
@@ -1022,6 +1023,10 @@ function openDetail(ticker){
   state.detailBsRows = []; state.detailBsEditRows = [];
   state.detailBsMsg = ""; state.detailBsMsgError = false;
   state.detailBsEditorOpen = false; state.detailBsCsvText = "";
+  // Reset periode ke "hari ini" tiap buka emiten baru, biar tidak nyangkut
+  // di rentang tanggal emiten sebelumnya.
+  const today = new Date().toISOString().slice(0,10);
+  state.detailBsDateFrom = today; state.detailBsDateTo = today; state.detailBsEditDate = today;
   render();
 }
 function closeDetail(){
@@ -1643,8 +1648,13 @@ function renderDetailBrokerSummary(s){
     </div>`).join("");
 
   const dRows = state.detailBsRows || [];
-  const dBuy = dRows.filter(r=>r.side==="buy").sort((a,b)=>a.rank-b.rank);
-  const dSell = dRows.filter(r=>r.side==="sell").sort((a,b)=>a.rank-b.rank);
+
+  // Kelompokkan hasil per tanggal (urut terbaru dulu) — karena sekarang
+  // "Muat Data" bisa menarik rentang tanggal, bukan cuma 1 hari.
+  const byDate = {};
+  dRows.forEach(r => { (byDate[r.trade_date] = byDate[r.trade_date] || []).push(r); });
+  const datesDesc = Object.keys(byDate).sort((a,b)=> a < b ? 1 : -1);
+
   const maxVal = Math.max(1, ...dRows.map(r=> Number(r.value_idr)||0));
   const barHtml = (r, cls) => `
     <div class="bs-bar-row">
@@ -1653,31 +1663,55 @@ function renderDetailBrokerSummary(s){
       <span class="bs-bar-value mono">${fmtNum(r.value_idr)}</span>
     </div>`;
 
+  const dateBlocksHtml = datesDesc.length ? datesDesc.map(date => {
+    const rows = byDate[date];
+    const dBuy = rows.filter(r=>r.side==="buy").sort((a,b)=>a.rank-b.rank);
+    const dSell = rows.filter(r=>r.side==="sell").sort((a,b)=>a.rank-b.rank);
+    return `
+      <div class="bs-date-block" style="margin-bottom:18px;padding-bottom:14px;border-bottom:1px solid var(--border);">
+        <div style="display:flex;align-items:center;gap:10px;margin-bottom:6px;">
+          <span class="mono" style="font-weight:700;font-size:13px;">${date}</span>
+          <button type="button" class="link-btn" data-dbs-edit-date="${date}" title="Isi form edit manual di bawah dengan tanggal ini">✏️ Edit tanggal ini</button>
+        </div>
+        ${bsStatusRowHtml(rows)}
+        <div class="bs-display-grid">
+          <div>
+            <div class="bs-col-title bs-buy">Top 5 Buy</div>
+            ${dBuy.length ? dBuy.map(r=>barHtml(r,"bs-fill-buy")).join("") : `<div class="empty-box" style="padding:16px;font-size:12px;">Tidak ada data buy.</div>`}
+          </div>
+          <div>
+            <div class="bs-col-title bs-sell">Top 5 Sell</div>
+            ${dSell.length ? dSell.map(r=>barHtml(r,"bs-fill-sell")).join("") : `<div class="empty-box" style="padding:16px;font-size:12px;">Tidak ada data sell.</div>`}
+          </div>
+        </div>
+      </div>`;
+  }).join("") : `<div class="empty-box" style="padding:16px;font-size:12px;">Belum ada data untuk periode ini.</div>`;
+
   return `
     <div class="bs-wrap">
-      <div class="bs-toolbar">
+      <div class="bs-toolbar" style="flex-wrap:wrap;gap:10px;">
         <span class="mono" style="font-weight:700;font-size:14px;">${escapeHtml(ticker)}</span>
-        <input id="dbsDate" class="bs-input" type="date" value="${state.detailBsDate||""}">
+        <div style="display:flex;align-items:center;gap:6px;">
+          <label style="font-size:11.5px;color:var(--muted);">Dari</label>
+          <input id="dbsDateFrom" class="bs-input" type="date" value="${state.detailBsDateFrom||""}">
+        </div>
+        <div style="display:flex;align-items:center;gap:6px;">
+          <label style="font-size:11.5px;color:var(--muted);">Sampai</label>
+          <input id="dbsDateTo" class="bs-input" type="date" value="${state.detailBsDateTo||""}">
+        </div>
         <button class="btn btn-outline" id="dbsLoadBtn" ${state.detailBsLoading?"disabled":""}>${state.detailBsLoading?"Memuat...":"Muat Data"}</button>
       </div>
 
       ${state.detailBsMsg ? `<div class="bs-msg ${state.detailBsMsgError?"bs-msg-error":"bs-msg-ok"}">${escapeHtml(state.detailBsMsg)}</div>` : ""}
 
-      ${bsStatusRowHtml(dRows)}
-
-      <div class="bs-display-grid">
-        <div>
-          <div class="bs-col-title bs-buy">Top 5 Buy</div>
-          ${dBuy.length ? dBuy.map(r=>barHtml(r,"bs-fill-buy")).join("") : `<div class="empty-box" style="padding:16px;font-size:12px;">Belum ada data untuk tanggal ini.</div>`}
-        </div>
-        <div>
-          <div class="bs-col-title bs-sell">Top 5 Sell</div>
-          ${dSell.length ? dSell.map(r=>barHtml(r,"bs-fill-sell")).join("") : `<div class="empty-box" style="padding:16px;font-size:12px;">Belum ada data untuk tanggal ini.</div>`}
-        </div>
-      </div>
+      ${dateBlocksHtml}
 
       <details class="bs-editor-panel" id="dbsEditorPanel" ${state.detailBsEditorOpen?"open":""}>
         <summary>✏️ Input / Edit Manual (dari screenshot Stockbit Anda)</summary>
+        <div style="display:flex;align-items:center;gap:6px;margin:10px 0;">
+          <label style="font-size:11.5px;color:var(--muted);">Tanggal yang diedit</label>
+          <input id="dbsEditDate" class="bs-input" type="date" value="${state.detailBsEditDate||""}">
+        </div>
         <div class="bs-editor-grid">
           <div>
             <div class="bs-col-title bs-buy">Top 5 Buy</div>
@@ -1704,22 +1738,34 @@ function renderDetailBrokerSummary(s){
 
 async function loadDetailBrokerSummary(){
   const ticker = state.detailTicker;
-  const dateEl = document.getElementById("dbsDate");
-  const date = dateEl?.value || "";
-  state.detailBsDate = date;
-  if(!ticker || !date){ state.detailBsMsg = "Tanggal belum diisi."; state.detailBsMsgError = true; render(); return; }
+  const fromEl = document.getElementById("dbsDateFrom");
+  const toEl = document.getElementById("dbsDateTo");
+  const from = fromEl?.value || state.detailBsDateFrom || "";
+  const to = toEl?.value || state.detailBsDateTo || "";
+  state.detailBsDateFrom = from; state.detailBsDateTo = to;
+  if(!ticker || !from || !to){ state.detailBsMsg = "Tanggal (dari & sampai) belum diisi."; state.detailBsMsgError = true; render(); return; }
+  if(from > to){ state.detailBsMsg = 'Tanggal "Dari" tidak boleh lebih besar dari "Sampai".'; state.detailBsMsgError = true; render(); return; }
   if(!SUPABASE_URL || !SUPABASE_KEY){ openSettings(); return; }
 
   state.detailBsLoading = true; state.detailBsMsg = ""; render();
   try {
-    const qs = new URLSearchParams({ stock_code: `eq.${ticker}`, trade_date: `eq.${date}`, order: "side.asc,rank.asc" });
-    const res = await fetch(`${SUPABASE_URL}/broker_summary?${qs}`, { headers: getSupaHeaders(), cache: "no-store" });
+    // URLSearchParams tidak bisa punya 2 key "trade_date" sekaligus (yang
+    // kedua akan menimpa yang pertama), jadi query string gte+lte disusun
+    // manual di sini.
+    const url = `${SUPABASE_URL}/broker_summary?stock_code=eq.${encodeURIComponent(ticker)}&trade_date=gte.${from}&trade_date=lte.${to}&order=trade_date.desc,side.asc,rank.asc`;
+    const res = await fetch(url, { headers: getSupaHeaders(), cache: "no-store" });
     if(!res.ok) throw new Error(`HTTP ${res.status} ${res.statusText}`);
     const rows = await res.json();
     state.detailBsRows = rows;
-    state.detailBsEditRows = rows.map(r=>({ side:r.side, rank:r.rank, broker_code:r.broker_code, lot:r.lot, value_idr:r.value_idr }));
-    state.detailBsMsg = rows.length ? `Menampilkan ${rows.length} baris.` : "Belum ada data untuk tanggal ini.";
+    const uniqDates = [...new Set(rows.map(r=>r.trade_date))];
+    state.detailBsMsg = rows.length
+      ? `Menampilkan ${rows.length} baris untuk ${uniqDates.length} tanggal (${from}..${to}).`
+      : `Belum ada data untuk periode ${from}..${to}.`;
     state.detailBsMsgError = false;
+    // Form edit manual default ke tanggal "Sampai" biar user tinggal isi
+    // data hari terbaru tanpa perlu klik "Edit tanggal ini" dulu.
+    state.detailBsEditDate = to;
+    state.detailBsEditRows = rows.filter(r=>r.trade_date===to).map(r=>({ side:r.side, rank:r.rank, broker_code:r.broker_code, lot:r.lot, value_idr:r.value_idr }));
   } catch(e) {
     state.detailBsMsg = "Gagal memuat: " + e.message;
     state.detailBsMsgError = true;
@@ -1749,8 +1795,9 @@ function readDbsEditorRows(side, code, date){
 
 async function saveDetailBrokerSummaryRows(){
   const code = state.detailTicker;
-  const date = state.detailBsDate || document.getElementById("dbsDate")?.value;
-  if(!code || !date){ state.detailBsMsg = "Tanggal belum diisi."; state.detailBsMsgError = true; render(); return; }
+  const dateEl = document.getElementById("dbsEditDate");
+  const date = dateEl?.value || state.detailBsEditDate;
+  if(!code || !date){ state.detailBsMsg = "Tanggal edit belum diisi."; state.detailBsMsgError = true; render(); return; }
   if(!SUPABASE_URL || !SUPABASE_KEY){ openSettings(); return; }
 
   const rows = [...readDbsEditorRows("buy", code, date), ...readDbsEditorRows("sell", code, date)];
@@ -1762,9 +1809,15 @@ async function saveDetailBrokerSummaryRows(){
       headers: { ...getSupaHeaders(), "Prefer": "resolution=merge-duplicates,return=representation" },
       body: JSON.stringify(rows)
     });
-    state.detailBsMsg = `Tersimpan ${rows.length} baris.`;
+    state.detailBsMsg = `Tersimpan ${rows.length} baris untuk ${date}.`;
     state.detailBsMsgError = false;
     state.detailBsEditorOpen = true;
+    state.detailBsEditDate = date;
+    // Lebarkan rentang "Dari/Sampai" kalau tanggal yang baru disimpan ada
+    // di luar rentang yang sedang ditampilkan, supaya langsung kelihatan
+    // setelah reload di bawah — bukan malah "hilang" dari layar.
+    if(!state.detailBsDateFrom || date < state.detailBsDateFrom) state.detailBsDateFrom = date;
+    if(!state.detailBsDateTo || date > state.detailBsDateTo) state.detailBsDateTo = date;
     render();
     loadDetailBrokerSummary();
   } catch(e) {
@@ -2449,6 +2502,9 @@ function getFiltered(){
     if(f.uangGedeMasuk.length && !f.uangGedeMasuk.includes(s.uangGedeMasuk)) return false;
     if(f.isBBSqueeze.length && !f.isBBSqueeze.includes(s.isBBSqueeze)) return false;
     if(f.valuasi.length && !f.valuasi.includes(s.valuasi)) return false;
+    if(f.capCategory.length && !f.capCategory.includes(s.capCategory)) return false;
+    if(f.freqSpike.length && !f.freqSpike.includes(s.freqSpike)) return false;
+    if(f.rekomendasi.length && !f.rekomendasi.includes(s.rekomendasi)) return false;
 
     const rf = state.rangeFilters;
     if(!inRange(s.bbWidth, rf.bbWidth)) return false;
@@ -2532,8 +2588,27 @@ function render(){
     document.querySelectorAll("#detailModalContent [data-chart]").forEach(b=> b.onclick = ()=>{ closeDetail(); loadChart(b.dataset.chart); });
 
     // --- Broker Summary di dalam modal Detail Emiten ---
-    const dbsDateInput = document.getElementById("dbsDate");
-    if(dbsDateInput) dbsDateInput.onchange = (e) => { state.detailBsDate = e.target.value; };
+    const dbsDateFromInput = document.getElementById("dbsDateFrom");
+    if(dbsDateFromInput) dbsDateFromInput.onchange = (e) => { state.detailBsDateFrom = e.target.value; };
+    const dbsDateToInput = document.getElementById("dbsDateTo");
+    if(dbsDateToInput) dbsDateToInput.onchange = (e) => { state.detailBsDateTo = e.target.value; };
+    const dbsEditDateInput = document.getElementById("dbsEditDate");
+    if(dbsEditDateInput) dbsEditDateInput.onchange = (e) => {
+      state.detailBsEditDate = e.target.value;
+      const rows = (state.detailBsRows||[]).filter(r=>r.trade_date===e.target.value);
+      state.detailBsEditRows = rows.map(r=>({ side:r.side, rank:r.rank, broker_code:r.broker_code, lot:r.lot, value_idr:r.value_idr }));
+      render();
+    };
+    document.querySelectorAll("#detailModalContent [data-dbs-edit-date]").forEach(btn=>{
+      btn.onclick = () => {
+        const date = btn.dataset.dbsEditDate;
+        state.detailBsEditDate = date;
+        const rows = (state.detailBsRows||[]).filter(r=>r.trade_date===date);
+        state.detailBsEditRows = rows.map(r=>({ side:r.side, rank:r.rank, broker_code:r.broker_code, lot:r.lot, value_idr:r.value_idr }));
+        state.detailBsEditorOpen = true;
+        render();
+      };
+    });
     const dbsLoadBtn = document.getElementById("dbsLoadBtn");
     if(dbsLoadBtn) dbsLoadBtn.onclick = loadDetailBrokerSummary;
     const dbsSaveBtn = document.getElementById("dbsSaveBtn");
@@ -2606,6 +2681,7 @@ const FILTER_LABELS = {
   sektor:"Sektor", syariahLabel:"Syariah", trendHarga:"Trend", cekMacd:"MACD", polaCandle:"Pola Candle",
   sinyalVolume:"Sinyal Volume", sinyalFrekuensi:"Sinyal Frekuensi", keyakinanNaik:"Keyakinan Naik", cekHarga:"Sinyal Harga", cekRsi:"Sinyal RSI",
   statusRsi:"Status RSI", band:"Bandarmologi", uangGedeMasuk:"Uang Gede", isBBSqueeze:"BB Squeeze", valuasi:"Valuasi",
+  capCategory:"Kategori Kap.", freqSpike:"Freq Spike", rekomendasi:"Rekomendasi Setup",
   bbWidth:"BB Width", atr14:"ATR 14", clv:"CLV", rsi7:"RSI 7", rsi21:"RSI 21", frequency:"Frekuensi"
 };
 const PRESET_LABELS = { bagger:"Skor Bagger ≥75", eri:"Eri Ginanjar", rsicross:"RSI & Harga Cross", golden:"Golden Cross DSI", uptrend:"Super Uptrend", breakout:"Volatility Breakout", pullback:"Pullback Uptrend", custom_bandar:"BPJS", asing_akumulasi:"Akumulasi Asing (IDX)", freq_spike:"Lonjakan Frekuensi" };
@@ -3204,6 +3280,7 @@ function renderScreener(){
         <div class="filter-grid">
           ${renderMultiSelect("sektor", "Sektor", getOpts("sektor"))}
           ${renderMultiSelect("syariahLabel", "Syariah", getOpts("syariahLabel"))}
+          ${renderMultiSelect("capCategory", "Kategori Kap.", getOpts("capCategory"))}
         </div>
       </div>
 
@@ -3224,9 +3301,11 @@ function renderScreener(){
         <div class="filter-grid">
           ${renderMultiSelect("sinyalVolume", "Sinyal Volume", getOpts("sinyalVolume"))}
           ${renderMultiSelect("sinyalFrekuensi", "Sinyal Frekuensi", getOpts("sinyalFrekuensi"))}
+          ${renderMultiSelect("freqSpike", "Freq Spike", getOpts("freqSpike"))}
           ${renderMultiSelect("keyakinanNaik", "Keyakinan Naik", getOpts("keyakinanNaik"))}
           ${renderMultiSelect("band", "Bandarmologi", getOpts("band"))}
           ${renderMultiSelect("uangGedeMasuk", "Uang Gede Masuk", getOpts("uangGedeMasuk"))}
+          ${renderMultiSelect("rekomendasi", "Rekomendasi Setup", getOpts("rekomendasi"))}
         </div>
       </div>
 
