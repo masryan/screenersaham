@@ -114,6 +114,17 @@ async function stockbitFetch(endpointTemplate, ticker){
 // ada opsi "semua yang lolos filter" supaya tidak sengaja membombardir
 // akun Stockbit sendiri dengan ratusan request.
 //
+// PENTING: 1 request = 1 SAHAM x 1 HARI (bukan 1 request untuk seluruh
+// rentang tanggal). Awalnya sempat dicoba 1 request per saham untuk
+// seluruh rentang (from..to) supaya lebih hemat request, tapi ternyata
+// parameter "limit" di endpoint membatasi TOTAL baris gabungan semua
+// hari — untuk saham aktif, itu berarti cuma tanggal tertentu saja yang
+// kebagian jatah sebelum limit habis, sisanya hilang begitu saja
+// (lihat histori: query 10 hari, yang kesimpan cuma 1 tanggal). Dengan
+// query per-hari, tiap tanggal punya jatah "limit" sendiri-sendiri jadi
+// jauh lebih reliable, walau jumlah request ke Stockbit jadi lebih
+// banyak (tickers x hari) — makanya ada jeda antar-request di bawah.
+//
 // SKEMA RESPONS BELUM DIKETAHUI: endpoint broker summary Stockbit belum
 // diverifikasi (field "Endpoint Broker Summary" di Pengaturan memang
 // masih kosong by default, diisi sendiri oleh user dari tab Network).
@@ -238,57 +249,61 @@ async function fetchAndSaveBrokerSummaryBulk(tickers, days){
   if(!SUPABASE_URL || !SUPABASE_KEY){ openSettings(); return; }
 
   const tradingDates = tradingDaysBack(days); // urut lama -> baru
-  const fromDate = tradingDates[0];
-  const toDate = tradingDates[tradingDates.length - 1];
 
   state.stockbitBrokerBulkLoading = true;
-  state.stockbitBrokerBulkProgress = { done: 0, total: tickers.length }; // 1 request per SAHAM sekarang, bukan per hari
+  // 1 request per SAHAM per HARI (lihat catatan di atas fungsi ini kenapa
+  // bukan 1 request untuk seluruh rentang tanggal sekaligus).
+  state.stockbitBrokerBulkProgress = { done: 0, total: tickers.length * tradingDates.length };
   state.stockbitBrokerBulkResults = [];
   render();
 
   for(const ticker of tickers){
-    const res = await stockbitFetchMarketDetector(ticker, fromDate, toDate);
-    if(res.error){
-      state.stockbitBrokerBulkResults.push({ ticker, date: `${fromDate}..${toDate}`, ok:false, msg: res.error });
-    } else {
-      const byDate = parseStockbitMarketDetector(res.raw);
-      if(!byDate || !Object.keys(byDate).length){
-        state.stockbitBrokerBulkResults.push({ ticker, date: `${fromDate}..${toDate}`, ok:false, msg: "Skema respons tidak dikenali / tidak ada data (cek raw JSON manual dulu)." });
+    const rows = [];
+    const failedDates = []; // {date, msg}
+    let successDays = 0;
+
+    for(const date of tradingDates){
+      const res = await stockbitFetchMarketDetector(ticker, date, date);
+      if(res.error){
+        failedDates.push({ date, msg: res.error });
       } else {
-        const rows = [];
-        tradingDates.forEach(d => {
-          const dd = byDate[d];
-          if(!dd) return;
-          dd.buy.forEach(r => rows.push({ stock_code:ticker, trade_date:d, side:"buy", rank:r.rank, broker_code:r.broker_code, lot:r.lot, value_idr:r.value_idr }));
-          dd.sell.forEach(r => rows.push({ stock_code:ticker, trade_date:d, side:"sell", rank:r.rank, broker_code:r.broker_code, lot:r.lot, value_idr:r.value_idr }));
-        });
-        const missingDates = tradingDates.filter(d => !byDate[d]);
-        if(!rows.length){
-          state.stockbitBrokerBulkResults.push({ ticker, date: `${fromDate}..${toDate}`, ok:false, msg: "Tidak ada baris broker valid di respons ini." });
+        const byDate = parseStockbitMarketDetector(res.raw);
+        const dd = byDate && byDate[date];
+        if(!dd || (!dd.buy.length && !dd.sell.length)){
+          failedDates.push({ date, msg: "tidak ada data (kemungkinan libur bursa)" });
         } else {
-          try{
-            await supaFetch(`${SUPABASE_URL}/broker_summary?on_conflict=stock_code,trade_date,side,rank`, {
-              method: "POST",
-              headers: { ...getSupaHeaders(), "Prefer": "resolution=merge-duplicates,return=minimal" },
-              body: JSON.stringify(rows)
-            });
-            let msg = `Tersimpan ${rows.length} baris untuk ${Object.keys(byDate).length}/${tradingDates.length} hari bursa.`;
-            // "limit" di URL endpoint membatasi TOTAL baris gabungan semua
-            // tanggal, jadi kalau sahamnya sangat aktif & rentang harinya
-            // lebar, sebagian hari bisa kepotong (tidak ikut ke-return).
-            // Kalau itu terjadi, kelihatan di sini supaya user tahu perlu
-            // naikkan "limit" di Endpoint Pengaturan atau pakai rentang lebih pendek.
-            if(missingDates.length) msg += ` ⚠️ ${missingDates.length} hari tidak ada data (kemungkinan libur bursa, ATAU "limit" di endpoint kurang besar untuk saham seaktif ini — coba naikkan limit di Pengaturan): ${missingDates.join(", ")}`;
-            state.stockbitBrokerBulkResults.push({ ticker, date: `${fromDate}..${toDate}`, ok:true, msg });
-          }catch(e){
-            state.stockbitBrokerBulkResults.push({ ticker, date: `${fromDate}..${toDate}`, ok:false, msg: "Gagal simpan ke DB: " + e.message });
-          }
+          successDays++;
+          dd.buy.forEach(r => rows.push({ stock_code:ticker, trade_date:date, side:"buy", rank:r.rank, broker_code:r.broker_code, lot:r.lot, value_idr:r.value_idr }));
+          dd.sell.forEach(r => rows.push({ stock_code:ticker, trade_date:date, side:"sell", rank:r.rank, broker_code:r.broker_code, lot:r.lot, value_idr:r.value_idr }));
         }
       }
+      state.stockbitBrokerBulkProgress.done++;
+      render();
+      // Jeda antar-request (sekarang per SAHAM x HARI, jadi totalnya lebih
+      // banyak dari sebelumnya) supaya tidak membombardir akun Stockbit.
+      await new Promise(r => setTimeout(r, 300));
     }
-    state.stockbitBrokerBulkProgress.done++;
+
+    if(!rows.length){
+      state.stockbitBrokerBulkResults.push({
+        ticker, date: `${tradingDates[0]}..${tradingDates[tradingDates.length-1]}`, ok:false,
+        msg: `Tidak ada data sama sekali untuk ${tradingDates.length} hari ini. Cek Token/Endpoint di Pengaturan, atau skema respons berubah (lihat raw JSON manual).`
+      });
+    } else {
+      try{
+        await supaFetch(`${SUPABASE_URL}/broker_summary?on_conflict=stock_code,trade_date,side,rank`, {
+          method: "POST",
+          headers: { ...getSupaHeaders(), "Prefer": "resolution=merge-duplicates,return=minimal" },
+          body: JSON.stringify(rows)
+        });
+        let msg = `Tersimpan ${rows.length} baris untuk ${successDays}/${tradingDates.length} hari bursa.`;
+        if(failedDates.length) msg += ` ⚠️ ${failedDates.length} hari gagal/kosong: ${failedDates.map(f=>f.date).join(", ")}`;
+        state.stockbitBrokerBulkResults.push({ ticker, date: `${tradingDates[0]}..${tradingDates[tradingDates.length-1]}`, ok:true, msg });
+      }catch(e){
+        state.stockbitBrokerBulkResults.push({ ticker, date: `${tradingDates[0]}..${tradingDates[tradingDates.length-1]}`, ok:false, msg: "Gagal simpan ke DB: " + e.message });
+      }
+    }
     render();
-    await new Promise(r => setTimeout(r, 350)); // tetap jaga jeda antar-SAHAM (bukan antar-hari lagi)
   }
 
   state.stockbitBrokerBulkLoading = false;
@@ -4066,8 +4081,9 @@ function renderBrokerSummary(){
             selama periode hari bursa terakhir yang kamu atur di samping (Senin&ndash;Jumat, belum
             menghitung libur bursa nasional). Butuh "Endpoint Broker Summary" &amp; Token terisi di
             ⚙️ Pengaturan. Hasil otomatis disimpan langsung ke database yang sama seperti input manual
-            di bawah. Makin banyak hari, makin besar juga "limit" yang perlu diisi di endpoint (lihat
-            ⚙️ Pengaturan) supaya data tidak kepotong.
+            di bawah. Ditarik <b>per hari satu-satu</b> (bukan sekaligus satu rentang) supaya tidak ada
+            tanggal yang kepotong &mdash; makin banyak hari/saham yang dicentang, makin lama & makin
+            banyak request ke Stockbit.
           </div>
           <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
             <label for="bsBulkDaysInput" style="font-size:11.5px; color:var(--muted); white-space:nowrap;">Periode (hari bursa)</label>
