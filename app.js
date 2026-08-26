@@ -564,8 +564,11 @@ async function openSettings() {
 
   // --- Notifikasi Telegram ---
   const tgFnEl = document.getElementById("setTelegramFunctionUrl");
-  if(tgFnEl) tgFnEl.value = state.telegramFunctionUrl || "";
+  if(tgFnEl) tgFnEl.value = state.telegramFunctionUrl || ""; // isi awal dari localStorage, sambil menunggu fetch di bawah
   await Promise.all([refreshCustomPresets(), loadTelegramSettingsFromSupabase()]);
+  // Timpa lagi setelah fetch selesai — kalau Supabase punya function_url tersimpan,
+  // itu yang dipakai (lihat loadTelegramSettingsFromSupabase), bukan cuma localStorage.
+  if(tgFnEl) tgFnEl.value = state.telegramFunctionUrl || "";
   const tgTokenEl = document.getElementById("setTelegramBotToken");
   if(tgTokenEl) tgTokenEl.value = state.telegramBotToken || "";
   const tgChatEl = document.getElementById("setTelegramChatId");
@@ -662,6 +665,13 @@ async function loadTelegramSettingsFromSupabase(){
     state.telegramPresetIds = Array.isArray(row.preset_ids) ? row.preset_ids.map(String) : [];
     state.telegramLastRunAt = row.last_run_at || null;
     state.telegramLastRunNote = row.last_run_note || null;
+    // function_url disimpan di Supabase (kolom telegram_settings.function_url)
+    // supaya tidak perlu diisi ulang tiap buka Pengaturan di device/browser lain.
+    // Kalau kolomnya belum pernah diisi (null), tetap pakai nilai localStorage lama.
+    if(row.function_url){
+      state.telegramFunctionUrl = row.function_url;
+      try{ localStorage.setItem(LS_TELEGRAM_FUNCTION_URL, state.telegramFunctionUrl); }catch(e){}
+    }
   }catch(e){ /* offline / tabel belum ada — abaikan, form tetap terisi default */ }
 }
 
@@ -677,6 +687,7 @@ async function saveTelegramSettingsToSupabase(){
         enabled: state.telegramEnabled,
         only_market_hours: state.telegramOnlyMarketHours,
         preset_ids: state.telegramPresetIds,
+        function_url: state.telegramFunctionUrl,
         updated_at: new Date().toISOString()
       })
     });
@@ -744,6 +755,8 @@ async function testTelegramNotification(){
   // request ini) memakai nilai terbaru saat mengirim test.
   state.telegramBotToken = (document.getElementById("setTelegramBotToken")?.value || "").trim();
   state.telegramChatId = (document.getElementById("setTelegramChatId")?.value || "").trim();
+  state.telegramFunctionUrl = fnUrl;
+  localStorage.setItem(LS_TELEGRAM_FUNCTION_URL, state.telegramFunctionUrl);
   await saveTelegramSettingsToSupabase();
 
   state.telegramTesting = true;
