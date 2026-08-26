@@ -169,13 +169,42 @@ function tradingDaysBack(n, fromDate = new Date()){
   return days.reverse(); // urut lama -> baru
 }
 
-async function stockbitFetchMarketDetector(ticker, fromDate, toDate){
+// Sama seperti tradingDaysBack, tapi rentangnya ditentukan lewat tanggal Dari–Sampai
+// eksplisit (bukan "mundur N hari dari sekarang") — dipakai untuk Periode Tarik Otomatis
+// yang sekarang bisa dipilih bebas lewat 2 input tanggal di UI.
+function tradingDaysInRange(fromDateStr, toDateStr){
+  const days = [];
+  if(!fromDateStr || !toDateStr) return days;
+  let d = new Date(fromDateStr + "T00:00:00");
+  const end = new Date(toDateStr + "T00:00:00");
+  if(d > end) return days; // Dari lebih baru dari Sampai — dianggap tidak valid, biar kelihatan kosong
+  while(d <= end){
+    const dow = d.getDay();
+    const iso = d.toISOString().slice(0,10);
+    if(dow !== 0 && dow !== 6 && !BURSA_HOLIDAYS.has(iso)) days.push(iso);
+    d.setDate(d.getDate() + 1);
+  }
+  return days; // sudah urut lama -> baru
+}
+
+async function stockbitFetchMarketDetector(ticker, fromDate, toDate, days){
   if(!state.stockbitToken) return { error: 'Token Stockbit belum diisi. Buka "⚙️ Pengaturan" → Live Data Stockbit.' };
   if(!state.stockbitBrokerEndpoint) return { error: 'Endpoint Broker Summary belum diisi di Pengaturan.' };
+  // Endpoint /marketdetectors mengembalikan baris CAMPUR banyak tanggal
+  // sekaligus dalam satu response, dan "limit" di URL membatasi TOTAL baris
+  // gabungan itu — bukan per hari. Kalau limit terlalu kecil untuk rentang
+  // hari & keaktifan saham, tanggal-tanggal lama bisa kepotong (tidak ikut
+  // ke-return sama sekali). Di sini limit dihitung otomatis dari jumlah
+  // hari yang diminta (dengan margin), supaya tidak perlu diutak-atik
+  // manual tiap kali "Periode" diubah. Kalau URL endpoint kamu (custom di
+  // Pengaturan) masih pakai angka mati (mis. "limit=200"), ganti jadi
+  // "limit={limit}" dulu supaya nilai otomatis ini kepakai.
+  const computedLimit = Math.max(500, (Number(days) || 1) * 300);
   const url = state.stockbitBrokerEndpoint
     .replace("{ticker}", encodeURIComponent(ticker))
     .replace("{from}", fromDate)   // format YYYY-MM-DD, sesuai contoh URL yang diverifikasi manual
-    .replace("{to}", toDate);
+    .replace("{to}", toDate)
+    .replace("{limit}", computedLimit);
   try{
     let res;
     if(state.stockbitProxyUrl){
@@ -255,7 +284,46 @@ function parseStockbitMarketDetector(raw){
   return byDate;
 }
 
-async function fetchAndSaveBrokerSummaryBulk(tickers, days = 10){
+// Endpoint /marketdetectors membatasi TOTAL baris gabungan lewat "limit" —
+// tapi dari pengujian lapangan (25 Agu 2026), ada masalah yang LEBIH
+// MENDASAR: endpoint ini kelihatannya TIDAK benar-benar mendukung rentang
+// from–to. Waktu dicoba pecah jadi beberapa chunk beberapa hari (mis. 4
+// hari per request), hasilnya PERSIS 1 hari data per chunk — cocok dengan
+// pola "cuma mengembalikan data untuk tanggal `to`, mengabaikan `from`".
+// Jadi satu-satunya cara yang terbukti dapat semua hari adalah: minta
+// SATU hari per request (from = to = tanggal itu), bukan rentang.
+// Ini artinya jumlah request ke Stockbit jadi = jumlah hari yang diminta
+// (bukan lagi dibagi jadi beberapa chunk besar) — lebih banyak request,
+// tapi ini yang terbukti benar-benar mengembalikan datanya.
+const STOCKBIT_BROKER_CHUNK_DAYS = 1; // JANGAN naikkan kecuali endpoint terbukti mendukung rentang beneran — lihat catatan di atas
+
+function chunkArray(arr, size){
+  const out = [];
+  for(let i=0; i<arr.length; i+=size) out.push(arr.slice(i, i+size));
+  return out;
+}
+
+// Cek tanggal mana saja (dari kandidat `dates`) yang SUDAH ada baris
+// broker_summary-nya di Supabase untuk ticker ini, supaya tidak perlu
+// tarik ulang ke Stockbit untuk hari yang datanya sudah tersimpan.
+async function fetchExistingBrokerDates(ticker, dates){
+  if(!dates.length) return new Set();
+  try{
+    const qs = new URLSearchParams({
+      stock_code: `eq.${ticker}`,
+      trade_date: `in.(${dates.join(",")})`,
+      select: "trade_date",
+    });
+    const res = await fetch(`${SUPABASE_URL}/broker_summary?${qs}`, { headers: getSupaHeaders(), cache: "no-store" });
+    if(!res.ok) return new Set(); // gagal cek = anggap belum ada, biar tetap ditarik (aman, cuma jadi tidak optimal)
+    const rows = await res.json();
+    return new Set(rows.map(r => r.trade_date));
+  }catch(e){
+    return new Set();
+  }
+}
+
+async function fetchAndSaveBrokerSummaryBulk(tickers, rangeFrom, rangeTo){
   if(state.stockbitBrokerBulkLoading) return;
   if(!tickers || !tickers.length){
     state.stockbitBrokerBulkResults = [{ ticker:"-", date:"-", ok:false, msg:"Centang minimal 1 saham di tab Screener dulu." }];
@@ -268,32 +336,71 @@ async function fetchAndSaveBrokerSummaryBulk(tickers, days = 10){
   }
   if(!SUPABASE_URL || !SUPABASE_KEY){ openSettings(); return; }
 
-  const tradingDates = tradingDaysBack(days); // urut lama -> baru
+  const tradingDates = tradingDaysInRange(rangeFrom, rangeTo); // urut lama -> baru
+  if(!tradingDates.length){
+    state.stockbitBrokerBulkResults = [{ ticker:"-", date:"-", ok:false, msg:'Periode tanggal tidak valid atau tidak ada hari bursa di rentang itu — cek lagi tanggal "Dari" dan "Sampai".' }];
+    render(); return;
+  }
   const fromDate = tradingDates[0];
   const toDate = tradingDates[tradingDates.length - 1];
+  const latestDate = toDate; // hari bursa paling baru dalam periode ini — SELALU ditarik ulang, lihat catatan di bawah
 
   state.stockbitBrokerBulkLoading = true;
-  state.stockbitBrokerBulkProgress = { done: 0, total: tickers.length }; // 1 request per SAHAM sekarang, bukan per hari
+  state.stockbitBrokerBulkProgress = { done: 0, total: tickers.length }; // progress tetap dihitung per SAHAM (tiap saham di dalamnya bisa beberapa request kecil)
   state.stockbitBrokerBulkResults = [];
   render();
 
   for(const ticker of tickers){
-    const res = await stockbitFetchMarketDetector(ticker, fromDate, toDate);
-    if(res.error){
-      state.stockbitBrokerBulkResults.push({ ticker, date: `${fromDate}..${toDate}`, ok:false, msg: res.error });
-    } else {
-      const byDate = parseStockbitMarketDetector(res.raw);
-      if(!byDate || !Object.keys(byDate).length){
-        state.stockbitBrokerBulkResults.push({ ticker, date: `${fromDate}..${toDate}`, ok:false, msg: "Skema respons tidak dikenali / tidak ada data (cek raw JSON manual dulu)." });
+    // Skip hari yang datanya SUDAH ada di database (broker summary hari yang
+    // sudah lewat itu final, tidak berubah lagi) — kecuali hari bursa paling
+    // baru dalam periode ini, yang tetap ditarik ulang tiap kali karena
+    // kemungkinan datanya masih berjalan/belum final saat sesi bursa berlangsung.
+    const existingDates = await fetchExistingBrokerDates(ticker, tradingDates);
+    const datesToFetch = tradingDates.filter(d => !existingDates.has(d) || d === latestDate);
+    const skippedCount = tradingDates.length - datesToFetch.length;
+
+    if(!datesToFetch.length){
+      state.stockbitBrokerBulkResults.push({ ticker, date: `${fromDate}..${toDate}`, ok:true, msg: `Semua ${tradingDates.length} hari sudah ada di database, dilewati (tidak ada request ke Stockbit).` });
+      state.stockbitBrokerBulkProgress.done++;
+      render();
+      continue; // tidak perlu jeda 350ms karena tidak ada request Stockbit sama sekali
+    }
+
+    // Ambil tiap potongan tanggal (yang belum ada) secara berurutan lalu
+    // gabungkan byDate-nya, supaya satu request yang gagal/kepotong tidak
+    // menghilangkan potongan lain.
+    const dateChunks = chunkArray(datesToFetch, STOCKBIT_BROKER_CHUNK_DAYS); // pecah jadi beberapa request kecil, lihat catatan di atas
+    let byDate = {};
+    let lastError = null;
+    let anyOk = false;
+    for(const chunk of dateChunks){
+      const chunkFrom = chunk[0], chunkTo = chunk[chunk.length - 1];
+      const res = await stockbitFetchMarketDetector(ticker, chunkFrom, chunkTo, chunk.length);
+      if(res.error){
+        lastError = res.error;
       } else {
+        const parsed = parseStockbitMarketDetector(res.raw);
+        if(parsed && Object.keys(parsed).length){
+          Object.assign(byDate, parsed);
+          anyOk = true;
+        }
+      }
+      if(dateChunks.length > 1) await new Promise(r => setTimeout(r, 300)); // jeda antar-potongan tanggal, jaga rate limit
+    }
+
+    if(!anyOk){
+      state.stockbitBrokerBulkResults.push({ ticker, date: `${fromDate}..${toDate}`, ok:false, msg: lastError || "Skema respons tidak dikenali / tidak ada data (cek raw JSON manual dulu)." });
+    } else {
         const rows = [];
-        tradingDates.forEach(d => {
+        datesToFetch.forEach(d => {
           const dd = byDate[d];
           if(!dd) return;
           dd.buy.forEach(r => rows.push({ stock_code:ticker, trade_date:d, side:"buy", rank:r.rank, broker_code:r.broker_code, lot:r.lot, value_idr:r.value_idr }));
           dd.sell.forEach(r => rows.push({ stock_code:ticker, trade_date:d, side:"sell", rank:r.rank, broker_code:r.broker_code, lot:r.lot, value_idr:r.value_idr }));
         });
-        const missingDates = tradingDates.filter(d => !byDate[d]);
+        // "Hilang" di sini = hari yang sebelumnya belum ada di DB DAN gagal ditarik sekarang —
+        // hari yang sudah ada di DB (di-skip) tidak dianggap hilang.
+        const missingDates = datesToFetch.filter(d => !byDate[d]);
         if(!rows.length){
           state.stockbitBrokerBulkResults.push({ ticker, date: `${fromDate}..${toDate}`, ok:false, msg: "Tidak ada baris broker valid di respons ini." });
         } else {
@@ -303,20 +410,19 @@ async function fetchAndSaveBrokerSummaryBulk(tickers, days = 10){
               headers: { ...getSupaHeaders(), "Prefer": "resolution=merge-duplicates,return=minimal" },
               body: JSON.stringify(rows)
             });
-            let msg = `Tersimpan ${rows.length} baris untuk ${Object.keys(byDate).length}/${tradingDates.length} hari bursa.`;
-            // "limit" di URL endpoint membatasi TOTAL baris gabungan semua
-            // tanggal, jadi kalau sahamnya sangat aktif & rentang harinya
-            // lebar, sebagian hari bisa kepotong (tidak ikut ke-return).
-            // Kalau itu terjadi, kelihatan di sini supaya user tahu perlu
-            // naikkan "limit" di Endpoint Pengaturan atau pakai rentang lebih pendek.
-            if(missingDates.length) msg += ` ⚠️ ${missingDates.length} hari tidak ada data: ${missingDates.join(", ")} (cek dulu apakah tanggal itu ada di BURSA_HOLIDAYS di app.js — kalau BUKAN hari libur bursa, kemungkinan "limit" di endpoint kurang besar untuk saham seaktif ini, coba naikkan di Pengaturan)`;
+            let msg = `Tersimpan ${rows.length} baris untuk ${Object.keys(byDate).length}/${datesToFetch.length} hari yang ditarik.`;
+            if(skippedCount) msg += ` (${skippedCount} hari lain dilewati, sudah ada di database.)`;
+            // Sekarang tiap request cuma mencakup STOCKBIT_BROKER_CHUNK_DAYS hari
+            // (lihat catatan di atas fetchAndSaveBrokerSummaryBulk), jadi kalau
+            // masih ada hari kosong itu BUKAN lagi soal "limit" di URL — lebih
+            // mungkin memang hari libur bursa, atau salah satu request chunk gagal.
+            if(missingDates.length) msg += ` ⚠️ ${missingDates.length} hari tidak ada data: ${missingDates.join(", ")} (cek dulu apakah tanggal itu ada di BURSA_HOLIDAYS di app.js — kalau BUKAN hari libur bursa dan STOCKBIT_BROKER_CHUNK_DAYS sudah 1, kemungkinan besar Stockbit memang tidak punya data broker net untuk saham ini di hari itu, mis. saham tidak likuid / tidak ada transaksi signifikan)`;
             state.stockbitBrokerBulkResults.push({ ticker, date: `${fromDate}..${toDate}`, ok:true, msg });
           }catch(e){
             state.stockbitBrokerBulkResults.push({ ticker, date: `${fromDate}..${toDate}`, ok:false, msg: "Gagal simpan ke DB: " + e.message });
           }
         }
       }
-    }
     state.stockbitBrokerBulkProgress.done++;
     render();
     await new Promise(r => setTimeout(r, 350)); // tetap jaga jeda antar-SAHAM (bukan antar-hari lagi)
@@ -455,6 +561,26 @@ async function openSettings() {
   const synced = await syncStockbitTokenFromSupabase();
   if(synced && stbToken) stbToken.value = state.stockbitToken;
   updateStockbitTokenStatusUI();
+
+  // --- Notifikasi Telegram ---
+  const tgFnEl = document.getElementById("setTelegramFunctionUrl");
+  if(tgFnEl) tgFnEl.value = state.telegramFunctionUrl || "";
+  await Promise.all([refreshCustomPresets(), loadTelegramSettingsFromSupabase()]);
+  const tgTokenEl = document.getElementById("setTelegramBotToken");
+  if(tgTokenEl) tgTokenEl.value = state.telegramBotToken || "";
+  const tgChatEl = document.getElementById("setTelegramChatId");
+  if(tgChatEl) tgChatEl.value = state.telegramChatId || "";
+  const tgEnabledEl = document.getElementById("setTelegramEnabled");
+  if(tgEnabledEl) tgEnabledEl.checked = !!state.telegramEnabled;
+  const tgHoursEl = document.getElementById("setTelegramOnlyMarketHours");
+  if(tgHoursEl) tgHoursEl.checked = state.telegramOnlyMarketHours !== false;
+  renderTelegramPresetChecklist();
+  const tgLastRunEl = document.getElementById("telegramLastRunStatus");
+  if(tgLastRunEl){
+    tgLastRunEl.textContent = state.telegramLastRunAt
+      ? `Terakhir cek server: ${new Date(state.telegramLastRunAt).toLocaleString("id-ID")} — ${state.telegramLastRunNote || ""}`
+      : "Belum pernah dijalankan Cron server (atau tabel telegram_settings belum dibuat).";
+  }
 }
 function updateStockbitTokenStatusUI(){
   const el = document.getElementById("stockbitTokenStatus");
@@ -495,7 +621,15 @@ function saveSettings() {
   localStorage.setItem(LS_STOCKBIT_QUOTE_EP, state.stockbitQuoteEndpoint);
   localStorage.setItem(LS_STOCKBIT_BROKER_EP, state.stockbitBrokerEndpoint);
   localStorage.setItem(LS_STOCKBIT_PROXY, state.stockbitProxyUrl);
-  
+
+  state.telegramFunctionUrl = (document.getElementById("setTelegramFunctionUrl")?.value || "").trim();
+  localStorage.setItem(LS_TELEGRAM_FUNCTION_URL, state.telegramFunctionUrl);
+  state.telegramBotToken = (document.getElementById("setTelegramBotToken")?.value || "").trim();
+  state.telegramChatId = (document.getElementById("setTelegramChatId")?.value || "").trim();
+  state.telegramEnabled = !!document.getElementById("setTelegramEnabled")?.checked;
+  state.telegramOnlyMarketHours = !!document.getElementById("setTelegramOnlyMarketHours")?.checked;
+  saveTelegramSettingsToSupabase();
+
   closeSettings();
   
   if(SUPABASE_URL && SUPABASE_KEY) {
@@ -506,6 +640,126 @@ function saveSettings() {
 }
 
 // ==========================================
+// NOTIFIKASI TELEGRAM (tabel telegram_settings di Supabase)
+//
+// Dipantau & dikirim oleh Edge Function `telegram-notifier` yang jalan
+// di server lewat Cron (lihat sql/06_telegram_notifikasi.sql) — bagian
+// di sini hanya UI untuk mengisi/menyimpan konfigurasinya dan tombol
+// uji-kirim manual.
+// ==========================================
+async function loadTelegramSettingsFromSupabase(){
+  if(!SUPABASE_URL || !SUPABASE_KEY) return;
+  try{
+    const res = await fetch(`${SUPABASE_URL}/telegram_settings?id=eq.1&select=*`, { headers: getSupaHeaders(), cache: "no-store" });
+    if(!res.ok) return; // tabel belum ada (belum jalankan sql/06_telegram_notifikasi.sql) — biarkan default
+    const rows = await res.json();
+    const row = Array.isArray(rows) ? rows[0] : null;
+    if(!row) return;
+    state.telegramBotToken = row.bot_token || "";
+    state.telegramChatId = row.chat_id || "";
+    state.telegramEnabled = !!row.enabled;
+    state.telegramOnlyMarketHours = row.only_market_hours !== false;
+    state.telegramPresetIds = Array.isArray(row.preset_ids) ? row.preset_ids.map(String) : [];
+    state.telegramLastRunAt = row.last_run_at || null;
+    state.telegramLastRunNote = row.last_run_note || null;
+  }catch(e){ /* offline / tabel belum ada — abaikan, form tetap terisi default */ }
+}
+
+async function saveTelegramSettingsToSupabase(){
+  if(!SUPABASE_URL || !SUPABASE_KEY) return;
+  try{
+    await supaFetch(`${SUPABASE_URL}/telegram_settings?id=eq.1`, {
+      method: "PATCH",
+      headers: { ...getSupaHeaders(), "Prefer": "return=minimal" },
+      body: JSON.stringify({
+        bot_token: state.telegramBotToken,
+        chat_id: state.telegramChatId,
+        enabled: state.telegramEnabled,
+        only_market_hours: state.telegramOnlyMarketHours,
+        preset_ids: state.telegramPresetIds,
+        updated_at: new Date().toISOString()
+      })
+    });
+  }catch(e){
+    showError("Gagal menyimpan Pengaturan Notifikasi Telegram: " + e.message + " — pastikan sudah menjalankan sql/06_telegram_notifikasi.sql di Supabase.");
+  }
+}
+
+// Centang/hapus centang 1 preset di daftar "preset yang dipantau" —
+// langsung disimpan ke Supabase supaya Edge Function di server melihat
+// perubahan ini di cron berikutnya, tidak perlu klik "Simpan & Reload".
+function toggleTelegramPreset(id){
+  const key = String(id);
+  const idx = state.telegramPresetIds.indexOf(key);
+  if(idx === -1) state.telegramPresetIds.push(key); else state.telegramPresetIds.splice(idx, 1);
+  renderTelegramPresetChecklist();
+  saveTelegramSettingsToSupabase();
+}
+
+function renderTelegramPresetChecklist(){
+  const el = document.getElementById("telegramPresetChecklist");
+  if(!el) return;
+
+  // Grup 1: 9 Preset DSI bawaan. Kunci disimpan dengan prefix "dsi:" (mis.
+  // "dsi:bagger") supaya Edge Function bisa bedakan dari id Preset Kustom
+  // (angka polos, tanpa prefix) — lihat functions/telegram-notifier/index.ts.
+  const dsiKeys = Object.keys(PRESET_LABELS);
+  const dsiHtml = dsiKeys.map(key => {
+    const fullId = `dsi:${key}`;
+    return `
+    <label style="display:grid;grid-template-columns:16px 1fr;align-items:center;gap:8px;font-size:12.5px;padding:6px 0;cursor:pointer;">
+      <input type="checkbox" class="custom-checkbox" style="margin:0;justify-self:start;" ${state.telegramPresetIds.includes(fullId) ? "checked" : ""} onchange="toggleTelegramPreset('${fullId}')">
+      <span style="text-align:left;">${escapeHtml(PRESET_LABELS[key])}</span>
+    </label>`;
+  }).join("");
+
+  // Grup 2: Preset Kustom (id polos angka, TANPA prefix — sama seperti
+  // sebelumnya, supaya query custom_presets?id=in.(...) di Edge Function
+  // tidak perlu diubah untuk yang ini).
+  const customHtml = state.customPresets.length
+    ? state.customPresets.map(p => `
+      <label style="display:grid;grid-template-columns:16px 1fr;align-items:center;gap:8px;font-size:12.5px;padding:6px 0;cursor:pointer;">
+        <input type="checkbox" class="custom-checkbox" style="margin:0;justify-self:start;" ${state.telegramPresetIds.includes(String(p.id)) ? "checked" : ""} onchange="toggleTelegramPreset('${p.id}')">
+        <span style="text-align:left;">${escapeHtml(p.name)}</span>
+      </label>`).join("")
+    : `<div style="font-size:11.5px;color:var(--muted);padding:4px 0;">Belum ada Preset Kustom tersimpan. Buat dulu lewat "+ Tambah Rule" di tab Screener, lalu "💾 Simpan sebagai Preset...".</div>`;
+
+  el.innerHTML = `
+    <div style="font-size:10.5px;color:var(--muted);text-transform:uppercase;letter-spacing:.04em;margin-bottom:2px;">Preset DSI Bawaan</div>
+    ${dsiHtml}
+    <div style="font-size:10.5px;color:var(--muted);text-transform:uppercase;letter-spacing:.04em;margin:10px 0 2px;border-top:1px solid var(--border);padding-top:8px;">Preset Kustom Saya</div>
+    ${customHtml}
+  `;
+}
+
+async function testTelegramNotification(){
+  const statusEl = document.getElementById("telegramTestStatus");
+  const fnUrl = (document.getElementById("setTelegramFunctionUrl")?.value || state.telegramFunctionUrl || "").trim();
+  if(!fnUrl){
+    if(statusEl){ statusEl.textContent = "Isi dulu \"URL Edge Function\" di bawah."; statusEl.style.color = "var(--down)"; }
+    return;
+  }
+  // Simpan dulu token/chat_id/preset yang sedang diketik supaya Edge
+  // Function di server (yang membaca dari Supabase, bukan dari body
+  // request ini) memakai nilai terbaru saat mengirim test.
+  state.telegramBotToken = (document.getElementById("setTelegramBotToken")?.value || "").trim();
+  state.telegramChatId = (document.getElementById("setTelegramChatId")?.value || "").trim();
+  await saveTelegramSettingsToSupabase();
+
+  state.telegramTesting = true;
+  if(statusEl){ statusEl.textContent = "Mengirim test..."; statusEl.style.color = "var(--muted)"; }
+  try{
+    const res = await fetch(fnUrl, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ test: true }) });
+    const body = await res.json().catch(()=>({}));
+    if(!res.ok) throw new Error(body.message || `HTTP ${res.status}`);
+    if(statusEl){ statusEl.textContent = "✅ Test terkirim — cek chat Telegram kamu."; statusEl.style.color = "var(--up)"; }
+  }catch(e){
+    if(statusEl){ statusEl.textContent = "❌ Gagal: " + e.message; statusEl.style.color = "var(--down)"; }
+  }
+  state.telegramTesting = false;
+}
+
+// ==========================================
 // APLIKASI UTAMA
 // ==========================================
 const LS_WATCHLIST = "ihsg_watchlist", LS_BACKTEST = "ihsg_backtest", LS_PORTO = "ihsg_portofolio", LS_STOCK_CACHE = "ihsg_stock_cache";
@@ -513,6 +767,12 @@ const LS_FREQ_ANALYZER_COL = "ihsg_freq_analyzer_col";
 const LS_CUSTOM_RULES = "ihsg_custom_rules_v1";
 const LS_STOCKBIT_TOKEN = "ihsg_stockbit_token", LS_STOCKBIT_QUOTE_EP = "ihsg_stockbit_quote_ep",
       LS_STOCKBIT_BROKER_EP = "ihsg_stockbit_broker_ep", LS_STOCKBIT_PROXY = "ihsg_stockbit_proxy";
+// Notifikasi Telegram — cuma URL Edge Function yang perlu disimpan lokal
+// (dipakai tombol "Uji Kirim Notifikasi" di browser). Bot token, chat ID,
+// status aktif, dan preset yang dipantau disimpan di Supabase (tabel
+// telegram_settings), bukan localStorage — supaya Edge Function di server
+// (dipanggil Cron, bukan dari browser ini) bisa membacanya juga.
+const LS_TELEGRAM_FUNCTION_URL = "ihsg_telegram_function_url";
 const STOCKBIT_DEFAULT_QUOTE_EP = "https://exodus.stockbit.com/stream/v3/symbol/{ticker}";
 // NOTE (25 Agu 2026): endpoint di atas TERBUKTI SALAH — itu API "Stream"
 // (linimasa komentar komunitas), bukan API harga. Endpoint quote/orderbook
@@ -521,7 +781,7 @@ const STOCKBIT_DEFAULT_QUOTE_EP = "https://exodus.stockbit.com/stream/v3/symbol/
 // dipakai ganti-ganti ticker cepat). Dibiarkan seperti ini dulu — field
 // "Endpoint Quote/Orderbook" di Pengaturan tetap bisa ditimpa manual kalau
 // endpoint yang benar sudah ketemu.
-const STOCKBIT_DEFAULT_BROKER_EP = "https://exodus.stockbit.com/marketdetectors/{ticker}?from={from}&to={to}&transaction_type=TRANSACTION_TYPE_NET&market_board=MARKET_BOARD_REGULER&investor_type=INVESTOR_TYPE_ALL&limit=200";
+const STOCKBIT_DEFAULT_BROKER_EP = "https://exodus.stockbit.com/marketdetectors/{ticker}?from={from}&to={to}&transaction_type=TRANSACTION_TYPE_NET&market_board=MARKET_BOARD_REGULER&investor_type=INVESTOR_TYPE_ALL&limit={limit}";
 // Diverifikasi manual dari DevTools tanggal 25 Agu 2026 (menu "Bandar
 // Detector" stockbit.com) — {ticker} di path URL, {from}/{to} format
 // YYYY-MM-DD. limit dinaikkan dari default Stockbit (25) ke 200 supaya lebih
@@ -606,12 +866,38 @@ let state = {
   stockbitBrokerEndpoint: STOCKBIT_DEFAULT_BROKER_EP, stockbitProxyUrl: "",
   stockbitTokenExpiresAt: null, stockbitTokenSyncedAt: null, stockbitTokenSource: "manual",
   stockbitLive: {}, stockbitBulkLoading: false, stockbitBulkProgress: null,
-  // Tarik otomatis Top 5 Broker Buy/Sell (10 hari bursa) HANYA untuk ticker
-  // yang dicentang (state.selectedForBacktest) — lihat fetchAndSaveBrokerSummaryBulk().
-  stockbitBrokerBulkLoading: false, stockbitBrokerBulkProgress: null, stockbitBrokerBulkResults: []
+  // Tarik otomatis Top 5 Broker Buy/Sell (jumlah hari bursa bisa diatur
+  // lewat input di UI, default 10) HANYA untuk ticker yang dicentang
+  // (state.selectedForBacktest) — lihat fetchAndSaveBrokerSummaryBulk().
+  stockbitBrokerBulkLoading: false, stockbitBrokerBulkProgress: null, stockbitBrokerBulkResults: [],
+  bsAutoBulkDays: 10,
+  // Periode Tarik Otomatis sekarang dipilih lewat tanggal Dari–Sampai (bukan cuma "N hari
+  // terakhir"), supaya bisa ambil rentang tanggal bebas di masa lalu, bukan cuma mundur dari
+  // hari ini. Default diisi otomatis saat pertama render (lihat renderBrokerSummary) mengikuti
+  // bsAutoBulkDays lama supaya perilaku awal tetap sama.
+  bsAutoBulkFrom: null, bsAutoBulkTo: null,
+  bsBulkResultsOpen: true, // status buka/tutup panel hasil Tarik Otomatis (accordion panah)
+  // ==========================================
+  // Notifikasi Telegram (tabel telegram_settings di Supabase, dieksekusi
+  // oleh Edge Function `telegram-notifier` yang dijadwalkan Cron server —
+  // lihat sql/06_telegram_notifikasi.sql). State di sini cuma cerminan
+  // untuk ditampilkan/diedit di ⚙️ Pengaturan, sumber kebenarannya tetap
+  // tabel telegram_settings.
+  // ==========================================
+  telegramBotToken: "", telegramChatId: "", telegramEnabled: false,
+  telegramOnlyMarketHours: true, telegramPresetIds: [],
+  telegramFunctionUrl: "", telegramLoading: false,
+  telegramLastRunAt: null, telegramLastRunNote: null,
+  telegramTestMsg: "", telegramTestMsgError: false, telegramTesting: false
 };
 
 function fmtNum(n){ if(n===null||n===undefined) return "-"; return new Intl.NumberFormat("id-ID").format(n); }
+function fmtDateID(iso){ // "2026-08-24" -> "24/08/2026"
+  if(!iso) return "-";
+  const [y,m,d] = iso.split("-");
+  if(!y||!m||!d) return iso;
+  return `${d}/${m}/${y}`;
+}
 function numOrNull(n){ if(n===null||n===undefined||n==="") return null; const v=parseFloat(n); return isNaN(v) ? null : v; }
 function boolLabel(v){
   if(v===true || v==="true" || v==="Ya" || v===1 || v==="1") return "Ya";
@@ -676,6 +962,7 @@ function loadSettings(){
     const savedRules = JSON.parse(localStorage.getItem(LS_CUSTOM_RULES)||"[]");
     state.customRules = Array.isArray(savedRules) ? savedRules : [];
   }catch(e){ state.customRules = []; }
+  try{ state.telegramFunctionUrl = localStorage.getItem(LS_TELEGRAM_FUNCTION_URL) || ""; }catch(e){}
 }
 function saveVisibleCols(){ localStorage.setItem(LS_VISIBLE_COLS, JSON.stringify([...state.visibleCols])); }
 function toggleColumn(key){
@@ -2354,7 +2641,18 @@ function enriched(){
     // Volume, karena Frekuensi & Volume adalah dua metrik berbeda.
     const freqBase = s.freqAnalyzer ?? s.avgFrequency3m ?? null;
     const freqRatio = (s.frequency!=null && freqBase) ? (s.frequency/freqBase) : null;
-    const freq = frequencySignal(freqRatio);
+    let freq = frequencySignal(freqRatio);
+    // Fallback: kalau tabel stocks_screener tidak punya kolom "frequency"
+    // (frekuensi transaksi HARI INI, beda dari frequency_ma20/ma50), rasio
+    // di atas selalu null. Kalau itu terjadi tapi backend sudah menghitung
+    // kolom freq_spike ("Ya"/lainnya) sendiri, pakai itu langsung sebagai
+    // sinyal — jangan biarkan filter kosong padahal datanya sebenarnya ada.
+    if (freqRatio == null && s.freqSpike != null) {
+      const isSpike = String(s.freqSpike).trim().toLowerCase() === "ya";
+      freq = isSpike
+        ? { ratio: null, label: "Ramai (Spike)", tone: "up" }
+        : { ratio: null, label: "Normal", tone: "muted" };
+    }
     const sinyalFrekuensi = freq.label;
 
     // Dipakai rule builder ("1 Day Volume Change") — persentase perubahan
@@ -2439,11 +2737,15 @@ function getFiltered(){
       if (s.foreignUpDays == null || s.foreignUpDays < 12) return false;
       if (s.turnover == null || s.turnover < 5e9) return false;
     } else if (state.activePreset === 'freq_spike') {
-      // Lonjakan jumlah transaksi vs rata-rata — perlu freqRatio (dari
-      // frequency & freq_ma20/avg_frequency_3m). Kalau kolom itu belum
-      // ada di DB, freqRatio selalu null → preset ini tidak mengeluarkan
-      // hasil, bukan salah menghitung dari Volume.
-      if (s.freqRatio == null || s.freqRatio < 1.5) return false;
+      // Lonjakan jumlah transaksi vs rata-rata. Prioritas: freqRatio kalau
+      // ada (dari frequency & freq_ma20/avg_frequency_3m). Kalau tabel
+      // tidak punya kolom "frequency" hari ini (freqRatio selalu null),
+      // fallback ke kolom freq_spike yang sudah dihitung backend, supaya
+      // preset ini tetap jalan pakai data yang memang tersedia di DB.
+      const isSpikeFromRatio = s.freqRatio != null && s.freqRatio >= 1.5;
+      const isSpikeFromDb = s.freqRatio == null && s.freqSpike != null
+        && String(s.freqSpike).trim().toLowerCase() === "ya";
+      if (!isSpikeFromRatio && !isSpikeFromDb) return false;
     }
 
     const f=state.filters;
@@ -3203,9 +3505,9 @@ function renderScreener(){
     ${renderRuleBuilder()}
     <div class="panel">
       <div class="filter-toolbar">
-        <div class="field" style="flex:0 0 auto;">
+        <div class="field" style="flex:1 1 100%;min-width:0;">
           <label>Screener DSI (Preset Siap Pakai)</label>
-          <div style="display:flex; gap:10px; flex-wrap:wrap;">
+          <div style="display:flex; gap:10px; flex-wrap:wrap; width:100%;">
             <button class="pill ${state.activePreset === 'bagger' ? 'pill-up' : 'pill-muted'}" onclick="state.activePreset = state.activePreset === 'bagger' ? null : 'bagger'; state.page=1; render();" title="Skor komposit dari formula_screening_saham_bagger.md: Fundamental 40% + Momentum Teknikal 35% + Volume/Smart Money 25%, total ≥75" style="font-weight:700;box-shadow:0 0 10px rgba(16,185,129,0.15);">🎯 Skor Bagger ≥75</button>
             <button class="pill ${state.activePreset === 'eri' ? 'pill-gold' : 'pill-muted'}" onclick="state.activePreset = state.activePreset === 'eri' ? null : 'eri'; state.page=1; render();">Eri Ginanjar</button>
             <button class="pill ${state.activePreset === 'rsicross' ? 'pill-gold' : 'pill-muted'}" onclick="state.activePreset = state.activePreset === 'rsicross' ? null : 'rsicross'; state.page=1; render();">RSI & Harga Cross</button>
@@ -4088,6 +4390,13 @@ function bsStatusRowHtml(rows){
 function emptyBsRow(side, rank){ return { side, rank, broker_code:"", lot:"", value_idr:"" }; }
 
 function renderBrokerSummary(){
+  // Default Periode Dari–Sampai (dipakai kalau user belum pernah mengubahnya) —
+  // meniru default lama "10 hari bursa terakhir" supaya perilaku awal tetap sama.
+  if(!state.bsAutoBulkFrom || !state.bsAutoBulkTo){
+    const defaultDates = tradingDaysBack(state.bsAutoBulkDays || 10);
+    state.bsAutoBulkFrom = defaultDates[0];
+    state.bsAutoBulkTo = defaultDates[defaultDates.length - 1];
+  }
   const editRows = state.bsEditRows && state.bsEditRows.length ? state.bsEditRows : [];
   const buyEdit = [0,1,2,3,4].map(i => editRows.find(r=>r.side==="buy" && r.rank===i+1) || emptyBsRow("buy", i+1));
   const sellEdit = [0,1,2,3,4].map(i => editRows.find(r=>r.side==="sell" && r.rank===i+1) || emptyBsRow("sell", i+1));
@@ -4125,26 +4434,51 @@ function renderBrokerSummary(){
           <div style="font-size:12px; color:var(--muted); max-width:560px; line-height:1.5;">
             🔴 Tarik otomatis Top 5 Buy/Sell dari Stockbit untuk
             <b>${state.selectedForBacktest.size} saham yang dicentang</b> di tab 📋 Screener,
-            selama <b>10 hari bursa terakhir</b> (Senin&ndash;Jumat, belum menghitung libur bursa nasional).
+            untuk hari bursa dari <b>${escapeHtml(fmtDateID(state.bsAutoBulkFrom))}</b> sampai
+            <b>${escapeHtml(fmtDateID(state.bsAutoBulkTo))}</b> (Senin&ndash;Jumat, libur bursa nasional otomatis dilewati).
+            Hari yang datanya sudah ada di database otomatis dilewati (skip) — hanya hari yang belum ada
+            dan hari bursa paling baru yang benar-benar ditarik ulang ke Stockbit.
             Butuh "Endpoint Broker Summary" &amp; Token terisi di ⚙️ Pengaturan. Hasil otomatis disimpan
             langsung ke database yang sama seperti input manual di bawah.
           </div>
-          <button type="button" class="btn btn-outline" id="bsAutoBulkBtn"
-            ${state.stockbitBrokerBulkLoading || state.selectedForBacktest.size===0 ? "disabled" : ""}
-            style="color:#f87171;border-color:rgba(239,68,68,0.4);white-space:nowrap;"
-            title="${state.selectedForBacktest.size===0 ? 'Centang minimal 1 saham di tab Screener dulu' : ''}">
-            ${state.stockbitBrokerBulkLoading
-              ? `Menarik ${state.stockbitBrokerBulkProgress?.done||0}/${state.stockbitBrokerBulkProgress?.total||0}...`
-              : `Tarik Otomatis (${state.selectedForBacktest.size} dicentang &times; 10 hari)`}
-          </button>
+          <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
+            <label style="font-size:11.5px; color:var(--muted); display:flex; align-items:center; gap:6px; white-space:nowrap;">
+              Dari
+              <input type="date" id="bsAutoBulkFromInput"
+                value="${state.bsAutoBulkFrom||""}"
+                ${state.stockbitBrokerBulkLoading ? "disabled" : ""}
+                style="padding:6px 8px; border-radius:8px; border:1px solid var(--border); background:var(--bg2,#0f1420); color:var(--text,#fff); font-size:12px;">
+            </label>
+            <label style="font-size:11.5px; color:var(--muted); display:flex; align-items:center; gap:6px; white-space:nowrap;">
+              Sampai
+              <input type="date" id="bsAutoBulkToInput"
+                value="${state.bsAutoBulkTo||""}"
+                ${state.stockbitBrokerBulkLoading ? "disabled" : ""}
+                style="padding:6px 8px; border-radius:8px; border:1px solid var(--border); background:var(--bg2,#0f1420); color:var(--text,#fff); font-size:12px;">
+            </label>
+            <button type="button" class="btn btn-outline" id="bsAutoBulkBtn"
+              ${state.stockbitBrokerBulkLoading || state.selectedForBacktest.size===0 ? "disabled" : ""}
+              style="color:#f87171;border-color:rgba(239,68,68,0.4);white-space:nowrap;"
+              title="${state.selectedForBacktest.size===0 ? 'Centang minimal 1 saham di tab Screener dulu' : ''}">
+              ${state.stockbitBrokerBulkLoading
+                ? `Menarik ${state.stockbitBrokerBulkProgress?.done||0}/${state.stockbitBrokerBulkProgress?.total||0}...`
+                : `Tarik Otomatis (${state.selectedForBacktest.size} dicentang)`}
+            </button>
+          </div>
         </div>
         ${state.stockbitBrokerBulkResults && state.stockbitBrokerBulkResults.length ? `
-          <div class="mono" style="margin-top:10px; max-height:220px; overflow-y:auto; font-size:11.5px;">
-            ${state.stockbitBrokerBulkResults.map(r => `
-              <div style="padding:4px 0; border-bottom:1px solid var(--border); color:${r.ok ? 'var(--up)' : 'var(--down)'};">
-                ${r.ok ? '✅' : '❌'} ${escapeHtml(r.ticker)} &middot; ${escapeHtml(r.date)} — ${escapeHtml(r.msg||"")}
-              </div>`).join("")}
-          </div>` : ""}
+          <details class="bs-bulk-results-panel" id="bsBulkResultsPanel" ${state.bsBulkResultsOpen?"open":""} style="margin-top:10px;">
+            <summary style="cursor:pointer; font-size:11.5px; color:var(--muted); list-style:none; display:flex; align-items:center; gap:6px; user-select:none;">
+              <span class="bs-bulk-results-arrow" style="display:inline-block; transition:transform .15s; transform:rotate(${state.bsBulkResultsOpen?90:0}deg);">▶</span>
+              Hasil (${state.stockbitBrokerBulkResults.length} saham)
+            </summary>
+            <div class="mono" style="margin-top:8px; max-height:220px; overflow-y:auto; font-size:11.5px;">
+              ${state.stockbitBrokerBulkResults.map(r => `
+                <div style="padding:4px 0; border-bottom:1px solid var(--border); color:${r.ok ? 'var(--up)' : 'var(--down)'};">
+                  ${r.ok ? '✅' : '❌'} ${escapeHtml(r.ticker)} &middot; ${escapeHtml(r.date)} — ${escapeHtml(r.msg||"")}
+                </div>`).join("")}
+            </div>
+          </details>` : ""}
       </div>
 
       ${bsStatusRowHtml(dRows)}
@@ -4931,8 +5265,20 @@ function attachContentEvents(){
   if(bsSaveBtn) bsSaveBtn.onclick = saveBrokerSummaryRows;
   const bsCsvFillBtn = document.getElementById("bsCsvFillBtn");
   if(bsCsvFillBtn) bsCsvFillBtn.onclick = fillBsFromCsv;
+  const bsAutoBulkFromInput = document.getElementById("bsAutoBulkFromInput");
+  if(bsAutoBulkFromInput) bsAutoBulkFromInput.onchange = (e) => {
+    state.bsAutoBulkFrom = e.target.value || state.bsAutoBulkFrom;
+    render();
+  };
+  const bsAutoBulkToInput = document.getElementById("bsAutoBulkToInput");
+  if(bsAutoBulkToInput) bsAutoBulkToInput.onchange = (e) => {
+    state.bsAutoBulkTo = e.target.value || state.bsAutoBulkTo;
+    render();
+  };
   const bsAutoBulkBtn = document.getElementById("bsAutoBulkBtn");
-  if(bsAutoBulkBtn) bsAutoBulkBtn.onclick = () => fetchAndSaveBrokerSummaryBulk([...state.selectedForBacktest], 10);
+  if(bsAutoBulkBtn) bsAutoBulkBtn.onclick = () => fetchAndSaveBrokerSummaryBulk([...state.selectedForBacktest], state.bsAutoBulkFrom, state.bsAutoBulkTo);
+  const bsBulkResultsPanel = document.getElementById("bsBulkResultsPanel");
+  if(bsBulkResultsPanel) bsBulkResultsPanel.ontoggle = (e) => { state.bsBulkResultsOpen = e.target.open; };
   const bsEditorPanel = document.getElementById("bsEditorPanel");
   if(bsEditorPanel) bsEditorPanel.ontoggle = (e) => { state.bsEditorOpen = e.target.open; };
 

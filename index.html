@@ -96,7 +96,8 @@
     </div>
     <div class="field">
       <label>Endpoint Broker Summary (sudah terisi default — timpa hanya kalau Stockbit ganti skemanya)</label>
-      <input id="setStockbitBrokerEndpoint" type="text" placeholder="https://exodus.stockbit.com/marketdetectors/{ticker}?from={from}&to={to}&transaction_type=TRANSACTION_TYPE_NET&market_board=MARKET_BOARD_REGULER&investor_type=INVESTOR_TYPE_ALL&limit=200">
+      <input id="setStockbitBrokerEndpoint" type="text" placeholder="https://exodus.stockbit.com/marketdetectors/{ticker}?from={from}&to={to}&transaction_type=TRANSACTION_TYPE_NET&market_board=MARKET_BOARD_REGULER&investor_type=INVESTOR_TYPE_ALL&limit={limit}">
+      <div style="font-size:11px;color:var(--muted);margin-top:4px;">⚠️ Kalau diisi manual, pastikan bagian akhir tetap <code>&limit={limit}</code> (placeholder, bukan angka mati) — kalau ditimpa jadi angka tetap seperti <code>&limit=200</code>, data hari-hari yang lebih lama bisa kepotong dan cuma 1 hari terakhir yang kesimpan.</div>
     </div>
     <div class="field">
       <label>Proxy URL (opsional — isi kalau permintaan langsung gagal karena CORS)</label>
@@ -114,6 +115,57 @@
       (jalankan dulu <code>sql/05_stockbit_token_sync.sql</code> di Supabase). Kalau sudah terpasang & kamu
       pernah buka stockbit.com dalam kondisi login, token akan tersinkron sendiri setiap kali modal ini dibuka.
     </div>
+
+    <div style="border-top:1px solid var(--border); padding-top:14px; margin-bottom:8px;">
+      <h3 style="font-size:14px; margin:0 0 4px;">🔔 Notifikasi Telegram (Rules Kustom)</h3>
+      <div style="font-size:11.5px; color:var(--muted); margin-bottom:10px; line-height:1.5;">
+        Kirim notifikasi Telegram otomatis kalau ada saham baru yang lolos preset Rules Kustom pilihanmu —
+        jalan di server (Cron), jadi tetap terkirim walau aplikasi ini tidak sedang dibuka.
+        Butuh setup 1x: jalankan <code>sql/06_telegram_notifikasi.sql</code> di Supabase, deploy
+        <code>functions/telegram-notifier</code>, lalu isi field di bawah ini.
+      </div>
+    </div>
+    <details style="margin-bottom:12px;">
+      <summary style="cursor:pointer; font-size:12px; color:var(--teal);">📖 Cara bikin Bot Telegram & dapat Chat ID (belum punya?)</summary>
+      <ol style="font-size:11.5px; color:var(--muted); line-height:1.7; padding-left:18px; margin:8px 0 0;">
+        <li>Buka Telegram, cari <b>@BotFather</b>, kirim perintah <code>/newbot</code>, ikuti instruksinya (kasih nama & username bot).</li>
+        <li>BotFather akan membalas dengan <b>token</b> (contoh: <code>123456789:AAExxxxxxxxxxxxxxxxxxxxxxxxxxxxxx</code>) — salin ke field "Bot Token" di bawah.</li>
+        <li>Cari & mulai chat dengan bot barumu (klik link dari BotFather atau cari usernamenya), kirim pesan apa saja (mis. "hi") supaya bot "kenal" kamu.</li>
+        <li>Untuk dapat <b>Chat ID</b>: cari <b>@userinfobot</b> di Telegram, kirim <code>/start</code>, dia akan membalas dengan ID akunmu (angka, contoh: <code>987654321</code>) — salin ke field "Chat ID".</li>
+        <li>Kalau mau notifikasi masuk ke grup, tambahkan bot ke grup itu, lalu pakai Chat ID grup (biasanya diawali tanda minus, mis. <code>-1001234567890</code> — bisa dicek lewat @RawDataBot atau membuka <code>https://api.telegram.org/bot&lt;token&gt;/getUpdates</code> setelah mengirim pesan ke grup).</li>
+      </ol>
+    </details>
+    <div class="field">
+      <label>Bot Token</label>
+      <input id="setTelegramBotToken" type="password" placeholder="123456789:AAExxxxxxxxxxxxxxxxxxxxxxxxxxxxxx">
+    </div>
+    <div class="field">
+      <label>Chat ID</label>
+      <input id="setTelegramChatId" type="text" placeholder="987654321">
+    </div>
+    <div class="field">
+      <label>URL Edge Function (untuk tombol "Uji Kirim" di bawah)</label>
+      <input id="setTelegramFunctionUrl" type="text" placeholder="https://xxxx.supabase.co/functions/v1/telegram-notifier">
+    </div>
+    <label style="display:grid;grid-template-columns:16px 1fr;align-items:center;gap:8px;font-size:12.5px;padding:6px 0;cursor:pointer;">
+      <input type="checkbox" id="setTelegramEnabled" class="custom-checkbox" style="margin:0;justify-self:start;">
+      <span style="text-align:left;">Aktifkan notifikasi otomatis (Cron server akan mengecek & mengirim)</span>
+    </label>
+    <label style="display:grid;grid-template-columns:16px 1fr;align-items:center;gap:8px;font-size:12.5px;padding:6px 0 10px;cursor:pointer;">
+      <input type="checkbox" id="setTelegramOnlyMarketHours" class="custom-checkbox" style="margin:0;justify-self:start;">
+      <span style="text-align:left;">Hanya kirim di jam bursa (≈09:00–17:00 WIB, Senin–Jumat)</span>
+    </label>
+    <div class="field">
+      <label>Preset yang dipantau (Rules Kustom tersimpan)</label>
+      <div id="telegramPresetChecklist" style="background:rgba(255,255,255,0.03);border:1px solid var(--border);border-radius:8px;padding:8px 12px;max-height:160px;overflow-y:auto;">
+        <div style="font-size:12px;color:var(--muted);">Memuat preset...</div>
+      </div>
+    </div>
+    <div style="display:flex;align-items:center;gap:10px;margin:4px 0 6px;">
+      <button type="button" class="btn btn-outline" onclick="testTelegramNotification()">📤 Uji Kirim Notifikasi</button>
+      <span id="telegramTestStatus" style="font-size:11.5px;color:var(--muted);"></span>
+    </div>
+    <div id="telegramLastRunStatus" style="font-size:11px;color:var(--muted);margin-bottom:14px;"></div>
 
     <div class="modal-actions">
       <button class="btn btn-primary" onclick="saveSettings()">Simpan & Reload</button>
