@@ -3164,15 +3164,65 @@ const RULE_METRICS = [
   { key:"foreignNet20D", label:"Foreign Net 20 Hari" }, { key:"foreignUpDays", label:"Foreign Net Positif (Hari)" },
   { key:"avgTicket", label:"Avg Ticket Size Asing" }, { key:"crossingPct", label:"Crossing (%)" },
   { key:"flowDays", label:"Jumlah Hari Data Flow" },
+
+  // --- Field KATEGORI (teks, bukan angka) — dibandingkan pakai "=" / "≠"
+  // terhadap salah satu pilihan tetap, bukan angka bebas. Daftar pilihan
+  // diambil dari nilai-nilai yang benar-benar muncul di kolom stocks_screener.
+  { key:"cekHarga", label:"Sinyal Harga", type:"category", options:[
+    "harga crossup ema 21 H dan L", "harga diatas ema 21 L dibawah ema 21 H", "harga belum cross up"
+  ]},
+  { key:"cekRsi", label:"Sinyal RSI", type:"category", options:[
+    "rsi 7 cross up rsi 21", "rsi 7 belum cross up"
+  ]},
+  { key:"statusRsi", label:"Status RSI", type:"category", options:[
+    "over bought", "over sold", "bullish", "netral", "bearish"
+  ]},
+  { key:"cekMacd", label:"Sinyal MACD", type:"category", options:[
+    "Bullish Menguat", "Wait & See / Bearish", "Momentum Buy (Early)", "Buy (Golden Cross)", "Sell (Dead Cross)"
+  ]},
+  { key:"keyakinanNaik", label:"Keyakinan Naik (kategori)", type:"category", options:[
+    "Sedang (Candle Bullish, Volume Belum Konfirmasi)", "Tinggi (Ada Konfirmasi Volume)",
+    "Sedang (Belum Ada Konfirmasi Volume)", "Rendah", "Sangat Tinggi (MACD + Volume + RSI/Stoch Konfirmasi)",
+    "Sangat Waspada (Distribusi Masif / Guyuran Bandar)", "Waspada (Trend Bearish + Candle Bearish)"
+  ]},
+  { key:"trendHarga", label:"Trend Harga (MA)", type:"category", options:[
+    "Bullish (diatas MA21/50/100/200)", "Sideways/Mixed", "Bearish (dibawah MA21/50/100/200)", "Bearish (dibawah MA yang tersedia)"
+  ]},
+  { key:"polaCandle", label:"Pola Candle", type:"category", options:[
+    "Bullish Engulfing (potensi reversal naik)", "Tidak ada pola signifikan", "Doji (keraguan pasar / potensi pembalikan)",
+    "Bearish Engulfing (potensi reversal turun)", "Bearish Harami (tekanan beli mulai melemah)",
+    "Hanging Man (waspada reversal turun setelah uptrend)", "Shooting Star (waspada reversal turun)",
+    "Bullish Harami (tekanan jual mulai melemah)"
+  ]},
+  { key:"uangGedeMasuk", label:"Uang Gede Masuk", type:"category", options:[
+    "Normal", "Akumulasi Kuat (RVOL>2 & CLV>0.7)", "Guyuran (RVOL>2 & CLV Negatif)"
+  ]},
+  { key:"valuasi", label:"Valuasi", type:"category", options:[
+    "Kemahalan (Overvalued)", "Murah (Undervalued)", "Wajar (Fair)"
+  ]},
+  { key:"capCategory", label:"Kategori Cap", type:"category", options:[
+    "Mid Cap", "Small Cap", "Big Cap"
+  ]},
+  { key:"cekVolume", label:"Sinyal Volume (kategori mentah)", type:"category", options:[
+    "Volume Normal", "Volume Spike Kuat", "Volume Sepi", "Volume Spike", "Volume Spike Ekstrem"
+  ]},
 ];
+const RULE_METRICS_BY_KEY = Object.fromEntries(RULE_METRICS.map(m=>[m.key, m]));
+function isCategoryMetric(key){ return RULE_METRICS_BY_KEY[key]?.type === "category"; }
 const RULE_OPS = {
-  ">": (a,b)=>a>b, "<": (a,b)=>a<b, ">=": (a,b)=>a>=b, "<=": (a,b)=>a<=b, "=": (a,b)=>a===b
+  ">": (a,b)=>a>b, "<": (a,b)=>a<b, ">=": (a,b)=>a>=b, "<=": (a,b)=>a<=b, "=": (a,b)=>a===b, "≠": (a,b)=>a!==b
 };
 function ruleMetricLabel(key){ const m = RULE_METRICS.find(x=>x.key===key); return m ? m.label : key; }
 function ruleMetricValue(s, key){
   const v = s[key];
   if(v===undefined || v===null || v==="" || isNaN(v)) return null;
   return Number(v);
+}
+// Sama seperti ruleMetricValue, tapi untuk field KATEGORI (teks) — tidak
+// dipaksa jadi angka, cukup dikembalikan apa adanya (atau null kalau kosong).
+function ruleRawValue(s, key){
+  const v = s[key];
+  return (v===undefined || v===null || v==="") ? null : v;
 }
 // Deskripsi 1 baris rule kustom dalam bahasa manusia, mis. "Price > 1"
 // atau "1 Day Price Returns (%) > -15" atau (bandingkan 2 metrik dengan
@@ -3218,6 +3268,16 @@ function getActiveScreenerContext(){
   };
 }
 function evalCustomRule(s, rule){
+  // Field kategori (teks) — hanya boleh dibandingkan "=" / "≠" terhadap
+  // salah satu pilihan tetap (rule.bConst), tidak bisa dikali/dibandingkan
+  // ke metrik lain karena tidak ada artinya untuk teks.
+  if(isCategoryMetric(rule.aKey)){
+    const aVal = ruleRawValue(s, rule.aKey);
+    if(aVal===null) return false;
+    const cmp = RULE_OPS[rule.op];
+    if(!cmp || (rule.op !== "=" && rule.op !== "≠")) return false;
+    return cmp(String(aVal), String(rule.bConst));
+  }
   const aVal = ruleMetricValue(s, rule.aKey);
   if(aVal===null) return false;
   const cmp = RULE_OPS[rule.op];
@@ -3376,6 +3436,16 @@ function updateCustomRule(id, field, value){
   } else {
     rule[field] = value;
   }
+  // Kalau field kategori dipilih sebagai aKey, paksa bentuk rule tetap valid:
+  // tidak bisa dibandingkan ke metrik lain (bType harus "const"), operator
+  // cuma "="/"≠", dan bConst harus salah satu pilihan kategori itu sendiri
+  // (bukan sisa angka/teks dari rule sebelumnya).
+  if(field === "aKey" && isCategoryMetric(rule.aKey)){
+    rule.bType = "const";
+    if(rule.op !== "=" && rule.op !== "≠") rule.op = "=";
+    const opts = RULE_METRICS_BY_KEY[rule.aKey].options;
+    if(!opts.includes(rule.bConst)) rule.bConst = opts[0];
+  }
   saveCustomRules();
   state.page = 1;
   render();
@@ -3387,23 +3457,42 @@ function deleteCustomRule(id){
   render();
 }
 function renderRuleBuilder(){
-  const metricOptions = (selected) => RULE_METRICS.map(m=>`<option value="${m.key}" ${selected===m.key?'selected':''}>${m.label}</option>`).join("");
-  const opOptions = (selected) => Object.keys(RULE_OPS).map(op=>`<option value="${op}" ${selected===op?'selected':''}>${op}</option>`).join("");
+  const numericMetrics = RULE_METRICS.filter(m => m.type !== "category");
+  const categoryMetrics = RULE_METRICS.filter(m => m.type === "category");
+  // Dipakai untuk dropdown "aKey" (semua field, dikelompokkan) — dan juga
+  // untuk dropdown "bKey" (cuma field ANGKA, karena membandingkan field
+  // kategori ke field lain tidak ada artinya).
+  const metricOptions = (selected, categoryToo) => {
+    const opt = m => `<option value="${m.key}" ${selected===m.key?'selected':''}>${m.label}</option>`;
+    if(!categoryToo) return numericMetrics.map(opt).join("");
+    return `<optgroup label="Angka">${numericMetrics.map(opt).join("")}</optgroup><optgroup label="Kategori (Teks)">${categoryMetrics.map(opt).join("")}</optgroup>`;
+  };
+  const opOptions = (selected, categoryOnly) => {
+    const ops = categoryOnly ? ["=","≠"] : Object.keys(RULE_OPS);
+    return ops.map(op=>`<option value="${op}" ${selected===op?'selected':''}>${op}</option>`).join("");
+  };
 
-  const rows = state.customRules.map(r => `
+  const rows = state.customRules.map(r => {
+    const isCat = isCategoryMetric(r.aKey);
+    const catOpts = isCat ? RULE_METRICS_BY_KEY[r.aKey].options : [];
+    return `
     <div class="rule-row" data-rule-id="${r.id}">
-      <select class="rule-select" data-rule-field="aKey" data-rule-id="${r.id}">${metricOptions(r.aKey)}</select>
-      <select class="rule-op" data-rule-field="op" data-rule-id="${r.id}">${opOptions(r.op)}</select>
-      ${r.bType === "const"
-        ? `<input type="number" step="any" class="rule-const" data-rule-field="bConst" data-rule-id="${r.id}" value="${r.bConst}" placeholder="angka">`
-        : `<input type="number" step="any" class="rule-mult" data-rule-field="mult" data-rule-id="${r.id}" value="${r.mult}">
-           <span class="rule-times">&times;</span>
-           <select class="rule-select" data-rule-field="bKey" data-rule-id="${r.id}">${metricOptions(r.bKey)}</select>`
+      <select class="rule-select" data-rule-field="aKey" data-rule-id="${r.id}">${metricOptions(r.aKey, true)}</select>
+      <select class="rule-op" data-rule-field="op" data-rule-id="${r.id}">${opOptions(r.op, isCat)}</select>
+      ${isCat
+        ? `<select class="rule-const" data-rule-field="bConst" data-rule-id="${r.id}">${catOpts.map(o=>`<option value="${escapeHtml(o)}" ${String(r.bConst)===o?'selected':''}>${escapeHtml(o)}</option>`).join("")}</select>`
+        : (r.bType === "const"
+            ? `<input type="number" step="any" class="rule-const" data-rule-field="bConst" data-rule-id="${r.id}" value="${r.bConst}" placeholder="angka">`
+            : `<input type="number" step="any" class="rule-mult" data-rule-field="mult" data-rule-id="${r.id}" value="${r.mult}">
+               <span class="rule-times">&times;</span>
+               <select class="rule-select" data-rule-field="bKey" data-rule-id="${r.id}">${metricOptions(r.bKey, false)}</select>`
+          )
       }
-      <button type="button" class="rule-btype-toggle" data-rule-field="toggleBType" data-rule-id="${r.id}" title="${r.bType==='const' ? 'Ganti jadi: bandingkan dengan metrik lain' : 'Ganti jadi: bandingkan dengan angka tetap'}">${r.bType==='const' ? '🔢' : '📊'}</button>
+      ${isCat ? "" : `<button type="button" class="rule-btype-toggle" data-rule-field="toggleBType" data-rule-id="${r.id}" title="${r.bType==='const' ? 'Ganti jadi: bandingkan dengan metrik lain' : 'Ganti jadi: bandingkan dengan angka tetap'}">${r.bType==='const' ? '🔢' : '📊'}</button>`}
       <button type="button" class="rule-del" data-rule-del="${r.id}" title="Hapus rule">✕</button>
     </div>
-  `).join("");
+  `;
+  }).join("");
 
   const presetOptions = state.customPresets.map(p =>
     `<option value="${p.id}" ${String(state.selectedPresetId)===String(p.id)?'selected':''}>${escapeHtml(p.name)} (${Array.isArray(p.rules)?p.rules.length:0} rule)</option>`
