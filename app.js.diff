@@ -1,0 +1,248 @@
+1069a1070,1174
+> // ==========================================
+> // OPPORTUNITY SCREENER — kartu preset baru (Top Opportunity, Multibagger
+> // Candidate, Overvalue/Hindari, Technical Momentum, Undervalued, Near
+> // Support ARA Pattern) + 2 detektor ARA (ARA Candidate, Near Support).
+> //
+> // Semua kartu ini pakai SATU mesin skor bersama (computeOpportunityScore)
+> // yang menghasilkan 4 sub-skor 0-100 (Fundamental, Valuasi, Momentum,
+> // Volume) dari kolom yang SUDAH ada di stocks_screener — tidak butuh
+> // kolom/tabel baru. Tiap kartu tinggal pakai kombinasi bobot + threshold
+> // gate (angka eksak) sesuai definisi masing-masing.
+> //
+> // CATATAN JUJUR soal data yang TIDAK tersedia persis seperti di gambar
+> // referensi (supaya tidak pura-pura akurat):
+> //   - "Est Upside > 30%" (Multibagger Candidate): tidak ada target harga
+> //     analis di DB ini. Didekati pakai jarak ke Fibonacci Pivot R1 (fibR1)
+> //     sebagai proxy resistance terdekat — kalau fibR1 tidak ada, sub-skor
+> //     valuasi kartu ini otomatis turun ke 0 utk saham tsb (bukan lolos
+> //     default), supaya tidak asal loloskan.
+> //   - "AI Score" di kartu Overvalue/Hindari BUKAN aiScore lama yang sudah
+> //     ada di app.js (skala -1..+6, khusus tampilan Detail Emiten) — itu
+> //     skala berbeda. Di sini dipakai skor opportunity 0-100 yang sama
+> //     dengan kartu lain, supaya threshold "<40" konsisten lintas kartu.
+> // ==========================================
+> function computeOpportunityScore(s){
+>   const num = v => (v===null || v===undefined || v==="" || isNaN(v)) ? null : Number(v);
+>   const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
+>   // scale(v, lo, hi) -> 0..100 linear, v<=lo -> 0, v>=hi -> 100
+>   const scale = (v, lo, hi) => v==null ? 0 : clamp(((v - lo) / (hi - lo)) * 100, 0, 100);
+>   // scaleInverse: makin KECIL v makin TINGGI skor (dipakai utk PER/PBV/DER — murah/sehat = bagus)
+>   const scaleInv = (v, lo, hi) => v==null ? 0 : clamp(((hi - v) / (hi - lo)) * 100, 0, 100);
+> 
+>   const roe = num(s.roe), npm = num(s.npm), roa = num(s.roa), der = num(s.der);
+>   const per = num(s.per), pbv = num(s.pbv);
+>   const pos52w = num(s.pos52w); // 0-100, posisi harga dlm range 52 minggu
+>   const changePct = num(s.changePct);
+>   const volRatio = num(s.volRatio);
+> 
+>   // --- Fundamental (ROE, NPM, ROA — makin tinggi makin bagus) ---
+>   const fundScore = (
+>     scale(roe, 0, 25) * 0.4 +
+>     scale(npm, 0, 20) * 0.35 +
+>     scale(roa, 0, 15) * 0.25
+>   );
+> 
+>   // --- Kesehatan keuangan (DER rendah = bagus) — dipakai terpisah dari
+>   //     fundScore karena beberapa kartu punya bobot "Kesehatan" sendiri
+>   const healthScore = der==null ? 50 : scaleInv(der, 0, 2.5);
+> 
+>   // --- Valuasi (PER, PBV murah = bagus) ---
+>   const valScore = (
+>     scaleInv(per, 5, 30) * 0.5 +
+>     scaleInv(pbv, 0.3, 5) * 0.5
+>   );
+> 
+>   // --- Momentum (posisi dlm range 52W + arah harga hari ini) ---
+>   const momScore = (
+>     scale(pos52w, 0, 100) * 0.7 +
+>     (changePct==null ? 50 : (changePct >= 0 ? 70 : 30)) * 0.3
+>   );
+> 
+>   // --- Volume/likuiditas (volRatio vs rata-rata) ---
+>   const volScore = scale(volRatio, 0.5, 3);
+> 
+>   // --- Proxy "Est Upside" pakai jarak ke Fibonacci R1 (resistance
+>   //     terdekat) — dipakai KHUSUS kartu Multibagger Candidate.
+>   const fibR1 = num(s.fibR1); // Fibonacci Pivot Resistance 1 (kolom top-level, beda dari s.fib.f618 dkk)
+>   const estUpsidePct = (fibR1!=null && s.cClose) ? ((fibR1 - s.cClose) / s.cClose) * 100 : null;
+>   const upsideScore = scale(estUpsidePct, 0, 50);
+> 
+>   return { fundScore, healthScore, valScore, momScore, volScore, estUpsidePct, upsideScore };
+> }
+> 
+> // --- ARA Score (Near Support / ARA Pattern) — 40-100 berdasarkan pola
+> //     konsolidasi ketat (tight range) dekat support, likuiditas cukup.
+> //     Bukan probabilitas statistik, murni skor pola teknikal seperti di
+> //     gambar referensi ("berdasarkan pola teknikal konsolidasi").
+> function computeAraScore(s){
+>   const num = v => (v===null || v===undefined || v==="" || isNaN(v)) ? null : Number(v);
+>   const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
+>   if (s.cHigh==null || s.cLow==null || s.cClose==null || !s.cClose) return null;
+> 
+>   // Tightness: range hari ini (High-Low)/Close — makin kecil makin ketat
+>   const rangePct = ((s.cHigh - s.cLow) / s.cClose) * 100;
+>   const tightnessScore = clamp(100 - (rangePct / 6) * 100, 0, 100); // range >=6% -> 0, range 0% -> 100
+> 
+>   // Dekat support: jarak Close ke Support (kalau ada), makin dekat makin tinggi
+>   const support = num(s.support);
+>   let supportScore = 50;
+>   if (support!=null && s.cClose) {
+>     const distPct = Math.abs((s.cClose - support) / s.cClose) * 100;
+>     supportScore = clamp(100 - (distPct / 5) * 100, 0, 100); // jarak >=5% -> 0
+>   }
+> 
+>   // Volatilitas rendah lanjutan: ATR14 relatif thd harga
+>   const atr14 = num(s.atr14);
+>   let volatilityScore = 50;
+>   if (atr14!=null && s.cClose) {
+>     const atrPct = (atr14 / s.cClose) * 100;
+>     volatilityScore = clamp(100 - (atrPct / 5) * 100, 0, 100);
+>   }
+> 
+>   const total = Math.round(tightnessScore * 0.4 + supportScore * 0.35 + volatilityScore * 0.25);
+>   return clamp(total, 0, 100);
+> }
+> 
+2762a2868,2919
+>     // --- OPPORTUNITY SCREENER (kartu baru) ---
+>     else if (state.activePreset === 'top_opportunity') {
+>       // Gate eksak sesuai kartu "Top Opportunity" di gambar referensi.
+>       if (!(s.roe > 15 && s.npm > 5 && s.der < 1.5 && s.roa > 8)) return false;
+>       if (!(s.per != null && s.per < 25 && s.pbv != null && s.pbv < 5)) return false;
+>       if (!(s.pos52w != null && s.pos52w > 50)) return false; // posisi > 52W mid
+>       if (!(s.volRatio != null && s.volRatio >= 1.5)) return false; // "volume signifikan"
+>       const sc = computeOpportunityScore(s);
+>       const total = sc.fundScore * 0.4 + sc.valScore * 0.3 + sc.momScore * 0.2 + sc.volScore * 0.1;
+>       if (total < 50) return false;
+>     } else if (state.activePreset === 'multibagger') {
+>       if (!(s.roe > 10 && s.npm > 5)) return false; // Growth
+>       if (!(s.der < 1 && s.roa > 5 && s.pbv != null && s.pbv < 3)) return false; // Kesehatan
+>       if (!(s.marketCap != null && s.marketCap < 10e12)) return false; // Small-Mid < 10T
+>       const sc = computeOpportunityScore(s);
+>       if (sc.estUpsidePct == null || sc.estUpsidePct <= 30) return false; // Est Upside > 30%
+>       const total = sc.fundScore * 0.35 + sc.healthScore * 0.35 + sc.upsideScore * 0.30;
+>       if (total < 40) return false;
+>     } else if (state.activePreset === 'overvalue_hindari') {
+>       const sc = computeOpportunityScore(s);
+>       const total = sc.fundScore * 0.4 + sc.valScore * 0.3 + sc.momScore * 0.2 + sc.volScore * 0.1;
+>       if (total >= 40) return false; // AI Score < 40 = kandidat dihindari
+>     } else if (state.activePreset === 'technical_momentum') {
+>       if (!(s.pos52w != null && s.pos52w > 50)) return false; // Harga > 50% range 52W
+>       if (!((s.changePct || 0) > 0)) return false; // 1D% positif
+>       if (!(s.pos52w != null && s.pos52w > 70)) return false; // Breakout: posisi > 70% dari 52W low
+>       if (!(s.volRatio != null)) return false; // butuh data volume utk cek "top 30%"
+>       if (!(s.roe > 8 && s.npm > 0)) return false; // Fundamental min: ROE>8%, NPM>0 (tidak merugi)
+>     } else if (state.activePreset === 'undervalued') {
+>       if (!(s.per != null && s.per < 15 && s.pbv != null && s.pbv < 1.5)) return false;
+>       if (!(s.roe > 12 && s.npm > 5 && s.roa > 6)) return false;
+>       if (!(s.der < 1)) return false; // Kesehatan + tidak merugi (der<1 dipakai sbg proxy sehat)
+>       const sc = computeOpportunityScore(s);
+>       if (sc.valScore < 60) return false; // Score valuasi >= 60
+>     } else if (state.activePreset === 'near_support_ara') {
+>       // Filter: technical only + likuiditas min 50jt/hari. Skor & Top 10
+>       // di-handle di renderScreener() (sort by araScore, slice 10) supaya
+>       // konsisten dgn kartu lain yg juga menampilkan tabel penuh terurut.
+>       if ((s.turnover || 0) < 50e6) return false;
+>       const ara = computeAraScore(s);
+>       if (ara == null || ara < 40) return false;
+>     } else if (state.activePreset === 'ara_candidate') {
+>       // "Momentum/ARA Detector": Small-mid cap, Close=High (menutup di
+>       // harga tertinggi hari ini), Offer=0 (habis diborong), belum ARA.
+>       if (!(s.marketCap != null && s.marketCap < 10e12)) return false; // small-mid proxy
+>       if (!(s.cClose != null && s.cHigh != null && s.cClose >= s.cHigh)) return false; // Close = High
+>       if (!(s.offerVolume != null && s.offerVolume === 0)) return false; // Offer = 0
+>       // "Belum ARA": harga hari ini belum mentok di batas Auto Reject Atas.
+>       // Didekati pakai changePct < 24% (ARA umum utk saham >Rp5000 = 20%,
+>       // saham lain bisa lebih tinggi — 24% dipakai sbg ambang aman generik).
+>       if (!((s.changePct || 0) < 24)) return false;
+>     }
+2939c3096,3097
+< const PRESET_LABELS = { bagger:"Skor Bagger ≥75", eri:"Eri Ginanjar", rsicross:"RSI & Harga Cross", golden:"Golden Cross DSI", uptrend:"Super Uptrend", breakout:"Volatility Breakout", pullback:"Pullback Uptrend", custom_bandar:"BPJS", asing_akumulasi:"Akumulasi Asing (IDX)", freq_spike:"Lonjakan Frekuensi" };
+---
+> const PRESET_LABELS = { bagger:"Skor Bagger ≥75", eri:"Eri Ginanjar", rsicross:"RSI & Harga Cross", golden:"Golden Cross DSI", uptrend:"Super Uptrend", breakout:"Volatility Breakout", pullback:"Pullback Uptrend", custom_bandar:"BPJS", asing_akumulasi:"Akumulasi Asing (IDX)", freq_spike:"Lonjakan Frekuensi",
+>   top_opportunity:"Top Opportunity", multibagger:"Multibagger Candidate", overvalue_hindari:"Overvalue / Hindari", technical_momentum:"Technical Momentum", undervalued:"Undervalued", near_support_ara:"Near Support (ARA Pattern)", ara_candidate:"ARA Candidate (Momentum Detector)" };
+3540,3541c3698,3709
+<   const sorted = getSorted(filtered);
+<   
+---
+>   let sorted = getSorted(filtered);
+> 
+>   // Kartu "Near Support (ARA Pattern)" & "ARA Candidate" secara desain
+>   // menampilkan Top 10 terurut skor (bukan tabel penuh) — hanya dipaksa
+>   // kalau user belum klik header kolom manapun utk sort manual (supaya
+>   // user tetap bisa override urutan/limit seperti tab lain kalau mau).
+>   if (!state.sort.col && state.activePreset === 'near_support_ara') {
+>     sorted = [...filtered].sort((a, b) => (computeAraScore(b) || 0) - (computeAraScore(a) || 0)).slice(0, 10);
+>   } else if (!state.sort.col && state.activePreset === 'ara_candidate') {
+>     sorted = [...filtered].sort((a, b) => (b.volRatio || 0) - (a.volRatio || 0)).slice(0, 10);
+>   }
+> 
+3624a3793,3804
+>         <div class="field" style="flex:1 1 100%;min-width:0;">
+>           <label>Opportunity Screener (Preset Baru)</label>
+>           <div style="display:flex; gap:10px; flex-wrap:wrap; width:100%;">
+>             <button class="pill ${state.activePreset === 'top_opportunity' ? 'pill-up' : 'pill-muted'}" onclick="state.activePreset = state.activePreset === 'top_opportunity' ? null : 'top_opportunity'; state.page=1; render();" title="ROE>15% · NPM>5% · DER<1.5 · ROA>8% · PER<25x · PBV<5x · Posisi>52W mid · Volume signifikan · Score≥50">🏆 Top Opportunity</button>
+>             <button class="pill ${state.activePreset === 'multibagger' ? 'pill-up' : 'pill-muted'}" onclick="state.activePreset = state.activePreset === 'multibagger' ? null : 'multibagger'; state.page=1; render();" title="ROE>10% · NPM>5% · DER<1 · ROA>5% · PBV<3x · Market Cap<10T · Est Upside(proxy Fib R1)>30% · Score≥40">🚀 Multibagger Candidate</button>
+>             <button class="pill ${state.activePreset === 'undervalued' ? 'pill-teal' : 'pill-muted'}" onclick="state.activePreset = state.activePreset === 'undervalued' ? null : 'undervalued'; state.page=1; render();" title="PER<15x · PBV<1.5x · ROE>12% · NPM>5% · ROA>6% · DER<1 · Score Valuasi≥60">💎 Undervalued</button>
+>             <button class="pill ${state.activePreset === 'technical_momentum' ? 'pill-gold' : 'pill-muted'}" onclick="state.activePreset = state.activePreset === 'technical_momentum' ? null : 'technical_momentum'; state.page=1; render();" title="Posisi>50% range 52W · 1D% positif · Posisi>70% dari 52W low · ROE>8% · NPM>0 (tidak merugi)">📊 Technical Momentum</button>
+>             <button class="pill ${state.activePreset === 'near_support_ara' ? 'pill-gold' : 'pill-muted'}" onclick="state.activePreset = state.activePreset === 'near_support_ara' ? null : 'near_support_ara'; state.page=1; render();" title="ARA Score 40-100 dari pola konsolidasi ketat dekat support · Likuiditas min 50jt/hari">🎯 Near Support (ARA Pattern)</button>
+>             <button class="pill ${state.activePreset === 'ara_candidate' ? 'pill-up' : 'pill-muted'}" onclick="state.activePreset = state.activePreset === 'ara_candidate' ? null : 'ara_candidate'; state.page=1; render();" title="Small-mid cap · Close=High · Offer=0 · Belum ARA hari ini">🔥 ARA Candidate</button>
+>             <button class="pill ${state.activePreset === 'overvalue_hindari' ? 'pill-down' : 'pill-muted'}" onclick="state.activePreset = state.activePreset === 'overvalue_hindari' ? null : 'overvalue_hindari'; state.page=1; render();" title="Skor Opportunity < 40 — fundamental lemah, valuasi mahal, atau risiko tinggi. Daftar HINDARI, bukan rekomendasi beli.">🚨 Overvalue / Hindari</button>
+>             </div>
+>         </div>
+4436a4617,4630
+>   const preset=(emoji,name,criteria,note)=>`
+>     <details style="margin-bottom:6px;">
+>       <summary style="cursor:pointer; font-size:13px; font-weight:600; color:var(--text); padding:5px 0;">${emoji} ${name}</summary>
+>       <div style="font-size:12px;color:var(--muted);line-height:1.7;padding:2px 0 12px 4px;">
+>         ${criteria}
+>         ${note ? `<div style="margin-top:6px;color:var(--gold);">⚠️ ${note}</div>` : ""}
+>       </div>
+>     </details>`;
+>   const menu=(name,desc)=>`
+>     <div style="margin-bottom:10px;">
+>       <div style="font-size:13px;font-weight:600;color:var(--text);">${name}</div>
+>       <div style="font-size:12px;color:var(--muted);line-height:1.7;margin-top:2px;">${desc}</div>
+>     </div>`;
+> 
+4439d4632
+<     ${row("Screener DSI","gold","Terdapat tombol preset yang akan menyaring data secara otomatis berdasarkan kondisi DSI (Eri Ginanjar, RSI Cross, Golden Cross, Super Uptrend, Volatility Breakout, Pullback Uptrend).")}
+4443a4637,4673
+> 
+>     <div class="about-row">
+>       ${pillHtml("Screener DSI · 10 Preset Bawaan","gold")}
+>       <p style="margin-bottom:10px;">Tombol siap-pakai di tab Screener yang menyaring data otomatis berdasarkan kondisi teknikal DSI. Klik nama preset di bawah untuk lihat kriteria persisnya (semua dihitung langsung dari kolom stocks_screener, bukan hasil AI/estimasi).</p>
+>       ${preset("🎯","Skor Bagger ≥75", "Skor komposit dari <code>formula_screening_saham_bagger.md</code>: Fundamental 40% + Momentum Teknikal 35% + Volume/Smart Money 25%. Total skor ≥75 = kandidat kuat.")}
+>       ${preset("","Eri Ginanjar", "RSI7 antara 58&ndash;70 &amp; RSI21 antara 50&ndash;70 &amp; RSI7&gt;RSI21 &middot; Close &gt; EMA21 High (maks +3%) &amp; Close &gt; EMA89 &middot; High &gt; PrevHigh &amp; Low &gt; PrevLow &amp; Volume &gt; PrevVolume &middot; Stochastic K cross up D.")}
+>       ${preset("","RSI & Harga Cross", "RSI7 58&ndash;75 &amp; RSI21 50&ndash;75 &amp; RSI7&gt;RSI21 &middot; Low &lt; EMA21 Low &amp; Close &gt; EMA21 High &amp; Close &gt; Open &middot; Close &ge; (High+Low)/2 &amp; Turnover &gt; Rp200jt &amp; Close &gt; MA100.")}
+>       ${preset("","Golden Cross DSI", "MACD Histogram baru saja cross dari negatif ke positif (histPrev &le; 0 &amp; hist &gt; 0) &middot; Stochastic K cross up D di hari yang sama.")}
+>       ${preset("","Super Uptrend", "Susunan Moving Average naik sempurna: Close &gt; MA21 &gt; MA50 &gt; MA100 &gt; MA200.")}
+>       ${preset("🚀","Volatility Breakout", "Bollinger Band Squeeze sedang aktif &middot; Volume Ratio &ge; 1.5x rata-rata &middot; Close &gt; EMA21 High &middot; Perubahan harga hari ini positif.")}
+>       ${preset("🧲","Pullback Uptrend", "Trend Harga diawali label \"Bullish\" &middot; Close &le; EMA21 Low &times; 1.03 &amp; Close &ge; Support &times; 0.98 (area pullback wajar) &middot; Stochastic K baru cross up D (kalau datanya tersedia).")}
+>       ${preset("🔥","BPJS (proxy volume)", "Open &gt; MA21, MA50, MA100, MA200 sekaligus &middot; Volume Ratio &gt; 2x &middot; Turnover &gt; Rp10 miliar &middot; Bandarmologi bertone \"up\" ATAU label Uang Gede Masuk mengandung \"Akumulasi\".", "Ini PROXY dari lonjakan volume, BUKAN data transaksi asing/institusi resmi — beda dengan preset \"Akumulasi Asing (IDX)\" di bawah.")}
+>       ${preset("🐋","Akumulasi Asing (IDX)", "Net beli asing 20 hari &ge; Rp50 miliar &middot; Konsisten net asing positif &ge; 12 dari 20 hari terakhir &middot; Turnover &ge; Rp5 miliar/hari (syarat likuiditas).", "Sumber: data foreign buy/sell RESMI dari IDX (tabel flows), bukan proxy.")}
+>       ${preset("🔊","Lonjakan Frekuensi", "Rasio frekuensi transaksi hari ini vs rata-rata (freq_ma20 atau avg_frequency_3m) &ge; 1.5x.", "Kalau kolom frequency harian tidak tersedia di DB, otomatis fallback ke kolom freq_spike yang sudah dihitung backend.")}
+>     </div>
+> 
+>     <div class="about-row">
+>       ${pillHtml("Opportunity Screener · 7 Preset Baru","up")}
+>       <p style="margin-bottom:10px;">Kartu tambahan bergaya "Top Opportunity / Multibagger / Bandarmology" yang direplikasi dari referensi Anda. Beberapa kriteria di gambar referensi (Est Upside analis, status ARA riil) tidak punya sumber data persis di database ini — bagian itu didekati (proxy) dan ditandai ⚠️ di bawah, supaya tidak dikira data resmi.</p>
+>       ${preset("🏆","Top Opportunity", "ROE &gt; 15% &amp; NPM &gt; 5% &amp; DER &lt; 1.5 &amp; ROA &gt; 8% (Fundamental) &middot; PER &lt; 25x &amp; PBV &lt; 5x (Valuasi) &middot; Posisi harga &gt; 50% dari range 52 minggu (Momentum) &middot; Volume Ratio &ge; 1.5x (Volume) &middot; Skor komposit (Fund 40% + Val 30% + Mom 20% + Vol 10%) &ge; 50.")}
+>       ${preset("🚀","Multibagger Candidate", "ROE &gt; 10% &amp; NPM &gt; 5% (Growth) &middot; DER &lt; 1 &amp; ROA &gt; 5% &amp; PBV &lt; 3x (Kesehatan) &middot; Market Cap &lt; Rp10 triliun (Small&ndash;Mid) &middot; Est. Upside &gt; 30% &middot; Skor (Fund 35% + Kesehatan 35% + Upside 30%) &ge; 40.", "\"Est. Upside\" TIDAK memakai target harga analis (tidak ada di DB ini) — didekati dari jarak harga sekarang ke Fibonacci Pivot Resistance 1 (fibR1). Kalau fibR1 kosong utk suatu saham, otomatis gagal syarat ini.")}
+>       ${preset("💎","Undervalued", "PER &lt; 15x &amp; PBV &lt; 1.5x (Valuasi Murah) &middot; ROE &gt; 12% &amp; NPM &gt; 5% &amp; ROA &gt; 6% (Profitabilitas) &middot; DER &lt; 1 (proxy \"sehat &amp; tidak merugi\") &middot; Skor Valuasi &ge; 60.")}
+>       ${preset("📊","Technical Momentum", "Posisi harga &gt; 50% dari range 52 minggu (Trend) &amp; perubahan harga hari ini positif &middot; Posisi &gt; 70% dari 52W Low (Breakout) &middot; ROE &gt; 8% &amp; NPM &gt; 0 (Fundamental minimum, tidak merugi).", "\"Volume top 30%\" di gambar referensi memakai persentil lintas seluruh saham hari itu — di sini hanya dicek Volume Ratio tersedia (tersedia data), belum benar-benar persentil top-30%.")}
+>       ${preset("🎯","Near Support (ARA Pattern)", "Skor ARA 0&ndash;100 dari kombinasi: ketatnya range harian (High&minus;Low)/Close 40%, jarak Close ke Support 35%, ATR14 relatif terhadap harga 25% &middot; Skor &ge; 40 &middot; Likuiditas minimum turnover Rp50 juta/hari &middot; Ditampilkan Top 10 terurut skor tertinggi.", "Ini skor pola teknikal buatan sendiri (bukan probabilitas statistik ARA yang tervalidasi).")}
+>       ${preset("🔥","ARA Candidate (Momentum Detector)", "Market Cap &lt; Rp10 triliun (proxy small&ndash;mid) &middot; Close = High hari ini (menutup di harga tertinggi) &middot; Offer Volume = 0 (antrian jual habis diborong) &middot; Perubahan harga &lt; 24% &middot; Ditampilkan Top 10 terurut Volume Ratio tertinggi.", "\"Belum ARA\" didekati pakai batas 24% generik, BUKAN pengecekan band Auto Reject Atas riil per rentang harga saham (yang sebenarnya bertingkat 20%/25%/35% tergantung harga).")}
+>       ${preset("🚨","Overvalue / Hindari", "Skor komposit SAMA seperti preset \"Top Opportunity\" (Fund 40% + Val 30% + Mom 20% + Vol 10%) tapi dengan syarat &lt; 40.", "ISI DAFTAR HINDARI/WASPADA, bukan sinyal jual otomatis — tetap perlu verifikasi manual sebelum ambil keputusan.")}
+>     </div>
+> 
+>     <div class="about-row">
+>       ${pillHtml("Filter & Menu Lain di Tab Screener","muted")}
+>       ${menu("🛠️ Rule Builder (+ Tambah Rule)", "Kombinasi kondisi kustom (AND, semua harus terpenuhi) yang Anda buat sendiri terhadap kolom apapun di tabel — mis. \"RSI7 &gt; 60\". Tersimpan di localStorage perangkat ini, dan bisa disimpan sebagai Preset ke tabel <code>custom_presets</code> di Supabase supaya bisa dipakai lagi atau dipantau lewat Notifikasi Telegram.")}
+>       ${menu("Filter Dropdown (Sektor, Syariah, Trend Harga, MACD, Pola Candle, Sinyal Volume, Sinyal Frekuensi, Keyakinan Naik, Sinyal Harga, Sinyal RSI, Status RSI, Bandarmologi, Uang Gede Masuk, BB Squeeze, Valuasi)", "Filter kategori langsung dari kolom di stocks_screener atau hasil turunannya — independen dari preset manapun di atas, bisa dikombinasikan dengan preset yang aktif.")}
+>       ${menu("Filter Rentang Angka (BB Width, ATR14, CLV, RSI7, RSI21, Frekuensi)", "Isi batas Min/Max manual untuk kolom teknikal tsb — juga independen dari preset, dikombinasikan dengan AND ke semua filter lain yang aktif.")}
+>       ${menu("Kolom Tampilan", "Memilih kolom mana yang ditampilkan di tabel screener. TIDAK mengubah data atau hasil filter — murni preferensi tampilan, tersimpan di localStorage.")}
+>       ${menu("📊 Ekspor Excel", "Mengekspor baris yang SEDANG tampil (hasil filter + sort + kolom aktif saat ini) ke file .xlsx, diproses sepenuhnya di browser (SheetJS) — tidak lewat server manapun.")}
+>       ${menu("Centang baris (kolom paling kiri)", "Menandai saham untuk aksi massal: dipakai di tab Backtest, atau untuk membatasi tombol \"🔴 Live Stockbit\" hanya ke saham yang dicentang saja.")}
+>     </div>
