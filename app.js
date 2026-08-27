@@ -3666,16 +3666,15 @@ function renderRuleBuilder(){
 
   return `
     <div class="panel" style="margin-bottom:16px;">
-      <div class="filter-section-title rules-panel-header" id="rulesPanelHeader" role="button" tabindex="0" aria-expanded="${!collapsed}" style="cursor:pointer;user-select:none;">
-        <span style="display:flex;align-items:center;gap:8px;">
+      <button type="button" id="rulesPanelHeader" aria-expanded="${!collapsed}" class="filter-section-title" style="background:transparent;border:none;margin:0;padding:0;text-align:left;width:100%;display:flex;align-items:center;justify-content:space-between;cursor:pointer;-webkit-tap-highlight-color:transparent;touch-action:manipulation;font-family:inherit;">
+        <span style="display:flex;align-items:center;gap:8px;pointer-events:none;">
           <span id="rulesPanelChevron" class="rules-chevron" style="display:inline-block;transition:transform .2s ease;transform:rotate(${collapsed ? -90 : 0}deg);">▾</span>
           Rules Kustom (mirip Edit Screener Stockbit)
           ${activeCountBadge}
         </span>
-        <span class="line"></span>
-      </div>
-      <div id="rulesPanelBody" style="${collapsed ? 'display:none;' : ''}">
-        <div class="rule-list">${rows || '<div style="color:var(--muted);font-size:13px;padding:6px 0 2px;">Belum ada rule kustom. Klik "+ Tambah Rule" untuk mulai — mis. "Frequency &gt; 5 &times; Frequency Analyzer".</div>'}</div>
+        <span class="line" style="pointer-events:none;"></span>
+      </button>
+      <div id="rulesPanelBody" style="${collapsed ? 'display:none;' : ''}">        <div class="rule-list">${rows || '<div style="color:var(--muted);font-size:13px;padding:6px 0 2px;">Belum ada rule kustom. Klik "+ Tambah Rule" untuk mulai — mis. "Frequency &gt; 5 &times; Frequency Analyzer".</div>'}</div>
         <div style="display:flex;align-items:center;gap:12px;margin-top:12px;flex-wrap:wrap;">
           <button type="button" class="btn btn-outline" id="addRuleBtn">+ Tambah Rule</button>
           <button type="button" class="btn btn-outline" id="savePresetBtn" ${state.presetsLoading?'disabled':''}>💾 Simpan sebagai Preset...</button>
@@ -5350,10 +5349,11 @@ function attachContentEvents(){
       if(chevron) chevron.style.transform = `rotate(${state.rulesPanelCollapsed ? -90 : 0}deg)`;
       rulesPanelHeader.setAttribute("aria-expanded", String(!state.rulesPanelCollapsed));
     };
-    rulesPanelHeader.onclick = toggleRulesPanel;
-    rulesPanelHeader.onkeydown = (e) => {
-      if(e.key === "Enter" || e.key === " "){ e.preventDefault(); toggleRulesPanel(); }
-    };
+    // click mencakup mouse desktop DAN tap mobile (native <button> selalu
+    // mengeluarkan event "click" yang konsisten di semua browser/WebView,
+    // beda dengan <div role="button"> yang di sebagian browser mobile lama
+    // butuh delay/quirk khusus sebelum "click" benar-benar terpicu).
+    rulesPanelHeader.onclick = (e) => { e.preventDefault(); toggleRulesPanel(); };
   }
 
   const addRuleBtn = document.getElementById("addRuleBtn");
