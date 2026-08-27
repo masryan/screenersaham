@@ -838,6 +838,9 @@ let state = {
   freqAnalyzerCol: "freq_ma20",
   // Rules kustom ala "Edit Screener" Stockbit: {id, aKey, op, mult, bType, bKey, bConst}
   customRules: [],
+  // Status collapse/expand panel "Rules Kustom" — disimpan di localStorage
+  // biar preferensi user (dibuka/ditutup) tetap nyantol setelah reload.
+  rulesPanelCollapsed: localStorage.getItem("ihsg_rules_panel_collapsed") === "true",
   // Preset Screener kustom (disimpan di tabel custom_presets Supabase):
   // {id, name, rules, created_at}. selectedPresetId = preset yang dipilih
   // di dropdown (belum tentu sudah "dimuat" ke customRules).
@@ -3656,24 +3659,38 @@ function renderRuleBuilder(){
     `<option value="${p.id}" ${String(state.selectedPresetId)===String(p.id)?'selected':''}>${escapeHtml(p.name)} (${Array.isArray(p.rules)?p.rules.length:0} rule)</option>`
   ).join("");
 
+  const collapsed = !!state.rulesPanelCollapsed;
+  const activeCountBadge = state.customRules.length
+    ? `<span style="font-size:10.5px;color:var(--teal);background:rgba(6,182,212,0.12);border:1px solid rgba(6,182,212,0.3);border-radius:999px;padding:1px 8px;font-weight:600;">${state.customRules.length} aktif</span>`
+    : "";
+
   return `
     <div class="panel" style="margin-bottom:16px;">
-      <div class="filter-section-title">Rules Kustom (mirip Edit Screener Stockbit)<span class="line"></span></div>
-      <div class="rule-list">${rows || '<div style="color:var(--muted);font-size:13px;padding:6px 0 2px;">Belum ada rule kustom. Klik "+ Tambah Rule" untuk mulai — mis. "Frequency &gt; 5 &times; Frequency Analyzer".</div>'}</div>
-      <div style="display:flex;align-items:center;gap:12px;margin-top:12px;flex-wrap:wrap;">
-        <button type="button" class="btn btn-outline" id="addRuleBtn">+ Tambah Rule</button>
-        <button type="button" class="btn btn-outline" id="savePresetBtn" ${state.presetsLoading?'disabled':''}>💾 Simpan sebagai Preset...</button>
-        ${state.customRules.length ? `<span style="font-size:12px;color:var(--muted);">${state.customRules.length} rule aktif — otomatis diterapkan ke tabel di bawah (AND, semua harus terpenuhi).</span>` : ""}
+      <div class="filter-section-title rules-panel-header" id="rulesPanelHeader" role="button" tabindex="0" aria-expanded="${!collapsed}" style="cursor:pointer;user-select:none;">
+        <span style="display:flex;align-items:center;gap:8px;">
+          <span id="rulesPanelChevron" class="rules-chevron" style="display:inline-block;transition:transform .2s ease;transform:rotate(${collapsed ? -90 : 0}deg);">▾</span>
+          Rules Kustom (mirip Edit Screener Stockbit)
+          ${activeCountBadge}
+        </span>
+        <span class="line"></span>
       </div>
-      <div style="display:flex;align-items:center;gap:10px;margin-top:14px;flex-wrap:wrap;padding-top:12px;border-top:1px solid var(--border);">
-        <label style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;">Preset Tersimpan</label>
-        <select id="presetSelect" style="background:rgba(0,0,0,0.2);border:1px solid var(--border);color:var(--text);font-size:12.5px;border-radius:7px;padding:8px 9px;min-width:220px;flex:1;max-width:320px;">
-          <option value="">${state.customPresets.length ? '— pilih preset —' : 'Belum ada preset tersimpan'}</option>
-          ${presetOptions}
-        </select>
-        <button type="button" class="btn btn-outline" id="loadPresetBtn" ${!state.selectedPresetId || state.presetsLoading ? 'disabled' : ''} title="Muat rule dari preset ini (menimpa rule kustom yang aktif)">📥 Muat</button>
-        <button type="button" class="btn btn-outline" id="updatePresetBtn" ${!state.selectedPresetId || !state.customRules.length || state.presetsLoading ? 'disabled' : ''} title="Timpa preset ini dengan Rules Kustom yang sedang aktif — tidak perlu simpan dengan nama baru" style="color:#34d399;border-color:rgba(16,185,129,0.35);">🔄 Update Preset</button>
-        <button type="button" class="btn btn-outline" id="deletePresetBtn" ${!state.selectedPresetId || state.presetsLoading ? 'disabled' : ''} title="Hapus preset ini" style="color:#f87171;border-color:rgba(239,68,68,0.3);">🗑️ Hapus</button>
+      <div id="rulesPanelBody" style="${collapsed ? 'display:none;' : ''}">
+        <div class="rule-list">${rows || '<div style="color:var(--muted);font-size:13px;padding:6px 0 2px;">Belum ada rule kustom. Klik "+ Tambah Rule" untuk mulai — mis. "Frequency &gt; 5 &times; Frequency Analyzer".</div>'}</div>
+        <div style="display:flex;align-items:center;gap:12px;margin-top:12px;flex-wrap:wrap;">
+          <button type="button" class="btn btn-outline" id="addRuleBtn">+ Tambah Rule</button>
+          <button type="button" class="btn btn-outline" id="savePresetBtn" ${state.presetsLoading?'disabled':''}>💾 Simpan sebagai Preset...</button>
+          ${state.customRules.length ? `<span style="font-size:12px;color:var(--muted);">${state.customRules.length} rule aktif — otomatis diterapkan ke tabel di bawah (AND, semua harus terpenuhi).</span>` : ""}
+        </div>
+        <div style="display:flex;align-items:center;gap:10px;margin-top:14px;flex-wrap:wrap;padding-top:12px;border-top:1px solid var(--border);">
+          <label style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;">Preset Tersimpan</label>
+          <select id="presetSelect" style="background:rgba(0,0,0,0.2);border:1px solid var(--border);color:var(--text);font-size:12.5px;border-radius:7px;padding:8px 9px;min-width:220px;flex:1;max-width:320px;">
+            <option value="">${state.customPresets.length ? '— pilih preset —' : 'Belum ada preset tersimpan'}</option>
+            ${presetOptions}
+          </select>
+          <button type="button" class="btn btn-outline" id="loadPresetBtn" ${!state.selectedPresetId || state.presetsLoading ? 'disabled' : ''} title="Muat rule dari preset ini (menimpa rule kustom yang aktif)">📥 Muat</button>
+          <button type="button" class="btn btn-outline" id="updatePresetBtn" ${!state.selectedPresetId || !state.customRules.length || state.presetsLoading ? 'disabled' : ''} title="Timpa preset ini dengan Rules Kustom yang sedang aktif — tidak perlu simpan dengan nama baru" style="color:#34d399;border-color:rgba(16,185,129,0.35);">🔄 Update Preset</button>
+          <button type="button" class="btn btn-outline" id="deletePresetBtn" ${!state.selectedPresetId || state.presetsLoading ? 'disabled' : ''} title="Hapus preset ini" style="color:#f87171;border-color:rgba(239,68,68,0.3);">🗑️ Hapus</button>
+        </div>
       </div>
     </div>
   `;
@@ -5321,6 +5338,23 @@ function renderTargetBandar(){
 function attachContentEvents(){
   const advToggleBtn = document.getElementById("advToggleBtn");
   if(advToggleBtn) advToggleBtn.onclick = () => { state.showAdvancedFilters = !state.showAdvancedFilters; render(); };
+
+  const rulesPanelHeader = document.getElementById("rulesPanelHeader");
+  if(rulesPanelHeader) {
+    const toggleRulesPanel = () => {
+      state.rulesPanelCollapsed = !state.rulesPanelCollapsed;
+      localStorage.setItem("ihsg_rules_panel_collapsed", String(state.rulesPanelCollapsed));
+      const body = document.getElementById("rulesPanelBody");
+      const chevron = document.getElementById("rulesPanelChevron");
+      if(body) body.style.display = state.rulesPanelCollapsed ? "none" : "";
+      if(chevron) chevron.style.transform = `rotate(${state.rulesPanelCollapsed ? -90 : 0}deg)`;
+      rulesPanelHeader.setAttribute("aria-expanded", String(!state.rulesPanelCollapsed));
+    };
+    rulesPanelHeader.onclick = toggleRulesPanel;
+    rulesPanelHeader.onkeydown = (e) => {
+      if(e.key === "Enter" || e.key === " "){ e.preventDefault(); toggleRulesPanel(); }
+    };
+  }
 
   const addRuleBtn = document.getElementById("addRuleBtn");
   if(addRuleBtn) addRuleBtn.onclick = addCustomRule;
