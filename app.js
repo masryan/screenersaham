@@ -154,6 +154,22 @@ const BURSA_HOLIDAYS = new Set([
   "2026-12-31", // Libur Bursa (penutup tahun)
 ]);
 
+// Selalu pakai komponen tanggal LOKAL (getFullYear/getMonth/getDate), JANGAN
+// toISOString() untuk merepresentasikan "tanggal kalender" — toISOString()
+// mengonversi ke UTC, dan karena WIB = UTC+7, tengah malam lokal (mis. dari
+// input <input type="date">, yang selalu diparse sebagai "T00:00:00" lokal)
+// mundur jadi jam 17:00 UTC HARI SEBELUMNYA, sehingga tanggalnya salah (bug
+// ini yang bikin rentang "28/08–29/08" kepetakan jadi 27/08). Semua tempat
+// yang butuh "tanggal hari ini"/"tanggal dari Date object" WAJIB pakai
+// helper ini, bukan .toISOString().slice(0,10).
+function toLocalISODate(d){
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
+}
+function todayLocalISO(){ return toLocalISODate(new Date()); }
+
 function tradingDaysBack(n, fromDate = new Date()){
   // Hari bursa = Senin-Jumat DIKURANGI tanggal di BURSA_HOLIDAYS (kalau tahunnya terdaftar).
   // Untuk tahun yang belum ada di kalender di atas, otomatis fallback ke exclude-weekend-saja
@@ -163,7 +179,7 @@ function tradingDaysBack(n, fromDate = new Date()){
   while(days.length < n){
     d.setDate(d.getDate() - 1);
     const dow = d.getDay();
-    const iso = d.toISOString().slice(0,10);
+    const iso = toLocalISODate(d);
     if(dow !== 0 && dow !== 6 && !BURSA_HOLIDAYS.has(iso)) days.push(iso);
   }
   return days.reverse(); // urut lama -> baru
@@ -180,7 +196,7 @@ function tradingDaysInRange(fromDateStr, toDateStr){
   if(d > end) return days; // Dari lebih baru dari Sampai — dianggap tidak valid, biar kelihatan kosong
   while(d <= end){
     const dow = d.getDay();
-    const iso = d.toISOString().slice(0,10);
+    const iso = toLocalISODate(d);
     if(dow !== 0 && dow !== 6 && !BURSA_HOLIDAYS.has(iso)) days.push(iso);
     d.setDate(d.getDate() + 1);
   }
@@ -282,6 +298,98 @@ function parseStockbitMarketDetector(raw){
   });
 
   return byDate;
+}
+
+// ==========================================
+// HISTORICAL DATA STOCKBIT (tabel Date/Close/Change/Value/Volume di tab
+// "Historical Data" halaman detail saham — Daily/Weekly/Monthly).
+// Endpoint belum diverifikasi (lihat catatan di STOCKBIT_DEFAULT_HISTORICAL_EP),
+// jadi parseStockbitHistorical() di bawah mencoba banyak kemungkinan nama
+// field secara defensif (mirip mapStockbitQuote) — kalau skema Stockbit
+// ternyata beda, tinggal tambah alias nama field baru di pick(...) masing2
+// kolom, tidak perlu ubah struktur lain.
+// ==========================================
+async function stockbitFetchHistorical(ticker, period, opts = {}){
+  if(!state.stockbitToken) return { error: 'Token Stockbit belum diisi. Buka "⚙️ Pengaturan" → Live Data Stockbit.' };
+  if(!state.stockbitHistoricalEndpoint) return { error: 'Endpoint Historical Data belum diisi di Pengaturan. Ambil dari DevTools → Network saat membuka tab "Historical Data" di stockbit.com (lihat komentar STOCKBIT_DEFAULT_HISTORICAL_EP di app.js untuk caranya).' };
+  // startDate/endDate: ISO YYYY-MM-DD. Default kalau tidak dikasih: 1 tahun
+  // terakhir sampai hari ini (cukup luas untuk isi awal chart/backtest).
+  const endDate = opts.endDate || todayLocalISO();
+  const startDate = opts.startDate || toLocalISODate(new Date(new Date(endDate).setFullYear(new Date(endDate).getFullYear() - 1)));
+  const limit = opts.limit || 300;
+  const page = opts.page || 1;
+  const url = state.stockbitHistoricalEndpoint
+    .replace("{ticker}", encodeURIComponent(ticker))
+    .replace("{period}", encodeURIComponent(stockbitHistoricalPeriodParam(period)))
+    .replace("{start_date}", encodeURIComponent(startDate))
+    .replace("{end_date}", encodeURIComponent(endDate))
+    .replace("{limit}", encodeURIComponent(limit))
+    .replace("{page}", encodeURIComponent(page));
+  try{
+    let res;
+    if(state.stockbitProxyUrl){
+      res = await fetch(state.stockbitProxyUrl, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ url, token: state.stockbitToken })
+      });
+    } else {
+      res = await fetch(url, { headers: { "Authorization": `Bearer ${state.stockbitToken}`, "x-platform": "web" } });
+    }
+    const text = await res.text();
+    let json = null;
+    try{ json = JSON.parse(text); }catch(e){ /* bukan JSON, biarkan null */ }
+    if(!res.ok){
+      return { error: `HTTP ${res.status}${json && json.message ? " — " + json.message : ""}`, raw: json ?? text };
+    }
+    return { raw: json ?? text };
+  }catch(e){
+    const hint = state.stockbitProxyUrl ? "" : " — kemungkinan diblokir CORS. Coba isi \"Proxy URL\" di Pengaturan.";
+    return { error: e.message + hint };
+  }
+}
+
+// Menerima response mentah dan mencoba menormalkannya jadi daftar baris
+// { date, close, change, changePct, value, volume }. Mengembalikan null
+// kalau tidak ditemukan array baris sama sekali (supaya UI bisa menampilkan
+// JSON mentah apa adanya alih-alih data yang salah tafsir/hilang diam-diam).
+function parseStockbitHistorical(raw){
+  if(!raw || typeof raw !== "object") return null;
+  const container = raw.data || raw.result || raw;
+  const list = Array.isArray(container) ? container
+    : Array.isArray(container?.rows) ? container.rows
+    : Array.isArray(container?.chartbit) ? container.chartbit
+    : Array.isArray(container?.data) ? container.data
+    : Array.isArray(container?.historical) ? container.historical
+    : null;
+  if(!list || !list.length) return null;
+
+  const pick = (row, ...keys) => { for(const k of keys){ if(row && row[k]!=null && row[k]!=="") return row[k]; } return null; };
+  // Normalisasi berbagai kemungkinan format tanggal Stockbit (epoch ms/detik,
+  // "20260828", "28-08-2026", dll.) jadi ISO YYYY-MM-DD lokal, supaya bisa
+  // dibandingkan langsung dengan hasil tradingDaysInRange() saat Tarik Otomatis
+  // bulk. Kalau gagal diparse, dikembalikan apa adanya (masih tampil di tabel,
+  // cuma tidak akan ikut cocok di filter rentang tanggal bulk).
+  const normDate = (v) => {
+    if(v == null) return null;
+    if(typeof v === "number") return toLocalISODate(new Date(v > 2e10 ? v : v * 1000));
+    const s = String(v).trim();
+    if(/^\d{4}-\d{2}-\d{2}/.test(s)) return s.slice(0,10);
+    if(/^\d{8}$/.test(s)) return `${s.slice(0,4)}-${s.slice(4,6)}-${s.slice(6,8)}`;
+    const m = s.match(/^(\d{1,2})[-\/](\d{1,2})[-\/](\d{4})$/);
+    if(m) return `${m[3]}-${m[2].padStart(2,"0")}-${m[1].padStart(2,"0")}`;
+    const parsed = new Date(s);
+    return isNaN(parsed) ? s : toLocalISODate(parsed);
+  };
+
+  return list.map(row => ({
+    date: normDate(pick(row, "date", "trade_date", "netbs_date", "period", "chart_date")),
+    close: Number(pick(row, "close", "close_price", "last", "c")) || null,
+    change: Number(pick(row, "change", "chg", "price_change")) || null,
+    changePct: Number(pick(row, "change_percentage", "change_percent", "changePercent", "pct")) || null,
+    value: Number(pick(row, "value", "value_idr", "val", "trade_value")) || null,
+    volume: Number(pick(row, "volume", "vol", "trade_volume")) || null,
+  })).filter(r => r.date);
 }
 
 // Endpoint /marketdetectors membatasi TOTAL baris gabungan lewat "limit" —
@@ -552,6 +660,8 @@ async function openSettings() {
   if(stbQuote) stbQuote.value = state.stockbitQuoteEndpoint || STOCKBIT_DEFAULT_QUOTE_EP;
   const stbBroker = document.getElementById("setStockbitBrokerEndpoint");
   if(stbBroker) stbBroker.value = state.stockbitBrokerEndpoint || STOCKBIT_DEFAULT_BROKER_EP;
+  const stbHistorical = document.getElementById("setStockbitHistoricalEndpoint");
+  if(stbHistorical) stbHistorical.value = state.stockbitHistoricalEndpoint || STOCKBIT_DEFAULT_HISTORICAL_EP;
   const stbProxy = document.getElementById("setStockbitProxyUrl");
   if(stbProxy) stbProxy.value = state.stockbitProxyUrl || "";
   document.getElementById("settingsModalOverlay").classList.add("open");
@@ -619,10 +729,12 @@ function saveSettings() {
   state.stockbitTokenSource = "manual"; // ditimpa balik ke "auto" oleh syncStockbitTokenFromSupabase() kalau memang datang dari situ
   state.stockbitQuoteEndpoint = (document.getElementById("setStockbitQuoteEndpoint")?.value || "").trim() || STOCKBIT_DEFAULT_QUOTE_EP;
   state.stockbitBrokerEndpoint = (document.getElementById("setStockbitBrokerEndpoint")?.value || "").trim() || STOCKBIT_DEFAULT_BROKER_EP;
+  state.stockbitHistoricalEndpoint = (document.getElementById("setStockbitHistoricalEndpoint")?.value || "").trim() || STOCKBIT_DEFAULT_HISTORICAL_EP;
   state.stockbitProxyUrl = (document.getElementById("setStockbitProxyUrl")?.value || "").trim();
   localStorage.setItem(LS_STOCKBIT_TOKEN, state.stockbitToken);
   localStorage.setItem(LS_STOCKBIT_QUOTE_EP, state.stockbitQuoteEndpoint);
   localStorage.setItem(LS_STOCKBIT_BROKER_EP, state.stockbitBrokerEndpoint);
+  localStorage.setItem(LS_STOCKBIT_HISTORICAL_EP, state.stockbitHistoricalEndpoint);
   localStorage.setItem(LS_STOCKBIT_PROXY, state.stockbitProxyUrl);
 
   state.telegramFunctionUrl = (document.getElementById("setTelegramFunctionUrl")?.value || "").trim();
@@ -779,7 +891,8 @@ const LS_WATCHLIST = "ihsg_watchlist", LS_BACKTEST = "ihsg_backtest", LS_PORTO =
 const LS_FREQ_ANALYZER_COL = "ihsg_freq_analyzer_col";
 const LS_CUSTOM_RULES = "ihsg_custom_rules_v1";
 const LS_STOCKBIT_TOKEN = "ihsg_stockbit_token", LS_STOCKBIT_QUOTE_EP = "ihsg_stockbit_quote_ep",
-      LS_STOCKBIT_BROKER_EP = "ihsg_stockbit_broker_ep", LS_STOCKBIT_PROXY = "ihsg_stockbit_proxy";
+      LS_STOCKBIT_BROKER_EP = "ihsg_stockbit_broker_ep", LS_STOCKBIT_PROXY = "ihsg_stockbit_proxy",
+      LS_STOCKBIT_HISTORICAL_EP = "ihsg_stockbit_historical_ep";
 // Notifikasi Telegram — cuma URL Edge Function yang perlu disimpan lokal
 // (dipakai tombol "Uji Kirim Notifikasi" di browser). Bot token, chat ID,
 // status aktif, dan preset yang dipantau disimpan di Supabase (tabel
@@ -795,6 +908,25 @@ const STOCKBIT_DEFAULT_QUOTE_EP = "https://exodus.stockbit.com/stream/v3/symbol/
 // "Endpoint Quote/Orderbook" di Pengaturan tetap bisa ditimpa manual kalau
 // endpoint yang benar sudah ketemu.
 const STOCKBIT_DEFAULT_BROKER_EP = "https://exodus.stockbit.com/marketdetectors/{ticker}?from={from}&to={to}&transaction_type=TRANSACTION_TYPE_NET&market_board=MARKET_BOARD_REGULER&investor_type=INVESTOR_TYPE_ALL&limit={limit}";
+// Endpoint Historical Data (tabel Date/Close/Change/Value/Volume di halaman
+// detail saham Stockbit — toggle Daily/Weekly/Monthly). Sudah diverifikasi
+// dari traffic asli lewat DevTools (30 Agu 2026) — beda dengan marketdetectors,
+// endpoint ini SUDAH mendukung rentang tanggal beneran lewat start_date/end_date
+// + pagination lewat limit/page, jadi tidak perlu trik "tarik semua lalu saring"
+// seperti broker summary. Placeholder {period} diisi lewat
+// stockbitHistoricalPeriodParam() (map "daily"/"weekly"/"monthly" ->
+// HS_PERIOD_DAILY/HS_PERIOD_WEEKLY/HS_PERIOD_MONTHLY — dua yang terakhir baru
+// tebakan pola penamaan, belum dicek manual; kalau salah, field Endpoint di
+// Pengaturan bisa ditimpa manual). Bentuk JSON response-nya SENDIRI belum
+// dikonfirmasi — parseStockbitHistorical() di bawah menebak nama field secara
+// defensif, jadi kalau muncul pesan "formatnya tidak dikenali", tinggal cek
+// console (F12) untuk lihat JSON asli dan tambah alias field yang cocok.
+const STOCKBIT_DEFAULT_HISTORICAL_EP = "https://exodus.stockbit.com/company-price-feed/historical/summary/{ticker}?period={period}&start_date={start_date}&end_date={end_date}&limit={limit}&page={page}";
+function stockbitHistoricalPeriodParam(period){
+  if(period === "weekly") return "HS_PERIOD_WEEKLY";
+  if(period === "monthly") return "HS_PERIOD_MONTHLY";
+  return "HS_PERIOD_DAILY";
+}
 // Diverifikasi manual dari DevTools tanggal 25 Agu 2026 (menu "Bandar
 // Detector" stockbit.com) — {ticker} di path URL, {from}/{to} format
 // YYYY-MM-DD. limit dinaikkan dari default Stockbit (25) ke 200 supaya lebih
@@ -838,24 +970,28 @@ let state = {
   freqAnalyzerCol: "freq_ma20",
   // Rules kustom ala "Edit Screener" Stockbit: {id, aKey, op, mult, bType, bKey, bConst}
   customRules: [],
-  // Status collapse/expand panel "Rules Kustom" — disimpan di localStorage
-  // biar preferensi user (dibuka/ditutup) tetap nyantol setelah reload.
-  rulesPanelCollapsed: localStorage.getItem("ihsg_rules_panel_collapsed") === "true",
   // Preset Screener kustom (disimpan di tabel custom_presets Supabase):
   // {id, name, rules, created_at}. selectedPresetId = preset yang dipilih
   // di dropdown (belum tentu sudah "dimuat" ke customRules).
   customPresets: [],
   selectedPresetId: "",
   presetsLoading: false,
+  // Data Top 3 Broker Beli/Jual per saham (dari broker_summary, hari
+  // trading terakhir yang tercatat) — dipakai rule kustom "Top 3 Broker
+  // (Beli/Jual) contains <kode>" untuk cari saham yang didominasi broker
+  // tertentu. Bentuk: { TICKER: { buy:["AK","YP","PD"], sell:[...] } }.
+  top3BrokerData: {},
+  top3BrokerDate: null,
+  top3BrokerLoading: false,
   // Tab Broker Summary: top 5 broker buy/sell per saham per tanggal.
   // Data diisi MANUAL (dari screenshot akun Stockbit sendiri) lewat
   // form atau tempel CSV — bukan hasil scraping otomatis.
-  bsStockCode: "", bsDate: new Date().toISOString().slice(0,10),
+  bsStockCode: "", bsDate: todayLocalISO(),
   bsRows: [], bsEditRows: [], bsLoading: false,
   bsEditorOpen: false, bsMsg: "", bsMsgError: false, bsCsvText: "",
   // Broker Summary versi di dalam modal Detail Emiten (terkunci ke
   // ticker yang sedang dibuka, tabel Supabase sama dengan di atas).
-  detailBsDate: new Date().toISOString().slice(0,10),
+  detailBsDate: todayLocalISO(),
   detailBsRows: [], detailBsEditRows: [], detailBsLoading: false,
   detailBsEditorOpen: false, detailBsMsg: "", detailBsMsgError: false, detailBsCsvText: "",
   // ==========================================
@@ -880,8 +1016,14 @@ let state = {
   // ==========================================
   stockbitToken: "", stockbitQuoteEndpoint: STOCKBIT_DEFAULT_QUOTE_EP,
   stockbitBrokerEndpoint: STOCKBIT_DEFAULT_BROKER_EP, stockbitProxyUrl: "",
+  stockbitHistoricalEndpoint: STOCKBIT_DEFAULT_HISTORICAL_EP,
+  detailHistoricalPeriod: "daily", detailHistoricalRows: [],
+  detailHistoricalLoading: false, detailHistoricalMsg: "", detailHistoricalMsgError: false,
   stockbitTokenExpiresAt: null, stockbitTokenSyncedAt: null, stockbitTokenSource: "manual",
   stockbitLive: {}, stockbitBulkLoading: false, stockbitBulkProgress: null,
+  // Riwayat Value (Rp) harian dari Stockbit per ticker, dipakai Smart Pick —
+  // lihat catatan lengkap di loadLive() dan spStockbitValueRatio().
+  stockbitValueHistory: {},
   // Tarik otomatis Top 5 Broker Buy/Sell (jumlah hari bursa bisa diatur
   // lewat input di UI, default 10) HANYA untuk ticker yang dicentang
   // (state.selectedForBacktest) — lihat fetchAndSaveBrokerSummaryBulk().
@@ -893,6 +1035,14 @@ let state = {
   // bsAutoBulkDays lama supaya perilaku awal tetap sama.
   bsAutoBulkFrom: null, bsAutoBulkTo: null,
   bsBulkResultsOpen: true, // status buka/tutup panel hasil Tarik Otomatis (accordion panah)
+  // Tarik otomatis Historical Data (Daily) HANYA untuk ticker yang dicentang
+  // di tab Screener — lihat fetchAndSaveHistoricalBulk(). Beda dengan broker
+  // summary, endpoint historical TIDAK menerima rentang tanggal (cuma
+  // {ticker}+{period}), jadi tiap ticker cukup 1x request lalu hasilnya
+  // disaring ke rentang Dari-Sampai yang dipilih di UI.
+  stockbitHistoricalBulkLoading: false, stockbitHistoricalBulkProgress: null, stockbitHistoricalBulkResults: [],
+  hdAutoBulkFrom: null, hdAutoBulkTo: null,
+  hdBulkResultsOpen: true,
   // ==========================================
   // Notifikasi Telegram (tabel telegram_settings di Supabase, dieksekusi
   // oleh Edge Function `telegram-notifier` yang dijadwalkan Cron server —
@@ -904,7 +1054,25 @@ let state = {
   telegramOnlyMarketHours: true, telegramPresetIds: [],
   telegramFunctionUrl: "", telegramLoading: false,
   telegramLastRunAt: null, telegramLastRunNote: null,
-  telegramTestMsg: "", telegramTestMsgError: false, telegramTesting: false
+  telegramTestMsg: "", telegramTestMsgError: false, telegramTesting: false,
+  // ==========================================
+  // Tab "✨ Smart Pick": 5 sinyal siap-pakai (Area Demand, Throwback/Retest
+  // Breakout, Liquidity Sweep, Bull Divergence, Early Breakout) dihitung
+  // dari data live yang SUDAH ADA di enriched() — bukan model AI beneran,
+  // cuma scoring rule-based dikemas mirip "AI Screener" ala Stockbit.
+  // Hasil di kartu = live/hari-ini saja (bisa berubah tiap refresh).
+  // Begitu "✓ Finalisasi Signal (EOD)" ditekan (idealnya setelah market
+  // close), snapshot hari itu (ticker+signal+harga entry) dikunci ke
+  // tabel Supabase `smart_pick_signals` supaya performanya (win rate,
+  // rata-rata return) bisa dilacak dari waktu ke waktu — lihat
+  // sql/07_smart_pick.sql.
+  // ==========================================
+  spOpenCriteria: null, // id sinyal yang panel "Kriteria"-nya sedang terbuka
+  spRecapCollapsed: (localStorage.getItem("ihsg_sp_recap_collapsed") === "1"),
+  spFinalizing: false, spMsg: "", spMsgError: false,
+  spFilterType: "all", spFrom: "", spTo: "",
+  spHistory: [], spHistoryLoading: false,
+  spListOpenDefId: null
 };
 
 function fmtNum(n){ if(n===null||n===undefined) return "-"; return new Intl.NumberFormat("id-ID").format(n); }
@@ -972,6 +1140,7 @@ function loadSettings(){
     state.stockbitToken = localStorage.getItem(LS_STOCKBIT_TOKEN) || "";
     state.stockbitQuoteEndpoint = localStorage.getItem(LS_STOCKBIT_QUOTE_EP) || STOCKBIT_DEFAULT_QUOTE_EP;
     state.stockbitBrokerEndpoint = localStorage.getItem(LS_STOCKBIT_BROKER_EP) || STOCKBIT_DEFAULT_BROKER_EP;
+    state.stockbitHistoricalEndpoint = localStorage.getItem(LS_STOCKBIT_HISTORICAL_EP) || STOCKBIT_DEFAULT_HISTORICAL_EP;
     state.stockbitProxyUrl = localStorage.getItem(LS_STOCKBIT_PROXY) || "";
   }catch(e){}
   try{
@@ -1070,111 +1239,6 @@ function keyakinanToneFromLabel(label){
 // Red flag (section 4 file .md) dihitung terpisah dari skor — dipakai
 // sebagai peringatan tambahan, bukan pengurang skor.
 // ==========================================
-// ==========================================
-// OPPORTUNITY SCREENER — kartu preset baru (Top Opportunity, Multibagger
-// Candidate, Overvalue/Hindari, Technical Momentum, Undervalued, Near
-// Support ARA Pattern) + 2 detektor ARA (ARA Candidate, Near Support).
-//
-// Semua kartu ini pakai SATU mesin skor bersama (computeOpportunityScore)
-// yang menghasilkan 4 sub-skor 0-100 (Fundamental, Valuasi, Momentum,
-// Volume) dari kolom yang SUDAH ada di stocks_screener — tidak butuh
-// kolom/tabel baru. Tiap kartu tinggal pakai kombinasi bobot + threshold
-// gate (angka eksak) sesuai definisi masing-masing.
-//
-// CATATAN JUJUR soal data yang TIDAK tersedia persis seperti di gambar
-// referensi (supaya tidak pura-pura akurat):
-//   - "Est Upside > 30%" (Multibagger Candidate): tidak ada target harga
-//     analis di DB ini. Didekati pakai jarak ke Fibonacci Pivot R1 (fibR1)
-//     sebagai proxy resistance terdekat — kalau fibR1 tidak ada, sub-skor
-//     valuasi kartu ini otomatis turun ke 0 utk saham tsb (bukan lolos
-//     default), supaya tidak asal loloskan.
-//   - "AI Score" di kartu Overvalue/Hindari BUKAN aiScore lama yang sudah
-//     ada di app.js (skala -1..+6, khusus tampilan Detail Emiten) — itu
-//     skala berbeda. Di sini dipakai skor opportunity 0-100 yang sama
-//     dengan kartu lain, supaya threshold "<40" konsisten lintas kartu.
-// ==========================================
-function computeOpportunityScore(s){
-  const num = v => (v===null || v===undefined || v==="" || isNaN(v)) ? null : Number(v);
-  const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
-  // scale(v, lo, hi) -> 0..100 linear, v<=lo -> 0, v>=hi -> 100
-  const scale = (v, lo, hi) => v==null ? 0 : clamp(((v - lo) / (hi - lo)) * 100, 0, 100);
-  // scaleInverse: makin KECIL v makin TINGGI skor (dipakai utk PER/PBV/DER — murah/sehat = bagus)
-  const scaleInv = (v, lo, hi) => v==null ? 0 : clamp(((hi - v) / (hi - lo)) * 100, 0, 100);
-
-  const roe = num(s.roe), npm = num(s.npm), roa = num(s.roa), der = num(s.der);
-  const per = num(s.per), pbv = num(s.pbv);
-  const pos52w = num(s.pos52w); // 0-100, posisi harga dlm range 52 minggu
-  const changePct = num(s.changePct);
-  const volRatio = num(s.volRatio);
-
-  // --- Fundamental (ROE, NPM, ROA — makin tinggi makin bagus) ---
-  const fundScore = (
-    scale(roe, 0, 25) * 0.4 +
-    scale(npm, 0, 20) * 0.35 +
-    scale(roa, 0, 15) * 0.25
-  );
-
-  // --- Kesehatan keuangan (DER rendah = bagus) — dipakai terpisah dari
-  //     fundScore karena beberapa kartu punya bobot "Kesehatan" sendiri
-  const healthScore = der==null ? 50 : scaleInv(der, 0, 2.5);
-
-  // --- Valuasi (PER, PBV murah = bagus) ---
-  const valScore = (
-    scaleInv(per, 5, 30) * 0.5 +
-    scaleInv(pbv, 0.3, 5) * 0.5
-  );
-
-  // --- Momentum (posisi dlm range 52W + arah harga hari ini) ---
-  const momScore = (
-    scale(pos52w, 0, 100) * 0.7 +
-    (changePct==null ? 50 : (changePct >= 0 ? 70 : 30)) * 0.3
-  );
-
-  // --- Volume/likuiditas (volRatio vs rata-rata) ---
-  const volScore = scale(volRatio, 0.5, 3);
-
-  // --- Proxy "Est Upside" pakai jarak ke Fibonacci R1 (resistance
-  //     terdekat) — dipakai KHUSUS kartu Multibagger Candidate.
-  const fibR1 = num(s.fibR1); // Fibonacci Pivot Resistance 1 (kolom top-level, beda dari s.fib.f618 dkk)
-  const estUpsidePct = (fibR1!=null && s.cClose) ? ((fibR1 - s.cClose) / s.cClose) * 100 : null;
-  const upsideScore = scale(estUpsidePct, 0, 50);
-
-  return { fundScore, healthScore, valScore, momScore, volScore, estUpsidePct, upsideScore };
-}
-
-// --- ARA Score (Near Support / ARA Pattern) — 40-100 berdasarkan pola
-//     konsolidasi ketat (tight range) dekat support, likuiditas cukup.
-//     Bukan probabilitas statistik, murni skor pola teknikal seperti di
-//     gambar referensi ("berdasarkan pola teknikal konsolidasi").
-function computeAraScore(s){
-  const num = v => (v===null || v===undefined || v==="" || isNaN(v)) ? null : Number(v);
-  const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
-  if (s.cHigh==null || s.cLow==null || s.cClose==null || !s.cClose) return null;
-
-  // Tightness: range hari ini (High-Low)/Close — makin kecil makin ketat
-  const rangePct = ((s.cHigh - s.cLow) / s.cClose) * 100;
-  const tightnessScore = clamp(100 - (rangePct / 6) * 100, 0, 100); // range >=6% -> 0, range 0% -> 100
-
-  // Dekat support: jarak Close ke Support (kalau ada), makin dekat makin tinggi
-  const support = num(s.support);
-  let supportScore = 50;
-  if (support!=null && s.cClose) {
-    const distPct = Math.abs((s.cClose - support) / s.cClose) * 100;
-    supportScore = clamp(100 - (distPct / 5) * 100, 0, 100); // jarak >=5% -> 0
-  }
-
-  // Volatilitas rendah lanjutan: ATR14 relatif thd harga
-  const atr14 = num(s.atr14);
-  let volatilityScore = 50;
-  if (atr14!=null && s.cClose) {
-    const atrPct = (atr14 / s.cClose) * 100;
-    volatilityScore = clamp(100 - (atrPct / 5) * 100, 0, 100);
-  }
-
-  const total = Math.round(tightnessScore * 0.4 + supportScore * 0.35 + volatilityScore * 0.25);
-  return clamp(total, 0, 100);
-}
-
 function computeBaggerScore(s){
   const num = v => (v===null || v===undefined || v==="" || isNaN(v)) ? null : Number(v);
   const rsi14 = num(s.rsi14);
@@ -1239,7 +1303,7 @@ async function loadLive(){
 
   state.loading = true; showError(""); render();
   try {
-    const [stocksRes, portoRes, backtestRes, wlRes, presetsRes] = await Promise.all([
+    const [stocksRes, portoRes, backtestRes, wlRes, presetsRes, stockbitHistRes] = await Promise.all([
       // Ambil dari VIEW gabungan, bukan tabel stocks mentah: stocks_screener
       // sudah menggabungkan fundamental+teknikal (tabel stocks) dengan
       // bandarmologi asli dari IDX (view flow_summary), lewat left join.
@@ -1247,7 +1311,19 @@ async function loadLive(){
       fetch(`${SUPABASE_URL}/portfolios?select=*`, { headers: getSupaHeaders(), cache: "no-store" }).then(r => r.json()),
       fetch(`${SUPABASE_URL}/backtest_sessions?select=*,backtest_items(*)`, { headers: getSupaHeaders(), cache: "no-store" }).then(r => r.json()),
       fetch(`${SUPABASE_URL}/watchlists?select=ticker`, { headers: getSupaHeaders(), cache: "no-store" }).then(r => r.json()),
-      fetch(`${SUPABASE_URL}/custom_presets?select=*&order=created_at.desc`, { headers: getSupaHeaders(), cache: "no-store" }).then(r => r.json())
+      fetch(`${SUPABASE_URL}/custom_presets?select=*&order=created_at.desc`, { headers: getSupaHeaders(), cache: "no-store" }).then(r => r.json()),
+      // Riwayat Value (Rp) harian dari Stockbit (tabel price_history_stockbit,
+      // diisi lewat tombol "📅 Historical" di Screener / tab Historical Data
+      // di modal Detail Emiten) — dipakai Smart Pick (Area Demand & Liquidity
+      // Sweep) untuk memvalidasi volume spike pakai NILAI transaksi riil,
+      // bukan cuma rasio volume lembar dari `flows`. Cuma ticker yang PERNAH
+      // ditarik manual yang akan punya data di sini — untuk ticker lain,
+      // Smart Pick tetap fallback ke volRatio seperti biasa (lihat
+      // spStockbitValueRatio()). .catch(()=>[]) supaya kalau tabelnya belum
+      // dibuat (migration 08 belum dijalankan), loadLive() tidak ikut gagal.
+      fetch(`${SUPABASE_URL}/price_history_stockbit?period=eq.daily&select=stock_code,trade_date,value_idr&order=trade_date.desc&limit=4000`, { headers: getSupaHeaders(), cache: "no-store" })
+        .then(r => r.ok ? r.json() : [])
+        .catch(() => [])
     ]);
 
     if (stocksRes.message) throw new Error(stocksRes.message);
@@ -1402,10 +1478,69 @@ async function loadLive(){
 
     if (warnings.length) showError(warnings.join(" · "));
 
+    // Susun state.stockbitValueHistory: { TICKER: [{date, value_idr}, ...] }
+    // Tidak perlu warning kalau kosong — ini fitur opsional (fallback ke
+    // volRatio biasa kalau tidak ada), bukan data wajib.
+    if(Array.isArray(stockbitHistRes) && stockbitHistRes.length){
+      const grouped = {};
+      stockbitHistRes.forEach(r => {
+        if(r.value_idr == null) return;
+        (grouped[r.stock_code] ||= []).push({ date: r.trade_date, value_idr: Number(r.value_idr) || 0 });
+      });
+      state.stockbitValueHistory = grouped;
+    } else {
+      state.stockbitValueHistory = {};
+    }
+
   } catch (e) {
     showError("Gagal terhubung ke Database Supabase: " + e.message);
   }
   state.loading = false; render();
+
+  // Top 3 Broker Beli/Jual dimuat terpisah (tidak di-await bareng fetch di
+  // atas) supaya screener utama tetap cepat tampil — begitu selesai, dia
+  // render() ulang sendiri untuk mengisi filter "Top 3 Broker".
+  loadTop3BrokerData();
+}
+
+// Ambil top 3 broker BELI dan top 3 broker JUAL per saham, dari trade_date
+// PALING BARU yang tercatat di tabel broker_summary (bukan per-saham,
+// karena kolomnya diisi manual/bulk — kalau ditarik per saham query bisa
+// sangat banyak). Asumsinya sama seperti logic skip-fetch broker summary:
+// hari trading terakhir dianggap representatif untuk "kondisi terkini".
+async function loadTop3BrokerData(){
+  if(!SUPABASE_URL || !SUPABASE_KEY) return;
+  state.top3BrokerLoading = true;
+  try{
+    const dateRes = await fetch(`${SUPABASE_URL}/broker_summary?select=trade_date&order=trade_date.desc&limit=1`, { headers: getSupaHeaders(), cache: "no-store" });
+    const dateRows = await dateRes.json();
+    const latestDate = Array.isArray(dateRows) && dateRows[0] ? dateRows[0].trade_date : null;
+    if(!latestDate){
+      state.top3BrokerData = {}; state.top3BrokerDate = null;
+      state.top3BrokerLoading = false; render();
+      return;
+    }
+
+    const res = await fetch(`${SUPABASE_URL}/broker_summary?select=stock_code,side,rank,broker_code&trade_date=eq.${latestDate}&rank=lte.3&order=stock_code.asc,side.asc,rank.asc`, { headers: getSupaHeaders(), cache: "no-store" });
+    const rows = await res.json();
+    const map = {};
+    if(Array.isArray(rows)){
+      rows.forEach(r => {
+        const ticker = String(r.stock_code || "").trim().toUpperCase();
+        const code = String(r.broker_code || "").trim().toUpperCase();
+        if(!ticker || !code) return;
+        if(!map[ticker]) map[ticker] = { buy: [], sell: [] };
+        if(r.side === "buy") map[ticker].buy.push(code);
+        else if(r.side === "sell") map[ticker].sell.push(code);
+      });
+    }
+    state.top3BrokerData = map;
+    state.top3BrokerDate = latestDate;
+  }catch(e){
+    console.warn("Gagal memuat Top 3 Broker:", e);
+  }
+  state.top3BrokerLoading = false;
+  render();
 }
 
 function showError(msg){
@@ -1443,6 +1578,7 @@ function openDetail(ticker){
   state.detailBsRows = []; state.detailBsEditRows = [];
   state.detailBsMsg = ""; state.detailBsMsgError = false;
   state.detailBsEditorOpen = false; state.detailBsCsvText = "";
+  state.detailHistoricalRows = []; state.detailHistoricalMsg = ""; state.detailHistoricalMsgError = false;
   render();
 }
 function closeDetail(){
@@ -1451,6 +1587,15 @@ function closeDetail(){
 }
 function setDetailTab(tab){
   state.detailTab = tab;
+  render();
+}
+
+function openSmartPickList(defId){
+  state.spListOpenDefId = defId;
+  render();
+}
+function closeSmartPickList(){
+  state.spListOpenDefId = null;
   render();
 }
 
@@ -2222,6 +2367,206 @@ function fillDbsFromCsv(){
   render();
 }
 
+function renderDetailHistorical(s){
+  const ticker = s.ticker;
+  const rows = state.detailHistoricalRows || [];
+  const periodBtn = (key, label) => `<button type="button" class="btn ${state.detailHistoricalPeriod===key?'btn-primary':'btn-outline'}" data-hist-period="${key}" ${state.detailHistoricalLoading?"disabled":""}>${label}</button>`;
+
+  const tableRows = rows.map(r => `
+    <tr>
+      <td class="mono">${escapeHtml(r.date)}</td>
+      <td class="mono" style="text-align:right;">${r.close!=null?fmtNum(r.close):"-"}</td>
+      <td class="mono" style="text-align:right;color:${(r.change??0)>=0?'var(--up)':'var(--down)'}">${r.change!=null?dNum(r.change,{plusSign:true}):"-"}${r.changePct!=null?` (${dNum(r.changePct,{plusSign:true,decimals:2,suffix:'%'})})`:""}</td>
+      <td class="mono" style="text-align:right;">${r.value!=null?fmtNum(r.value):"-"}</td>
+      <td class="mono" style="text-align:right;">${r.volume!=null?fmtNum(r.volume):"-"}</td>
+    </tr>`).join("");
+
+  return `
+    <div class="bs-wrap">
+      <div class="bs-toolbar" style="flex-wrap:wrap;gap:8px;">
+        <span class="mono" style="font-weight:700;font-size:14px;">${escapeHtml(ticker)}</span>
+        ${periodBtn("daily","Daily")}
+        ${periodBtn("weekly","Weekly")}
+        ${periodBtn("monthly","Monthly")}
+        <button class="btn btn-outline" id="dhistLoadBtn" ${state.detailHistoricalLoading?"disabled":""}>${state.detailHistoricalLoading?"Menarik data...":"⬇️ Tarik Data dari Stockbit"}</button>
+        ${rows.length ? `<button class="btn btn-outline" id="dhistSaveBtn">💾 Simpan ke Database</button>` : ""}
+      </div>
+
+      ${state.detailHistoricalMsg ? `<div class="bs-msg ${state.detailHistoricalMsgError?"bs-msg-error":"bs-msg-ok"}">${escapeHtml(state.detailHistoricalMsg)}</div>` : ""}
+
+      ${!rows.length ? `<div class="empty-box" style="margin-top:12px;">Belum ada data. Klik "Tarik Data dari Stockbit" di atas (butuh Token Stockbit &amp; Endpoint Historical Data terisi di ⚙️ Pengaturan).</div>` : `
+      <div style="overflow-x:auto;margin-top:12px;">
+        <table style="width:100%;border-collapse:collapse;font-size:12.5px;">
+          <thead>
+            <tr style="color:var(--muted);text-align:right;">
+              <th style="text-align:left;padding:6px 8px;">Date</th>
+              <th style="padding:6px 8px;">Close</th>
+              <th style="padding:6px 8px;">Change</th>
+              <th style="padding:6px 8px;">Value</th>
+              <th style="padding:6px 8px;">Volume</th>
+            </tr>
+          </thead>
+          <tbody>${tableRows}</tbody>
+        </table>
+      </div>`}
+    </div>`;
+}
+
+async function loadDetailHistorical(period){
+  const ticker = state.detailTicker;
+  if(period) state.detailHistoricalPeriod = period;
+  if(!ticker) return;
+  state.detailHistoricalLoading = true; state.detailHistoricalMsg = ""; render();
+  const res = await stockbitFetchHistorical(ticker, state.detailHistoricalPeriod);
+  if(res.error){
+    state.detailHistoricalMsg = res.error;
+    state.detailHistoricalMsgError = true;
+    state.detailHistoricalRows = [];
+  } else {
+    const parsed = parseStockbitHistorical(res.raw);
+    if(!parsed){
+      state.detailHistoricalMsg = "Response diterima tapi formatnya tidak dikenali. Cek console (F12) untuk lihat JSON mentahnya, lalu sesuaikan parseStockbitHistorical() di app.js.";
+      state.detailHistoricalMsgError = true;
+      state.detailHistoricalRows = [];
+      console.log("Stockbit historical raw response:", res.raw);
+    } else {
+      state.detailHistoricalRows = parsed;
+      state.detailHistoricalMsg = `Berhasil menarik ${parsed.length} baris (${state.detailHistoricalPeriod}).`;
+      state.detailHistoricalMsgError = false;
+    }
+  }
+  state.detailHistoricalLoading = false;
+  render();
+}
+
+async function saveDetailHistoricalRows(){
+  const ticker = state.detailTicker;
+  const rows = state.detailHistoricalRows || [];
+  if(!ticker || !rows.length) return;
+  if(!SUPABASE_URL || !SUPABASE_KEY){ openSettings(); return; }
+  try{
+    const payload = rows.map(r => ({
+      stock_code: ticker, trade_date: r.date, period: state.detailHistoricalPeriod,
+      close: r.close, change: r.change, change_pct: r.changePct, value_idr: r.value, volume: r.volume
+    }));
+    await supaFetch(`${SUPABASE_URL}/price_history_stockbit?on_conflict=stock_code,trade_date,period`, {
+      method: "POST",
+      headers: { ...getSupaHeaders(), "Prefer": "resolution=merge-duplicates,return=representation" },
+      body: JSON.stringify(payload)
+    });
+    state.detailHistoricalMsg = `Tersimpan ${payload.length} baris ke tabel price_history_stockbit.`;
+    state.detailHistoricalMsgError = false;
+  } catch(e){
+    state.detailHistoricalMsg = "Gagal menyimpan: " + e.message + " (pastikan sudah jalankan sql/08_price_history_stockbit.sql)";
+    state.detailHistoricalMsgError = true;
+  }
+  render();
+}
+
+// ==========================================
+// TARIK OTOMATIS (BULK) — Historical Data untuk banyak ticker sekaligus,
+// dipicu dari toolbar tab Screener (mirip Tarik Otomatis Broker Summary).
+// Beda dengan broker summary: endpoint historical TIDAK menerima rentang
+// tanggal ({ticker}+{period} saja), jadi per ticker cukup SATU request,
+// lalu hasilnya disaring ke rentang Dari-Sampai yang dipilih di UI.
+// ==========================================
+async function fetchExistingHistoricalDates(ticker, dates){
+  if(!dates.length) return new Set();
+  try{
+    const qs = new URLSearchParams({
+      stock_code: `eq.${ticker}`, period: "eq.daily",
+      trade_date: `in.(${dates.join(",")})`,
+      select: "trade_date",
+    });
+    const res = await fetch(`${SUPABASE_URL}/price_history_stockbit?${qs}`, { headers: getSupaHeaders(), cache: "no-store" });
+    if(!res.ok) return new Set();
+    const rows = await res.json();
+    return new Set(rows.map(r => r.trade_date));
+  }catch(e){
+    return new Set();
+  }
+}
+
+async function fetchAndSaveHistoricalBulk(tickers, rangeFrom, rangeTo){
+  if(state.stockbitHistoricalBulkLoading) return;
+  if(!tickers || !tickers.length){
+    state.stockbitHistoricalBulkResults = [{ ticker:"-", date:"-", ok:false, msg:"Centang minimal 1 saham di tab Screener dulu." }];
+    render(); return;
+  }
+  if(!state.stockbitToken){ openSettings(); return; }
+  if(!state.stockbitHistoricalEndpoint){
+    state.stockbitHistoricalBulkResults = [{ ticker:"-", date:"-", ok:false, msg:'Isi dulu "Endpoint Historical Data" di ⚙️ Pengaturan.' }];
+    render(); return;
+  }
+  if(!SUPABASE_URL || !SUPABASE_KEY){ openSettings(); return; }
+
+  const tradingDates = tradingDaysInRange(rangeFrom, rangeTo);
+  if(!tradingDates.length){
+    state.stockbitHistoricalBulkResults = [{ ticker:"-", date:"-", ok:false, msg:'Periode tanggal tidak valid atau tidak ada hari bursa di rentang itu — cek lagi tanggal "Dari" dan "Sampai".' }];
+    render(); return;
+  }
+  const fromDate = tradingDates[0];
+  const toDate = tradingDates[tradingDates.length - 1];
+  const latestDate = toDate; // hari bursa paling baru — tetap ditarik ulang walau sudah ada, sama seperti broker summary
+
+  state.stockbitHistoricalBulkLoading = true;
+  state.stockbitHistoricalBulkProgress = { done: 0, total: tickers.length };
+  state.stockbitHistoricalBulkResults = [];
+  render();
+
+  for(const ticker of tickers){
+    const existingDates = await fetchExistingHistoricalDates(ticker, tradingDates);
+    const neededDates = tradingDates.filter(d => !existingDates.has(d) || d === latestDate);
+
+    if(!neededDates.length){
+      state.stockbitHistoricalBulkResults.push({ ticker, date: `${fromDate}..${toDate}`, ok:true, msg: `Semua ${tradingDates.length} hari sudah ada di database, dilewati (tidak ada request ke Stockbit).` });
+      state.stockbitHistoricalBulkProgress.done++;
+      render();
+      continue;
+    }
+
+    const res = await stockbitFetchHistorical(ticker, "daily", { startDate: fromDate, endDate: toDate, limit: Math.max(tradingDates.length + 5, 30), page: 1 });
+    if(res.error){
+      state.stockbitHistoricalBulkResults.push({ ticker, date: `${fromDate}..${toDate}`, ok:false, msg: res.error });
+    } else {
+      const parsed = parseStockbitHistorical(res.raw);
+      if(!parsed){
+        state.stockbitHistoricalBulkResults.push({ ticker, date: `${fromDate}..${toDate}`, ok:false, msg: "Response diterima tapi formatnya tidak dikenali (cek console)." });
+        console.log(`Stockbit historical raw response (${ticker}):`, res.raw);
+      } else {
+        const inRange = parsed.filter(r => r.date >= fromDate && r.date <= toDate);
+        if(!inRange.length){
+          state.stockbitHistoricalBulkResults.push({ ticker, date: `${fromDate}..${toDate}`, ok:false, msg: `Endpoint mengembalikan ${parsed.length} baris tapi tidak ada yang jatuh di rentang ${fromDate}..${toDate} — kemungkinan start_date/end_date/limit di endpoint belum sesuai skema aslinya (cek raw JSON di console).` });
+        } else {
+          try{
+            const payload = inRange.map(r => ({
+              stock_code: ticker, trade_date: r.date, period: "daily",
+              close: r.close, change: r.change, change_pct: r.changePct, value_idr: r.value, volume: r.volume
+            }));
+            await supaFetch(`${SUPABASE_URL}/price_history_stockbit?on_conflict=stock_code,trade_date,period`, {
+              method: "POST",
+              headers: { ...getSupaHeaders(), "Prefer": "resolution=merge-duplicates,return=representation" },
+              body: JSON.stringify(payload)
+            });
+            const gotDates = new Set(inRange.map(r=>r.date));
+            const missing = neededDates.filter(d => !gotDates.has(d));
+            state.stockbitHistoricalBulkResults.push({ ticker, date: `${fromDate}..${toDate}`, ok:true,
+              msg: `Tersimpan ${payload.length} baris${missing.length ? ` (${missing.length} hari tidak ada di respons endpoint: ${missing.join(", ")})` : ""}.` });
+          } catch(e){
+            state.stockbitHistoricalBulkResults.push({ ticker, date: `${fromDate}..${toDate}`, ok:false, msg: "Gagal simpan ke DB: " + e.message });
+          }
+        }
+      }
+    }
+    state.stockbitHistoricalBulkProgress.done++;
+    render();
+    await new Promise(r => setTimeout(r, 300)); // jeda antar-ticker, jaga rate limit Stockbit
+  }
+
+  state.stockbitHistoricalBulkLoading = false;
+  render();
+}
+
 function renderDetailModalContent(){
   const s = enriched().find(x => x.ticker === state.detailTicker);
   if(!s){
@@ -2232,6 +2577,7 @@ function renderDetailModalContent(){
     { key:"fundamental", label:"💰 Fundamental" },
     { key:"bandarmologi", label:"🐋 Bandarmologi (IDX)" },
     { key:"brokersum", label:"🏦 Broker Summary" },
+    { key:"historical", label:"📅 Historical Data" },
     { key:"analisa", label:"🧠 Analisa" }
   ];
   const tabBtns = tabs.map(t => `<button type="button" class="detail-tab-btn ${state.detailTab===t.key?'active':''}" data-detail-tab="${t.key}">${t.label}</button>`).join("");
@@ -2240,6 +2586,7 @@ function renderDetailModalContent(){
   else if(state.detailTab === "fundamental") body = renderDetailFundamental(s);
   else if(state.detailTab === "bandarmologi") body = renderDetailBandarmologi(s);
   else if(state.detailTab === "brokersum") body = renderDetailBrokerSummary(s);
+  else if(state.detailTab === "historical") body = renderDetailHistorical(s);
   else body = renderDetailAnalisa(s);
 
   return `
@@ -2310,8 +2657,8 @@ async function syncBacktestToSupabase(sessionId, sessionDate, items) {
     // tampilan yang dipakai UI.
     const ts = Number(sessionId);
     const sessionDateIso = Number.isFinite(ts)
-      ? new Date(ts).toISOString().slice(0, 10)
-      : new Date().toISOString().slice(0, 10);
+      ? toLocalISODate(new Date(ts))
+      : todayLocalISO();
 
     await supaFetch(`${SUPABASE_URL}/backtest_sessions`, {
       method: "POST",
@@ -2491,7 +2838,7 @@ function exportScreenerToExcel(){
   const headers = Object.keys(data[0]);
   worksheet['!cols'] = headers.map(h => ({ wch: Math.max(10, h.length + 2) }));
 
-  const dateStr = new Date().toISOString().slice(0, 10);
+  const dateStr = todayLocalISO();
   XLSX.writeFile(workbook, `Screener_IHSG_${dateStr}.xlsx`);
 }
 
@@ -2588,7 +2935,7 @@ function exportAllBacktestToExcel() {
   worksheet['!cols'] = wscols;
 
   // Unduh dengan nama file otomatis memakai tanggal hari ini
-  const dateStr = new Date().toISOString().slice(0, 10);
+  const dateStr = todayLocalISO();
   XLSX.writeFile(workbook, `Semua_Backtest_IHSG_${dateStr}.xlsx`);
 }
 
@@ -2868,58 +3215,6 @@ function getFiltered(){
         && String(s.freqSpike).trim().toLowerCase() === "ya";
       if (!isSpikeFromRatio && !isSpikeFromDb) return false;
     }
-    // --- OPPORTUNITY SCREENER (kartu baru) ---
-    else if (state.activePreset === 'top_opportunity') {
-      // Gate eksak sesuai kartu "Top Opportunity" di gambar referensi.
-      if (!(s.roe > 15 && s.npm > 5 && s.der < 1.5 && s.roa > 8)) return false;
-      if (!(s.per != null && s.per < 25 && s.pbv != null && s.pbv < 5)) return false;
-      if (!(s.pos52w != null && s.pos52w > 50)) return false; // posisi > 52W mid
-      if (!(s.volRatio != null && s.volRatio >= 1.5)) return false; // "volume signifikan"
-      const sc = computeOpportunityScore(s);
-      const total = sc.fundScore * 0.4 + sc.valScore * 0.3 + sc.momScore * 0.2 + sc.volScore * 0.1;
-      if (total < 50) return false;
-    } else if (state.activePreset === 'multibagger') {
-      if (!(s.roe > 10 && s.npm > 5)) return false; // Growth
-      if (!(s.der < 1 && s.roa > 5 && s.pbv != null && s.pbv < 3)) return false; // Kesehatan
-      if (!(s.marketCap != null && s.marketCap < 10e12)) return false; // Small-Mid < 10T
-      const sc = computeOpportunityScore(s);
-      if (sc.estUpsidePct == null || sc.estUpsidePct <= 30) return false; // Est Upside > 30%
-      const total = sc.fundScore * 0.35 + sc.healthScore * 0.35 + sc.upsideScore * 0.30;
-      if (total < 40) return false;
-    } else if (state.activePreset === 'overvalue_hindari') {
-      const sc = computeOpportunityScore(s);
-      const total = sc.fundScore * 0.4 + sc.valScore * 0.3 + sc.momScore * 0.2 + sc.volScore * 0.1;
-      if (total >= 40) return false; // AI Score < 40 = kandidat dihindari
-    } else if (state.activePreset === 'technical_momentum') {
-      if (!(s.pos52w != null && s.pos52w > 50)) return false; // Harga > 50% range 52W
-      if (!((s.changePct || 0) > 0)) return false; // 1D% positif
-      if (!(s.pos52w != null && s.pos52w > 70)) return false; // Breakout: posisi > 70% dari 52W low
-      if (!(s.volRatio != null)) return false; // butuh data volume utk cek "top 30%"
-      if (!(s.roe > 8 && s.npm > 0)) return false; // Fundamental min: ROE>8%, NPM>0 (tidak merugi)
-    } else if (state.activePreset === 'undervalued') {
-      if (!(s.per != null && s.per < 15 && s.pbv != null && s.pbv < 1.5)) return false;
-      if (!(s.roe > 12 && s.npm > 5 && s.roa > 6)) return false;
-      if (!(s.der < 1)) return false; // Kesehatan + tidak merugi (der<1 dipakai sbg proxy sehat)
-      const sc = computeOpportunityScore(s);
-      if (sc.valScore < 60) return false; // Score valuasi >= 60
-    } else if (state.activePreset === 'near_support_ara') {
-      // Filter: technical only + likuiditas min 50jt/hari. Skor & Top 10
-      // di-handle di renderScreener() (sort by araScore, slice 10) supaya
-      // konsisten dgn kartu lain yg juga menampilkan tabel penuh terurut.
-      if ((s.turnover || 0) < 50e6) return false;
-      const ara = computeAraScore(s);
-      if (ara == null || ara < 40) return false;
-    } else if (state.activePreset === 'ara_candidate') {
-      // "Momentum/ARA Detector": Small-mid cap, Close=High (menutup di
-      // harga tertinggi hari ini), Offer=0 (habis diborong), belum ARA.
-      if (!(s.marketCap != null && s.marketCap < 10e12)) return false; // small-mid proxy
-      if (!(s.cClose != null && s.cHigh != null && s.cClose >= s.cHigh)) return false; // Close = High
-      if (!(s.offerVolume != null && s.offerVolume === 0)) return false; // Offer = 0
-      // "Belum ARA": harga hari ini belum mentok di batas Auto Reject Atas.
-      // Didekati pakai changePct < 24% (ARA umum utk saham >Rp5000 = 20%,
-      // saham lain bisa lebih tinggi — 24% dipakai sbg ambang aman generik).
-      if (!((s.changePct || 0) < 24)) return false;
-    }
 
     const f=state.filters;
     if(f.sektor.length && !f.sektor.includes(s.sektor)) return false;
@@ -2984,6 +3279,322 @@ function getSorted(data) {
 }
 function uniqueOpts(list, key){ return [...new Set(list.map(s=> key==="band" ? s.band.label : s[key]))]; }
 
+// ==========================================================
+// ✨ SMART PICK — mesin deteksi & skor 5 sinyal
+//
+// PENTING soal keterbatasan: ini BUKAN model AI/machine-learning beneran.
+// Ini scoring rule-based di atas data teknikal yang sudah ada di
+// enriched() (posisi 52W, rasio volume, RSI, MA, dst) — dikemas mirip
+// "AI Screener" ala Stockbit supaya gampang dibaca. Threshold di bawah
+// heuristik pribadi, silakan disesuaikan lewat konstanta di tiap
+// detect() kalau hasilnya kurang cocok dengan gaya trading Anda.
+// ==========================================================
+function clamp01(x){ return Math.max(0, Math.min(1, x)); }
+// Likuiditas harian dipakai sebagai syarat minimum tiap sinyal (supaya
+// tidak menyarankan saham yang susah dieksekusi) — pakai value_traded
+// kalau ada, fallback ke turnover.
+function spLiquidity(s){ return (s.valueTraded!=null ? s.valueTraded : s.turnover) || 0; }
+// Posisi harga dalam range 52 minggu (0% = di low52w, 100% = di high52w).
+// Pakai kolom pos52w dari DB kalau ada; kalau tidak, turunkan sendiri
+// dari cClose/high52w/low52w.
+function spPos52w(s){
+  if(s.pos52w!=null && !isNaN(s.pos52w)) return s.pos52w;
+  if(s.high52w!=null && s.low52w!=null && s.high52w > s.low52w){
+    return (s.cClose - s.low52w) / (s.high52w - s.low52w) * 100;
+  }
+  return null;
+}
+// Rata-rata Value (Rp) historis dari Stockbit (price_history_stockbit),
+// EXCLUDE hari ini (kalau kebawa) supaya tidak membandingkan angka hari ini
+// dengan dirinya sendiri. null kalau datanya kurang dari 3 hari (belum
+// cukup untuk baseline yang wajar) — caller WAJIB fallback ke volRatio biasa
+// kalau null, karena ini fitur opsional (cuma ticker yang pernah ditarik
+// manual lewat tombol "📅 Historical" yang akan punya data).
+function spStockbitAvgValue(ticker){
+  const rows = state.stockbitValueHistory?.[ticker];
+  if(!rows || rows.length < 3) return null;
+  const today = todayLocalISO();
+  const hist = rows.filter(r => r.date !== today && r.value_idr > 0);
+  if(hist.length < 3) return null;
+  const avg = hist.reduce((a,r)=>a+r.value_idr, 0) / hist.length;
+  return avg > 0 ? avg : null;
+}
+// Rasio Value hari ini (live, dari stocks_screener) vs rata-rata Value
+// historis Stockbit — versi "volRatio" tapi pakai NILAI transaksi riil
+// (value_idr), bukan cuma jumlah lembar. null kalau tidak ada data Stockbit
+// untuk ticker ini (lihat spStockbitAvgValue).
+function spStockbitValueRatio(s){
+  const avg = spStockbitAvgValue(s.ticker);
+  if(!avg) return null;
+  return spLiquidity(s) / avg;
+}
+
+const SMART_PICK_DEFS = [
+  {
+    id: "area_demand", icon: "📥", tone: "gold",
+    title: "Area Demand",
+    shortDesc: "Saham profitabel + volume tinggi di area support 52W — siap bounce.",
+    definisi: "Saham fundamental sehat yang harganya masuk ke zona bawah range 52 minggu (area support/demand), tapi belum benar-benar rontok — kandidat pantulan (bounce) dari area akumulasi.",
+    filter: "Volume Tinggi: wajib ≥ Rp1 M/hari. Saham Hidup: harga ≥ Rp100 (tidak rugi/gocap). Posisi ≤ 30% range 52W (zona bawah). Reaksi di Support: perubahan harga hari ini &gt; -4% (bukan dump).",
+    scoring: "Skor Zona 100 = Support 25 + Reaksi 20 + Volume 25 + Pullback 15 + Struktur 15 (bonus multi-minggu).",
+    sinyalKuat: "Volume spike 2×–5×+ dari rata-rata (badge otomatis) di dekat area support = smart money mulai serap.",
+    detect(s){
+      const pos = spPos52w(s);
+      const liq = spLiquidity(s);
+      const changePct = s.changePct || 0;
+      const match = pos != null && pos <= 30 && (s.cClose||0) >= 100 && changePct > -4 && liq >= 1e9;
+      if(!match) return { match:false, score:0, strong:false };
+      const supportScore = 25 * clamp01((30 - pos) / 30);
+      const reaksiScore = 20 * clamp01((changePct + 4) / 8);
+      // Kalau ada riwayat Value Stockbit untuk ticker ini, pakai rasio Value
+      // riil (bukan cuma volRatio lembar) — ambil yang LEBIH TINGGI di antara
+      // keduanya, karena keduanya sama-sama indikasi valid smart money masuk,
+      // dan volRatio dari `flows`/Yahoo kadang telat/kurang presisi dibanding
+      // Value Stockbit yang ditarik manual.
+      const stockbitRatio = spStockbitValueRatio(s);
+      const volRatioEffective = stockbitRatio != null ? Math.max(s.volRatio || 0, stockbitRatio) : s.volRatio;
+      const volumeScore = volRatioEffective != null ? 25 * clamp01((Math.min(volRatioEffective,6) - 1) / 5) : 12;
+      const pullbackScore = s.support ? 15 * (1 - clamp01(Math.abs(s.cClose - s.support) / (s.support * 0.05))) : 7;
+      const strukturScore = s.week52ChangePct != null ? (s.week52ChangePct > -25 ? 15 : 6) : 8;
+      const score = supportScore + reaksiScore + volumeScore + pullbackScore + strukturScore;
+      const strong = score >= 75 && (volRatioEffective||0) >= 2;
+      return { match:true, score, strong, stockbitVerified: stockbitRatio != null };
+    }
+  },
+  {
+    id: "throwback", icon: "🔁", tone: "teal",
+    title: "Throwback / Retest Breakout",
+    shortDesc: "Sudah breakout lalu pullback ke support — bounce dari retest.",
+    definisi: "Saham yang sudah breakout dari uptrend menengah, lalu turun kembali (pullback) menguji area breakout sebagai support baru, dan mulai memantul lagi.",
+    filter: "Posisi 45–90% range 52W (zona atas). Perubahan hari ini ≥ 0% (hold/hijau). Uptrend & pullback ke area breakout sebagai support baru, lalu mulai memantul.",
+    scoring: "Kekuatan uptrend (MA21&gt;MA50&gt;MA100) + kualitas retest (jarak ke support) + posisi bounce 60–80% dari skor total.",
+    sinyalKuat: "Uptrend kuat + retest sehat + posisi bounce ≥60% + kenaikan hari ini &gt;2% = retest berkualitas.",
+    detect(s){
+      const pos = spPos52w(s);
+      const changePct = s.changePct || 0;
+      const match = pos != null && pos >= 45 && pos <= 90 && changePct >= 0 && s.cClose > (s.ma50 || 0);
+      if(!match) return { match:false, score:0, strong:false };
+      const uptrendScore = (s.ma21 > s.ma50 && s.ma50 > s.ma100) ? 40 : (s.cClose > s.ma50 ? 22 : 8);
+      const retestRef = s.support || s.ema21L;
+      const retestScore = retestRef ? 30 * (1 - clamp01(Math.abs(s.cClose - retestRef) / (retestRef * 0.05))) : 15;
+      const bounceScore = 30 * clamp01(changePct / 4);
+      const score = uptrendScore + retestScore + bounceScore;
+      const strong = score >= 75 && changePct > 2;
+      return { match:true, score, strong };
+    }
+  },
+  {
+    id: "liquidity_sweep", icon: "💧", tone: "muted",
+    title: "Liquidity Sweep",
+    shortDesc: "Sapu bawah support lalu reversal tajam — stop hunt bandar.",
+    definisi: "Harga menyapu ke bawah zona low 52 minggu (stop hunt / grab liquidity), lalu berbalik naik tajam dari harga yang sama dengan volume tinggi.",
+    filter: "Posisi &lt; 30% range 52W (zona bawah). Perubahan hari ini &gt; +1% (reversal). Volume transaksi ≥ Rp100 jt/hari. Drop lebih dalam dari MA + volume spike = bonus skor.",
+    scoring: "Kedalaman sweep (drop vs low sebelumnya) + ketajaman reversal hari ini + kekuatan volume vs median.",
+    sinyalKuat: "Drop &gt;15% lalu reversal &gt;5% dengan volume &gt;5× median = sweep + reversal kuat.",
+    detect(s){
+      const pos = spPos52w(s);
+      const liq = spLiquidity(s);
+      const changePct = s.changePct || 0;
+      const match = pos != null && pos < 30 && changePct > 1 && liq >= 100e6;
+      if(!match) return { match:false, score:0, strong:false };
+      const deeper = (s.prevLow && s.cLow != null && s.cLow < s.prevLow) ? ((s.prevLow - s.cLow) / s.prevLow) * 100 : 0;
+      const depthScore = 35 * clamp01(deeper / 10);
+      const reversalScore = 35 * clamp01((changePct - 1) / 6);
+      // Sama seperti Area Demand — pakai rasio Value Stockbit kalau tersedia,
+      // ambil yang lebih tinggi dibanding volRatio biasa (lihat catatan di
+      // spStockbitValueRatio()).
+      const stockbitRatio = spStockbitValueRatio(s);
+      const volRatioEffective = stockbitRatio != null ? Math.max(s.volRatio || 0, stockbitRatio) : s.volRatio;
+      const volSpikeScore = volRatioEffective != null ? 30 * clamp01((volRatioEffective - 1) / 4) : 12;
+      const score = depthScore + reversalScore + volSpikeScore;
+      const strong = score >= 75 && changePct > 5 && (volRatioEffective||0) >= 5;
+      return { match:true, score, strong, stockbitVerified: stockbitRatio != null };
+    }
+  },
+  {
+    id: "bull_divergence", icon: "📉", tone: "up",
+    title: "Bull Divergence",
+    shortDesc: "Harga turun tapi momentum berbalik naik — sinyal reversal.",
+    definisi: "Harga masih di zona bawah 52 minggu (oversold/downtrend) tapi hari ini naik dengan volume tinggi — sinyal akumulasi & reversal dini.",
+    filter: "Posisi harga &lt; 55% range 52W. Perubahan hari ini positif (hijau). Volume transaksi ≥ Rp100 jt/hari.",
+    scoring: "Makin dekat ke low 52W = makin tinggi skor. Ditambah volume spike vs median pasar + kenaikan hari ini (%).",
+    sinyalKuat: "Harga &lt;20% dari low 52W + naik &gt;3% + volume &gt;5× median = divergence sangat kuat.",
+    detect(s){
+      const pos = spPos52w(s);
+      const liq = spLiquidity(s);
+      const changePct = s.changePct || 0;
+      const match = pos != null && pos < 55 && changePct > 0 && liq >= 100e6;
+      if(!match) return { match:false, score:0, strong:false };
+      const proximityScore = 40 * clamp01((55 - pos) / 55);
+      const volSpikeScore = s.volRatio != null ? 30 * clamp01((s.volRatio - 1) / 4) : 12;
+      const gainScore = 30 * clamp01(changePct / 4);
+      const score = proximityScore + volSpikeScore + gainScore;
+      const strong = pos < 20 && changePct > 3 && (s.volRatio||0) >= 5;
+      return { match:true, score, strong };
+    }
+  },
+  {
+    id: "early_breakout", icon: "🚀", tone: "up",
+    title: "Early Breakout",
+    shortDesc: "Volume meledak + harga dekat resistance — sinyal breakout awal.",
+    definisi: "Harga mendekati/menembus resistance dengan volume tinggi — konfirmasi breakout nyata, bukan fake breakout.",
+    filter: "Posisi harga &gt; 50% range 52W. Perubahan hari ini positif (hijau). Volume transaksi ≥ Rp100 jt/hari.",
+    scoring: "Makin dekat ke high 52W = makin tinggi skor. Ditambah volume breakout vs median pasar + kenaikan hari ini (%).",
+    sinyalKuat: "Posisi &gt;85% dari range 52W + naik &gt;4% + volume &gt;5× median = breakout dikonfirmasi, bukan fake.",
+    detect(s){
+      const pos = spPos52w(s);
+      const liq = spLiquidity(s);
+      const changePct = s.changePct || 0;
+      const match = pos != null && pos > 50 && changePct > 0 && liq >= 100e6;
+      if(!match) return { match:false, score:0, strong:false };
+      const proximityScore = 40 * clamp01((pos - 50) / 50);
+      const volSpikeScore = s.volRatio != null ? 30 * clamp01((s.volRatio - 1) / 4) : 12;
+      const gainScore = 30 * clamp01(changePct / 4);
+      const score = proximityScore + volSpikeScore + gainScore;
+      const strong = pos > 85 && changePct > 4 && (s.volRatio||0) >= 5;
+      return { match:true, score, strong };
+    }
+  }
+];
+
+function spDefById(id){ return SMART_PICK_DEFS.find(d=>d.id===id); }
+function spToneFor(id){ return (spDefById(id) || {}).tone || "muted"; }
+function spTitleFor(id){ return (spDefById(id) || {}).title || id; }
+
+function getSmartPickMatches(defId){
+  const def = spDefById(defId);
+  if(!def) return [];
+  return enriched()
+    .map(s => ({ ticker: s.ticker, ...def.detect(s) }))
+    .filter(m => m.match)
+    .sort((a,b) => b.score - a.score);
+}
+
+// Versi lengkap untuk modal "Daftar Saham" — beda dari getSmartPickMatches
+// (yang cuma dipakai chip ringkas di kartu), ini bawa data harga/posisi/vol
+// sekalian supaya bisa ditampilkan sebagai tabel data saham per fitur.
+function getSmartPickMatchesFull(defId){
+  const def = spDefById(defId);
+  if(!def) return [];
+  return enriched()
+    .map(s => {
+      const r = def.detect(s);
+      if(!r.match) return null;
+      return {
+        ticker: s.ticker, sektor: s.sektor, name: s.name,
+        price: s.cClose, changePct: s.changePct,
+        pos52w: spPos52w(s), volRatio: s.volRatio,
+        score: r.score, strong: r.strong, stockbitVerified: !!r.stockbitVerified
+      };
+    })
+    .filter(Boolean)
+    .sort((a,b) => b.score - a.score);
+}
+
+// Gabungkan riwayat sinyal yang sudah difinalisasi (state.spHistory) dengan
+// harga live saat ini (state.stocks) untuk menghitung Now / Δ% / Hari di
+// tabel Rekap & Share Signal.
+function smartPickRowsWithLive(){
+  const priceByTicker = {};
+  state.stocks.forEach(s => { priceByTicker[s.ticker] = s.cClose; });
+  const today = new Date();
+  return state.spHistory
+    .filter(h => state.spFilterType === "all" || h.signal_type === state.spFilterType)
+    .map(h => {
+      const now = priceByTicker[h.stock_code];
+      const entry = Number(h.entry_price);
+      const chgPct = (now != null && entry) ? ((now - entry) / entry * 100) : null;
+      const muncul = new Date(h.muncul_date + "T00:00:00");
+      const hari = Math.max(0, Math.round((today - muncul) / 86400000));
+      return { ...h, nowPrice: now, chgPct, hari };
+    });
+}
+
+function computeSmartPickStats(rows){
+  const withChg = rows.filter(r => r.chgPct != null);
+  const wins = withChg.filter(r => r.chgPct > 0).length;
+  return {
+    winRate: withChg.length ? (wins / withChg.length * 100) : null,
+    avg: withChg.length ? (withChg.reduce((a,r) => a + r.chgPct, 0) / withChg.length) : null,
+    total: rows.length
+  };
+}
+
+// "Finalisasi Signal (EOD)": ambil semua saham yang LOLOS hari ini untuk
+// tiap sinyal, lalu kunci (ticker, signal_type, tanggal, harga entry) ke
+// tabel smart_pick_signals. Pakai Prefer: resolution=merge-duplicates
+// supaya klik ulang di HARI YANG SAMA cuma mem-update baris yang sama
+// (butuh unique constraint (stock_code,signal_type,muncul_date) di DB —
+// lihat sql/07_smart_pick.sql), bukan bikin duplikat. Begitu tanggalnya
+// sudah lewat, baris lama TIDAK pernah ditimpa lagi — itulah "dikunci ke
+// tanggal data" yang dimaksud di UI.
+async function finalizeSmartPickSignals(){
+  if(!SUPABASE_URL || !SUPABASE_KEY){ openSettings(); return; }
+  state.spFinalizing = true; state.spMsg = ""; render();
+  try{
+    const today = todayLocalISO();
+    const list = enriched();
+    const rows = [];
+    SMART_PICK_DEFS.forEach(def => {
+      list.forEach(s => {
+        const r = def.detect(s);
+        if(r.match){
+          rows.push({
+            stock_code: s.ticker,
+            signal_type: def.id,
+            signal_label: def.title,
+            muncul_date: today,
+            entry_price: s.cClose,
+            score: Math.round(r.score),
+            is_strong: !!r.strong
+          });
+        }
+      });
+    });
+    if(!rows.length){
+      state.spMsg = "Tidak ada saham yang lolos kriteria Smart Pick hari ini — belum ada yang difinalisasi.";
+      state.spMsgError = true;
+    } else {
+      const res = await fetch(`${SUPABASE_URL}/smart_pick_signals`, {
+        method: "POST",
+        headers: { ...getSupaHeaders(), "Prefer": "resolution=merge-duplicates,return=minimal" },
+        body: JSON.stringify(rows)
+      });
+      if(!res.ok){
+        const t = await res.text();
+        throw new Error(t || `HTTP ${res.status}`);
+      }
+      state.spMsg = `✅ Finalisasi berhasil: ${rows.length} sinyal dikunci untuk tanggal ${fmtDateID(today)}.`;
+      state.spMsgError = false;
+      await loadSmartPickHistory();
+    }
+  }catch(e){
+    state.spMsg = "Gagal finalisasi: " + e.message + " — pastikan tabel smart_pick_signals & unique constraint-nya sudah dibuat (lihat sql/07_smart_pick.sql).";
+    state.spMsgError = true;
+  }
+  state.spFinalizing = false;
+  render();
+}
+
+async function loadSmartPickHistory(){
+  if(!SUPABASE_URL || !SUPABASE_KEY) return;
+  state.spHistoryLoading = true; render();
+  try{
+    const qs = new URLSearchParams({ select: "*", order: "muncul_date.desc,score.desc" });
+    if(state.spFilterType !== "all") qs.set("signal_type", `eq.${state.spFilterType}`);
+    if(state.spFrom) qs.append("muncul_date", `gte.${state.spFrom}`);
+    if(state.spTo) qs.append("muncul_date", `lte.${state.spTo}`);
+    const res = await fetch(`${SUPABASE_URL}/smart_pick_signals?${qs.toString()}`, { headers: getSupaHeaders(), cache: "no-store" });
+    const json = await res.json();
+    if(!Array.isArray(json)) throw new Error((json && json.message) || `HTTP ${res.status}`);
+    state.spHistory = json;
+  }catch(e){
+    showError("Gagal memuat riwayat Smart Pick: " + e.message + " — pastikan tabel smart_pick_signals sudah dibuat (lihat sql/07_smart_pick.sql).");
+  }
+  state.spHistoryLoading = false;
+  render();
+}
+
 function render(){
   document.getElementById("modePill").className = "pill pill-up";
   document.getElementById("modePill").textContent = "Data Live";
@@ -2991,6 +3602,7 @@ function render(){
 
   const content = document.getElementById("content");
   if(state.tab==="screener") content.innerHTML = renderScreener();
+  else if(state.tab==="smartpick") content.innerHTML = renderSmartPick();
   else if(state.tab==="sektoral") content.innerHTML = renderSektoral();
   else if(state.tab==="watchlist") content.innerHTML = renderWatchlist();
   else if(state.tab==="backtest") content.innerHTML = renderBacktest();
@@ -3030,6 +3642,24 @@ function render(){
     if(dbsCsvFillBtn) dbsCsvFillBtn.onclick = fillDbsFromCsv;
     const dbsEditorPanel = document.getElementById("dbsEditorPanel");
     if(dbsEditorPanel) dbsEditorPanel.ontoggle = (e) => { state.detailBsEditorOpen = e.target.open; };
+
+    // --- Historical Data (Daily/Weekly/Monthly) di dalam modal Detail Emiten ---
+    document.querySelectorAll("[data-hist-period]").forEach(btn=>{
+      btn.onclick = () => loadDetailHistorical(btn.dataset.histPeriod);
+    });
+    const dhistLoadBtn = document.getElementById("dhistLoadBtn");
+    if(dhistLoadBtn) dhistLoadBtn.onclick = () => loadDetailHistorical();
+    const dhistSaveBtn = document.getElementById("dhistSaveBtn");
+    if(dhistSaveBtn) dhistSaveBtn.onclick = saveDetailHistoricalRows;
+  }
+
+  document.getElementById("spListModalOverlay").classList.toggle("open", !!state.spListOpenDefId);
+  if(state.spListOpenDefId){
+    document.getElementById("spListModalTitle").textContent = `📋 Daftar Saham · ${spTitleFor(state.spListOpenDefId)}`;
+    document.getElementById("spListModalContent").innerHTML = renderSmartPickListModalContent();
+    document.querySelectorAll("[data-sp-list-detail]").forEach(b=>{
+      b.onclick = () => { closeSmartPickList(); openDetail(b.dataset.spListDetail); };
+    });
   }
 }
 
@@ -3096,8 +3726,7 @@ const FILTER_LABELS = {
   statusRsi:"Status RSI", band:"Bandarmologi", uangGedeMasuk:"Uang Gede", isBBSqueeze:"BB Squeeze", valuasi:"Valuasi",
   bbWidth:"BB Width", atr14:"ATR 14", clv:"CLV", rsi7:"RSI 7", rsi21:"RSI 21", frequency:"Frekuensi"
 };
-const PRESET_LABELS = { bagger:"Skor Bagger ≥75", eri:"Eri Ginanjar", rsicross:"RSI & Harga Cross", golden:"Golden Cross DSI", uptrend:"Super Uptrend", breakout:"Volatility Breakout", pullback:"Pullback Uptrend", custom_bandar:"BPJS", asing_akumulasi:"Akumulasi Asing (IDX)", freq_spike:"Lonjakan Frekuensi",
-  top_opportunity:"Top Opportunity", multibagger:"Multibagger Candidate", overvalue_hindari:"Overvalue / Hindari", technical_momentum:"Technical Momentum", undervalued:"Undervalued", near_support_ara:"Near Support (ARA Pattern)", ara_candidate:"ARA Candidate (Momentum Detector)" };
+const PRESET_LABELS = { bagger:"Skor Bagger ≥75", eri:"Eri Ginanjar", rsicross:"RSI & Harga Cross", golden:"Golden Cross DSI", uptrend:"Super Uptrend", breakout:"Volatility Breakout", pullback:"Pullback Uptrend", custom_bandar:"BPJS", asing_akumulasi:"Akumulasi Asing (IDX)", freq_spike:"Lonjakan Frekuensi" };
 function clearChip(kind, key, value){
   if(kind==="search") state.search="";
   else if(kind==="preset") state.activePreset=null;
@@ -3367,11 +3996,24 @@ const RULE_METRICS = [
   { key:"cekVolume", label:"Sinyal Volume (kategori mentah)", type:"category", options:[
     "Volume Normal", "Volume Spike Kuat", "Volume Sepi", "Volume Spike", "Volume Spike Ekstrem"
   ]},
+
+  // --- Field BROKER (daftar kode broker top 3, bukan angka/kategori
+  // tetap) — dibandingkan pakai "contains" / "!contains" terhadap kode
+  // broker yang diketik bebas (mis. "AK"), diambil dari top 3 baris
+  // broker_summary hari trading terakhir. Dipakai untuk cari saham yang
+  // sedang didominasi broker tertentu di sisi beli atau jual.
+  { key:"top3BuyBrokers", label:"Top 3 Broker (Beli)", type:"broker" },
+  { key:"top3SellBrokers", label:"Top 3 Broker (Jual)", type:"broker" },
 ];
 const RULE_METRICS_BY_KEY = Object.fromEntries(RULE_METRICS.map(m=>[m.key, m]));
 function isCategoryMetric(key){ return RULE_METRICS_BY_KEY[key]?.type === "category"; }
+function isBrokerMetric(key){ return RULE_METRICS_BY_KEY[key]?.type === "broker"; }
 const RULE_OPS = {
-  ">": (a,b)=>a>b, "<": (a,b)=>a<b, ">=": (a,b)=>a>=b, "<=": (a,b)=>a<=b, "=": (a,b)=>a===b, "≠": (a,b)=>a!==b
+  ">": (a,b)=>a>b, "<": (a,b)=>a<b, ">=": (a,b)=>a>=b, "<=": (a,b)=>a<=b, "=": (a,b)=>a===b, "≠": (a,b)=>a!==b,
+  // "a" di sini adalah ARRAY kode broker (top 3 beli/jual), "b" adalah
+  // kode broker yang diketik user (sudah di-uppercase di ruleRawValue).
+  "contains": (a,b)=> Array.isArray(a) && a.includes(b),
+  "!contains": (a,b)=> Array.isArray(a) && !a.includes(b),
 };
 function ruleMetricLabel(key){ const m = RULE_METRICS.find(x=>x.key===key); return m ? m.label : key; }
 function ruleMetricValue(s, key){
@@ -3381,7 +4023,16 @@ function ruleMetricValue(s, key){
 }
 // Sama seperti ruleMetricValue, tapi untuk field KATEGORI (teks) — tidak
 // dipaksa jadi angka, cukup dikembalikan apa adanya (atau null kalau kosong).
+// Juga menangani field BROKER (top3BuyBrokers/top3SellBrokers), yang bukan
+// properti langsung di objek saham `s` — datanya diambil dari
+// state.top3BrokerData (hasil loadTop3BrokerData(), keyed by ticker).
 function ruleRawValue(s, key){
+  if(key === "top3BuyBrokers" || key === "top3SellBrokers"){
+    const data = state.top3BrokerData[String(s.ticker || "").toUpperCase()];
+    if(!data) return null;
+    const arr = key === "top3BuyBrokers" ? data.buy : data.sell;
+    return (arr && arr.length) ? arr : null;
+  }
   const v = s[key];
   return (v===undefined || v===null || v==="") ? null : v;
 }
@@ -3429,6 +4080,18 @@ function getActiveScreenerContext(){
   };
 }
 function evalCustomRule(s, rule){
+  // Field broker (top 3 broker beli/jual) — dibandingkan pakai
+  // "contains" / "!contains" terhadap kode broker bebas yang diketik user
+  // (rule.bConst), bukan angka atau pilihan tetap.
+  if(isBrokerMetric(rule.aKey)){
+    const aVal = ruleRawValue(s, rule.aKey); // array kode broker, atau null kalau tidak ada data
+    if(aVal===null) return false;
+    const cmp = RULE_OPS[rule.op];
+    if(!cmp || (rule.op !== "contains" && rule.op !== "!contains")) return false;
+    const needle = String(rule.bConst || "").trim().toUpperCase();
+    if(!needle) return false;
+    return cmp(aVal, needle);
+  }
   // Field kategori (teks) — hanya boleh dibandingkan "=" / "≠" terhadap
   // salah satu pilihan tetap (rule.bConst), tidak bisa dikali/dibandingkan
   // ke metrik lain karena tidak ada artinya untuk teks.
@@ -3607,6 +4270,22 @@ function updateCustomRule(id, field, value){
     const opts = RULE_METRICS_BY_KEY[rule.aKey].options;
     if(!opts.includes(rule.bConst)) rule.bConst = opts[0];
   }
+  // Kalau field BROKER (Top 3 Broker Beli/Jual) dipilih sebagai aKey: tidak
+  // bisa dibandingkan ke metrik lain (bType harus "const"), operator cuma
+  // "contains"/"!contains", dan bConst adalah kode broker bebas (teks),
+  // bukan angka atau pilihan kategori sisa rule sebelumnya.
+  else if(field === "aKey" && isBrokerMetric(rule.aKey)){
+    rule.bType = "const";
+    if(rule.op !== "contains" && rule.op !== "!contains") rule.op = "contains";
+    if(typeof rule.bConst !== "string") rule.bConst = "";
+  }
+  // Kalau aKey diganti KE field numerik biasa dari kategori/broker
+  // sebelumnya, operator "="/"≠"/"contains"/"!contains" sisa boleh tetap
+  // dipakai untuk "="/"≠" (valid juga untuk angka), tapi "contains"/
+  // "!contains" harus direset karena tidak berlaku untuk angka.
+  else if(field === "aKey" && !isCategoryMetric(rule.aKey) && !isBrokerMetric(rule.aKey)){
+    if(rule.op === "contains" || rule.op === "!contains") rule.op = ">";
+  }
   saveCustomRules();
   state.page = 1;
   render();
@@ -3618,38 +4297,43 @@ function deleteCustomRule(id){
   render();
 }
 function renderRuleBuilder(){
-  const numericMetrics = RULE_METRICS.filter(m => m.type !== "category");
+  const numericMetrics = RULE_METRICS.filter(m => m.type !== "category" && m.type !== "broker");
   const categoryMetrics = RULE_METRICS.filter(m => m.type === "category");
+  const brokerMetrics = RULE_METRICS.filter(m => m.type === "broker");
   // Dipakai untuk dropdown "aKey" (semua field, dikelompokkan) — dan juga
   // untuk dropdown "bKey" (cuma field ANGKA, karena membandingkan field
-  // kategori ke field lain tidak ada artinya).
-  const metricOptions = (selected, categoryToo) => {
+  // kategori/broker ke field lain tidak ada artinya).
+  const metricOptions = (selected, includeExtra) => {
     const opt = m => `<option value="${m.key}" ${selected===m.key?'selected':''}>${m.label}</option>`;
-    if(!categoryToo) return numericMetrics.map(opt).join("");
-    return `<optgroup label="Angka">${numericMetrics.map(opt).join("")}</optgroup><optgroup label="Kategori (Teks)">${categoryMetrics.map(opt).join("")}</optgroup>`;
+    if(!includeExtra) return numericMetrics.map(opt).join("");
+    return `<optgroup label="Angka">${numericMetrics.map(opt).join("")}</optgroup><optgroup label="Kategori (Teks)">${categoryMetrics.map(opt).join("")}</optgroup><optgroup label="Broker (Top 3)">${brokerMetrics.map(opt).join("")}</optgroup>`;
   };
-  const opOptions = (selected, categoryOnly) => {
-    const ops = categoryOnly ? ["=","≠"] : Object.keys(RULE_OPS);
-    return ops.map(op=>`<option value="${op}" ${selected===op?'selected':''}>${op}</option>`).join("");
+  const opLabels = { "contains":"contains", "!contains":"tidak mengandung" };
+  const opOptions = (selected, categoryOnly, brokerOnly) => {
+    const ops = brokerOnly ? ["contains","!contains"] : categoryOnly ? ["=","≠"] : Object.keys(RULE_OPS).filter(op=>op!=="contains"&&op!=="!contains");
+    return ops.map(op=>`<option value="${op}" ${selected===op?'selected':''}>${opLabels[op]||op}</option>`).join("");
   };
 
   const rows = state.customRules.map(r => {
     const isCat = isCategoryMetric(r.aKey);
+    const isBroker = isBrokerMetric(r.aKey);
     const catOpts = isCat ? RULE_METRICS_BY_KEY[r.aKey].options : [];
     return `
     <div class="rule-row" data-rule-id="${r.id}">
       <select class="rule-select" data-rule-field="aKey" data-rule-id="${r.id}">${metricOptions(r.aKey, true)}</select>
-      <select class="rule-op" data-rule-field="op" data-rule-id="${r.id}">${opOptions(r.op, isCat)}</select>
+      <select class="rule-op" data-rule-field="op" data-rule-id="${r.id}">${opOptions(r.op, isCat, isBroker)}</select>
       ${isCat
         ? `<select class="rule-const" data-rule-field="bConst" data-rule-id="${r.id}">${catOpts.map(o=>`<option value="${escapeHtml(o)}" ${String(r.bConst)===o?'selected':''}>${escapeHtml(o)}</option>`).join("")}</select>`
-        : (r.bType === "const"
-            ? `<input type="number" step="any" class="rule-const" data-rule-field="bConst" data-rule-id="${r.id}" value="${r.bConst}" placeholder="angka">`
-            : `<input type="number" step="any" class="rule-mult" data-rule-field="mult" data-rule-id="${r.id}" value="${r.mult}">
-               <span class="rule-times">&times;</span>
-               <select class="rule-select" data-rule-field="bKey" data-rule-id="${r.id}">${metricOptions(r.bKey, false)}</select>`
-          )
+        : isBroker
+          ? `<input type="text" class="rule-const" data-rule-field="bConst" data-rule-id="${r.id}" value="${escapeHtml(r.bConst||"")}" placeholder="Kode broker, mis. AK" maxlength="6" style="text-transform:uppercase;width:150px">`
+          : (r.bType === "const"
+              ? `<input type="number" step="any" class="rule-const" data-rule-field="bConst" data-rule-id="${r.id}" value="${r.bConst}" placeholder="angka">`
+              : `<input type="number" step="any" class="rule-mult" data-rule-field="mult" data-rule-id="${r.id}" value="${r.mult}">
+                 <span class="rule-times">&times;</span>
+                 <select class="rule-select" data-rule-field="bKey" data-rule-id="${r.id}">${metricOptions(r.bKey, false)}</select>`
+            )
       }
-      ${isCat ? "" : `<button type="button" class="rule-btype-toggle" data-rule-field="toggleBType" data-rule-id="${r.id}" title="${r.bType==='const' ? 'Ganti jadi: bandingkan dengan metrik lain' : 'Ganti jadi: bandingkan dengan angka tetap'}">${r.bType==='const' ? '🔢' : '📊'}</button>`}
+      ${(isCat || isBroker) ? "" : `<button type="button" class="rule-btype-toggle" data-rule-field="toggleBType" data-rule-id="${r.id}" title="${r.bType==='const' ? 'Ganti jadi: bandingkan dengan metrik lain' : 'Ganti jadi: bandingkan dengan angka tetap'}">${r.bType==='const' ? '🔢' : '📊'}</button>`}
       <button type="button" class="rule-del" data-rule-del="${r.id}" title="Hapus rule">✕</button>
     </div>
   `;
@@ -3659,37 +4343,24 @@ function renderRuleBuilder(){
     `<option value="${p.id}" ${String(state.selectedPresetId)===String(p.id)?'selected':''}>${escapeHtml(p.name)} (${Array.isArray(p.rules)?p.rules.length:0} rule)</option>`
   ).join("");
 
-  const collapsed = !!state.rulesPanelCollapsed;
-  const activeCountBadge = state.customRules.length
-    ? `<span style="font-size:10.5px;color:var(--teal);background:rgba(6,182,212,0.12);border:1px solid rgba(6,182,212,0.3);border-radius:999px;padding:1px 8px;font-weight:600;">${state.customRules.length} aktif</span>`
-    : "";
-
   return `
     <div class="panel" style="margin-bottom:16px;">
-      <button type="button" id="rulesPanelHeader" aria-expanded="${!collapsed}" class="filter-section-title" style="background:transparent;border:none;margin:0;padding:0;text-align:left;width:100%;display:flex;align-items:center;justify-content:space-between;cursor:pointer;-webkit-tap-highlight-color:transparent;touch-action:manipulation;font-family:inherit;">
-        <span style="display:flex;align-items:center;gap:8px;pointer-events:none;">
-          <span id="rulesPanelChevron" class="rules-chevron" style="display:inline-block;transition:transform .2s ease;transform:rotate(${collapsed ? -90 : 0}deg);">▾</span>
-          Rules Kustom (mirip Edit Screener Stockbit)
-          ${activeCountBadge}
-        </span>
-        <span class="line" style="pointer-events:none;"></span>
-      </button>
-      <div id="rulesPanelBody" style="${collapsed ? 'display:none;' : ''}">        <div class="rule-list">${rows || '<div style="color:var(--muted);font-size:13px;padding:6px 0 2px;">Belum ada rule kustom. Klik "+ Tambah Rule" untuk mulai — mis. "Frequency &gt; 5 &times; Frequency Analyzer".</div>'}</div>
-        <div style="display:flex;align-items:center;gap:12px;margin-top:12px;flex-wrap:wrap;">
-          <button type="button" class="btn btn-outline" id="addRuleBtn">+ Tambah Rule</button>
-          <button type="button" class="btn btn-outline" id="savePresetBtn" ${state.presetsLoading?'disabled':''}>💾 Simpan sebagai Preset...</button>
-          ${state.customRules.length ? `<span style="font-size:12px;color:var(--muted);">${state.customRules.length} rule aktif — otomatis diterapkan ke tabel di bawah (AND, semua harus terpenuhi).</span>` : ""}
-        </div>
-        <div style="display:flex;align-items:center;gap:10px;margin-top:14px;flex-wrap:wrap;padding-top:12px;border-top:1px solid var(--border);">
-          <label style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;">Preset Tersimpan</label>
-          <select id="presetSelect" style="background:rgba(0,0,0,0.2);border:1px solid var(--border);color:var(--text);font-size:12.5px;border-radius:7px;padding:8px 9px;min-width:220px;flex:1;max-width:320px;">
-            <option value="">${state.customPresets.length ? '— pilih preset —' : 'Belum ada preset tersimpan'}</option>
-            ${presetOptions}
-          </select>
-          <button type="button" class="btn btn-outline" id="loadPresetBtn" ${!state.selectedPresetId || state.presetsLoading ? 'disabled' : ''} title="Muat rule dari preset ini (menimpa rule kustom yang aktif)">📥 Muat</button>
-          <button type="button" class="btn btn-outline" id="updatePresetBtn" ${!state.selectedPresetId || !state.customRules.length || state.presetsLoading ? 'disabled' : ''} title="Timpa preset ini dengan Rules Kustom yang sedang aktif — tidak perlu simpan dengan nama baru" style="color:#34d399;border-color:rgba(16,185,129,0.35);">🔄 Update Preset</button>
-          <button type="button" class="btn btn-outline" id="deletePresetBtn" ${!state.selectedPresetId || state.presetsLoading ? 'disabled' : ''} title="Hapus preset ini" style="color:#f87171;border-color:rgba(239,68,68,0.3);">🗑️ Hapus</button>
-        </div>
+      <div class="filter-section-title">Rules Kustom (mirip Edit Screener Stockbit)<span class="line"></span></div>
+      <div class="rule-list">${rows || '<div style="color:var(--muted);font-size:13px;padding:6px 0 2px;">Belum ada rule kustom. Klik "+ Tambah Rule" untuk mulai — mis. "Frequency &gt; 5 &times; Frequency Analyzer".</div>'}</div>
+      <div style="display:flex;align-items:center;gap:12px;margin-top:12px;flex-wrap:wrap;">
+        <button type="button" class="btn btn-outline" id="addRuleBtn">+ Tambah Rule</button>
+        <button type="button" class="btn btn-outline" id="savePresetBtn" ${state.presetsLoading?'disabled':''}>💾 Simpan sebagai Preset...</button>
+        ${state.customRules.length ? `<span style="font-size:12px;color:var(--muted);">${state.customRules.length} rule aktif — otomatis diterapkan ke tabel di bawah (AND, semua harus terpenuhi).</span>` : ""}
+      </div>
+      <div style="display:flex;align-items:center;gap:10px;margin-top:14px;flex-wrap:wrap;padding-top:12px;border-top:1px solid var(--border);">
+        <label style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;">Preset Tersimpan</label>
+        <select id="presetSelect" style="background:rgba(0,0,0,0.2);border:1px solid var(--border);color:var(--text);font-size:12.5px;border-radius:7px;padding:8px 9px;min-width:220px;flex:1;max-width:320px;">
+          <option value="">${state.customPresets.length ? '— pilih preset —' : 'Belum ada preset tersimpan'}</option>
+          ${presetOptions}
+        </select>
+        <button type="button" class="btn btn-outline" id="loadPresetBtn" ${!state.selectedPresetId || state.presetsLoading ? 'disabled' : ''} title="Muat rule dari preset ini (menimpa rule kustom yang aktif)">📥 Muat</button>
+        <button type="button" class="btn btn-outline" id="updatePresetBtn" ${!state.selectedPresetId || !state.customRules.length || state.presetsLoading ? 'disabled' : ''} title="Timpa preset ini dengan Rules Kustom yang sedang aktif — tidak perlu simpan dengan nama baru" style="color:#34d399;border-color:rgba(16,185,129,0.35);">🔄 Update Preset</button>
+        <button type="button" class="btn btn-outline" id="deletePresetBtn" ${!state.selectedPresetId || state.presetsLoading ? 'disabled' : ''} title="Hapus preset ini" style="color:#f87171;border-color:rgba(239,68,68,0.3);">🗑️ Hapus</button>
       </div>
     </div>
   `;
@@ -3711,18 +4382,22 @@ const PAGE_SIZE_OPTIONS = [10, 25, 50, 100, 200];
 function renderScreener(){
   const list = enriched();
   const filtered = getFiltered();
-  let sorted = getSorted(filtered);
+  const sorted = getSorted(filtered);
 
-  // Kartu "Near Support (ARA Pattern)" & "ARA Candidate" secara desain
-  // menampilkan Top 10 terurut skor (bukan tabel penuh) — hanya dipaksa
-  // kalau user belum klik header kolom manapun utk sort manual (supaya
-  // user tetap bisa override urutan/limit seperti tab lain kalau mau).
-  if (!state.sort.col && state.activePreset === 'near_support_ara') {
-    sorted = [...filtered].sort((a, b) => (computeAraScore(b) || 0) - (computeAraScore(a) || 0)).slice(0, 10);
-  } else if (!state.sort.col && state.activePreset === 'ara_candidate') {
-    sorted = [...filtered].sort((a, b) => (b.volRatio || 0) - (a.volRatio || 0)).slice(0, 10);
+  // Default Periode Dari–Sampai untuk tombol "Tarik Data Stockbit" di toolbar
+  // Screener (state sama dengan yang dipakai tab Broker Summary, jadi kalau
+  // diubah di sini otomatis kepakai juga di sana, dan sebaliknya).
+  if(!state.bsAutoBulkFrom || !state.bsAutoBulkTo){
+    const defaultDates = tradingDaysBack(state.bsAutoBulkDays || 10);
+    state.bsAutoBulkFrom = defaultDates[0];
+    state.bsAutoBulkTo = defaultDates[defaultDates.length - 1];
   }
-
+  if(!state.hdAutoBulkFrom || !state.hdAutoBulkTo){
+    const defaultHdDates = tradingDaysBack(10);
+    state.hdAutoBulkFrom = defaultHdDates[0];
+    state.hdAutoBulkTo = defaultHdDates[defaultHdDates.length - 1];
+  }
+  
   const effectiveLimit = state.limit === "all" ? Math.max(sorted.length, 1) : state.limit;
   const totalPages = Math.ceil(sorted.length / effectiveLimit) || 1;
   if (state.page > totalPages) state.page = totalPages;
@@ -3806,18 +4481,6 @@ function renderScreener(){
           <button class="pill ${state.activePreset === 'freq_spike' ? 'pill-teal' : 'pill-muted'}" onclick="state.activePreset = state.activePreset === 'freq_spike' ? null : 'freq_spike'; state.page=1; render();" title="Rasio Frekuensi &ge; 1.5x rata-rata — butuh kolom frequency/freq_ma20 di DB, kalau belum ada preset ini tidak akan menampilkan hasil">🔊 Lonjakan Frekuensi</button>
             </div>
         </div>
-        <div class="field" style="flex:1 1 100%;min-width:0;">
-          <label>Opportunity Screener (Preset Baru)</label>
-          <div style="display:flex; gap:10px; flex-wrap:wrap; width:100%;">
-            <button class="pill ${state.activePreset === 'top_opportunity' ? 'pill-up' : 'pill-muted'}" onclick="state.activePreset = state.activePreset === 'top_opportunity' ? null : 'top_opportunity'; state.page=1; render();" title="ROE>15% · NPM>5% · DER<1.5 · ROA>8% · PER<25x · PBV<5x · Posisi>52W mid · Volume signifikan · Score≥50">🏆 Top Opportunity</button>
-            <button class="pill ${state.activePreset === 'multibagger' ? 'pill-up' : 'pill-muted'}" onclick="state.activePreset = state.activePreset === 'multibagger' ? null : 'multibagger'; state.page=1; render();" title="ROE>10% · NPM>5% · DER<1 · ROA>5% · PBV<3x · Market Cap<10T · Est Upside(proxy Fib R1)>30% · Score≥40">🚀 Multibagger Candidate</button>
-            <button class="pill ${state.activePreset === 'undervalued' ? 'pill-teal' : 'pill-muted'}" onclick="state.activePreset = state.activePreset === 'undervalued' ? null : 'undervalued'; state.page=1; render();" title="PER<15x · PBV<1.5x · ROE>12% · NPM>5% · ROA>6% · DER<1 · Score Valuasi≥60">💎 Undervalued</button>
-            <button class="pill ${state.activePreset === 'technical_momentum' ? 'pill-gold' : 'pill-muted'}" onclick="state.activePreset = state.activePreset === 'technical_momentum' ? null : 'technical_momentum'; state.page=1; render();" title="Posisi>50% range 52W · 1D% positif · Posisi>70% dari 52W low · ROE>8% · NPM>0 (tidak merugi)">📊 Technical Momentum</button>
-            <button class="pill ${state.activePreset === 'near_support_ara' ? 'pill-gold' : 'pill-muted'}" onclick="state.activePreset = state.activePreset === 'near_support_ara' ? null : 'near_support_ara'; state.page=1; render();" title="ARA Score 40-100 dari pola konsolidasi ketat dekat support · Likuiditas min 50jt/hari">🎯 Near Support (ARA Pattern)</button>
-            <button class="pill ${state.activePreset === 'ara_candidate' ? 'pill-up' : 'pill-muted'}" onclick="state.activePreset = state.activePreset === 'ara_candidate' ? null : 'ara_candidate'; state.page=1; render();" title="Small-mid cap · Close=High · Offer=0 · Belum ARA hari ini">🔥 ARA Candidate</button>
-            <button class="pill ${state.activePreset === 'overvalue_hindari' ? 'pill-down' : 'pill-muted'}" onclick="state.activePreset = state.activePreset === 'overvalue_hindari' ? null : 'overvalue_hindari'; state.page=1; render();" title="Skor Opportunity < 40 — fundamental lemah, valuasi mahal, atau risiko tinggi. Daftar HINDARI, bukan rekomendasi beli.">🚨 Overvalue / Hindari</button>
-            </div>
-        </div>
         <div class="field">
           <label>Cari Ticker</label>
           <div class="search-wrap">
@@ -3844,7 +4507,66 @@ function renderScreener(){
               : (state.selectedForBacktest.size>0 ? `🔴 Live Stockbit (${state.selectedForBacktest.size} dicentang)` : `🔴 Live Stockbit (${sorted.length} lolos)`)}
           </button>
         </div>
+        <div class="field" style="flex:0 0 auto;">
+          <label>&nbsp;</label>
+          <div style="display:flex; align-items:center; gap:6px;">
+            <input type="date" id="screenerBsFromInput"
+              value="${state.bsAutoBulkFrom||""}"
+              ${state.stockbitBrokerBulkLoading ? "disabled" : ""}
+              style="padding:9.5px 8px; border-radius:8px; border:1px solid var(--border); background:rgba(0,0,0,0.2); color:var(--text); font-size:12px;">
+            <span style="color:var(--muted); font-size:11px;">&ndash;</span>
+            <input type="date" id="screenerBsToInput"
+              value="${state.bsAutoBulkTo||""}"
+              ${state.stockbitBrokerBulkLoading ? "disabled" : ""}
+              style="padding:9.5px 8px; border-radius:8px; border:1px solid var(--border); background:rgba(0,0,0,0.2); color:var(--text); font-size:12px;">
+            <button type="button" class="btn btn-outline" id="screenerBsBulkBtn"
+              ${state.stockbitBrokerBulkLoading ? "disabled" : ""}
+              style="color:#f87171;border-color:rgba(239,68,68,0.4);white-space:nowrap;"
+              title="Tarik data Broker Summary Stockbit untuk saham yang dicentang (atau semua hasil filter kalau tidak ada yang dicentang), untuk periode tanggal di samping">
+              ${state.stockbitBrokerBulkLoading
+                ? `Menarik ${state.stockbitBrokerBulkProgress?.done||0}/${state.stockbitBrokerBulkProgress?.total||0}...`
+                : (state.selectedForBacktest.size>0 ? `Tarik Data (${state.selectedForBacktest.size} dicentang)` : `Tarik Data (${sorted.length} lolos)`)}
+            </button>
+          </div>
+        </div>
+        <div class="field" style="flex:0 0 auto;">
+          <label>&nbsp;</label>
+          <div style="display:flex; align-items:center; gap:6px;">
+            <input type="date" id="screenerHdFromInput"
+              value="${state.hdAutoBulkFrom||""}"
+              ${state.stockbitHistoricalBulkLoading ? "disabled" : ""}
+              style="padding:9.5px 8px; border-radius:8px; border:1px solid var(--border); background:rgba(0,0,0,0.2); color:var(--text); font-size:12px;">
+            <span style="color:var(--muted); font-size:11px;">&ndash;</span>
+            <input type="date" id="screenerHdToInput"
+              value="${state.hdAutoBulkTo||""}"
+              ${state.stockbitHistoricalBulkLoading ? "disabled" : ""}
+              style="padding:9.5px 8px; border-radius:8px; border:1px solid var(--border); background:rgba(0,0,0,0.2); color:var(--text); font-size:12px;">
+            <button type="button" class="btn btn-outline" id="screenerHdBulkBtn"
+              ${state.stockbitHistoricalBulkLoading ? "disabled" : ""}
+              style="color:#a78bfa;border-color:rgba(167,139,250,0.4);white-space:nowrap;"
+              title="Tarik Historical Data (Daily) Stockbit untuk saham yang dicentang (atau semua hasil filter kalau tidak ada yang dicentang), disaring ke periode tanggal di samping">
+              ${state.stockbitHistoricalBulkLoading
+                ? `Menarik ${state.stockbitHistoricalBulkProgress?.done||0}/${state.stockbitHistoricalBulkProgress?.total||0}...`
+                : (state.selectedForBacktest.size>0 ? `📅 Historical (${state.selectedForBacktest.size} dicentang)` : `📅 Historical (${sorted.length} lolos)`)}
+            </button>
+          </div>
+        </div>
       </div>
+      ${state.stockbitHistoricalBulkResults && state.stockbitHistoricalBulkResults.length ? `
+        <div style="margin:-6px 0 14px;">
+          <details class="bs-bulk-results-panel" id="hdBulkResultsPanel" ${state.hdBulkResultsOpen?"open":""}>
+            <summary style="cursor:pointer; font-size:11.5px; color:var(--muted); list-style:none; display:flex; align-items:center; gap:6px; user-select:none;">
+              <span class="bs-bulk-results-arrow" style="display:inline-block; transition:transform .15s; transform:rotate(${state.hdBulkResultsOpen?90:0}deg);">▶</span>
+              Hasil Tarik Historical Data (${state.stockbitHistoricalBulkResults.length} saham)
+            </summary>
+            <div class="mono" style="margin-top:8px; max-height:220px; overflow-y:auto; font-size:11.5px;">
+              ${state.stockbitHistoricalBulkResults.map(r => `
+                <div style="padding:4px 0; border-bottom:1px solid var(--border); color:${r.ok ? 'var(--up)' : 'var(--down)'};">
+                  ${r.ok ? '✅' : '❌'} ${escapeHtml(r.ticker)} &middot; ${escapeHtml(r.date)} — ${escapeHtml(r.msg||"")}
+                </div>`).join("")}
+            </div>
+          </details>
+        </div>` : ""}
 
       <div class="filter-section">
         <div class="filter-section-title">Klasifikasi Emiten<span class="line"></span></div>
@@ -4628,65 +5350,171 @@ function drawChartSVG(){
   svg.innerHTML = `${gridLines}${levelLines}<path d="${path}" fill="none" stroke="var(--gold)" stroke-width="2.5" style="filter: drop-shadow(0 4px 6px rgba(245,158,11,0.2));"/>`;
 }
 
-function renderAbout(){
-  const row=(title,tone,desc)=>`<div class="about-row">${pillHtml(title,tone)}<p>${desc}</p></div>`;
-  const preset=(emoji,name,criteria,note)=>`
-    <details style="margin-bottom:6px;">
-      <summary style="cursor:pointer; font-size:13px; font-weight:600; color:var(--text); padding:5px 0;">${emoji} ${name}</summary>
-      <div style="font-size:12px;color:var(--muted);line-height:1.7;padding:2px 0 12px 4px;">
-        ${criteria}
-        ${note ? `<div style="margin-top:6px;color:var(--gold);">⚠️ ${note}</div>` : ""}
+function spCriteriaBox(label, html){
+  return `<div class="sp-crit-box"><div class="sp-crit-lbl">${label}</div><div class="sp-crit-body">${html}</div></div>`;
+}
+
+function renderSmartPickListModalContent(){
+  const defId = state.spListOpenDefId;
+  const def = spDefById(defId);
+  if(!def) return "";
+  const list = getSmartPickMatchesFull(defId);
+  if(!list.length){
+    return `<div class="empty-box">Belum ada saham yang lolos kriteria "${escapeHtml(def.title)}" hari ini.</div>`;
+  }
+  return `
+    <div style="font-size:12px;color:var(--muted);margin-bottom:12px;">
+      ${escapeHtml(def.shortDesc)} — <b class="mono">${list.length}</b> saham lolos, diurutkan dari skor tertinggi.
+    </div>
+    <div class="table-wrap" style="max-height:60vh;">
+      <table class="mono">
+        <thead>
+          <tr><th>#</th><th>Kode</th><th>Sektor</th><th>Harga</th><th>Δ%</th><th>Posisi 52W</th><th>Vol Ratio</th><th>Skor</th><th></th></tr>
+        </thead>
+        <tbody>
+          ${list.map((s,i)=>`
+            <tr>
+              <td>${i+1}</td>
+              <td class="ticker-cell">${escapeHtml(s.ticker)}${s.strong?' <span title="Sinyal Kuat">🔥</span>':''}${s.stockbitVerified?' <span title="Volume spike tervalidasi Value (Rp) riil dari Stockbit, bukan cuma rasio volume lembar">💠</span>':''}</td>
+              <td style="white-space:normal;max-width:160px;font-family:'Sora',sans-serif;">${escapeHtml(s.sektor||"-")}</td>
+              <td>Rp${fmtNum(Math.round(s.price||0))}</td>
+              <td style="font-weight:700;color:${(s.changePct||0)>=0?'var(--up)':'var(--down)'};">${(s.changePct||0)>=0?"+":""}${(s.changePct||0).toFixed(1)}%</td>
+              <td>${s.pos52w!=null?s.pos52w.toFixed(0)+"%":"-"}</td>
+              <td>${s.volRatio!=null?s.volRatio.toFixed(1)+"x":"-"}</td>
+              <td>${pillHtml(s.score.toFixed(0), s.strong?"gold":"teal")}</td>
+              <td><button type="button" class="link-btn" data-sp-list-detail="${s.ticker}">Detail</button></td>
+            </tr>`).join("")}
+        </tbody>
+      </table>
+    </div>
+  `;
+}
+
+function renderSmartPickCard(def){
+  const matches = getSmartPickMatches(def.id);
+  const open = state.spOpenCriteria === def.id;
+  return `
+    <div class="sp-card">
+      <div class="sp-card-head">
+        <div class="sp-card-title">${def.icon} ${escapeHtml(def.title)}</div>
+        <button type="button" class="sp-crit-toggle ${open?'open':''}" data-sp-toggle="${def.id}">Kriteria <span class="chev">▾</span></button>
       </div>
-    </details>`;
-  const menu=(name,desc)=>`
-    <div style="margin-bottom:10px;">
-      <div style="font-size:13px;font-weight:600;color:var(--text);">${name}</div>
-      <div style="font-size:12px;color:var(--muted);line-height:1.7;margin-top:2px;">${desc}</div>
+      <div class="sp-card-desc">${escapeHtml(def.shortDesc)}</div>
+      <div class="sp-card-count">
+        ${matches.length ? `<span class="pill pill-${def.tone}">${matches.length} lolos hari ini</span>` : `<span class="pill pill-muted">Belum ada yang lolos</span>`}
+      </div>
+      ${matches.length ? `
+      <div class="sp-card-tickers">
+        ${matches.slice(0,6).map(m=>`<button type="button" class="sp-ticker-chip ${m.strong?'strong':''}" data-sp-ticker="${m.ticker}" title="Skor ${m.score.toFixed(0)}${m.strong?' · Sinyal Kuat 🔥':''}${m.stockbitVerified?' · Value Stockbit terverifikasi 💠':''}">${escapeHtml(m.ticker)}${m.strong?' 🔥':''}${m.stockbitVerified?' 💠':''}</button>`).join("")}
+        ${matches.length>6?`<span class="sp-ticker-more">+${matches.length-6} lagi</span>`:""}
+      </div>
+      <button type="button" class="btn btn-outline sp-viewall-btn" data-sp-viewall="${def.id}">📋 Lihat Daftar Lengkap (${matches.length})</button>` : ""}
+      <div class="sp-crit-panel ${open?'open':''}">
+        <div class="sp-crit-grid">
+          ${spCriteriaBox("Definisi", def.definisi)}
+          ${spCriteriaBox("Filter", def.filter)}
+          ${spCriteriaBox("Scoring", def.scoring)}
+          ${spCriteriaBox("Sinyal Kuat", def.sinyalKuat)}
+        </div>
+      </div>
     </div>`;
+}
+
+function renderSmartPick(){
+  const cardsHtml = SMART_PICK_DEFS.map(renderSmartPickCard).join("");
+
+  const rows = smartPickRowsWithLive();
+  const stats = computeSmartPickStats(rows);
+  const todayStr = todayLocalISO();
+  const alreadyToday = state.spHistory.some(h => h.muncul_date === todayStr);
+
+  const tableRows = rows.map(r => `
+    <tr>
+      <td class="ticker-cell">${escapeHtml(r.stock_code)}</td>
+      <td>${pillHtml(escapeHtml(spTitleFor(r.signal_type)), spToneFor(r.signal_type))}</td>
+      <td>${fmtDateID(r.muncul_date)}</td>
+      <td class="mono">Rp${fmtNum(Math.round(r.entry_price))}</td>
+      <td class="mono">${r.nowPrice!=null ? "Rp"+fmtNum(Math.round(r.nowPrice)) : "-"}</td>
+      <td class="mono" style="font-weight:700;color:${r.chgPct==null?'var(--muted)':(r.chgPct>=0?'var(--up)':'var(--down)')};">${r.chgPct==null?"-":(r.chgPct>=0?"+":"")+r.chgPct.toFixed(1)+"%"}</td>
+      <td class="mono">${r.hari}h</td>
+    </tr>`).join("");
 
   return `
+    <div class="panel" style="margin-bottom:16px;">
+      <div class="filter-section-title">✨ Smart Pick <span class="pill pill-teal" style="margin-left:8px;">AI SCREENER</span><span class="line"></span></div>
+      <div style="font-size:12px;color:var(--muted);margin-bottom:14px;">
+        5 sinyal siap pakai, dihitung otomatis dari data live saat ini (rule-based, bukan model AI beneran). Klik "Kriteria" di tiap kartu untuk lihat definisi & cara skornya.
+      </div>
+      <div class="sp-grid">${cardsHtml}</div>
+    </div>
+
+    <div class="panel">
+      <button type="button" class="sp-recap-header" id="spRecapHeader">
+        <div>
+          <div class="filter-section-title" style="margin-bottom:2px;">📌 Rekap &amp; Share Signal</div>
+          <div style="font-size:11.5px;color:var(--muted);font-weight:400;">Performa tiap signal sejak finalisasi + lacak win rate</div>
+        </div>
+        <span class="chev sp-recap-chev ${state.spRecapCollapsed?'':'open'}">▾</span>
+      </button>
+      <div class="sp-recap-body ${state.spRecapCollapsed?'':'open'}">
+        <div class="sp-finalize-bar">
+          <div>
+            <div style="font-weight:700;font-size:13px;">FINALISASI HARI INI</div>
+            <div style="font-size:11px;color:var(--muted);">Klik setelah market close — dikunci ke tanggal data${alreadyToday?" (sudah difinalisasi hari ini)":""}</div>
+          </div>
+          <button type="button" class="btn btn-primary" id="spFinalizeBtn" ${state.spFinalizing?"disabled":""}>${state.spFinalizing?"Memproses...":"✓ Finalisasi Signal (EOD)"}</button>
+        </div>
+        ${state.spMsg?`<div class="bs-msg ${state.spMsgError?'bs-msg-error':'bs-msg-ok'}" style="margin-top:8px;">${escapeHtml(state.spMsg)}</div>`:""}
+
+        <div class="sp-toolbar">
+          <select id="spFilterType" class="bs-input">
+            <option value="all" ${state.spFilterType==="all"?"selected":""}>Semua signal</option>
+            ${SMART_PICK_DEFS.map(d=>`<option value="${d.id}" ${state.spFilterType===d.id?"selected":""}>${escapeHtml(d.title)}</option>`).join("")}
+          </select>
+          <span style="font-size:11px;color:var(--muted);">Dari</span>
+          <input type="date" id="spFromInput" class="bs-input" value="${state.spFrom||""}">
+          <span style="font-size:11px;color:var(--muted);">s/d</span>
+          <input type="date" id="spToInput" class="bs-input" value="${state.spTo||""}">
+          <button type="button" class="btn btn-outline" id="spRefreshBtn" title="Muat ulang riwayat">🔄</button>
+        </div>
+
+        <div class="summary-grid" style="margin-top:14px;">
+          <div class="summary-card tone-up">
+            <div class="summary-lbl">Win Rate</div>
+            <div class="summary-val">${stats.winRate!=null?stats.winRate.toFixed(0)+"%":"-"}</div>
+          </div>
+          <div class="summary-card tone-gold">
+            <div class="summary-lbl">Rata-rata</div>
+            <div class="summary-val" style="color:${stats.avg==null?'var(--text)':(stats.avg>=0?'var(--up)':'var(--down)')};font-size:20px;">${stats.avg!=null?(stats.avg>=0?"+":"")+stats.avg.toFixed(1)+"%":"-"}</div>
+          </div>
+          <div class="summary-card">
+            <div class="summary-lbl">Tercatat</div>
+            <div class="summary-val">${stats.total}</div>
+          </div>
+        </div>
+
+        ${state.spHistoryLoading ? `<div class="empty-box" style="margin-top:14px;">Memuat riwayat...</div>` :
+          rows.length ? `
+          <div class="table-wrap" style="margin-top:14px;">
+            <table class="mono">
+              <thead><tr><th>Kode</th><th>Signal</th><th>Muncul</th><th>Entry</th><th>Now</th><th>Δ%</th><th>Hari</th></tr></thead>
+              <tbody>${tableRows}</tbody>
+            </table>
+          </div>` : `<div class="empty-box" style="margin-top:14px;">Belum ada riwayat sinyal${!SUPABASE_URL?" (Supabase belum dikonfigurasi)":""}. Klik "✓ Finalisasi Signal (EOD)" di atas — idealnya setelah market close — untuk mulai melacak performa.</div>`}
+      </div>
+    </div>
+  `;
+}
+
+function renderAbout(){
+  const row=(title,tone,desc)=>`<div class="about-row">${pillHtml(title,tone)}<p>${desc}</p></div>`;
+  return `
     ${row("Teknikal","teal","Diambil dari Yahoo Finance (data publik, gratis) lewat Google Apps Script Anda sendiri. Indikator: EMA21 High/Low, RSI7 vs RSI21, MACD histogram, Volume MA20 — persis logika di script screener.txt Anda.")}
+    ${row("Screener DSI","gold","Terdapat tombol preset yang akan menyaring data secara otomatis berdasarkan kondisi DSI (Eri Ginanjar, RSI Cross, Golden Cross, Super Uptrend, Volatility Breakout, Pullback Uptrend).")}
     ${row("Penyimpanan Koneksi","up","Semua API Key Supabase dan URL Anda sekarang disimpan aman di dalam Local Storage browser perangkat ini. Tidak tertanam di dalam HTML sehingga aman jika di-hosting publik.")}
     ${row("Fundamental","teal","PER, PBV, ROE, dan Dividend Yield dari modul quoteSummary Yahoo Finance.")}
     ${row("Bandarmologi","down","PENTING: ini BUKAN data transaksi broker asli. Yang ditampilkan di sini hanyalah PROXY heuristik: rasio volume hari ini terhadap volume rata-rata 20 hari, dikombinasikan arah harga.")}
     ${row("Watchlist","muted","Disimpan otomatis di penyimpanan browser Anda (localStorage) di perangkat ini. Jika Web App terhubung, tanda bintang juga akan disinkronkan ke Supabase.")}
-
-    <div class="about-row">
-      ${pillHtml("Screener DSI · 10 Preset Bawaan","gold")}
-      <p style="margin-bottom:10px;">Tombol siap-pakai di tab Screener yang menyaring data otomatis berdasarkan kondisi teknikal DSI. Klik nama preset di bawah untuk lihat kriteria persisnya (semua dihitung langsung dari kolom stocks_screener, bukan hasil AI/estimasi).</p>
-      ${preset("🎯","Skor Bagger ≥75", "Skor komposit dari <code>formula_screening_saham_bagger.md</code>: Fundamental 40% + Momentum Teknikal 35% + Volume/Smart Money 25%. Total skor ≥75 = kandidat kuat.")}
-      ${preset("","Eri Ginanjar", "RSI7 antara 58&ndash;70 &amp; RSI21 antara 50&ndash;70 &amp; RSI7&gt;RSI21 &middot; Close &gt; EMA21 High (maks +3%) &amp; Close &gt; EMA89 &middot; High &gt; PrevHigh &amp; Low &gt; PrevLow &amp; Volume &gt; PrevVolume &middot; Stochastic K cross up D.")}
-      ${preset("","RSI & Harga Cross", "RSI7 58&ndash;75 &amp; RSI21 50&ndash;75 &amp; RSI7&gt;RSI21 &middot; Low &lt; EMA21 Low &amp; Close &gt; EMA21 High &amp; Close &gt; Open &middot; Close &ge; (High+Low)/2 &amp; Turnover &gt; Rp200jt &amp; Close &gt; MA100.")}
-      ${preset("","Golden Cross DSI", "MACD Histogram baru saja cross dari negatif ke positif (histPrev &le; 0 &amp; hist &gt; 0) &middot; Stochastic K cross up D di hari yang sama.")}
-      ${preset("","Super Uptrend", "Susunan Moving Average naik sempurna: Close &gt; MA21 &gt; MA50 &gt; MA100 &gt; MA200.")}
-      ${preset("🚀","Volatility Breakout", "Bollinger Band Squeeze sedang aktif &middot; Volume Ratio &ge; 1.5x rata-rata &middot; Close &gt; EMA21 High &middot; Perubahan harga hari ini positif.")}
-      ${preset("🧲","Pullback Uptrend", "Trend Harga diawali label \"Bullish\" &middot; Close &le; EMA21 Low &times; 1.03 &amp; Close &ge; Support &times; 0.98 (area pullback wajar) &middot; Stochastic K baru cross up D (kalau datanya tersedia).")}
-      ${preset("🔥","BPJS (proxy volume)", "Open &gt; MA21, MA50, MA100, MA200 sekaligus &middot; Volume Ratio &gt; 2x &middot; Turnover &gt; Rp10 miliar &middot; Bandarmologi bertone \"up\" ATAU label Uang Gede Masuk mengandung \"Akumulasi\".", "Ini PROXY dari lonjakan volume, BUKAN data transaksi asing/institusi resmi — beda dengan preset \"Akumulasi Asing (IDX)\" di bawah.")}
-      ${preset("🐋","Akumulasi Asing (IDX)", "Net beli asing 20 hari &ge; Rp50 miliar &middot; Konsisten net asing positif &ge; 12 dari 20 hari terakhir &middot; Turnover &ge; Rp5 miliar/hari (syarat likuiditas).", "Sumber: data foreign buy/sell RESMI dari IDX (tabel flows), bukan proxy.")}
-      ${preset("🔊","Lonjakan Frekuensi", "Rasio frekuensi transaksi hari ini vs rata-rata (freq_ma20 atau avg_frequency_3m) &ge; 1.5x.", "Kalau kolom frequency harian tidak tersedia di DB, otomatis fallback ke kolom freq_spike yang sudah dihitung backend.")}
-    </div>
-
-    <div class="about-row">
-      ${pillHtml("Opportunity Screener · 7 Preset Baru","up")}
-      <p style="margin-bottom:10px;">Kartu tambahan bergaya "Top Opportunity / Multibagger / Bandarmology" yang direplikasi dari referensi Anda. Beberapa kriteria di gambar referensi (Est Upside analis, status ARA riil) tidak punya sumber data persis di database ini — bagian itu didekati (proxy) dan ditandai ⚠️ di bawah, supaya tidak dikira data resmi.</p>
-      ${preset("🏆","Top Opportunity", "ROE &gt; 15% &amp; NPM &gt; 5% &amp; DER &lt; 1.5 &amp; ROA &gt; 8% (Fundamental) &middot; PER &lt; 25x &amp; PBV &lt; 5x (Valuasi) &middot; Posisi harga &gt; 50% dari range 52 minggu (Momentum) &middot; Volume Ratio &ge; 1.5x (Volume) &middot; Skor komposit (Fund 40% + Val 30% + Mom 20% + Vol 10%) &ge; 50.")}
-      ${preset("🚀","Multibagger Candidate", "ROE &gt; 10% &amp; NPM &gt; 5% (Growth) &middot; DER &lt; 1 &amp; ROA &gt; 5% &amp; PBV &lt; 3x (Kesehatan) &middot; Market Cap &lt; Rp10 triliun (Small&ndash;Mid) &middot; Est. Upside &gt; 30% &middot; Skor (Fund 35% + Kesehatan 35% + Upside 30%) &ge; 40.", "\"Est. Upside\" TIDAK memakai target harga analis (tidak ada di DB ini) — didekati dari jarak harga sekarang ke Fibonacci Pivot Resistance 1 (fibR1). Kalau fibR1 kosong utk suatu saham, otomatis gagal syarat ini.")}
-      ${preset("💎","Undervalued", "PER &lt; 15x &amp; PBV &lt; 1.5x (Valuasi Murah) &middot; ROE &gt; 12% &amp; NPM &gt; 5% &amp; ROA &gt; 6% (Profitabilitas) &middot; DER &lt; 1 (proxy \"sehat &amp; tidak merugi\") &middot; Skor Valuasi &ge; 60.")}
-      ${preset("📊","Technical Momentum", "Posisi harga &gt; 50% dari range 52 minggu (Trend) &amp; perubahan harga hari ini positif &middot; Posisi &gt; 70% dari 52W Low (Breakout) &middot; ROE &gt; 8% &amp; NPM &gt; 0 (Fundamental minimum, tidak merugi).", "\"Volume top 30%\" di gambar referensi memakai persentil lintas seluruh saham hari itu — di sini hanya dicek Volume Ratio tersedia (tersedia data), belum benar-benar persentil top-30%.")}
-      ${preset("🎯","Near Support (ARA Pattern)", "Skor ARA 0&ndash;100 dari kombinasi: ketatnya range harian (High&minus;Low)/Close 40%, jarak Close ke Support 35%, ATR14 relatif terhadap harga 25% &middot; Skor &ge; 40 &middot; Likuiditas minimum turnover Rp50 juta/hari &middot; Ditampilkan Top 10 terurut skor tertinggi.", "Ini skor pola teknikal buatan sendiri (bukan probabilitas statistik ARA yang tervalidasi).")}
-      ${preset("🔥","ARA Candidate (Momentum Detector)", "Market Cap &lt; Rp10 triliun (proxy small&ndash;mid) &middot; Close = High hari ini (menutup di harga tertinggi) &middot; Offer Volume = 0 (antrian jual habis diborong) &middot; Perubahan harga &lt; 24% &middot; Ditampilkan Top 10 terurut Volume Ratio tertinggi.", "\"Belum ARA\" didekati pakai batas 24% generik, BUKAN pengecekan band Auto Reject Atas riil per rentang harga saham (yang sebenarnya bertingkat 20%/25%/35% tergantung harga).")}
-      ${preset("🚨","Overvalue / Hindari", "Skor komposit SAMA seperti preset \"Top Opportunity\" (Fund 40% + Val 30% + Mom 20% + Vol 10%) tapi dengan syarat &lt; 40.", "ISI DAFTAR HINDARI/WASPADA, bukan sinyal jual otomatis — tetap perlu verifikasi manual sebelum ambil keputusan.")}
-    </div>
-
-    <div class="about-row">
-      ${pillHtml("Filter & Menu Lain di Tab Screener","muted")}
-      ${menu("🛠️ Rule Builder (+ Tambah Rule)", "Kombinasi kondisi kustom (AND, semua harus terpenuhi) yang Anda buat sendiri terhadap kolom apapun di tabel — mis. \"RSI7 &gt; 60\". Tersimpan di localStorage perangkat ini, dan bisa disimpan sebagai Preset ke tabel <code>custom_presets</code> di Supabase supaya bisa dipakai lagi atau dipantau lewat Notifikasi Telegram.")}
-      ${menu("Filter Dropdown (Sektor, Syariah, Trend Harga, MACD, Pola Candle, Sinyal Volume, Sinyal Frekuensi, Keyakinan Naik, Sinyal Harga, Sinyal RSI, Status RSI, Bandarmologi, Uang Gede Masuk, BB Squeeze, Valuasi)", "Filter kategori langsung dari kolom di stocks_screener atau hasil turunannya — independen dari preset manapun di atas, bisa dikombinasikan dengan preset yang aktif.")}
-      ${menu("Filter Rentang Angka (BB Width, ATR14, CLV, RSI7, RSI21, Frekuensi)", "Isi batas Min/Max manual untuk kolom teknikal tsb — juga independen dari preset, dikombinasikan dengan AND ke semua filter lain yang aktif.")}
-      ${menu("Kolom Tampilan", "Memilih kolom mana yang ditampilkan di tabel screener. TIDAK mengubah data atau hasil filter — murni preferensi tampilan, tersimpan di localStorage.")}
-      ${menu("📊 Ekspor Excel", "Mengekspor baris yang SEDANG tampil (hasil filter + sort + kolom aktif saat ini) ke file .xlsx, diproses sepenuhnya di browser (SheetJS) — tidak lewat server manapun.")}
-      ${menu("Centang baris (kolom paling kiri)", "Menandai saham untuk aksi massal: dipakai di tab Backtest, atau untuk membatasi tombol \"🔴 Live Stockbit\" hanya ke saham yang dicentang saja.")}
-    </div>
   `;
 }
 
@@ -5076,7 +5904,7 @@ async function loadTargetWindow(){
   state.targetLoading = true; state.targetMsg = ""; render();
   try{
     const cutoff = new Date(); cutoff.setDate(cutoff.getDate() - windowDays);
-    const cutoffStr = cutoff.toISOString().slice(0,10);
+    const cutoffStr = toLocalISODate(cutoff);
     const qs = new URLSearchParams({
       stock_code: `eq.${code}`, trade_date: `gte.${cutoffStr}`,
       order: "trade_date.asc,side.asc,rank.asc"
@@ -5126,7 +5954,7 @@ async function saveTargetCalculation(){
   }
   if(!SUPABASE_URL || !SUPABASE_KEY){ openSettings(); return; }
 
-  const today = new Date().toISOString().slice(0,10);
+  const today = todayLocalISO();
   const payload = {
     stock_code: code, calc_date: today, window_days: state.targetWindowDays,
     avg_bandar_price: state.targetAvgBandar.avgPrice,
@@ -5338,24 +6166,6 @@ function attachContentEvents(){
   const advToggleBtn = document.getElementById("advToggleBtn");
   if(advToggleBtn) advToggleBtn.onclick = () => { state.showAdvancedFilters = !state.showAdvancedFilters; render(); };
 
-  const rulesPanelHeader = document.getElementById("rulesPanelHeader");
-  if(rulesPanelHeader) {
-    const toggleRulesPanel = () => {
-      state.rulesPanelCollapsed = !state.rulesPanelCollapsed;
-      localStorage.setItem("ihsg_rules_panel_collapsed", String(state.rulesPanelCollapsed));
-      const body = document.getElementById("rulesPanelBody");
-      const chevron = document.getElementById("rulesPanelChevron");
-      if(body) body.style.display = state.rulesPanelCollapsed ? "none" : "";
-      if(chevron) chevron.style.transform = `rotate(${state.rulesPanelCollapsed ? -90 : 0}deg)`;
-      rulesPanelHeader.setAttribute("aria-expanded", String(!state.rulesPanelCollapsed));
-    };
-    // click mencakup mouse desktop DAN tap mobile (native <button> selalu
-    // mengeluarkan event "click" yang konsisten di semua browser/WebView,
-    // beda dengan <div role="button"> yang di sebagian browser mobile lama
-    // butuh delay/quirk khusus sebelum "click" benar-benar terpicu).
-    rulesPanelHeader.onclick = (e) => { e.preventDefault(); toggleRulesPanel(); };
-  }
-
   const addRuleBtn = document.getElementById("addRuleBtn");
   if(addRuleBtn) addRuleBtn.onclick = addCustomRule;
 
@@ -5530,6 +6340,28 @@ function attachContentEvents(){
     const tickers = checked.length ? checked : getSorted(getFiltered()).map(s=>s.ticker);
     if(tickers.length) fetchStockbitLiveBulk(tickers);
   };
+  const screenerBsFromInput = document.getElementById("screenerBsFromInput");
+  if(screenerBsFromInput) screenerBsFromInput.onchange = (e) => { state.bsAutoBulkFrom = e.target.value || state.bsAutoBulkFrom; };
+  const screenerBsToInput = document.getElementById("screenerBsToInput");
+  if(screenerBsToInput) screenerBsToInput.onchange = (e) => { state.bsAutoBulkTo = e.target.value || state.bsAutoBulkTo; };
+  const screenerBsBulkBtn = document.getElementById("screenerBsBulkBtn");
+  if(screenerBsBulkBtn) screenerBsBulkBtn.onclick = () => {
+    const checked = [...state.selectedForBacktest];
+    const tickers = checked.length ? checked : getSorted(getFiltered()).map(s=>s.ticker);
+    fetchAndSaveBrokerSummaryBulk(tickers, state.bsAutoBulkFrom, state.bsAutoBulkTo);
+  };
+  const screenerHdFromInput = document.getElementById("screenerHdFromInput");
+  if(screenerHdFromInput) screenerHdFromInput.onchange = (e) => { state.hdAutoBulkFrom = e.target.value || state.hdAutoBulkFrom; };
+  const screenerHdToInput = document.getElementById("screenerHdToInput");
+  if(screenerHdToInput) screenerHdToInput.onchange = (e) => { state.hdAutoBulkTo = e.target.value || state.hdAutoBulkTo; };
+  const screenerHdBulkBtn = document.getElementById("screenerHdBulkBtn");
+  if(screenerHdBulkBtn) screenerHdBulkBtn.onclick = () => {
+    const checked = [...state.selectedForBacktest];
+    const tickers = checked.length ? checked : getSorted(getFiltered()).map(s=>s.ticker);
+    fetchAndSaveHistoricalBulk(tickers, state.hdAutoBulkFrom, state.hdAutoBulkTo);
+  };
+  const hdBulkResultsPanel = document.getElementById("hdBulkResultsPanel");
+  if(hdBulkResultsPanel) hdBulkResultsPanel.ontoggle = (e) => { state.hdBulkResultsOpen = e.target.open; };
   
   document.querySelectorAll("[data-sektor-toggle]").forEach(el=>{
     el.onclick = ()=>{
@@ -5661,6 +6493,37 @@ function attachContentEvents(){
   if(tbScopeSelect) tbScopeSelect.onchange = (e) => { state.targetSummaryScope = e.target.value; };
   const tbHistoryBtn = document.getElementById("tbHistoryBtn");
   if(tbHistoryBtn) tbHistoryBtn.onclick = loadTargetHistory;
+
+  // --- Smart Pick ---
+  document.querySelectorAll("[data-sp-toggle]").forEach(btn=>{
+    btn.onclick = () => {
+      const id = btn.dataset.spToggle;
+      state.spOpenCriteria = (state.spOpenCriteria === id) ? null : id;
+      render();
+    };
+  });
+  document.querySelectorAll("[data-sp-ticker]").forEach(btn=>{
+    btn.onclick = () => openDetail(btn.dataset.spTicker);
+  });
+  document.querySelectorAll("[data-sp-viewall]").forEach(btn=>{
+    btn.onclick = () => openSmartPickList(btn.dataset.spViewall);
+  });
+  const spRecapHeader = document.getElementById("spRecapHeader");
+  if(spRecapHeader) spRecapHeader.onclick = () => {
+    state.spRecapCollapsed = !state.spRecapCollapsed;
+    localStorage.setItem("ihsg_sp_recap_collapsed", state.spRecapCollapsed ? "1" : "0");
+    render();
+  };
+  const spFinalizeBtn = document.getElementById("spFinalizeBtn");
+  if(spFinalizeBtn) spFinalizeBtn.onclick = finalizeSmartPickSignals;
+  const spFilterType = document.getElementById("spFilterType");
+  if(spFilterType) spFilterType.onchange = (e) => { state.spFilterType = e.target.value; loadSmartPickHistory(); };
+  const spFromInput = document.getElementById("spFromInput");
+  if(spFromInput) spFromInput.onchange = (e) => { state.spFrom = e.target.value; loadSmartPickHistory(); };
+  const spToInput = document.getElementById("spToInput");
+  if(spToInput) spToInput.onchange = (e) => { state.spTo = e.target.value; loadSmartPickHistory(); };
+  const spRefreshBtn = document.getElementById("spRefreshBtn");
+  if(spRefreshBtn) spRefreshBtn.onclick = loadSmartPickHistory;
 }
 
 document.addEventListener("click", (e) => {
@@ -5676,6 +6539,7 @@ document.getElementById("tabs").addEventListener("click", (e)=>{
   const btn = e.target.closest(".tab-btn");
   if(!btn) return;
   state.tab = btn.dataset.tab;
+  if(state.tab === "smartpick" && !state.spHistory.length && !state.spHistoryLoading) loadSmartPickHistory();
   render();
 });
 document.getElementById("refreshBtn").onclick = ()=> loadLive();
@@ -5683,7 +6547,39 @@ document.getElementById("portoModalClose").onclick = ()=> resetPortoForm();
 document.getElementById("portoModalOverlay").onclick = (e)=>{ if(e.target.id==="portoModalOverlay") resetPortoForm(); };
 document.getElementById("detailModalClose").onclick = ()=> closeDetail();
 document.getElementById("detailModalOverlay").onclick = (e)=>{ if(e.target.id==="detailModalOverlay") closeDetail(); };
+document.getElementById("spListModalClose").onclick = ()=> closeSmartPickList();
+document.getElementById("spListModalOverlay").onclick = (e)=>{ if(e.target.id==="spListModalOverlay") closeSmartPickList(); };
 
 loadSettings();
 syncStockbitTokenFromSupabase();
 loadLive();
+
+// ==========================================
+// AUTO-REFRESH HARGA LIVE — sebelumnya loadLive() cuma dipanggil sekali saat
+// page load, jadi tab yang dibiarkan terbuka lama menampilkan harga basi.
+// Sekarang dijadwalkan ulang tiap LIVE_REFRESH_INTERVAL_MS, dengan 2 pengaman:
+// 1. Diskip kalau tab sedang di background (document.hidden) — hemat request,
+//    dan begitu tab dibuka lagi langsung refresh sekali (visibilitychange)
+//    supaya tidak perlu nunggu interval penuh.
+// 2. Diskip kalau user sedang fokus mengetik di input/textarea/select manapun
+//    (search box, form manual Broker Summary, dsb.) — render() replace
+//    innerHTML, jadi kalau dipaksa refresh di tengah ketikan akan reset fokus
+//    & nilai yang belum ke-commit ke state. Kalau sedang diskip, otomatis
+//    dicoba lagi di siklus interval berikutnya (tidak hilang, cuma ditunda).
+// ==========================================
+const LIVE_REFRESH_INTERVAL_MS = 45000; // 45 detik — cukup sering tanpa membebani Supabase/Stockbit
+let liveRefreshInFlight = false;
+
+function shouldSkipAutoRefreshLive(){
+  const el = document.activeElement;
+  return !!(el && (el.tagName === "INPUT" || el.tagName === "TEXTAREA" || el.tagName === "SELECT"));
+}
+
+async function autoRefreshLiveTick(){
+  if(liveRefreshInFlight || document.hidden || shouldSkipAutoRefreshLive()) return;
+  liveRefreshInFlight = true;
+  try{ await loadLive(); } finally { liveRefreshInFlight = false; }
+}
+
+setInterval(autoRefreshLiveTick, LIVE_REFRESH_INTERVAL_MS);
+document.addEventListener("visibilitychange", () => { if(!document.hidden) autoRefreshLiveTick(); });

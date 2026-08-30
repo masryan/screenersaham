@@ -39,6 +39,7 @@
 
 <div class="tabs" id="tabs">
   <button class="tab-btn active" data-tab="screener">📋 Screener</button>
+  <button class="tab-btn" data-tab="smartpick">✨ Smart Pick</button>
   <button class="tab-btn" data-tab="sektoral">🏢 Sektoral</button>
   <button class="tab-btn" data-tab="watchlist">⭐ Watchlist</button>
   <button class="tab-btn" data-tab="backtest">🔬 Backtest</button>
@@ -98,6 +99,11 @@
       <label>Endpoint Broker Summary (sudah terisi default — timpa hanya kalau Stockbit ganti skemanya)</label>
       <input id="setStockbitBrokerEndpoint" type="text" placeholder="https://exodus.stockbit.com/marketdetectors/{ticker}?from={from}&to={to}&transaction_type=TRANSACTION_TYPE_NET&market_board=MARKET_BOARD_REGULER&investor_type=INVESTOR_TYPE_ALL&limit={limit}">
       <div style="font-size:11px;color:var(--muted);margin-top:4px;">⚠️ Kalau diisi manual, pastikan bagian akhir tetap <code>&limit={limit}</code> (placeholder, bukan angka mati) — kalau ditimpa jadi angka tetap seperti <code>&limit=200</code>, data hari-hari yang lebih lama bisa kepotong dan cuma 1 hari terakhir yang kesimpan.</div>
+    </div>
+    <div class="field">
+      <label>Endpoint Historical Data (sudah terisi default — timpa hanya kalau Stockbit ganti skemanya)</label>
+      <input id="setStockbitHistoricalEndpoint" type="text" placeholder="https://exodus.stockbit.com/company-price-feed/historical/summary/{ticker}?period={period}&start_date={start_date}&end_date={end_date}&limit={limit}&page={page}">
+      <div style="font-size:11px;color:var(--muted);margin-top:4px;">✅ Endpoint sudah dicek manual lewat DevTools (mode Daily). Mode Weekly/Monthly baru tebakan pola nama parameter — kalau ternyata salah/data janggal, kabari supaya bisa dikoreksi.</div>
     </div>
     <div class="field">
       <label>Proxy URL (opsional — isi kalau permintaan langsung gagal karena CORS)</label>
@@ -193,6 +199,17 @@
       <button class="close-btn" id="detailModalClose">✕</button>
     </div>
     <div id="detailModalContent"></div>
+  </div>
+</div>
+
+<!-- Modal Daftar Saham Smart Pick -->
+<div class="modal-overlay" id="spListModalOverlay">
+  <div class="modal detail-modal">
+    <div class="modal-top">
+      <h3 id="spListModalTitle">Daftar Saham</h3>
+      <button class="close-btn" id="spListModalClose">✕</button>
+    </div>
+    <div id="spListModalContent"></div>
   </div>
 </div>
 
