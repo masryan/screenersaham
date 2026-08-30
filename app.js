@@ -6583,3 +6583,19 @@ async function autoRefreshLiveTick(){
 
 setInterval(autoRefreshLiveTick, LIVE_REFRESH_INTERVAL_MS);
 document.addEventListener("visibilitychange", () => { if(!document.hidden) autoRefreshLiveTick(); });
+
+// ==========================================
+// PWA: daftarkan service worker supaya browser menganggap app ini
+// "installable" (syarat "Add to Home Screen"/install prompt di Android
+// Chrome; iOS Safari tidak butuh service worker tapi tetap aman didaftarkan).
+// Dibungkus try/catch + cek 'serviceWorker' in navigator karena:
+//  - Kalau halaman ini masih dibuka lewat file:// (bukan http/https),
+//    registrasi service worker akan gagal/ditolak browser — itu WAJAR,
+//    bukan bug. Fitur install penuh baru aktif kalau di-hosting via HTTPS
+//    (lihat catatan PWA_HOSTING.md).
+// ==========================================
+if("serviceWorker" in navigator && (location.protocol === "https:" || location.hostname === "localhost")){
+  window.addEventListener("load", () => {
+    navigator.serviceWorker.register("sw.js").catch(() => { /* diamkan — bukan fatal */ });
+  });
+}
