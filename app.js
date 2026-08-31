@@ -357,6 +357,7 @@ function parseStockbitHistorical(raw){
   if(!raw || typeof raw !== "object") return null;
   const container = raw.data || raw.result || raw;
   const list = Array.isArray(container) ? container
+    : Array.isArray(container?.result) ? container.result   // bentuk asli: { data: { result: [...] } }
     : Array.isArray(container?.rows) ? container.rows
     : Array.isArray(container?.chartbit) ? container.chartbit
     : Array.isArray(container?.data) ? container.data
@@ -389,6 +390,17 @@ function parseStockbitHistorical(raw){
     changePct: Number(pick(row, "change_percentage", "change_percent", "changePercent", "pct")) || null,
     value: Number(pick(row, "value", "value_idr", "val", "trade_value")) || null,
     volume: Number(pick(row, "volume", "vol", "trade_volume")) || null,
+    // Field bonus yang ternyata sudah disediakan endpoint ini sekalian —
+    // termasuk FOREIGN FLOW HARIAN per ticker (foreign_buy/foreign_sell/
+    // net_foreign), jadi tidak perlu endpoint marketdetectors terpisah untuk
+    // data asing (lihat diskusi "Data foreign bisa diambil dari stockbit?").
+    open: Number(pick(row, "open")) || null,
+    high: Number(pick(row, "high")) || null,
+    low: Number(pick(row, "low")) || null,
+    frequency: Number(pick(row, "frequency")) || null,
+    foreignBuy: Number(pick(row, "foreign_buy")) || null,
+    foreignSell: Number(pick(row, "foreign_sell")) || null,
+    netForeign: pick(row, "net_foreign") != null ? Number(pick(row, "net_foreign")) : null,
   })).filter(r => r.date);
 }
 
@@ -1019,6 +1031,10 @@ let state = {
   stockbitHistoricalEndpoint: STOCKBIT_DEFAULT_HISTORICAL_EP,
   detailHistoricalPeriod: "daily", detailHistoricalRows: [],
   detailHistoricalLoading: false, detailHistoricalMsg: "", detailHistoricalMsgError: false,
+  // Panel "Bandingkan dengan IDX (flows)" di tab Historical Data — lihat
+  // loadDetailCompare(). Cuma dihitung on-demand (klik tombol), tidak
+  // otomatis, karena butuh 1 fetch tambahan ke tabel `flows`.
+  detailCompareRows: [], detailCompareLoading: false, detailCompareMsg: "", detailCompareOpen: false,
   stockbitTokenExpiresAt: null, stockbitTokenSyncedAt: null, stockbitTokenSource: "manual",
   stockbitLive: {}, stockbitBulkLoading: false, stockbitBulkProgress: null,
   // Riwayat Value (Rp) harian dari Stockbit per ticker, dipakai Smart Pick —
@@ -1071,6 +1087,7 @@ let state = {
   spRecapCollapsed: (localStorage.getItem("ihsg_sp_recap_collapsed") === "1"),
   spFinalizing: false, spMsg: "", spMsgError: false,
   spFilterType: "all", spFrom: "", spTo: "",
+  btFrom: "", btTo: "",
   spHistory: [], spHistoryLoading: false,
   spListOpenDefId: null
 };
@@ -1452,7 +1469,11 @@ async function loadLive(){
        state.backtests = backtestRes.map(b => ({
          id: b.id, date: b.session_date,
          items: b.backtest_items.map(it => ({
-            ticker: it.ticker, entryPrice: it.entry_price, filterStr: it.notes, sumber: it.source, kriteria: it.criteria
+            ticker: it.ticker, entryPrice: it.entry_price, filterStr: it.notes, sumber: it.source, kriteria: it.criteria,
+            // Fallback ke tanggal sesi (lewat id sesi = timestamp) kalau
+            // baris lama belum punya entry_at (sebelum migrasi
+            // sql/09_backtest_entry_at.sql dijalankan / kolomnya kosong).
+            entryTs: it.entry_at ? new Date(it.entry_at).getTime() : (Number(b.id) || Date.now())
          }))
        })).sort((a,b) => String(b.id).localeCompare(String(a.id)));
        saveBacktests();
@@ -1579,6 +1600,7 @@ function openDetail(ticker){
   state.detailBsMsg = ""; state.detailBsMsgError = false;
   state.detailBsEditorOpen = false; state.detailBsCsvText = "";
   state.detailHistoricalRows = []; state.detailHistoricalMsg = ""; state.detailHistoricalMsgError = false;
+  state.detailCompareRows = []; state.detailCompareMsg = ""; state.detailCompareOpen = false;
   render();
 }
 function closeDetail(){
@@ -2379,6 +2401,7 @@ function renderDetailHistorical(s){
       <td class="mono" style="text-align:right;color:${(r.change??0)>=0?'var(--up)':'var(--down)'}">${r.change!=null?dNum(r.change,{plusSign:true}):"-"}${r.changePct!=null?` (${dNum(r.changePct,{plusSign:true,decimals:2,suffix:'%'})})`:""}</td>
       <td class="mono" style="text-align:right;">${r.value!=null?fmtNum(r.value):"-"}</td>
       <td class="mono" style="text-align:right;">${r.volume!=null?fmtNum(r.volume):"-"}</td>
+      <td class="mono" style="text-align:right;color:${r.netForeign==null?'inherit':(r.netForeign>=0?'var(--up)':'var(--down)')}" title="Foreign Buy: ${r.foreignBuy!=null?fmtNum(r.foreignBuy):'-'} · Foreign Sell: ${r.foreignSell!=null?fmtNum(r.foreignSell):'-'}">${r.netForeign!=null?dNum(r.netForeign,{plusSign:true}):"-"}</td>
     </tr>`).join("");
 
   return `
@@ -2390,6 +2413,7 @@ function renderDetailHistorical(s){
         ${periodBtn("monthly","Monthly")}
         <button class="btn btn-outline" id="dhistLoadBtn" ${state.detailHistoricalLoading?"disabled":""}>${state.detailHistoricalLoading?"Menarik data...":"⬇️ Tarik Data dari Stockbit"}</button>
         ${rows.length ? `<button class="btn btn-outline" id="dhistSaveBtn">💾 Simpan ke Database</button>` : ""}
+        ${rows.length ? `<button class="btn btn-outline" id="dhistCompareBtn" ${state.detailCompareLoading?"disabled":""} style="color:#a78bfa;border-color:rgba(167,139,250,0.4);">${state.detailCompareLoading?"Membandingkan...":"🔍 Bandingkan dengan IDX"}</button>` : ""}
       </div>
 
       ${state.detailHistoricalMsg ? `<div class="bs-msg ${state.detailHistoricalMsgError?"bs-msg-error":"bs-msg-ok"}">${escapeHtml(state.detailHistoricalMsg)}</div>` : ""}
@@ -2404,11 +2428,56 @@ function renderDetailHistorical(s){
               <th style="padding:6px 8px;">Change</th>
               <th style="padding:6px 8px;">Value</th>
               <th style="padding:6px 8px;">Volume</th>
+              <th style="padding:6px 8px;" title="Net Foreign (Buy - Sell asing), hover baris untuk lihat rincian Buy/Sell">Net Foreign</th>
             </tr>
           </thead>
           <tbody>${tableRows}</tbody>
         </table>
       </div>`}
+
+      ${state.detailCompareMsg || (state.detailCompareRows && state.detailCompareRows.length) ? `
+      <div style="margin-top:16px;">
+        <details id="dhistComparePanel" ${state.detailCompareOpen?"open":""}>
+          <summary style="cursor:pointer; font-size:12px; color:var(--muted); user-select:none;">
+            🔍 Bandingkan dengan IDX (flows) ${state.detailCompareMsg ? `— ${escapeHtml(state.detailCompareMsg)}` : ""}
+          </summary>
+          ${state.detailCompareRows && state.detailCompareRows.length ? `
+          <div style="overflow-x:auto;margin-top:10px;">
+            <table style="width:100%;border-collapse:collapse;font-size:11.5px;">
+              <thead>
+                <tr style="color:var(--muted);text-align:right;">
+                  <th style="text-align:left;padding:6px 8px;">Date</th>
+                  <th style="padding:6px 8px;" colspan="2">Close (SB / IDX)</th>
+                  <th style="padding:6px 8px;" colspan="2">Value (SB / IDX)</th>
+                  <th style="padding:6px 8px;" colspan="2">Volume (SB / IDX)</th>
+                  <th style="padding:6px 8px;" colspan="2">Net Foreign (SB / IDX)</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${state.detailCompareRows.map(r => {
+                  const pctDiff = (a,b) => (a==null||b==null||b===0) ? null : Math.abs((a-b)/b);
+                  const cellPair = (a,b,fmt=fmtNum) => {
+                    const diff = pctDiff(a,b);
+                    const warn = diff != null && diff > 0.01; // beda >1% -> tandai kuning
+                    const color = a==null||b==null ? 'var(--muted)' : (warn ? 'var(--gold)' : 'inherit');
+                    return `<td class="mono" style="text-align:right;color:${color};">${a!=null?fmt(a):"-"}</td><td class="mono" style="text-align:right;color:var(--muted);">${b!=null?fmt(b):"-"}</td>`;
+                  };
+                  return `<tr>
+                    <td class="mono">${escapeHtml(r.date)}</td>
+                    ${cellPair(r.closeSb, r.closeIdx)}
+                    ${cellPair(r.valueSb, r.valueIdx)}
+                    ${cellPair(r.volumeSb, r.volumeIdx)}
+                    ${cellPair(r.netForeignSb, r.netForeignIdx, (v)=>dNum(v,{plusSign:true}))}
+                  </tr>`;
+                }).join("")}
+              </tbody>
+            </table>
+            <div style="font-size:10.5px;color:var(--muted);margin-top:6px;">
+              Kolom kiri tiap pasangan = Stockbit, kanan = IDX (<code>flows</code>). Angka <span style="color:var(--gold);">kuning</span> = beda &gt;1% antar sumber (bukan error — dua penyedia data independen, wajar sedikit beda metodologi/timing).
+            </div>
+          </div>` : ""}
+        </details>
+      </div>` : ""}
     </div>`;
 }
 
@@ -2447,7 +2516,9 @@ async function saveDetailHistoricalRows(){
   try{
     const payload = rows.map(r => ({
       stock_code: ticker, trade_date: r.date, period: state.detailHistoricalPeriod,
-      close: r.close, change: r.change, change_pct: r.changePct, value_idr: r.value, volume: r.volume
+      close: r.close, change: r.change, change_pct: r.changePct, value_idr: r.value, volume: r.volume,
+      open: r.open, high: r.high, low: r.low, frequency: r.frequency,
+      foreign_buy: r.foreignBuy, foreign_sell: r.foreignSell, net_foreign: r.netForeign
     }));
     await supaFetch(`${SUPABASE_URL}/price_history_stockbit?on_conflict=stock_code,trade_date,period`, {
       method: "POST",
@@ -2460,6 +2531,61 @@ async function saveDetailHistoricalRows(){
     state.detailHistoricalMsg = "Gagal menyimpan: " + e.message + " (pastikan sudah jalankan sql/08_price_history_stockbit.sql)";
     state.detailHistoricalMsgError = true;
   }
+  render();
+}
+
+// ==========================================
+// PANEL "BANDINGKAN DENGAN IDX" — validasi silang angka Stockbit
+// (price_history_stockbit) vs angka IDX resmi (tabel `flows`, hasil
+// sync-idx-full.mjs) untuk ticker & rentang tanggal yang sama. Dua sumber
+// ini independen (lihat diskusi sebelumnya) — TIDAK saling menimpa di
+// stocks_screener, tapi angkanya bisa sedikit beda karena metodologi/timing
+// pencatatan tiap penyedia data. Panel ini murni buat verifikasi manual,
+// tidak mengubah data apa pun.
+// ==========================================
+async function loadDetailCompare(){
+  const ticker = state.detailTicker;
+  const rows = state.detailHistoricalRows || [];
+  if(!ticker || !rows.length){
+    state.detailCompareMsg = 'Tarik data Stockbit dulu (tombol "⬇️ Tarik Data dari Stockbit" di atas) sebelum membandingkan.';
+    render(); return;
+  }
+  state.detailCompareLoading = true; state.detailCompareMsg = ""; render();
+  try{
+    const dates = rows.map(r => r.date).filter(Boolean);
+    const qs = new URLSearchParams({
+      ticker: `eq.${ticker}`,
+      date: `in.(${dates.join(",")})`,
+      select: "date,close,value,volume,foreign_buy,foreign_sell",
+    });
+    const res = await fetch(`${SUPABASE_URL}/flows?${qs}`, { headers: getSupaHeaders(), cache: "no-store" });
+    if(!res.ok) throw new Error(`HTTP ${res.status}`);
+    const flowsRows = await res.json();
+    const idxByDate = {};
+    flowsRows.forEach(r => { idxByDate[r.date] = r; });
+
+    const combined = rows.map(r => {
+      const idx = idxByDate[r.date];
+      return {
+        date: r.date,
+        closeSb: r.close, closeIdx: idx?.close ?? null,
+        valueSb: r.value, valueIdx: idx?.value ?? null,
+        volumeSb: r.volume, volumeIdx: idx?.volume ?? null,
+        netForeignSb: r.netForeign,
+        netForeignIdx: (idx?.foreign_buy != null && idx?.foreign_sell != null) ? (idx.foreign_buy - idx.foreign_sell) : null,
+      };
+    });
+    state.detailCompareRows = combined;
+    const matchedCount = combined.filter(r => r.closeIdx != null).length;
+    state.detailCompareMsg = matchedCount
+      ? `${matchedCount}/${combined.length} hari ditemukan juga di \`flows\` (IDX).`
+      : `Tidak ada tanggal yang cocok di \`flows\` untuk ${ticker} — kemungkinan sync-idx-full.mjs belum pernah menjangkau ticker/periode ini.`;
+    state.detailCompareOpen = true;
+  }catch(e){
+    state.detailCompareMsg = "Gagal membandingkan: " + e.message;
+    state.detailCompareRows = [];
+  }
+  state.detailCompareLoading = false;
   render();
 }
 
@@ -2541,7 +2667,9 @@ async function fetchAndSaveHistoricalBulk(tickers, rangeFrom, rangeTo){
           try{
             const payload = inRange.map(r => ({
               stock_code: ticker, trade_date: r.date, period: "daily",
-              close: r.close, change: r.change, change_pct: r.changePct, value_idr: r.value, volume: r.volume
+              close: r.close, change: r.change, change_pct: r.changePct, value_idr: r.value, volume: r.volume,
+              open: r.open, high: r.high, low: r.low, frequency: r.frequency,
+              foreign_buy: r.foreignBuy, foreign_sell: r.foreignSell, net_foreign: r.netForeign
             }));
             await supaFetch(`${SUPABASE_URL}/price_history_stockbit?on_conflict=stock_code,trade_date,period`, {
               method: "POST",
@@ -2684,7 +2812,13 @@ async function syncBacktestToSupabase(sessionId, sessionDate, items) {
       // migrasi SQL di bawah); kalau kolom belum ada, Supabase akan
       // menolak insert dengan error "column ... does not exist" — jalankan
       // dulu migrasinya sebelum mencoba lagi.
-      criteria: it.kriteria || null
+      criteria: it.kriteria || null,
+      // Tanggal/jam ENTRY milik item ini sendiri (bukan lagi tanggal sesi) —
+      // supaya item manual yang ditambahkan belakangan ke sesi lama tetap
+      // tercatat sesuai kapan dia benar-benar di-entry, bukan ikut tanggal
+      // sesi induknya. Butuh kolom `entry_at timestamptz` di tabel
+      // backtest_items — lihat sql/09_backtest_entry_at.sql.
+      entry_at: new Date(it.entryTs || Date.now()).toISOString()
     }));
     
     await supaFetch(`${SUPABASE_URL}/backtest_items`, {
@@ -2712,17 +2846,19 @@ async function saveToBacktest(){
   const ctx = getActiveScreenerContext();
   const sessionId = String(Date.now());
   const tglSesi = new Date().toLocaleString('id-ID');
+  const entryTs = Date.now();
   const items = toSave.map(s => ({
     ticker: s.ticker,
     entryPrice: s.cClose,
     sumber: ctx.label,
     kriteria: ctx.criteria,
+    entryTs,
     keterangan: `Harga: ${s.cekHarga}; RSI: ${s.cekRsi}; Status RSI: ${s.statusRsi}; MACD: ${s.cekMacd}; Rasio Vol: ${(s.volRatio??0).toFixed(2)}x (${s.sinyalVolume}); Keyakinan Naik: ${s.keyakinanNaik}`
   }));
 
   state.backtests.unshift({
     id: sessionId, date: tglSesi,
-    items: items.map(it=>({ ticker: it.ticker, entryPrice: it.entryPrice, filterStr: it.keterangan, kriteria: it.kriteria, sumber: it.sumber }))
+    items: items.map(it=>({ ticker: it.ticker, entryPrice: it.entryPrice, filterStr: it.keterangan, kriteria: it.kriteria, sumber: it.sumber, entryTs: it.entryTs }))
   });
   saveBacktests();
   state.selectedForBacktest.clear(); 
@@ -2753,22 +2889,17 @@ async function addManualBacktest(sessionId, ticker, entryPrice, keterangan){
   // netral, bukan ikut-ikutan preset yang mungkin kebetulan sedang aktif
   // di tab Screener saat ini (itu tidak relevan untuk entry manual).
   const manualKriteria = "Input manual — tidak melalui filter screener";
-  session.items.push({ ticker, entryPrice, filterStr: note, kriteria: manualKriteria, sumber: "Manual" });
+  // entryTs diambil SEKARANG (bukan dari session.id) — kalau item ini
+  // ditambahkan ke sesi lama lewat dropdown "Simpan ke Sesi", tanggal
+  // entry-nya tetap hari ini, bukan ikut tanggal sesi lama tsb.
+  const entryTs = Date.now();
+  session.items.push({ ticker, entryPrice, filterStr: note, kriteria: manualKriteria, sumber: "Manual", entryTs });
   saveBacktests();
   render();
 
-  await syncBacktestToSupabase(sid, session.date, [{ ticker, entryPrice, sumber: "Manual", filterStr: note, kriteria: manualKriteria }]);
+  await syncBacktestToSupabase(sid, session.date, [{ ticker, entryPrice, sumber: "Manual", filterStr: note, kriteria: manualKriteria, entryTs }]);
   // Kalau gagal, showError() di dalam syncBacktestToSupabase sudah
   // menampilkan alasannya di banner atas halaman.
-}
-
-async function deleteBacktestSession(id){
-  if(!confirm("Hapus sesi backtest ini?")) return;
-  state.backtests = state.backtests.filter(b => String(b.id) !== String(id));
-  saveBacktests();
-  render();
-  try{ await supaFetch(`${SUPABASE_URL}/backtest_sessions?id=eq.${id}`, { method: "DELETE", headers: getSupaHeaders() }); }
-  catch(e){ showError(`Sesi dihapus lokal, tapi gagal dihapus di Supabase (bisa muncul lagi setelah refresh): ${e.message}`); }
 }
 
 async function deleteBacktestItem(sessionId, ticker){
@@ -2842,80 +2973,110 @@ function exportScreenerToExcel(){
   XLSX.writeFile(workbook, `Screener_IHSG_${dateStr}.xlsx`);
 }
 
-function exportBacktestToExcel(id) {
-  const session = state.backtests.find(b => String(b.id) === String(id));
-  if (!session) return;
-  
-  // 1. Siapkan data dengan kolom "Tanggal Entry"
-  const data = session.items.map(item => {
+// Ratakan semua item dari semua sesi backtest jadi satu daftar per-item,
+// masing-masing membawa sessionId (dibutuhkan untuk hapus per-item lewat
+// session_id+ticker) dan entryTs (timestamp entry MILIK ITEM itu sendiri —
+// lihat catatan di saveToBacktest/addManualBacktest). Baris lama yang
+// belum punya entryTs (tersimpan sebelum perubahan ini) fallback ke
+// timestamp sesi induknya supaya tidak error/kosong.
+function allBacktestItemsFlat(){
+  const out = [];
+  state.backtests.forEach(session => {
+    const fallbackTs = Number(session.id) || Date.now();
+    session.items.forEach(item => {
+      out.push({ ...item, sessionId: session.id, entryTs: item.entryTs || fallbackTs });
+    });
+  });
+  return out;
+}
+
+// Item backtest yang lolos filter rentang tanggal (state.btFrom/btTo) yang
+// sedang aktif di tab Backtest. Dipakai bareng oleh render, ekspor per
+// kriteria, dan ekspor semua.
+function backtestItemsInDateRange(items){
+  return items.filter(it => {
+    const iso = toLocalISODate(new Date(it.entryTs));
+    if(state.btFrom && iso < state.btFrom) return false;
+    if(state.btTo && iso > state.btTo) return false;
+    return true;
+  });
+}
+
+function hariSinceEntry(entryTs){
+  const entryDateIso = toLocalISODate(new Date(entryTs));
+  return Math.max(0, Math.round((new Date(todayLocalISO()+"T00:00:00") - new Date(entryDateIso+"T00:00:00")) / 86400000));
+}
+
+// Ekspor Excel untuk SATU blok kriteria screener/preset (mengikuti filter
+// tanggal yang sedang aktif), diurutkan dari entry terbaru.
+function exportBacktestGroupToExcel(kriteria) {
+  const items = backtestItemsInDateRange(allBacktestItemsFlat())
+    .filter(it => (it.kriteria || "Tanpa kriteria") === kriteria)
+    .sort((a,b) => b.entryTs - a.entryTs);
+
+  if (!items.length) {
+    return alert("Tidak ada data untuk diekspor pada kriteria ini (cek filter tanggal yang aktif).");
+  }
+
+  const data = items.map(item => {
     const liveData = state.stocks.find(s => s.ticker === item.ticker);
     const currentPrice = liveData ? liveData.cClose : item.entryPrice;
     const pl = item.entryPrice ? ((currentPrice - item.entryPrice) / item.entryPrice) * 100 : 0;
-    
+
     return {
-      "Tanggal Entry": session.date, // Diambil dari waktu tangkap/sesi
+      "Tanggal Entry": fmtDateID(toLocalISODate(new Date(item.entryTs))),
+      "Ticker": item.ticker,
+      "Sumber": item.sumber || "Screener",
+      "Harga Entry": item.entryPrice,
+      "Harga Live": currentPrice,
+      "Profit/Loss (%)": parseFloat(pl.toFixed(2)),
+      "Hari": hariSinceEntry(item.entryTs),
+      "Filter / Keterangan": item.filterStr || "-"
+    };
+  });
+
+  const worksheet = XLSX.utils.json_to_sheet(data);
+  const workbook = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(workbook, worksheet, "Backtest");
+
+  worksheet['!cols'] = [
+    {wch: 14}, // Tanggal Entry
+    {wch: 10}, // Ticker
+    {wch: 12}, // Sumber
+    {wch: 12}, // Harga Entry
+    {wch: 12}, // Harga Live
+    {wch: 15}, // Profit/Loss (%)
+    {wch: 8},  // Hari
+    {wch: 50}  // Keterangan
+  ];
+
+  const safeName = (kriteria || "Backtest").replace(/[^a-z0-9]+/gi, "_").replace(/^_+|_+$/g, "").slice(0, 40) || "Backtest";
+  XLSX.writeFile(workbook, `Backtest_${safeName}_${todayLocalISO()}.xlsx`);
+}
+
+function exportAllBacktestToExcel() {
+  const items = allBacktestItemsFlat().sort((a,b) => b.entryTs - a.entryTs);
+  if (items.length === 0) {
+    return alert("Belum ada data backtest untuk diekspor.");
+  }
+
+  const allData = items.map(item => {
+    const liveData = state.stocks.find(s => s.ticker === item.ticker);
+    const currentPrice = liveData ? liveData.cClose : item.entryPrice;
+    const pl = item.entryPrice ? ((currentPrice - item.entryPrice) / item.entryPrice) * 100 : 0;
+
+    return {
+      "Tanggal Entry": fmtDateID(toLocalISODate(new Date(item.entryTs))),
       "Ticker": item.ticker,
       "Sumber": item.sumber || "Screener",
       "Kriteria Screener": item.kriteria || "-",
       "Harga Entry": item.entryPrice,
       "Harga Live": currentPrice,
       "Profit/Loss (%)": parseFloat(pl.toFixed(2)),
+      "Hari": hariSinceEntry(item.entryTs),
       "Filter / Keterangan": item.filterStr || "-"
     };
   });
-
-  // 2. Buat Workbook & Worksheet Excel murni
-  const worksheet = XLSX.utils.json_to_sheet(data);
-  const workbook = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(workbook, worksheet, "Data Backtest");
-  
-  // 3. Atur lebar kolom agar rapi
-  const wscols = [
-    {wch: 22}, // Tanggal Entry
-    {wch: 10}, // Ticker
-    {wch: 12}, // Sumber
-    {wch: 40}, // Kriteria Screener
-    {wch: 12}, // Harga Entry
-    {wch: 12}, // Harga Live
-    {wch: 15}, // Profit/Loss (%)
-    {wch: 50}  // Keterangan
-  ];
-  worksheet['!cols'] = wscols;
-
-  // 4. Unduh file sebagai .xlsx
-  XLSX.writeFile(workbook, `Backtest_IHSG_${session.id}.xlsx`);
-}
-
-function exportAllBacktestToExcel() {
-  if (!state.backtests || state.backtests.length === 0) {
-    return alert("Belum ada data backtest untuk diekspor.");
-  }
-
-  let allData = [];
-  
-  // Looping untuk menggabungkan seluruh item dari semua sesi
-  state.backtests.forEach(session => {
-    session.items.forEach(item => {
-      const liveData = state.stocks.find(s => s.ticker === item.ticker);
-      const currentPrice = liveData ? liveData.cClose : item.entryPrice;
-      const pl = item.entryPrice ? ((currentPrice - item.entryPrice) / item.entryPrice) * 100 : 0;
-      
-      allData.push({
-        "Tanggal Entry": session.date,
-        "Ticker": item.ticker,
-        "Sumber": item.sumber || "Screener",
-        "Kriteria Screener": item.kriteria || "-",
-        "Harga Entry": item.entryPrice,
-        "Harga Live": currentPrice,
-        "Profit/Loss (%)": parseFloat(pl.toFixed(2)),
-        "Filter / Keterangan": item.filterStr || "-"
-      });
-    });
-  });
-
-  if (allData.length === 0) {
-    return alert("Sesi backtest kosong, tidak ada item untuk diekspor.");
-  }
 
   // Buat file Excel
   const worksheet = XLSX.utils.json_to_sheet(allData);
@@ -2924,12 +3085,14 @@ function exportAllBacktestToExcel() {
   
   // Mengatur lebar kolom agar rapi
   const wscols = [
-    {wch: 22}, // Tanggal Entry
+    {wch: 14}, // Tanggal Entry
     {wch: 10}, // Ticker
     {wch: 12}, // Sumber
+    {wch: 40}, // Kriteria Screener
     {wch: 12}, // Harga Entry
     {wch: 12}, // Harga Live
     {wch: 15}, // Profit/Loss (%)
+    {wch: 8},  // Hari
     {wch: 50}  // Keterangan
   ];
   worksheet['!cols'] = wscols;
@@ -2938,6 +3101,22 @@ function exportAllBacktestToExcel() {
   const dateStr = todayLocalISO();
   XLSX.writeFile(workbook, `Semua_Backtest_IHSG_${dateStr}.xlsx`);
 }
+
+// Hapus SEMUA item pada satu blok kriteria screener/preset sekaligus
+// (bisa berasal dari beberapa sesi berbeda) — dipakai tombol "Hapus
+// Kriteria Ini" di header tiap blok. Menghapus item satu-satu lewat
+// deleteBacktestItem supaya logika hapus lokal+Supabase tetap konsisten
+// dengan tombol "Hapus" per baris.
+async function deleteBacktestGroup(kriteria){
+  const items = allBacktestItemsFlat().filter(it => (it.kriteria || "Tanpa kriteria") === kriteria);
+  if(!items.length) return;
+  if(!confirm(`Hapus seluruh ${items.length} emiten pada kriteria "${kriteria}"? Tindakan ini tidak bisa dibatalkan.`)) return;
+  for(const it of items){
+    await deleteBacktestItem(it.sessionId, it.ticker);
+  }
+}
+
+
 
 async function syncPortoToServer_(record) {
   const payload = {
@@ -3335,14 +3514,23 @@ const SMART_PICK_DEFS = [
     title: "Area Demand",
     shortDesc: "Saham profitabel + volume tinggi di area support 52W — siap bounce.",
     definisi: "Saham fundamental sehat yang harganya masuk ke zona bawah range 52 minggu (area support/demand), tapi belum benar-benar rontok — kandidat pantulan (bounce) dari area akumulasi.",
-    filter: "Volume Tinggi: wajib ≥ Rp1 M/hari. Saham Hidup: harga ≥ Rp100 (tidak rugi/gocap). Posisi ≤ 30% range 52W (zona bawah). Reaksi di Support: perubahan harga hari ini &gt; -4% (bukan dump).",
-    scoring: "Skor Zona 100 = Support 25 + Reaksi 20 + Volume 25 + Pullback 15 + Struktur 15 (bonus multi-minggu).",
+    filter: "Volume Tinggi: wajib ≥ Rp1 M/hari. Saham Hidup: harga ≥ Rp100 (tidak rugi/gocap), Range 52W ≥ 15%. Profitabel: NPM ≥ 0 & ROE ≥ 0. Posisi ≤ 30% range 52W (zona bawah). Reaksi di Support: perubahan harga hari ini &gt; -4% (bukan dump).",
+    scoring: "Skor Zona 100 = Support 25 + Reaksi 20 + Volume 25 (rasio spike ATAU nilai transaksi absolut, mana yang lebih tinggi) + Pullback 15 (toleransi ±10% dari support) + Struktur 15 (bonus multi-minggu).",
     sinyalKuat: "Volume spike 2×–5×+ dari rata-rata (badge otomatis) di dekat area support = smart money mulai serap.",
     detect(s){
       const pos = spPos52w(s);
       const liq = spLiquidity(s);
       const changePct = s.changePct || 0;
-      const match = pos != null && pos <= 30 && (s.cClose||0) >= 100 && changePct > -4 && liq >= 1e9;
+      // "Saham profitabel" (klaim di shortDesc/definisi) & "Saham Hidup" —
+      // dua syarat ini SEBELUMNYA cuma teks doang, tidak pernah dicek di
+      // detect(). Null diperlakukan netral/lolos (bukan otomatis gagal),
+      // konsisten dengan gaya defensif di kode lain — cuma yang JELAS
+      // negatif/sempit yang digugurkan.
+      const npmOk = s.npm == null || s.npm >= 0;
+      const roeOk = s.roe == null || s.roe >= 0;
+      const range52wPct = (s.high52w != null && s.low52w != null && s.low52w > 0) ? (s.high52w - s.low52w) / s.low52w * 100 : null;
+      const rangeOk = range52wPct == null || range52wPct >= 15;
+      const match = pos != null && pos <= 30 && (s.cClose||0) >= 100 && changePct > -4 && liq >= 1e9 && npmOk && roeOk && rangeOk;
       if(!match) return { match:false, score:0, strong:false };
       const supportScore = 25 * clamp01((30 - pos) / 30);
       const reaksiScore = 20 * clamp01((changePct + 4) / 8);
@@ -3353,8 +3541,24 @@ const SMART_PICK_DEFS = [
       // Value Stockbit yang ditarik manual.
       const stockbitRatio = spStockbitValueRatio(s);
       const volRatioEffective = stockbitRatio != null ? Math.max(s.volRatio || 0, stockbitRatio) : s.volRatio;
-      const volumeScore = volRatioEffective != null ? 25 * clamp01((Math.min(volRatioEffective,6) - 1) / 5) : 12;
-      const pullbackScore = s.support ? 15 * (1 - clamp01(Math.abs(s.cClose - s.support) / (s.support * 0.05))) : 7;
+      // Volume Score sekarang diambil dari YANG TERBAIK antara dua cara nilai:
+      // (a) rasio spike vs rata-rata (cara lama) — bagus buat nangkep saham
+      //     yang tiba-tiba ramai padahal biasanya sepi.
+      // (b) nilai transaksi ABSOLUT hari ini (cara ihsgscreener.com) — bagus
+      //     buat saham yang MEMANG likuid tiap hari (jadi "Vol Sangat Tinggi"
+      //     meski rasio spike-nya kecil, mis. TCPI: Rp14M/hari tapi cuma 1.2x
+      //     rata-rata — sebelumnya nyaris nol padahal jelas likuid tinggi).
+      // Skala absolut: mulai dari syarat wajib match (Rp1 miliar = baseline
+      // 0) sampai Rp20 miliar (skor penuh 25).
+      const volumeScoreRatio = volRatioEffective != null ? 25 * clamp01((Math.min(volRatioEffective,6) - 1) / 5) : 12;
+      const volumeScoreAbsolute = 25 * clamp01((liq - 1e9) / 19e9);
+      const volumeScore = Math.max(volumeScoreRatio, volumeScoreAbsolute);
+      // Toleransi jarak ke Support dilonggarkan dari 5% -> 10% dari harga
+      // support — 5% ternyata terlalu ketat untuk saham yang sudah mulai
+      // bounce tapi belum sangat dekat support (mis. TCPI: 8.4% dari support,
+      // sebelumnya skor pullback = 0 padahal secara zona masih wajar disebut
+      // "dekat support").
+      const pullbackScore = s.support ? 15 * (1 - clamp01(Math.abs(s.cClose - s.support) / (s.support * 0.10))) : 7;
       const strukturScore = s.week52ChangePct != null ? (s.week52ChangePct > -25 ? 15 : 6) : 8;
       const score = supportScore + reaksiScore + volumeScore + pullbackScore + strukturScore;
       const strong = score >= 75 && (volRatioEffective||0) >= 2;
@@ -3366,13 +3570,18 @@ const SMART_PICK_DEFS = [
     title: "Throwback / Retest Breakout",
     shortDesc: "Sudah breakout lalu pullback ke support — bounce dari retest.",
     definisi: "Saham yang sudah breakout dari uptrend menengah, lalu turun kembali (pullback) menguji area breakout sebagai support baru, dan mulai memantul lagi.",
-    filter: "Posisi 45–90% range 52W (zona atas). Perubahan hari ini ≥ 0% (hold/hijau). Uptrend & pullback ke area breakout sebagai support baru, lalu mulai memantul.",
+    filter: "Posisi 45–90% range 52W (zona atas). Perubahan hari ini ≥ 0% (hold/hijau). Uptrend & pullback ke area breakout sebagai support baru = BONUS skor (bukan syarat wajib).",
     scoring: "Kekuatan uptrend (MA21&gt;MA50&gt;MA100) + kualitas retest (jarak ke support) + posisi bounce 60–80% dari skor total.",
     sinyalKuat: "Uptrend kuat + retest sehat + posisi bounce ≥60% + kenaikan hari ini &gt;2% = retest berkualitas.",
     detect(s){
       const pos = spPos52w(s);
       const changePct = s.changePct || 0;
-      const match = pos != null && pos >= 45 && pos <= 90 && changePct >= 0 && s.cClose > (s.ma50 || 0);
+      // Sebelumnya ada gate tambahan `cClose > MA50` di sini — dihapus karena
+      // di spesifikasi acuan, uptrend/pullback (MA21>MA50>MA100, chg13W/26W/4W)
+      // itu BONUS SKOR (lihat uptrendScore di bawah), bukan syarat lolos/gugur.
+      // Saham retest sehat yang closing-nya pas sedikit di bawah MA50 dulu
+      // otomatis gugur duluan — sekarang tetap lolos dengan skor lebih rendah.
+      const match = pos != null && pos >= 45 && pos <= 90 && changePct >= 0;
       if(!match) return { match:false, score:0, strong:false };
       const uptrendScore = (s.ma21 > s.ma50 && s.ma50 > s.ma100) ? 40 : (s.cClose > s.ma50 ? 22 : 8);
       const retestRef = s.support || s.ema21L;
@@ -3576,6 +3785,81 @@ async function finalizeSmartPickSignals(){
   render();
 }
 
+// Data terakhir yang ditampilkan di tabel Rekap & Share Signal (sudah
+// mengikuti filter signal/tanggal aktif) — dipakai oleh tombol Ekspor
+// Excel & Hapus Data supaya keduanya konsisten dengan apa yang terlihat
+// di layar, bukan seluruh riwayat di database.
+let lastSmartPickExport = [];
+
+function exportSmartPickToExcel(){
+  const rows = lastSmartPickExport;
+  if(!rows.length){
+    return alert("Tidak ada data Rekap & Share Signal untuk diekspor (cek filter yang aktif).");
+  }
+
+  const data = rows.map(r => ({
+    "Kode": r.stock_code,
+    "Signal": spTitleFor(r.signal_type),
+    "Muncul": fmtDateID(r.muncul_date),
+    "Entry": Math.round(r.entry_price),
+    "Now": r.nowPrice != null ? Math.round(r.nowPrice) : null,
+    "Δ%": r.chgPct != null ? Number(r.chgPct.toFixed(2)) : null,
+    "Hari": r.hari
+  }));
+
+  const worksheet = XLSX.utils.json_to_sheet(data);
+  const workbook = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(workbook, worksheet, "Rekap Signal");
+
+  const headers = Object.keys(data[0]);
+  worksheet['!cols'] = headers.map(h => ({ wch: Math.max(10, h.length + 2) }));
+
+  const dateStr = todayLocalISO();
+  XLSX.writeFile(workbook, `Rekap_Signal_IHSG_${dateStr}.xlsx`);
+}
+
+// Hapus data Rekap & Share Signal dari tabel Supabase `smart_pick_signals`.
+// Mengikuti filter signal/tanggal yang sedang aktif di UI — kalau tidak
+// ada filter aktif sama sekali, ini menghapus SEMUA riwayat (makanya pakai
+// konfirmasi tegas + fallback filter `muncul_date=not.is.null` supaya
+// PostgREST mau menjalankan DELETE tanpa WHERE eksplisit).
+async function deleteSmartPickHistory(){
+  if(!SUPABASE_URL || !SUPABASE_KEY){ openSettings(); return; }
+  const rows = lastSmartPickExport;
+  if(!rows.length){
+    return alert("Tidak ada data Rekap & Share Signal untuk dihapus (cek filter yang aktif).");
+  }
+
+  const noFilterActive = state.spFilterType === "all" && !state.spFrom && !state.spTo;
+  const confirmMsg = noFilterActive
+    ? `Hapus SEMUA riwayat Rekap & Share Signal (${rows.length} sinyal)? Tindakan ini tidak bisa dibatalkan.`
+    : `Hapus ${rows.length} sinyal yang sedang ditampilkan (sesuai filter aktif)? Tindakan ini tidak bisa dibatalkan.`;
+  if(!confirm(confirmMsg)) return;
+
+  state.spHistoryLoading = true; state.spMsg = ""; render();
+  try{
+    const qs = new URLSearchParams();
+    if(state.spFilterType !== "all") qs.set("signal_type", `eq.${state.spFilterType}`);
+    if(state.spFrom) qs.append("muncul_date", `gte.${state.spFrom}`);
+    if(state.spTo) qs.append("muncul_date", `lte.${state.spTo}`);
+    if(![...qs.keys()].length) qs.set("muncul_date", "not.is.null");
+
+    const res = await fetch(`${SUPABASE_URL}/smart_pick_signals?${qs.toString()}`, { method: "DELETE", headers: getSupaHeaders() });
+    if(!res.ok){
+      const t = await res.text();
+      throw new Error(t || `HTTP ${res.status}`);
+    }
+    state.spMsg = `🗑️ Data berhasil dihapus.`;
+    state.spMsgError = false;
+    await loadSmartPickHistory();
+  }catch(e){
+    state.spMsg = "Gagal menghapus data: " + e.message;
+    state.spMsgError = true;
+    state.spHistoryLoading = false;
+    render();
+  }
+}
+
 async function loadSmartPickHistory(){
   if(!SUPABASE_URL || !SUPABASE_KEY) return;
   state.spHistoryLoading = true; render();
@@ -3651,6 +3935,10 @@ function render(){
     if(dhistLoadBtn) dhistLoadBtn.onclick = () => loadDetailHistorical();
     const dhistSaveBtn = document.getElementById("dhistSaveBtn");
     if(dhistSaveBtn) dhistSaveBtn.onclick = saveDetailHistoricalRows;
+    const dhistCompareBtn = document.getElementById("dhistCompareBtn");
+    if(dhistCompareBtn) dhistCompareBtn.onclick = loadDetailCompare;
+    const dhistComparePanel = document.getElementById("dhistComparePanel");
+    if(dhistComparePanel) dhistComparePanel.ontoggle = (e) => { state.detailCompareOpen = e.target.open; };
   }
 
   document.getElementById("spListModalOverlay").classList.toggle("open", !!state.spListOpenDefId);
@@ -4700,10 +4988,44 @@ function renderBacktest(){
     return manualForm + `<div class="empty-box">Belum ada sesi backtest yang disimpan.</div>`;
   }
 
-  const sessions = state.backtests.map(session => {
+  // Filter periode tanggal (berlaku ke SEMUA blok kriteria di bawah) —
+  // mengecek tanggal entry per ITEM (bukan tanggal sesi), sesuai catatan
+  // di allBacktestItemsFlat().
+  const dateFilterBar = `
+    <div class="sp-toolbar" style="margin-bottom:16px;">
+      <span style="font-size:11px;color:var(--muted);">Dari</span>
+      <input type="date" id="btFromInput" class="bs-input" value="${state.btFrom||""}">
+      <span style="font-size:11px;color:var(--muted);">s/d</span>
+      <input type="date" id="btToInput" class="bs-input" value="${state.btTo||""}">
+      ${(state.btFrom||state.btTo) ? `<button type="button" class="btn btn-outline" id="btClearFilterBtn">✕ Bersihkan Filter</button>` : ""}
+    </div>`;
+
+  const filteredItems = backtestItemsInDateRange(allBacktestItemsFlat());
+
+  if(filteredItems.length === 0){
+    return manualForm + dateFilterBar + `<div class="empty-box">Tidak ada data backtest pada rentang tanggal ini.</div>`;
+  }
+
+  // Kelompokkan PER KRITERIA SCREENER/PRESET (bukan lagi per tanggal
+  // sesi) — emiten yang lolos preset/rule yang sama tetap satu blok
+  // walau di-entry di hari yang berbeda-beda. Blok & baris di dalamnya
+  // sama-sama diurutkan dari data entry TERBARU ke terlama.
+  const groups = {};
+  filteredItems.forEach(it => {
+    const key = it.kriteria || "Tanpa kriteria";
+    (groups[key] = groups[key] || []).push(it);
+  });
+  const groupKeys = Object.keys(groups).sort((a,b) => {
+    const maxA = Math.max(...groups[a].map(it=>it.entryTs));
+    const maxB = Math.max(...groups[b].map(it=>it.entryTs));
+    return maxB - maxA;
+  });
+
+  const sessions = groupKeys.map(kriteria => {
+    const items = [...groups[kriteria]].sort((a,b) => b.entryTs - a.entryTs);
     let winCount = 0, totalPL = 0, maxPL = -Infinity, minPL = Infinity, validItems = 0;
 
-    const rows = session.items.map(item => {
+    const rows = items.map(item => {
       const liveData = state.stocks.find(s => s.ticker === item.ticker);
       const currentPrice = liveData ? liveData.cClose : item.entryPrice;
       const pl = item.entryPrice ? ((currentPrice - item.entryPrice) / item.entryPrice) * 100 : 0;
@@ -4719,19 +5041,20 @@ function renderBacktest(){
       const tone = pl > 0 ? "up" : pl < 0 ? "down" : "muted";
       const plStr = (pl > 0 ? "+" : "") + pl.toFixed(2) + "%";
       const filterStr = item.filterStr || "-";
-      const kriteriaStr = item.kriteria || "-";
       const sumberPill = pillHtml(item.sumber || "Screener", item.sumber === "Manual" ? "gold" : "muted");
+      const hari = hariSinceEntry(item.entryTs);
 
       return `<tr>
         <td class="ticker-cell"><button class="ticker-link" data-detail="${item.ticker}" title="Lihat detail ${item.ticker}">${item.ticker}</button></td>
         <td>${sumberPill}</td>
-        <td style="white-space:normal; max-width:260px; font-family:'Sora',sans-serif; font-size:12px; line-height:1.6; color:var(--gold); opacity:0.9;">${kriteriaStr}</td>
+        <td class="mono" style="white-space:nowrap;">${fmtDateID(toLocalISODate(new Date(item.entryTs)))}</td>
         <td style="white-space:normal; max-width:320px; font-family:'Sora',sans-serif; font-size:12px; line-height:1.6; color:var(--text); opacity:0.9;">${filterStr}</td>
         <td class="mono">${fmtNum(item.entryPrice)}</td>
         <td class="mono">${fmtNum(currentPrice)}</td>
         <td class="mono" style="color:var(--${tone}); font-weight:700; font-size:14px;">${plStr}</td>
+        <td class="mono">${hari}h</td>
         <td><button class="link-btn" data-chart="${item.ticker}">Chart</button></td>
-        <td><button class="link-btn" style="color:#f87171;" data-del-bt-item="${session.id}|${item.ticker}">Hapus</button></td>
+        <td><button class="link-btn" style="color:#f87171;" data-del-bt-item="${item.sessionId}|${item.ticker}">Hapus</button></td>
       </tr>`;
     }).join("");
 
@@ -4764,16 +5087,18 @@ function renderBacktest(){
       </div>
     `;
 
+    const groupKeyAttr = encodeURIComponent(kriteria);
+
     return `
       <div class="panel" style="flex-direction:column; align-items:stretch; margin-bottom: 24px;">
-        <div style="display:flex; justify-content:space-between; align-items:flex-start; border-bottom: 1px solid var(--border); padding-bottom: 16px; margin-bottom: 16px;">
+        <div style="display:flex; justify-content:space-between; align-items:flex-start; border-bottom: 1px solid var(--border); padding-bottom: 16px; margin-bottom: 16px; gap:12px;">
           <div>
-            <h3 style="margin:0; font-size: 15px; font-weight:700;">Waktu Tangkap: ${session.date}</h3>
-            <div style="font-size: 12px; color: var(--muted); margin-top: 6px; font-weight:500;">${session.items.length} Emiten Disimpan</div>
+            <h3 style="margin:0; font-size: 13.5px; font-weight:700; color:var(--gold); line-height:1.5;">${escapeHtml(kriteria)}</h3>
+            <div style="font-size: 12px; color: var(--muted); margin-top: 6px; font-weight:500;">${items.length} Emiten Disimpan</div>
           </div>
-          <div style="display:flex; gap:10px;">
-            <button class="btn btn-outline" style="color:#22d3ee; border-color:rgba(6,182,212,0.4);" data-export-bt="${session.id}">Ekspor Excel</button>
-            <button class="btn btn-outline" style="color:#f87171; border-color:rgba(239,68,68,0.4);" data-del-bt="${session.id}">Hapus Sesi</button>
+          <div style="display:flex; gap:10px; flex-shrink:0;">
+            <button class="btn btn-outline" style="color:#22d3ee; border-color:rgba(6,182,212,0.4);" data-export-bt-kriteria="${groupKeyAttr}">Ekspor Excel</button>
+            <button class="btn btn-outline" style="color:#f87171; border-color:rgba(239,68,68,0.4);" data-del-bt-kriteria="${groupKeyAttr}">Hapus Kriteria Ini</button>
           </div>
         </div>
         ${sessionSummary}
@@ -4781,8 +5106,8 @@ function renderBacktest(){
           <table class="mono">
             <thead>
               <tr>
-                <th>Ticker</th><th>Sumber</th><th>Kriteria Screener</th><th>Filter / Keterangan</th><th>Harga Entry</th>
-                <th>Harga Live</th><th>Profit / Loss</th><th>Aksi</th><th></th>
+                <th>Ticker</th><th>Sumber</th><th>Tanggal Entry</th><th>Filter / Keterangan</th><th>Harga Entry</th>
+                <th>Harga Live</th><th>Profit / Loss</th><th>Hari</th><th>Aksi</th><th></th>
               </tr>
             </thead>
             <tbody>${rows}</tbody>
@@ -4792,7 +5117,7 @@ function renderBacktest(){
     `;
   }).join("");
 
-  return manualForm + sessions;
+  return manualForm + dateFilterBar + sessions;
 }
 
   
@@ -5424,6 +5749,7 @@ function renderSmartPick(){
   const cardsHtml = SMART_PICK_DEFS.map(renderSmartPickCard).join("");
 
   const rows = smartPickRowsWithLive();
+  lastSmartPickExport = rows;
   const stats = computeSmartPickStats(rows);
   const todayStr = todayLocalISO();
   const alreadyToday = state.spHistory.some(h => h.muncul_date === todayStr);
@@ -5476,6 +5802,8 @@ function renderSmartPick(){
           <span style="font-size:11px;color:var(--muted);">s/d</span>
           <input type="date" id="spToInput" class="bs-input" value="${state.spTo||""}">
           <button type="button" class="btn btn-outline" id="spRefreshBtn" title="Muat ulang riwayat">🔄</button>
+          <button type="button" class="btn btn-outline" id="spExportBtn" style="color:#22d3ee;border-color:rgba(6,182,212,0.4);white-space:nowrap;" title="Ekspor data yang sedang ditampilkan (sesuai filter aktif) ke Excel (.xlsx)" ${!rows.length?"disabled":""}>📊 Ekspor Excel (${rows.length})</button>
+          <button type="button" class="btn btn-outline" id="spDeleteBtn" style="color:#f87171;border-color:rgba(239,68,68,0.4);white-space:nowrap;" title="Hapus data yang sedang ditampilkan (sesuai filter aktif) dari Supabase — tidak bisa dibatalkan" ${state.spHistoryLoading || !rows.length?"disabled":""}>🗑️ Hapus Data</button>
         </div>
 
         <div class="summary-grid" style="margin-top:14px;">
@@ -6317,13 +6645,20 @@ function attachContentEvents(){
   const saveBt = document.getElementById("saveBacktestBtn");
   if(saveBt) saveBt.onclick = saveToBacktest;
   
-  document.querySelectorAll("[data-del-bt]").forEach(btn => {
-    btn.onclick = () => deleteBacktestSession(parseInt(btn.dataset.delBt));
+  document.querySelectorAll("[data-del-bt-kriteria]").forEach(btn => {
+    btn.onclick = () => deleteBacktestGroup(decodeURIComponent(btn.dataset.delBtKriteria));
   });
 
-  document.querySelectorAll("[data-export-bt]").forEach(btn => {
-    btn.onclick = () => exportBacktestToExcel(parseInt(btn.dataset.exportBt));
+  document.querySelectorAll("[data-export-bt-kriteria]").forEach(btn => {
+    btn.onclick = () => exportBacktestGroupToExcel(decodeURIComponent(btn.dataset.exportBtKriteria));
   });
+
+  const btFromInput = document.getElementById("btFromInput");
+  if(btFromInput) btFromInput.onchange = (e) => { state.btFrom = e.target.value; render(); };
+  const btToInput = document.getElementById("btToInput");
+  if(btToInput) btToInput.onchange = (e) => { state.btTo = e.target.value; render(); };
+  const btClearFilterBtn = document.getElementById("btClearFilterBtn");
+  if(btClearFilterBtn) btClearFilterBtn.onclick = () => { state.btFrom = ""; state.btTo = ""; render(); };
 
   const exportAllBtBtn = document.getElementById("exportAllBtBtn");
   if(exportAllBtBtn) exportAllBtBtn.onclick = exportAllBacktestToExcel;
@@ -6522,6 +6857,10 @@ function attachContentEvents(){
   if(spFromInput) spFromInput.onchange = (e) => { state.spFrom = e.target.value; loadSmartPickHistory(); };
   const spToInput = document.getElementById("spToInput");
   if(spToInput) spToInput.onchange = (e) => { state.spTo = e.target.value; loadSmartPickHistory(); };
+  const spExportBtn = document.getElementById("spExportBtn");
+  if(spExportBtn) spExportBtn.onclick = exportSmartPickToExcel;
+  const spDeleteBtn = document.getElementById("spDeleteBtn");
+  if(spDeleteBtn) spDeleteBtn.onclick = deleteSmartPickHistory;
   const spRefreshBtn = document.getElementById("spRefreshBtn");
   if(spRefreshBtn) spRefreshBtn.onclick = loadSmartPickHistory;
 }
