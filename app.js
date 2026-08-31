@@ -949,7 +949,7 @@ function stockbitHistoricalPeriodParam(period){
 let state = {
   demoMode: false, stocks: [], watchlist: new Set(), backtests: [],
   selectedForBacktest: new Set(),
-  portfolio: [], portoEditId: null, portoModalOpen: false, selectedPorto: new Set(),
+  portfolio: [], portoEditId: null, portoModalOpen: false, portoPrefill: null, selectedPorto: new Set(),
   tab: "screener", search: "", activePreset: null,
   visibleCols: new Set(), // diisi loadSettings() dari localStorage atau DEFAULT_VISIBLE_COLS
   colPickerOpen: false,
@@ -959,8 +959,8 @@ let state = {
     bbWidth:{min:"",max:""}, 
     atr14:{min:"",max:""}, 
     clv:{min:"",max:""},
-    rsi7:{min:"58",max:"72"},  
-    rsi21:{min:"58",max:"72"},
+    rsi7:{min:"",max:""},
+    rsi21:{min:"",max:""},
     frequency:{min:"",max:""}
   },
   openDropdown: null, 
@@ -982,6 +982,7 @@ let state = {
   freqAnalyzerCol: "freq_ma20",
   // Rules kustom ala "Edit Screener" Stockbit: {id, aKey, op, mult, bType, bKey, bConst}
   customRules: [],
+  ruleBuilderOpen: true, // collapsible panel Rules Kustom — auto-collapse setelah "Muat" preset
   // Preset Screener kustom (disimpan di tabel custom_presets Supabase):
   // {id, name, rules, created_at}. selectedPresetId = preset yang dipilih
   // di dropdown (belum tentu sudah "dimuat" ke customRules).
@@ -1020,6 +1021,66 @@ let state = {
   targetAvgBandar: null, targetCurrentPrice: null, targetAtr14: null, targetLevels: null,
   targetSummaryScope: "ticker", // "ticker" = emiten ini saja, "all" = semua emiten
   targetHistory: [], targetHistoryLoading: false,
+  // ==========================================
+  // Tab "🎯 Entry Price Scanner" — dibangun DI ATAS data broker_summary
+  // yang sama (bukan tabel baru), tapi dipakai LINTAS SEMUA saham
+  // sekaligus (bukan 1 ticker seperti Target Bandar). Lihat blok komentar
+  // besar "ENTRY PRICE SCANNER" di dekat fungsi runEntryPriceScan() untuk
+  // penjelasan lengkap logika & keterbatasannya.
+  // ==========================================
+  epsScanning: false, epsMsg: "", epsMsgError: false,
+  epsRaw: null, // hasil scan mentah (per saham, per hari, per tipe broker) — lihat runEntryPriceScan()
+  epsResults: [], // hasil scan yang SUDAH kena filter+urut aktif — dihitung ulang instan dari epsRaw
+  epsFilters: {
+    periode: "1w",          // "1w" | "2w" | "1m"
+    broker: "both",         // "asing" | "lokal" | "both"
+    konvergensi: "all",     // "all" | "menyatu" | "diam" | "menjauh"
+    tanjakan: "all",        // "all" | "menanjak"
+    minMutu: 0,             // 0 = semua
+    minAkum: 0,             // Rp, 0 = semua
+    minGap: "all",          // "all" | "dekat" (|gap|<=3%) | "nyangkut" (harga<VWAP)
+    urut: new Set(["konvergensi","tanjakan"])  // bisa digabung; lihat EPS_SORTERS
+  },
+  epsInfoOpen: false,
+  // ==========================================
+  // Tab "⬢ Kraken Flow (ORCA)" — order-flow/bandarmology screener yang
+  // meniru fitur "ORCA System" di ihsgscreener.com. BEDA dari Entry Price
+  // Scanner: tidak butuh scan/fetch terpisah — semua sinyalnya dihitung
+  // LANGSUNG dari snapshot EOD yang sudah ada di state.stocks (bid,
+  // bidVolume, offer, offerVolume, avgTicket, crossingPct, frequency,
+  // cClose/cHigh, foreignNet1D/5D/20D — semua kolom ini SUDAH dipetakan
+  // di loadLive(), lihat komentar "Antrian bid/offer terbaik" & "Bandarmologi
+  // ASLI dari IDX" di atas). Jadi tab ini reaktif — tidak ada tombol "Scan",
+  // hasil langsung update tiap filter diubah (lihat computeOrcaResults()).
+  //
+  // UPDATE: bid/offer sekarang disimpan HISTORIS per hari di `flows`
+  // (lihat sync-idx-full.mjs & sql/07_flows_bid_offer.sql) — jadi
+  // "Durasi" di bawah bisa benar-benar mengagregasi SEMUA parameter
+  // (Bid/Offer, ATS, Non-Regular, Frequency, dst) lewat jendela N hari,
+  // bukan cuma Foreign+ seperti sebelumnya. Datanya ditarik LAZY (sekali,
+  // 7 hari bursa terakhir) lewat ensureOrcaHistoryLoaded() begitu tab ini
+  // dibuka — lihat orcaHistory* di bawah & loadOrcaHistory(). Selama
+  // masih loading atau untuk tanggal SEBELUM migration 07 dijalankan
+  // (bid/offer historis masih NULL), filter otomatis jatuh balik ke
+  // snapshot hari terakhir dari state.stocks supaya tab tetap terpakai.
+  // ==========================================
+  orcaFilters: new Set(), // subset dari ORCA_FILTER_DEFS: bidOffer, ats, noSell, closeHigh, nonRegular, topVolume, frequency, foreignPlus, offerSlender
+  orcaDuration: 3,        // 1..7 "hari" — jendela agregasi utk semua filter (lihat computeOrcaResults()) + Foreign+ (1D/5D/20D)
+  orcaMarketCap: "all",   // all | 1t | 5t | 10t | 50t | 100t | custom
+  orcaCustomCapT: "",     // dipakai kalau orcaMarketCap === "custom" (nilai dalam Triliun Rupiah)
+  orcaMinAts: 0,          // 0 | 2e9 | 5e9 — "Filter Kuat" khusus Offer's Slender
+  orcaMinFreq: 0,         // 0 | 2000 | 5000 — "Filter Kuat" khusus Offer's Slender
+  orcaSearch: "",
+  orcaInfoOpen: false,
+  // Histori mentah dari `flows` (7 hari bursa terakhir, SEMUA emiten),
+  // ditarik sekali lewat ensureOrcaHistoryLoaded() — map ticker -> array
+  // baris harian terurut TERBARU dulu. computeOrcaResults() menghitung
+  // ulang agregat jendela N-hari dari sini secara instan tiap render,
+  // tanpa fetch ulang tiap kali Durasi diubah.
+  orcaHistoryByTicker: null,
+  orcaHistoryLoading: false,
+  orcaHistoryError: null,
+  orcaHistoryLoadedAt: null,
   // ==========================================
   // Live Data Stockbit (opsional, via token extension Chrome milik user).
   // stockbitLive: map ticker -> {loading, error, raw, mapped, fetchedAt}
@@ -1087,7 +1148,6 @@ let state = {
   spRecapCollapsed: (localStorage.getItem("ihsg_sp_recap_collapsed") === "1"),
   spFinalizing: false, spMsg: "", spMsgError: false,
   spFilterType: "all", spFrom: "", spTo: "",
-  btFrom: "", btTo: "",
   spHistory: [], spHistoryLoading: false,
   spListOpenDefId: null
 };
@@ -1098,6 +1158,23 @@ function fmtDateID(iso){ // "2026-08-24" -> "24/08/2026"
   const [y,m,d] = iso.split("-");
   if(!y||!m||!d) return iso;
   return `${d}/${m}/${y}`;
+}
+// ==========================================
+// HARI SEJAK TANGGAL ENTRY — dipakai kolom "Hari" di tab Backtest.
+// Dihitung dari tanggal kalender lokal (bukan selisih ms mentah, supaya
+// tidak kepengaruh jam/timezone — lihat catatan toLocalISODate di atas).
+// Menerima "YYYY-MM-DD"; kalau kosong/tidak valid, return null (dirender "-").
+// ==========================================
+function daysSinceEntry(entryDateIso){
+  if(!entryDateIso) return null;
+  const parts = String(entryDateIso).split("-").map(Number);
+  if(parts.length !== 3 || parts.some(isNaN)) return null;
+  const [y,m,d] = parts;
+  const entry = new Date(y, m-1, d);
+  const now = new Date();
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const diffDays = Math.round((today - entry) / 86400000);
+  return diffDays < 0 ? 0 : diffDays;
 }
 function numOrNull(n){ if(n===null||n===undefined||n==="") return null; const v=parseFloat(n); return isNaN(v) ? null : v; }
 function boolLabel(v){
@@ -1470,10 +1547,13 @@ async function loadLive(){
          id: b.id, date: b.session_date,
          items: b.backtest_items.map(it => ({
             ticker: it.ticker, entryPrice: it.entry_price, filterStr: it.notes, sumber: it.source, kriteria: it.criteria,
-            // Fallback ke tanggal sesi (lewat id sesi = timestamp) kalau
-            // baris lama belum punya entry_at (sebelum migrasi
-            // sql/09_backtest_entry_at.sql dijalankan / kolomnya kosong).
-            entryTs: it.entry_at ? new Date(it.entry_at).getTime() : (Number(b.id) || Date.now())
+            // it.entry_date butuh kolom `entry_date` di backtest_items (lihat
+            // catatan migrasi di syncBacktestToSupabase). Selama kolom itu
+            // belum ada di server, it.entry_date akan undefined — fallback ke
+            // tanggal sesi (b.session_date, format "YYYY-MM-DD" dari Supabase)
+            // supaya kolom "Tanggal Entry"/"Hari" tetap menampilkan sesuatu
+            // yang masuk akal, bukan kosong.
+            entryDate: it.entry_date || b.session_date || null
          }))
        })).sort((a,b) => String(b.id).localeCompare(String(a.id)));
        saveBacktests();
@@ -2813,12 +2893,14 @@ async function syncBacktestToSupabase(sessionId, sessionDate, items) {
       // menolak insert dengan error "column ... does not exist" — jalankan
       // dulu migrasinya sebelum mencoba lagi.
       criteria: it.kriteria || null,
-      // Tanggal/jam ENTRY milik item ini sendiri (bukan lagi tanggal sesi) —
-      // supaya item manual yang ditambahkan belakangan ke sesi lama tetap
-      // tercatat sesuai kapan dia benar-benar di-entry, bukan ikut tanggal
-      // sesi induknya. Butuh kolom `entry_at timestamptz` di tabel
-      // backtest_items — lihat sql/09_backtest_entry_at.sql.
-      entry_at: new Date(it.entryTs || Date.now()).toISOString()
+      // Kolom baru — tanggal entry PER ITEM (bukan cuma tanggal sesi),
+      // dipakai kolom "Tanggal Entry" & "Hari" di tab Backtest. Butuh
+      // kolom `entry_date date` di tabel backtest_items:
+      //   ALTER TABLE backtest_items ADD COLUMN entry_date date;
+      // Kalau kolom belum ada, Supabase menolak insert — jalankan migrasi
+      // dulu. Selama itu belum dijalankan, data tetap tersimpan lokal
+      // (localStorage) dan UI tetap menampilkan tanggal entry dari sana.
+      entry_date: it.entryDate || null
     }));
     
     await supaFetch(`${SUPABASE_URL}/backtest_items`, {
@@ -2846,19 +2928,25 @@ async function saveToBacktest(){
   const ctx = getActiveScreenerContext();
   const sessionId = String(Date.now());
   const tglSesi = new Date().toLocaleString('id-ID');
-  const entryTs = Date.now();
+  // Tanggal entry PER ITEM dikunci ke tanggal hari ini SEKALI SAJA saat
+  // disimpan (bukan dihitung ulang tiap render) — inilah yang membuat
+  // harga & tanggal entry "terkunci": begitu tersimpan, refresh data live
+  // di layar tidak pernah menulis ulang entryPrice/entryDate yang sudah
+  // ada (lihat renderBacktest — hanya "Harga Live" yang diambil dari data
+  // live, "Harga Entry" & "Tanggal Entry" selalu dari item yang tersimpan).
+  const tglEntryIso = todayLocalISO();
   const items = toSave.map(s => ({
     ticker: s.ticker,
     entryPrice: s.cClose,
+    entryDate: tglEntryIso,
     sumber: ctx.label,
     kriteria: ctx.criteria,
-    entryTs,
     keterangan: `Harga: ${s.cekHarga}; RSI: ${s.cekRsi}; Status RSI: ${s.statusRsi}; MACD: ${s.cekMacd}; Rasio Vol: ${(s.volRatio??0).toFixed(2)}x (${s.sinyalVolume}); Keyakinan Naik: ${s.keyakinanNaik}`
   }));
 
   state.backtests.unshift({
     id: sessionId, date: tglSesi,
-    items: items.map(it=>({ ticker: it.ticker, entryPrice: it.entryPrice, filterStr: it.keterangan, kriteria: it.kriteria, sumber: it.sumber, entryTs: it.entryTs }))
+    items: items.map(it=>({ ticker: it.ticker, entryPrice: it.entryPrice, entryDate: it.entryDate, filterStr: it.keterangan, kriteria: it.kriteria, sumber: it.sumber }))
   });
   saveBacktests();
   state.selectedForBacktest.clear(); 
@@ -2870,12 +2958,16 @@ async function saveToBacktest(){
     : `${toSave.length} emiten disimpan lokal, tapi gagal sinkron ke Supabase. Lihat pesan error di atas halaman.`);
 }
 
-async function addManualBacktest(sessionId, ticker, entryPrice, keterangan){
+async function addManualBacktest(sessionId, ticker, entryPrice, keterangan, entryDate){
   ticker = String(ticker || "").trim().toUpperCase().replace(".JK","");
   if(!ticker) return alert("Ticker wajib diisi.");
   entryPrice = parseFloat(entryPrice) || 0;
   if(!entryPrice) return alert("Harga entry wajib diisi.");
   const note = keterangan && keterangan.trim() ? keterangan.trim() : "Input manual (uji di luar screener)";
+  // Tanggal entry: pakai yang diisi user di form (kalau ada), fallback ke
+  // hari ini. Ini yang dikunci sebagai "Tanggal Entry" item — tidak pernah
+  // berubah lagi setelah tersimpan (lihat catatan di saveToBacktest).
+  const tglEntryIso = (entryDate && /^\d{4}-\d{2}-\d{2}$/.test(entryDate)) ? entryDate : todayLocalISO();
 
   let sid = sessionId || "";
   let session = sid ? state.backtests.find(b => String(b.id) === String(sid)) : null;
@@ -2884,22 +2976,39 @@ async function addManualBacktest(sessionId, ticker, entryPrice, keterangan){
     session = { id: sid, date: new Date().toLocaleString('id-ID'), items: [] };
     state.backtests.unshift(session);
   }
+
+  // KUNCI HARGA ENTRY: kalau ticker ini sudah ada di sesi yang sama,
+  // JANGAN timpa item lama (baik lokal maupun saat upsert ke Supabase
+  // lewat "Prefer: resolution=merge-duplicates" pada session_id+ticker
+  // yang sama) — tolak dan minta user hapus dulu item lama kalau memang
+  // mau mengganti harga/tanggal entry-nya. Tanpa guard ini, menambahkan
+  // ticker yang sama dua kali diam-diam mengganti harga entry yang sudah
+  // "terkunci" sebelumnya.
+  if(session.items.some(it => it.ticker === ticker)){
+    return alert(`${ticker} sudah ada di sesi ini dengan harga entry yang sudah terkunci. Hapus item lama dulu (tombol "Hapus" di baris tabel) kalau memang ingin mengganti harga/tanggal entry-nya.`);
+  }
+
   // Manual entry TIDAK punya kriteria screener (ticker & harga diketik
   // sendiri di luar hasil filter), jadi kolom Kriteria diisi keterangan
   // netral, bukan ikut-ikutan preset yang mungkin kebetulan sedang aktif
   // di tab Screener saat ini (itu tidak relevan untuk entry manual).
   const manualKriteria = "Input manual — tidak melalui filter screener";
-  // entryTs diambil SEKARANG (bukan dari session.id) — kalau item ini
-  // ditambahkan ke sesi lama lewat dropdown "Simpan ke Sesi", tanggal
-  // entry-nya tetap hari ini, bukan ikut tanggal sesi lama tsb.
-  const entryTs = Date.now();
-  session.items.push({ ticker, entryPrice, filterStr: note, kriteria: manualKriteria, sumber: "Manual", entryTs });
+  session.items.push({ ticker, entryPrice, entryDate: tglEntryIso, filterStr: note, kriteria: manualKriteria, sumber: "Manual" });
   saveBacktests();
   render();
 
-  await syncBacktestToSupabase(sid, session.date, [{ ticker, entryPrice, sumber: "Manual", filterStr: note, kriteria: manualKriteria, entryTs }]);
+  await syncBacktestToSupabase(sid, session.date, [{ ticker, entryPrice, entryDate: tglEntryIso, sumber: "Manual", filterStr: note, kriteria: manualKriteria }]);
   // Kalau gagal, showError() di dalam syncBacktestToSupabase sudah
   // menampilkan alasannya di banner atas halaman.
+}
+
+async function deleteBacktestSession(id){
+  if(!confirm("Hapus sesi backtest ini?")) return;
+  state.backtests = state.backtests.filter(b => String(b.id) !== String(id));
+  saveBacktests();
+  render();
+  try{ await supaFetch(`${SUPABASE_URL}/backtest_sessions?id=eq.${id}`, { method: "DELETE", headers: getSupaHeaders() }); }
+  catch(e){ showError(`Sesi dihapus lokal, tapi gagal dihapus di Supabase (bisa muncul lagi setelah refresh): ${e.message}`); }
 }
 
 async function deleteBacktestItem(sessionId, ticker){
@@ -2973,117 +3082,36 @@ function exportScreenerToExcel(){
   XLSX.writeFile(workbook, `Screener_IHSG_${dateStr}.xlsx`);
 }
 
-// Ratakan semua item dari semua sesi backtest jadi satu daftar per-item,
-// masing-masing membawa sessionId (dibutuhkan untuk hapus per-item lewat
-// session_id+ticker) dan entryTs (timestamp entry MILIK ITEM itu sendiri —
-// lihat catatan di saveToBacktest/addManualBacktest). Baris lama yang
-// belum punya entryTs (tersimpan sebelum perubahan ini) fallback ke
-// timestamp sesi induknya supaya tidak error/kosong.
-function allBacktestItemsFlat(){
-  const out = [];
-  state.backtests.forEach(session => {
-    const fallbackTs = Number(session.id) || Date.now();
-    session.items.forEach(item => {
-      out.push({ ...item, sessionId: session.id, entryTs: item.entryTs || fallbackTs });
-    });
-  });
-  return out;
-}
-
-// Item backtest yang lolos filter rentang tanggal (state.btFrom/btTo) yang
-// sedang aktif di tab Backtest. Dipakai bareng oleh render, ekspor per
-// kriteria, dan ekspor semua.
-function backtestItemsInDateRange(items){
-  return items.filter(it => {
-    const iso = toLocalISODate(new Date(it.entryTs));
-    if(state.btFrom && iso < state.btFrom) return false;
-    if(state.btTo && iso > state.btTo) return false;
-    return true;
-  });
-}
-
-function hariSinceEntry(entryTs){
-  const entryDateIso = toLocalISODate(new Date(entryTs));
-  return Math.max(0, Math.round((new Date(todayLocalISO()+"T00:00:00") - new Date(entryDateIso+"T00:00:00")) / 86400000));
-}
-
-// Ekspor Excel untuk SATU blok kriteria screener/preset (mengikuti filter
-// tanggal yang sedang aktif), diurutkan dari entry terbaru.
-function exportBacktestGroupToExcel(kriteria) {
-  const items = backtestItemsInDateRange(allBacktestItemsFlat())
-    .filter(it => (it.kriteria || "Tanpa kriteria") === kriteria)
-    .sort((a,b) => b.entryTs - a.entryTs);
-
-  if (!items.length) {
-    return alert("Tidak ada data untuk diekspor pada kriteria ini (cek filter tanggal yang aktif).");
-  }
-
-  const data = items.map(item => {
+function exportBacktestToExcel(id) {
+  const session = state.backtests.find(b => String(b.id) === String(id));
+  if (!session) return;
+  
+  // 1. Siapkan data dengan kolom "Tanggal Entry"
+  const data = session.items.map(item => {
     const liveData = state.stocks.find(s => s.ticker === item.ticker);
     const currentPrice = liveData ? liveData.cClose : item.entryPrice;
     const pl = item.entryPrice ? ((currentPrice - item.entryPrice) / item.entryPrice) * 100 : 0;
-
+    const hariSejak = daysSinceEntry(item.entryDate);
+    
     return {
-      "Tanggal Entry": fmtDateID(toLocalISODate(new Date(item.entryTs))),
-      "Ticker": item.ticker,
-      "Sumber": item.sumber || "Screener",
-      "Harga Entry": item.entryPrice,
-      "Harga Live": currentPrice,
-      "Profit/Loss (%)": parseFloat(pl.toFixed(2)),
-      "Hari": hariSinceEntry(item.entryTs),
-      "Filter / Keterangan": item.filterStr || "-"
-    };
-  });
-
-  const worksheet = XLSX.utils.json_to_sheet(data);
-  const workbook = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(workbook, worksheet, "Backtest");
-
-  worksheet['!cols'] = [
-    {wch: 14}, // Tanggal Entry
-    {wch: 10}, // Ticker
-    {wch: 12}, // Sumber
-    {wch: 12}, // Harga Entry
-    {wch: 12}, // Harga Live
-    {wch: 15}, // Profit/Loss (%)
-    {wch: 8},  // Hari
-    {wch: 50}  // Keterangan
-  ];
-
-  const safeName = (kriteria || "Backtest").replace(/[^a-z0-9]+/gi, "_").replace(/^_+|_+$/g, "").slice(0, 40) || "Backtest";
-  XLSX.writeFile(workbook, `Backtest_${safeName}_${todayLocalISO()}.xlsx`);
-}
-
-function exportAllBacktestToExcel() {
-  const items = allBacktestItemsFlat().sort((a,b) => b.entryTs - a.entryTs);
-  if (items.length === 0) {
-    return alert("Belum ada data backtest untuk diekspor.");
-  }
-
-  const allData = items.map(item => {
-    const liveData = state.stocks.find(s => s.ticker === item.ticker);
-    const currentPrice = liveData ? liveData.cClose : item.entryPrice;
-    const pl = item.entryPrice ? ((currentPrice - item.entryPrice) / item.entryPrice) * 100 : 0;
-
-    return {
-      "Tanggal Entry": fmtDateID(toLocalISODate(new Date(item.entryTs))),
+      "Tanggal Entry": fmtDateID(item.entryDate) !== "-" ? fmtDateID(item.entryDate) : session.date, // fallback ke waktu tangkap/sesi kalau item lama belum punya tanggal sendiri
       "Ticker": item.ticker,
       "Sumber": item.sumber || "Screener",
       "Kriteria Screener": item.kriteria || "-",
       "Harga Entry": item.entryPrice,
       "Harga Live": currentPrice,
       "Profit/Loss (%)": parseFloat(pl.toFixed(2)),
-      "Hari": hariSinceEntry(item.entryTs),
+      "Hari": hariSejak ?? "-",
       "Filter / Keterangan": item.filterStr || "-"
     };
   });
 
-  // Buat file Excel
-  const worksheet = XLSX.utils.json_to_sheet(allData);
+  // 2. Buat Workbook & Worksheet Excel murni
+  const worksheet = XLSX.utils.json_to_sheet(data);
   const workbook = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(workbook, worksheet, "Semua Backtest");
+  XLSX.utils.book_append_sheet(workbook, worksheet, "Data Backtest");
   
-  // Mengatur lebar kolom agar rapi
+  // 3. Atur lebar kolom agar rapi
   const wscols = [
     {wch: 14}, // Tanggal Entry
     {wch: 10}, // Ticker
@@ -3097,26 +3125,65 @@ function exportAllBacktestToExcel() {
   ];
   worksheet['!cols'] = wscols;
 
+  // 4. Unduh file sebagai .xlsx
+  XLSX.writeFile(workbook, `Backtest_IHSG_${session.id}.xlsx`);
+}
+
+function exportAllBacktestToExcel() {
+  if (!state.backtests || state.backtests.length === 0) {
+    return alert("Belum ada data backtest untuk diekspor.");
+  }
+
+  let allData = [];
+  
+  // Looping untuk menggabungkan seluruh item dari semua sesi
+  state.backtests.forEach(session => {
+    session.items.forEach(item => {
+      const liveData = state.stocks.find(s => s.ticker === item.ticker);
+      const currentPrice = liveData ? liveData.cClose : item.entryPrice;
+      const pl = item.entryPrice ? ((currentPrice - item.entryPrice) / item.entryPrice) * 100 : 0;
+      const hariSejak = daysSinceEntry(item.entryDate);
+      
+      allData.push({
+        "Tanggal Entry": fmtDateID(item.entryDate) !== "-" ? fmtDateID(item.entryDate) : session.date,
+        "Ticker": item.ticker,
+        "Sumber": item.sumber || "Screener",
+        "Kriteria Screener": item.kriteria || "-",
+        "Harga Entry": item.entryPrice,
+        "Harga Live": currentPrice,
+        "Profit/Loss (%)": parseFloat(pl.toFixed(2)),
+        "Hari": hariSejak ?? "-",
+        "Filter / Keterangan": item.filterStr || "-"
+      });
+    });
+  });
+
+  if (allData.length === 0) {
+    return alert("Sesi backtest kosong, tidak ada item untuk diekspor.");
+  }
+
+  // Buat file Excel
+  const worksheet = XLSX.utils.json_to_sheet(allData);
+  const workbook = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(workbook, worksheet, "Semua Backtest");
+  
+  // Mengatur lebar kolom agar rapi
+  const wscols = [
+    {wch: 14}, // Tanggal Entry
+    {wch: 10}, // Ticker
+    {wch: 12}, // Sumber
+    {wch: 12}, // Harga Entry
+    {wch: 12}, // Harga Live
+    {wch: 15}, // Profit/Loss (%)
+    {wch: 8},  // Hari
+    {wch: 50}  // Keterangan
+  ];
+  worksheet['!cols'] = wscols;
+
   // Unduh dengan nama file otomatis memakai tanggal hari ini
   const dateStr = todayLocalISO();
   XLSX.writeFile(workbook, `Semua_Backtest_IHSG_${dateStr}.xlsx`);
 }
-
-// Hapus SEMUA item pada satu blok kriteria screener/preset sekaligus
-// (bisa berasal dari beberapa sesi berbeda) — dipakai tombol "Hapus
-// Kriteria Ini" di header tiap blok. Menghapus item satu-satu lewat
-// deleteBacktestItem supaya logika hapus lokal+Supabase tetap konsisten
-// dengan tombol "Hapus" per baris.
-async function deleteBacktestGroup(kriteria){
-  const items = allBacktestItemsFlat().filter(it => (it.kriteria || "Tanpa kriteria") === kriteria);
-  if(!items.length) return;
-  if(!confirm(`Hapus seluruh ${items.length} emiten pada kriteria "${kriteria}"? Tindakan ini tidak bisa dibatalkan.`)) return;
-  for(const it of items){
-    await deleteBacktestItem(it.sessionId, it.ticker);
-  }
-}
-
-
 
 async function syncPortoToServer_(record) {
   const payload = {
@@ -3165,6 +3232,7 @@ async function submitPortoForm(){
   savePortoLocal();
   state.portoEditId = null;
   state.portoModalOpen = false;
+  state.portoPrefill = null;
   render();
 }
 
@@ -3249,11 +3317,36 @@ function recalcPortoForm(){
 function resetPortoForm(){
   state.portoEditId = null;
   state.portoModalOpen = false;
+  state.portoPrefill = null;
   render();
 }
 
 function openPortoModal(id){
   state.portoEditId = id || null;
+  state.portoModalOpen = true;
+  state.portoPrefill = null;
+  render();
+}
+
+// ==========================================
+// TAMBAH KE PORTOFOLIO DARI TAB BACKTEST — dipicu klik kode emiten
+// (ticker) di baris tabel Backtest. Membuka modal "Tambah Transaksi
+// Portofolio" dalam mode TAMBAH BARU (bukan edit), dengan Ticker, Tanggal
+// Beli, dan Harga Beli sudah terisi dari harga/tanggal entry backtest
+// yang SUDAH TERKUNCI (item.entryPrice/item.entryDate — lihat catatan di
+// saveToBacktest/addManualBacktest) — bukan dari harga live saat ini,
+// supaya entry backtest dan entry portofolio konsisten.
+// ==========================================
+function addBacktestItemToPortfolio(sessionId, ticker){
+  const session = state.backtests.find(b => String(b.id) === String(sessionId));
+  const item = session ? session.items.find(it => it.ticker === ticker) : null;
+  if(!item) return;
+  state.portoEditId = null;
+  state.portoPrefill = {
+    ticker: item.ticker,
+    hargaBeli: item.entryPrice || "",
+    tglBeli: item.entryDate || todayLocalISO()
+  };
   state.portoModalOpen = true;
   render();
 }
@@ -3785,81 +3878,6 @@ async function finalizeSmartPickSignals(){
   render();
 }
 
-// Data terakhir yang ditampilkan di tabel Rekap & Share Signal (sudah
-// mengikuti filter signal/tanggal aktif) — dipakai oleh tombol Ekspor
-// Excel & Hapus Data supaya keduanya konsisten dengan apa yang terlihat
-// di layar, bukan seluruh riwayat di database.
-let lastSmartPickExport = [];
-
-function exportSmartPickToExcel(){
-  const rows = lastSmartPickExport;
-  if(!rows.length){
-    return alert("Tidak ada data Rekap & Share Signal untuk diekspor (cek filter yang aktif).");
-  }
-
-  const data = rows.map(r => ({
-    "Kode": r.stock_code,
-    "Signal": spTitleFor(r.signal_type),
-    "Muncul": fmtDateID(r.muncul_date),
-    "Entry": Math.round(r.entry_price),
-    "Now": r.nowPrice != null ? Math.round(r.nowPrice) : null,
-    "Δ%": r.chgPct != null ? Number(r.chgPct.toFixed(2)) : null,
-    "Hari": r.hari
-  }));
-
-  const worksheet = XLSX.utils.json_to_sheet(data);
-  const workbook = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(workbook, worksheet, "Rekap Signal");
-
-  const headers = Object.keys(data[0]);
-  worksheet['!cols'] = headers.map(h => ({ wch: Math.max(10, h.length + 2) }));
-
-  const dateStr = todayLocalISO();
-  XLSX.writeFile(workbook, `Rekap_Signal_IHSG_${dateStr}.xlsx`);
-}
-
-// Hapus data Rekap & Share Signal dari tabel Supabase `smart_pick_signals`.
-// Mengikuti filter signal/tanggal yang sedang aktif di UI — kalau tidak
-// ada filter aktif sama sekali, ini menghapus SEMUA riwayat (makanya pakai
-// konfirmasi tegas + fallback filter `muncul_date=not.is.null` supaya
-// PostgREST mau menjalankan DELETE tanpa WHERE eksplisit).
-async function deleteSmartPickHistory(){
-  if(!SUPABASE_URL || !SUPABASE_KEY){ openSettings(); return; }
-  const rows = lastSmartPickExport;
-  if(!rows.length){
-    return alert("Tidak ada data Rekap & Share Signal untuk dihapus (cek filter yang aktif).");
-  }
-
-  const noFilterActive = state.spFilterType === "all" && !state.spFrom && !state.spTo;
-  const confirmMsg = noFilterActive
-    ? `Hapus SEMUA riwayat Rekap & Share Signal (${rows.length} sinyal)? Tindakan ini tidak bisa dibatalkan.`
-    : `Hapus ${rows.length} sinyal yang sedang ditampilkan (sesuai filter aktif)? Tindakan ini tidak bisa dibatalkan.`;
-  if(!confirm(confirmMsg)) return;
-
-  state.spHistoryLoading = true; state.spMsg = ""; render();
-  try{
-    const qs = new URLSearchParams();
-    if(state.spFilterType !== "all") qs.set("signal_type", `eq.${state.spFilterType}`);
-    if(state.spFrom) qs.append("muncul_date", `gte.${state.spFrom}`);
-    if(state.spTo) qs.append("muncul_date", `lte.${state.spTo}`);
-    if(![...qs.keys()].length) qs.set("muncul_date", "not.is.null");
-
-    const res = await fetch(`${SUPABASE_URL}/smart_pick_signals?${qs.toString()}`, { method: "DELETE", headers: getSupaHeaders() });
-    if(!res.ok){
-      const t = await res.text();
-      throw new Error(t || `HTTP ${res.status}`);
-    }
-    state.spMsg = `🗑️ Data berhasil dihapus.`;
-    state.spMsgError = false;
-    await loadSmartPickHistory();
-  }catch(e){
-    state.spMsg = "Gagal menghapus data: " + e.message;
-    state.spMsgError = true;
-    state.spHistoryLoading = false;
-    render();
-  }
-}
-
 async function loadSmartPickHistory(){
   if(!SUPABASE_URL || !SUPABASE_KEY) return;
   state.spHistoryLoading = true; render();
@@ -3894,6 +3912,8 @@ function render(){
   else if(state.tab==="chart") content.innerHTML = renderChart();
   else if(state.tab==="brokersum") content.innerHTML = renderBrokerSummary();
   else if(state.tab==="target") content.innerHTML = renderTargetBandar();
+  else if(state.tab==="eps") content.innerHTML = renderEntryPriceScanner();
+  else if(state.tab==="kraken") content.innerHTML = renderKrakenFlow();
   else if(state.tab==="about") content.innerHTML = renderAbout();
 
   attachContentEvents();
@@ -4329,6 +4349,9 @@ function ruleRawValue(s, key){
 // pengali) "Frequency > 5 × Frequency Analyzer".
 function ruleDescription(rule){
   const aLabel = ruleMetricLabel(rule.aKey);
+  if(rule.op === "between"){
+    return `${aLabel} antara ${rule.bConstMin} dan ${rule.bConstMax}`;
+  }
   if(rule.bType === "const"){
     return `${aLabel} ${rule.op} ${rule.bConst}`;
   }
@@ -4392,6 +4415,15 @@ function evalCustomRule(s, rule){
   }
   const aVal = ruleMetricValue(s, rule.aKey);
   if(aVal===null) return false;
+  // "between" (mis. RSI21 antara 50-70, meniru filter "Between" di
+  // screener Stockbit) — selalu 2 angka tetap, tidak bisa dibandingkan ke
+  // metrik lain, jadi ditangani terpisah dari cmp(a,b) generik di bawah.
+  if(rule.op === "between"){
+    const lo = parseFloat(rule.bConstMin);
+    const hi = parseFloat(rule.bConstMax);
+    if(isNaN(lo) || isNaN(hi)) return false;
+    return aVal >= Math.min(lo,hi) && aVal <= Math.max(lo,hi);
+  }
   const cmp = RULE_OPS[rule.op];
   if(!cmp) return false;
   if(rule.bType === "const"){
@@ -4511,6 +4543,10 @@ function loadSelectedPreset(){
   state.customRules = rules.map(r => ({ ...r, id: "r" + Date.now() + "_" + (ruleIdCounter++) }));
   saveCustomRules();
   state.page = 1;
+  // Otomatis collapse panel Rules Kustom setelah preset dimuat — biar tidak
+  // langsung kelihatan 10+ baris rule tiap kali cuma mau pakai preset yang
+  // sudah jadi. Tinggal klik header panel buat expand lagi kalau mau edit.
+  state.ruleBuilderOpen = false;
   render();
 }
 
@@ -4538,6 +4574,7 @@ function addCustomRule(){
   });
   saveCustomRules();
   state.page = 1;
+  state.ruleBuilderOpen = true; // biar baris baru langsung kelihatan kalau panel lagi collapsed
   render();
 }
 function updateCustomRule(id, field, value){
@@ -4574,6 +4611,15 @@ function updateCustomRule(id, field, value){
   else if(field === "aKey" && !isCategoryMetric(rule.aKey) && !isBrokerMetric(rule.aKey)){
     if(rule.op === "contains" || rule.op === "!contains") rule.op = ">";
   }
+  // Kalau operator diganti JADI "between": paksa bType="const" (antara 2
+  // angka tetap, tidak masuk akal dibandingkan ke metrik lain) dan siapkan
+  // bConstMin/bConstMax — pakai bConst lama sebagai titik awal biar user
+  // tidak mulai dari kosong kalau sebelumnya sudah isi satu angka.
+  if(field === "op" && rule.op === "between"){
+    rule.bType = "const";
+    if(rule.bConstMin === undefined || rule.bConstMin === "") rule.bConstMin = rule.bConst || "";
+    if(rule.bConstMax === undefined || rule.bConstMax === "") rule.bConstMax = "";
+  }
   saveCustomRules();
   state.page = 1;
   render();
@@ -4596,9 +4642,9 @@ function renderRuleBuilder(){
     if(!includeExtra) return numericMetrics.map(opt).join("");
     return `<optgroup label="Angka">${numericMetrics.map(opt).join("")}</optgroup><optgroup label="Kategori (Teks)">${categoryMetrics.map(opt).join("")}</optgroup><optgroup label="Broker (Top 3)">${brokerMetrics.map(opt).join("")}</optgroup>`;
   };
-  const opLabels = { "contains":"contains", "!contains":"tidak mengandung" };
+  const opLabels = { "contains":"contains", "!contains":"tidak mengandung", "between":"antara (between)" };
   const opOptions = (selected, categoryOnly, brokerOnly) => {
-    const ops = brokerOnly ? ["contains","!contains"] : categoryOnly ? ["=","≠"] : Object.keys(RULE_OPS).filter(op=>op!=="contains"&&op!=="!contains");
+    const ops = brokerOnly ? ["contains","!contains"] : categoryOnly ? ["=","≠"] : [...Object.keys(RULE_OPS).filter(op=>op!=="contains"&&op!=="!contains"), "between"];
     return ops.map(op=>`<option value="${op}" ${selected===op?'selected':''}>${opLabels[op]||op}</option>`).join("");
   };
 
@@ -4614,14 +4660,18 @@ function renderRuleBuilder(){
         ? `<select class="rule-const" data-rule-field="bConst" data-rule-id="${r.id}">${catOpts.map(o=>`<option value="${escapeHtml(o)}" ${String(r.bConst)===o?'selected':''}>${escapeHtml(o)}</option>`).join("")}</select>`
         : isBroker
           ? `<input type="text" class="rule-const" data-rule-field="bConst" data-rule-id="${r.id}" value="${escapeHtml(r.bConst||"")}" placeholder="Kode broker, mis. AK" maxlength="6" style="text-transform:uppercase;width:150px">`
-          : (r.bType === "const"
+          : r.op === "between"
+            ? `<input type="number" step="any" class="rule-const" data-rule-field="bConstMin" data-rule-id="${r.id}" value="${r.bConstMin ?? ""}" placeholder="dari" style="width:80px">
+               <span class="rule-times">&ndash;</span>
+               <input type="number" step="any" class="rule-const" data-rule-field="bConstMax" data-rule-id="${r.id}" value="${r.bConstMax ?? ""}" placeholder="sampai" style="width:80px">`
+            : (r.bType === "const"
               ? `<input type="number" step="any" class="rule-const" data-rule-field="bConst" data-rule-id="${r.id}" value="${r.bConst}" placeholder="angka">`
               : `<input type="number" step="any" class="rule-mult" data-rule-field="mult" data-rule-id="${r.id}" value="${r.mult}">
                  <span class="rule-times">&times;</span>
                  <select class="rule-select" data-rule-field="bKey" data-rule-id="${r.id}">${metricOptions(r.bKey, false)}</select>`
             )
       }
-      ${(isCat || isBroker) ? "" : `<button type="button" class="rule-btype-toggle" data-rule-field="toggleBType" data-rule-id="${r.id}" title="${r.bType==='const' ? 'Ganti jadi: bandingkan dengan metrik lain' : 'Ganti jadi: bandingkan dengan angka tetap'}">${r.bType==='const' ? '🔢' : '📊'}</button>`}
+      ${(isCat || isBroker || r.op === "between") ? "" : `<button type="button" class="rule-btype-toggle" data-rule-field="toggleBType" data-rule-id="${r.id}" title="${r.bType==='const' ? 'Ganti jadi: bandingkan dengan metrik lain' : 'Ganti jadi: bandingkan dengan angka tetap'}">${r.bType==='const' ? '🔢' : '📊'}</button>`}
       <button type="button" class="rule-del" data-rule-del="${r.id}" title="Hapus rule">✕</button>
     </div>
   `;
@@ -4633,13 +4683,21 @@ function renderRuleBuilder(){
 
   return `
     <div class="panel" style="margin-bottom:16px;">
-      <div class="filter-section-title">Rules Kustom (mirip Edit Screener Stockbit)<span class="line"></span></div>
+      <div class="filter-section-title" id="ruleBuilderToggle" style="cursor:pointer;display:flex;align-items:center;justify-content:space-between;gap:10px;user-select:none;">
+        <span style="display:flex;align-items:center;gap:8px;">
+          <span style="display:inline-block;transition:transform .15s;transform:rotate(${state.ruleBuilderOpen?90:0}deg);">▶</span>
+          Rules Kustom (mirip Edit Screener Stockbit)
+        </span>
+        <span class="line" style="flex:1;"></span>
+        ${state.customRules.length ? `<span style="font-size:11.5px;color:var(--muted);font-weight:400;text-transform:none;letter-spacing:0;white-space:nowrap;">${state.customRules.length} rule aktif</span>` : ""}
+      </div>
+      ${state.ruleBuilderOpen ? `
       <div class="rule-list">${rows || '<div style="color:var(--muted);font-size:13px;padding:6px 0 2px;">Belum ada rule kustom. Klik "+ Tambah Rule" untuk mulai — mis. "Frequency &gt; 5 &times; Frequency Analyzer".</div>'}</div>
       <div style="display:flex;align-items:center;gap:12px;margin-top:12px;flex-wrap:wrap;">
         <button type="button" class="btn btn-outline" id="addRuleBtn">+ Tambah Rule</button>
         <button type="button" class="btn btn-outline" id="savePresetBtn" ${state.presetsLoading?'disabled':''}>💾 Simpan sebagai Preset...</button>
         ${state.customRules.length ? `<span style="font-size:12px;color:var(--muted);">${state.customRules.length} rule aktif — otomatis diterapkan ke tabel di bawah (AND, semua harus terpenuhi).</span>` : ""}
-      </div>
+      </div>` : ""}
       <div style="display:flex;align-items:center;gap:10px;margin-top:14px;flex-wrap:wrap;padding-top:12px;border-top:1px solid var(--border);">
         <label style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;">Preset Tersimpan</label>
         <select id="presetSelect" style="background:rgba(0,0,0,0.2);border:1px solid var(--border);color:var(--text);font-size:12.5px;border-radius:7px;padding:8px 9px;min-width:220px;flex:1;max-width:320px;">
@@ -4978,6 +5036,7 @@ function renderBacktest(){
       <div class="porto-form" style="grid-template-columns:repeat(auto-fill,minmax(180px,1fr));align-items:end;">
         <div class="field"><label>Simpan ke Sesi</label><select id="btManualSession">${sessionOptions}</select></div>
         <div class="field"><label>Ticker</label><input id="btManualTicker" list="btTickerList" placeholder="BBCA" style="text-transform:uppercase;"><datalist id="btTickerList">${tickerOptions}</datalist></div>
+        <div class="field"><label>Tanggal Entry</label><input id="btManualDate" type="date" value="${todayLocalISO()}"></div>
         <div class="field"><label>Harga Entry</label><input id="btManualPrice" type="number" placeholder="0"></div>
         <div class="field wide"><label>Keterangan</label><input id="btManualNote" placeholder="Catatan"></div>
         <div class="field"><button class="btn btn-outline" style="border-color:var(--goldDim);color:var(--gold);justify-content:center; padding:10px;" id="btManualAddBtn">+ Tambah</button></div>
@@ -4988,44 +5047,10 @@ function renderBacktest(){
     return manualForm + `<div class="empty-box">Belum ada sesi backtest yang disimpan.</div>`;
   }
 
-  // Filter periode tanggal (berlaku ke SEMUA blok kriteria di bawah) —
-  // mengecek tanggal entry per ITEM (bukan tanggal sesi), sesuai catatan
-  // di allBacktestItemsFlat().
-  const dateFilterBar = `
-    <div class="sp-toolbar" style="margin-bottom:16px;">
-      <span style="font-size:11px;color:var(--muted);">Dari</span>
-      <input type="date" id="btFromInput" class="bs-input" value="${state.btFrom||""}">
-      <span style="font-size:11px;color:var(--muted);">s/d</span>
-      <input type="date" id="btToInput" class="bs-input" value="${state.btTo||""}">
-      ${(state.btFrom||state.btTo) ? `<button type="button" class="btn btn-outline" id="btClearFilterBtn">✕ Bersihkan Filter</button>` : ""}
-    </div>`;
-
-  const filteredItems = backtestItemsInDateRange(allBacktestItemsFlat());
-
-  if(filteredItems.length === 0){
-    return manualForm + dateFilterBar + `<div class="empty-box">Tidak ada data backtest pada rentang tanggal ini.</div>`;
-  }
-
-  // Kelompokkan PER KRITERIA SCREENER/PRESET (bukan lagi per tanggal
-  // sesi) — emiten yang lolos preset/rule yang sama tetap satu blok
-  // walau di-entry di hari yang berbeda-beda. Blok & baris di dalamnya
-  // sama-sama diurutkan dari data entry TERBARU ke terlama.
-  const groups = {};
-  filteredItems.forEach(it => {
-    const key = it.kriteria || "Tanpa kriteria";
-    (groups[key] = groups[key] || []).push(it);
-  });
-  const groupKeys = Object.keys(groups).sort((a,b) => {
-    const maxA = Math.max(...groups[a].map(it=>it.entryTs));
-    const maxB = Math.max(...groups[b].map(it=>it.entryTs));
-    return maxB - maxA;
-  });
-
-  const sessions = groupKeys.map(kriteria => {
-    const items = [...groups[kriteria]].sort((a,b) => b.entryTs - a.entryTs);
+  const sessions = state.backtests.map(session => {
     let winCount = 0, totalPL = 0, maxPL = -Infinity, minPL = Infinity, validItems = 0;
 
-    const rows = items.map(item => {
+    const rows = session.items.map(item => {
       const liveData = state.stocks.find(s => s.ticker === item.ticker);
       const currentPrice = liveData ? liveData.cClose : item.entryPrice;
       const pl = item.entryPrice ? ((currentPrice - item.entryPrice) / item.entryPrice) * 100 : 0;
@@ -5041,20 +5066,28 @@ function renderBacktest(){
       const tone = pl > 0 ? "up" : pl < 0 ? "down" : "muted";
       const plStr = (pl > 0 ? "+" : "") + pl.toFixed(2) + "%";
       const filterStr = item.filterStr || "-";
+      const kriteriaStr = item.kriteria || "-";
       const sumberPill = pillHtml(item.sumber || "Screener", item.sumber === "Manual" ? "gold" : "muted");
-      const hari = hariSinceEntry(item.entryTs);
+      // Tanggal & harga entry di bawah ini SELALU dari item yang sudah
+      // tersimpan (terkunci saat pertama kali disimpan — lihat
+      // saveToBacktest/addManualBacktest), tidak pernah dihitung ulang
+      // dari data live. Hanya "Harga Live" & P/L yang ikut data live.
+      const tglEntryStr = fmtDateID(item.entryDate);
+      const hariSejak = daysSinceEntry(item.entryDate);
+      const hariStr = hariSejak === null ? "-" : `${hariSejak}h`;
 
       return `<tr>
-        <td class="ticker-cell"><button class="ticker-link" data-detail="${item.ticker}" title="Lihat detail ${item.ticker}">${item.ticker}</button></td>
+        <td class="ticker-cell"><button class="ticker-link" data-bt-add-porto="${session.id}|${item.ticker}" title="Tambah ${item.ticker} ke Portofolio (harga &amp; tanggal entry otomatis terisi)">${item.ticker}</button></td>
         <td>${sumberPill}</td>
-        <td class="mono" style="white-space:nowrap;">${fmtDateID(toLocalISODate(new Date(item.entryTs)))}</td>
+        <td class="mono">${tglEntryStr}</td>
+        <td style="white-space:normal; max-width:260px; font-family:'Sora',sans-serif; font-size:12px; line-height:1.6; color:var(--gold); opacity:0.9;">${kriteriaStr}</td>
         <td style="white-space:normal; max-width:320px; font-family:'Sora',sans-serif; font-size:12px; line-height:1.6; color:var(--text); opacity:0.9;">${filterStr}</td>
-        <td class="mono">${fmtNum(item.entryPrice)}</td>
+        <td class="mono" title="Harga entry terkunci sejak disimpan">${fmtNum(item.entryPrice)}</td>
         <td class="mono">${fmtNum(currentPrice)}</td>
         <td class="mono" style="color:var(--${tone}); font-weight:700; font-size:14px;">${plStr}</td>
-        <td class="mono">${hari}h</td>
+        <td class="mono">${hariStr}</td>
         <td><button class="link-btn" data-chart="${item.ticker}">Chart</button></td>
-        <td><button class="link-btn" style="color:#f87171;" data-del-bt-item="${item.sessionId}|${item.ticker}">Hapus</button></td>
+        <td><button class="link-btn" style="color:#f87171;" data-del-bt-item="${session.id}|${item.ticker}">Hapus</button></td>
       </tr>`;
     }).join("");
 
@@ -5087,18 +5120,16 @@ function renderBacktest(){
       </div>
     `;
 
-    const groupKeyAttr = encodeURIComponent(kriteria);
-
     return `
       <div class="panel" style="flex-direction:column; align-items:stretch; margin-bottom: 24px;">
-        <div style="display:flex; justify-content:space-between; align-items:flex-start; border-bottom: 1px solid var(--border); padding-bottom: 16px; margin-bottom: 16px; gap:12px;">
+        <div style="display:flex; justify-content:space-between; align-items:flex-start; border-bottom: 1px solid var(--border); padding-bottom: 16px; margin-bottom: 16px;">
           <div>
-            <h3 style="margin:0; font-size: 13.5px; font-weight:700; color:var(--gold); line-height:1.5;">${escapeHtml(kriteria)}</h3>
-            <div style="font-size: 12px; color: var(--muted); margin-top: 6px; font-weight:500;">${items.length} Emiten Disimpan</div>
+            <h3 style="margin:0; font-size: 15px; font-weight:700;">Waktu Tangkap: ${session.date}</h3>
+            <div style="font-size: 12px; color: var(--muted); margin-top: 6px; font-weight:500;">${session.items.length} Emiten Disimpan</div>
           </div>
-          <div style="display:flex; gap:10px; flex-shrink:0;">
-            <button class="btn btn-outline" style="color:#22d3ee; border-color:rgba(6,182,212,0.4);" data-export-bt-kriteria="${groupKeyAttr}">Ekspor Excel</button>
-            <button class="btn btn-outline" style="color:#f87171; border-color:rgba(239,68,68,0.4);" data-del-bt-kriteria="${groupKeyAttr}">Hapus Kriteria Ini</button>
+          <div style="display:flex; gap:10px;">
+            <button class="btn btn-outline" style="color:#22d3ee; border-color:rgba(6,182,212,0.4);" data-export-bt="${session.id}">Ekspor Excel</button>
+            <button class="btn btn-outline" style="color:#f87171; border-color:rgba(239,68,68,0.4);" data-del-bt="${session.id}">Hapus Sesi</button>
           </div>
         </div>
         ${sessionSummary}
@@ -5106,7 +5137,7 @@ function renderBacktest(){
           <table class="mono">
             <thead>
               <tr>
-                <th>Ticker</th><th>Sumber</th><th>Tanggal Entry</th><th>Filter / Keterangan</th><th>Harga Entry</th>
+                <th>Ticker</th><th>Sumber</th><th>Tanggal Entry</th><th>Kriteria Screener</th><th>Filter / Keterangan</th><th>Harga Entry</th>
                 <th>Harga Live</th><th>Profit / Loss</th><th>Hari</th><th>Aksi</th><th></th>
               </tr>
             </thead>
@@ -5117,7 +5148,7 @@ function renderBacktest(){
     `;
   }).join("");
 
-  return manualForm + dateFilterBar + sessions;
+  return manualForm + sessions;
 }
 
   
@@ -5433,10 +5464,11 @@ function renderWatchlist(){
 
 function renderPortoFormFields(){
   const editing = state.portoEditId ? state.portfolio.find(p => String(p.id) === String(state.portoEditId)) : null;
+  const prefill = !editing && state.portoPrefill ? state.portoPrefill : null;
   const f = editing || {
-    ticker:"", tglBeli:"", hargaBeli:"", lotBeli:"", feeBeliPct:0.15,
+    ticker: prefill?.ticker || "", tglBeli: prefill?.tglBeli || "", hargaBeli: prefill?.hargaBeli || "", lotBeli: "", feeBeliPct: 0.15,
     support:"", resistance:"", fib618:"", targetTP:"", cutLoss:"",
-    tglJual:"", hargaJual:"", lotJual:"", feeJualPct:0.25, catatan:""
+    tglJual:"", hargaJual:"", lotJual:"", feeJualPct:0.25, catatan: prefill ? `Dari Backtest — harga entry terkunci ${fmtNum(prefill.hargaBeli)} @ ${fmtDateID(prefill.tglBeli)}` : ""
   };
   const c = editing ? hitungPorto({
     hargaBeli:+f.hargaBeli||0, lotBeli:+f.lotBeli||0, feeBeliPct:+f.feeBeliPct||0,
@@ -5749,7 +5781,6 @@ function renderSmartPick(){
   const cardsHtml = SMART_PICK_DEFS.map(renderSmartPickCard).join("");
 
   const rows = smartPickRowsWithLive();
-  lastSmartPickExport = rows;
   const stats = computeSmartPickStats(rows);
   const todayStr = todayLocalISO();
   const alreadyToday = state.spHistory.some(h => h.muncul_date === todayStr);
@@ -5802,8 +5833,6 @@ function renderSmartPick(){
           <span style="font-size:11px;color:var(--muted);">s/d</span>
           <input type="date" id="spToInput" class="bs-input" value="${state.spTo||""}">
           <button type="button" class="btn btn-outline" id="spRefreshBtn" title="Muat ulang riwayat">🔄</button>
-          <button type="button" class="btn btn-outline" id="spExportBtn" style="color:#22d3ee;border-color:rgba(6,182,212,0.4);white-space:nowrap;" title="Ekspor data yang sedang ditampilkan (sesuai filter aktif) ke Excel (.xlsx)" ${!rows.length?"disabled":""}>📊 Ekspor Excel (${rows.length})</button>
-          <button type="button" class="btn btn-outline" id="spDeleteBtn" style="color:#f87171;border-color:rgba(239,68,68,0.4);white-space:nowrap;" title="Hapus data yang sedang ditampilkan (sesuai filter aktif) dari Supabase — tidak bisa dibatalkan" ${state.spHistoryLoading || !rows.length?"disabled":""}>🗑️ Hapus Data</button>
         </div>
 
         <div class="summary-grid" style="margin-top:14px;">
@@ -6490,6 +6519,1050 @@ function renderTargetBandar(){
   `;
 }
 
+// ==========================================================================
+// ENTRY PRICE SCANNER — "broker trap" scanner lintas SEMUA saham sekaligus.
+//
+// Konsep (mengikuti pola ihsgscreener.com): setiap broker punya harga
+// rata-rata beli (VWAP Buy) = total nilai beli ÷ total volume beli, dalam
+// suatu jendela waktu. Kalau harga sekarang di BAWAH VWAP Buy itu, broker
+// tsb sedang rugi ("NYANGKUT") — orang yang rugi cenderung menahan/menambah,
+// bukan jual murah, jadi level itu jadi support psikologis. Kalau harga
+// sudah jauh DI ATAS VWAP mereka, mereka sudah untung dan rawan ambil
+// untung, jadi level itu dilewati sebagai area entry.
+//
+// SUMBER DATA: tabel `broker_summary` yang SAMA dengan tab 📊 Broker
+// Summary / 🎯 Target Bandar (top 5 broker beli & jual per hari, per
+// saham) — BUKAN endpoint baru. Konsekuensinya: hasil scan ini HANYA
+// SEBAGUS data broker_summary yang sudah terisi. Kalau broker_summary
+// kosong/jarang diisi untuk banyak saham, "Hasil Scan" akan kosong/sedikit
+// juga — ini bukan bug, tapi keterbatasan data sumber (top-5 broker/hari,
+// bukan seluruh transaksi pasar).
+//
+// KLASIFIKASI ASING/LOKAL: TIDAK ADA API publik resmi untuk ini, jadi
+// dipakai daftar statis best-effort EPS_FOREIGN_BROKER_CODES di bawah
+// (sama semangatnya dengan SYARIAH_TICKERS di atas file ini — silakan
+// diperbaiki sendiri kalau ada kode yang salah/kurang). Kode yang TIDAK
+// ada di daftar itu default dianggap "Lokal".
+//
+// SEMUA formula (Gap%, Konvergensi, Tanjakan 10H, Mutu, Score) di bawah
+// adalah HEURISTIK YANG KAMI RANCANG SENDIRI dari data yang tersedia —
+// BUKAN replikasi rumus rahasia ihsgscreener.com (kami tidak pernah
+// melihat source code mereka) dan BUKAN jaminan/rekomendasi investasi.
+// Semua konstanta sengaja dijadikan variabel (EPS_* di bawah) supaya
+// gampang disesuaikan.
+// ==========================================================================
+
+const EPS_AREA_PCT = 3;        // ±X% dari VWAP = dianggap "DI AREA"
+const EPS_TANJAKAN_WINDOW = 10; // jumlah hari bursa untuk "Tanjakan 10H"
+const EPS_MIN_PRICE = 80;       // saham di bawah harga ini diblokir (saham gorengan receh)
+const EPS_EXCLUDED_SECTOR_KEYWORDS = ["propert", "real estate"]; // dicocokkan case-insensitive, substring
+
+// Daftar kode broker yang UMUM dianggap sekuritas asing/JV asing oleh
+// komunitas bandarmologi (BELUM diverifikasi resmi ke daftar anggota
+// bursa IDX terbaru — cek ulang sebelum dipakai serius). Kode lain di
+// luar daftar ini dianggap "Lokal" secara default.
+const EPS_FOREIGN_BROKER_CODES = new Set([
+  "AK","BK","CS","DB","KZ","MS","RX","BW","GW","AG","XA","ZP","YU","RS","OD","IF"
+]);
+function epsBrokerType(brokerCode){
+  return EPS_FOREIGN_BROKER_CODES.has(String(brokerCode||"").trim().toUpperCase()) ? "asing" : "lokal";
+}
+
+function epsIsExcludedSector(sektor){
+  const s = String(sektor||"").toLowerCase();
+  return EPS_EXCLUDED_SECTOR_KEYWORDS.some(kw => s.includes(kw));
+}
+
+// Ambil ISO date N hari bursa (Senin-Jumat) ke belakang dari hari ini —
+// dipakai sebagai cutoff query supaya jendela 1 bulan (20 hari bursa)
+// tidak perlu narik seluruh histori broker_summary yang mungkin sudah
+// bertahun-tahun.
+function epsCutoffDate(tradingDaysBackN){
+  const calendarDaysBack = Math.ceil(tradingDaysBackN * 7/5) + 10; // buffer libur bursa
+  const d = new Date();
+  d.setDate(d.getDate() - calendarDaysBack);
+  return toLocalISODate(d);
+}
+
+// ==========================================================================
+// LANGKAH 1 — tarik SEMUA baris broker_summary (semua saham) dalam jendela
+// ~1 bulan bursa, lalu susun jadi struktur harian per saham per tipe
+// broker (asing/lokal). Ini query BERAT (bisa ratusan ribu baris kalau
+// broker_summary sudah terisi rutin untuk banyak saham) — makanya scan
+// ini TIDAK jalan otomatis, harus ditekan manual lewat tombol "🔄 Scan
+// Sekarang", dan hasilnya di-cache (localStorage + tabel Supabase
+// eps_scan_cache kalau migrasinya sudah dijalankan) supaya sesi
+// berikutnya tidak perlu scan ulang.
+// ==========================================================================
+async function runEntryPriceScan(){
+  if(!SUPABASE_URL || !SUPABASE_KEY){ openSettings(); return; }
+  state.epsScanning = true; state.epsMsg = "Menarik data broker_summary untuk semua saham..."; state.epsMsgError = false; render();
+
+  try{
+    const cutoff = epsCutoffDate(EPS_TANJAKAN_WINDOW * 2); // ambil 2x jendela terpanjang biar aman utk 1 bulan (20 hari bursa)
+    const qs = new URLSearchParams({
+      trade_date: `gte.${cutoff}`,
+      select: "stock_code,trade_date,side,broker_code,lot,value_idr",
+      order: "trade_date.asc"
+    });
+    const res = await fetch(`${SUPABASE_URL}/broker_summary?${qs}`, { headers: getSupaHeaders(), cache: "no-store" });
+    if(!res.ok) throw new Error(`HTTP ${res.status} ${res.statusText}`);
+    const rows = await res.json();
+    if(rows.message) throw new Error(rows.message);
+
+    if(!rows.length){
+      state.epsRaw = null;
+      state.epsMsg = "Belum ada data broker_summary sama sekali. Isi dulu di tab 📊 Broker Summary untuk minimal beberapa saham.";
+      state.epsMsgError = true;
+      state.epsScanning = false; render(); return;
+    }
+
+    // Susun: byStock[TICKER].days[TANGGAL].asing / .lokal = {buyVal,sellVal,buyLot,sellLot,brokerNet:{kode:net}}
+    const byStock = {};
+    const allDatesSet = new Set();
+    rows.forEach(r=>{
+      const code = String(r.stock_code||"").toUpperCase();
+      const date = r.trade_date;
+      const type = epsBrokerType(r.broker_code);
+      if(!code || !date) return;
+      allDatesSet.add(date);
+      if(!byStock[code]) byStock[code] = { days: {} };
+      if(!byStock[code].days[date]) byStock[code].days[date] = {
+        asing: { buyVal:0, sellVal:0, buyLot:0, sellLot:0, brokerNet:{} },
+        lokal: { buyVal:0, sellVal:0, buyLot:0, sellLot:0, brokerNet:{} }
+      };
+      const bucket = byStock[code].days[date][type];
+      const val = Number(r.value_idr)||0;
+      const lot = Number(r.lot)||0;
+      const bc = String(r.broker_code||"").trim().toUpperCase();
+      if(r.side === "buy"){ bucket.buyVal += val; bucket.buyLot += lot; }
+      else if(r.side === "sell"){ bucket.sellVal += val; bucket.sellLot += lot; }
+      if(bc){ bucket.brokerNet[bc] = (bucket.brokerNet[bc]||0) + (r.side==="buy"?val:-val); }
+    });
+
+    // Hanya simpan EPS_TANJAKAN_WINDOW*2 hari bursa TERBARU per saham
+    // (cukup untuk 1 bulan + buffer tren), supaya objek yang disimpan ke
+    // localStorage tidak membengkak tanpa batas seiring waktu.
+    const keepDays = EPS_TANJAKAN_WINDOW * 2;
+    Object.values(byStock).forEach(stock=>{
+      const dates = Object.keys(stock.days).sort();
+      const drop = dates.slice(0, Math.max(0, dates.length - keepDays));
+      drop.forEach(d => delete stock.days[d]);
+    });
+
+    state.epsRaw = {
+      scannedAt: new Date().toISOString(),
+      stockCount: Object.keys(byStock).length,
+      byStock
+    };
+    saveEpsCache();
+    state.epsMsg = `Scan selesai — ${Object.keys(byStock).length} saham, ${allDatesSet.size} hari bursa dengan data.`;
+    state.epsMsgError = false;
+
+    // Simpan salinan ringkas ke Supabase supaya user LAIN (kalau app ini
+    // dipakai bersama) tidak perlu scan ulang — opsional, gagal diam-diam
+    // kalau tabel `eps_scan_cache` belum dimigrasikan (lihat catatan di
+    // saveEpsCache/loadEpsCacheFromServer).
+    await syncEpsCacheToSupabase();
+  } catch(e){
+    state.epsMsg = "Gagal scan: " + e.message;
+    state.epsMsgError = true;
+  }
+  state.epsScanning = false;
+  recomputeEpsResults();
+  render();
+}
+
+function saveEpsCache(){
+  try{ localStorage.setItem("ihsg_eps_scan", JSON.stringify(state.epsRaw)); }catch(e){ /* localStorage penuh — abaikan, cache Supabase tetap dicoba */ }
+}
+
+function loadEpsCacheFromLocal(){
+  try{
+    const raw = localStorage.getItem("ihsg_eps_scan");
+    if(raw) state.epsRaw = JSON.parse(raw);
+  }catch(e){ state.epsRaw = null; }
+}
+
+// Tabel `eps_scan_cache` BELUM tentu ada di Supabase Anda — ini fitur
+// opsional (biar hasil scan bisa dipakai bareng lintas device/user tanpa
+// tiap orang scan ulang). Kalau mau aktifkan, jalankan migrasi:
+//   CREATE TABLE eps_scan_cache (
+//     id text PRIMARY KEY DEFAULT 'latest',
+//     scanned_at timestamptz NOT NULL,
+//     payload jsonb NOT NULL
+//   );
+// Tanpa tabel ini, scan tetap jalan & tersimpan di localStorage browser
+// ini saja — cuma tidak otomatis kebagi ke device/user lain.
+async function syncEpsCacheToSupabase(){
+  if(!state.epsRaw) return;
+  try{
+    await supaFetch(`${SUPABASE_URL}/eps_scan_cache?on_conflict=id`, {
+      method: "POST",
+      headers: { ...getSupaHeaders(), "Prefer": "resolution=merge-duplicates" },
+      body: JSON.stringify({ id: "latest", scanned_at: state.epsRaw.scannedAt, payload: state.epsRaw })
+    });
+  } catch(e){
+    console.warn("Gagal sinkron eps_scan_cache (tabel mungkin belum dimigrasikan):", e.message);
+  }
+}
+
+async function loadEpsCacheFromServer(){
+  if(!SUPABASE_URL || !SUPABASE_KEY) return false;
+  try{
+    const res = await fetch(`${SUPABASE_URL}/eps_scan_cache?id=eq.latest&select=scanned_at,payload`, { headers: getSupaHeaders(), cache: "no-store" });
+    if(!res.ok) return false;
+    const rows = await res.json();
+    if(!Array.isArray(rows) || !rows.length) return false;
+    const server = rows[0].payload;
+    // Pakai hasil server HANYA kalau lebih baru dari cache lokal (atau
+    // belum ada cache lokal sama sekali) — supaya scan lokal yang baru
+    // saja dijalankan tidak ketimpa data server yang lebih basi.
+    if(!state.epsRaw || new Date(server.scannedAt) > new Date(state.epsRaw.scannedAt)){
+      state.epsRaw = server;
+      saveEpsCache();
+    }
+    return true;
+  } catch(e){ return false; }
+}
+
+async function ensureEpsDataLoaded(){
+  if(state.epsRaw){ recomputeEpsResults(); return; }
+  loadEpsCacheFromLocal();
+  const gotServer = await loadEpsCacheFromServer();
+  if(!state.epsRaw && !gotServer){
+    state.epsMsg = "Belum ada hasil scan tersimpan. Klik \"🔄 Scan Sekarang\" untuk mulai (sekali scan berlaku untuk semua kombinasi filter).";
+    state.epsMsgError = false;
+  }
+  recomputeEpsResults();
+  render();
+}
+
+function clearEpsCache(){
+  if(!confirm("Hapus cache hasil scan Entry Price Scanner? Anda perlu \"Scan Sekarang\" lagi setelah ini.")) return;
+  state.epsRaw = null; state.epsResults = [];
+  try{ localStorage.removeItem("ihsg_eps_scan"); }catch(e){}
+  state.epsMsg = "Cache dihapus.";
+  state.epsMsgError = false;
+  render();
+}
+
+// Jumlah hari bursa yang dipakai untuk tiap opsi Periode.
+const EPS_PERIODE_DAYS = { "1w": 5, "2w": 10, "1m": 20 };
+
+// ==========================================================================
+// LANGKAH 2 — dari epsRaw (mentah, mencakup jendela terpanjang), hitung
+// SATU baris hasil per saham sesuai filter yang sedang aktif. Semua
+// filter (periode, broker, konvergensi, dst) beroperasi di sini, di
+// memori, TANPA fetch ulang — makanya instan.
+// ==========================================================================
+function computeEpsRowForStock(ticker, stockRaw, filters, stockMap){
+  const dates = Object.keys(stockRaw.days).sort(); // ascending
+  if(!dates.length) return null;
+  const windowDays = EPS_PERIODE_DAYS[filters.periode] || 5;
+  const periodeDates = dates.slice(-windowDays);
+  if(!periodeDates.length) return null;
+
+  const typesToInclude = filters.broker === "asing" ? ["asing"] : filters.broker === "lokal" ? ["lokal"] : ["asing","lokal"];
+
+  // --- VWAP Buy & Net Buy kumulatif dalam periode terpilih ---
+  let cumBuyVal = 0, cumBuyLot = 0, netBuyPeriode = 0;
+  const brokerNetTotal = {}; // kode broker -> net value, dalam periode & tipe terpilih
+  periodeDates.forEach(d=>{
+    const day = stockRaw.days[d];
+    typesToInclude.forEach(t=>{
+      const b = day[t];
+      cumBuyVal += b.buyVal; cumBuyLot += b.buyLot;
+      netBuyPeriode += (b.buyVal - b.sellVal);
+      Object.entries(b.brokerNet).forEach(([code,net])=>{ brokerNetTotal[code] = (brokerNetTotal[code]||0) + net; });
+    });
+  });
+  const vwapBuy = cumBuyLot > 0 ? cumBuyVal / (cumBuyLot*100) : null;
+  if(vwapBuy === null) return null; // tidak ada transaksi beli sama sekali di periode ini -> tidak bisa dinilai
+
+  const s = stockMap.get(ticker);
+  const currentPrice = s ? s.cClose : null;
+  if(currentPrice == null) return null; // saham tidak ada di data live saat ini (delisted/berubah kode dsb)
+  if(currentPrice < EPS_MIN_PRICE) return null;
+  if(epsIsExcludedSector(s.sektor)) return null;
+
+  const gapPct = ((currentPrice - vwapBuy) / vwapBuy) * 100;
+  const areaLabel = Math.abs(gapPct) <= EPS_AREA_PCT ? "DI AREA" : (gapPct < 0 ? "NYANGKUT" : "UNTUNG");
+  const areaTone = areaLabel === "NYANGKUT" ? "down" : areaLabel === "DI AREA" ? "gold" : "up";
+
+  // --- Konvergensi: bandingkan |gap%| VWAP kumulatif hari demi hari,
+  // dalam periode terpilih. "Menyatu" = mengecil, "Menjauh" = membesar,
+  // "Diam" = relatif flat (dalam ±0.5 poin persentase). Butuh min. 2 titik.
+  let konvergensi = "diam", konvergensiVal = 0;
+  if(periodeDates.length >= 2){
+    let runBuyVal = 0, runBuyLot = 0;
+    const gapSeries = [];
+    periodeDates.forEach(d=>{
+      const day = stockRaw.days[d];
+      typesToInclude.forEach(t=>{ runBuyVal += day[t].buyVal; runBuyLot += day[t].buyLot; });
+      if(runBuyLot > 0){
+        const vwapAtDay = runBuyVal/(runBuyLot*100);
+        gapSeries.push(Math.abs((currentPrice - vwapAtDay)/vwapAtDay*100));
+      }
+    });
+    if(gapSeries.length >= 2){
+      konvergensiVal = gapSeries[gapSeries.length-1] - gapSeries[0];
+      if(konvergensiVal <= -0.5) konvergensi = "menyatu";
+      else if(konvergensiVal >= 0.5) konvergensi = "menjauh";
+      else konvergensi = "diam";
+    }
+  }
+  const konvergensiIcon = konvergensi === "menyatu" ? "⇄" : konvergensi === "menjauh" ? "↔" : "▶";
+
+  // --- Tanjakan 10H: tren net-buy kumulatif selama EPS_TANJAKAN_WINDOW
+  // hari bursa TERAKHIR (independen dari filter Periode di atas — selalu
+  // 10 hari, sesuai nama fiturnya), dibagi 2 paruh, dibandingkan.
+  const tj10Dates = dates.slice(-EPS_TANJAKAN_WINDOW);
+  let tanjakan = "diam", tanjakanSlope = 0, tanjakanScore = 0, tanjakanTopBroker = "-";
+  if(tj10Dates.length >= 4){
+    const dailyNet = tj10Dates.map(d=>{
+      const day = stockRaw.days[d];
+      return typesToInclude.reduce((a,t)=> a + (day[t].buyVal - day[t].sellVal), 0);
+    });
+    const half = Math.floor(dailyNet.length/2);
+    const firstHalfAvg = dailyNet.slice(0,half).reduce((a,b)=>a+b,0) / (half||1);
+    const secondHalfAvg = dailyNet.slice(half).reduce((a,b)=>a+b,0) / (dailyNet.length-half||1);
+    const upDays = dailyNet.filter(v=>v>0).length;
+    tanjakanScore = Math.round((upDays/dailyNet.length)*100);
+    tanjakan = secondHalfAvg > firstHalfAvg ? "menanjak" : "diam";
+    const scale = Math.max(1, Math.abs(firstHalfAvg));
+    tanjakanSlope = (secondHalfAvg - firstHalfAvg) / scale;
+
+    const tjBrokerNet = {};
+    tj10Dates.forEach(d=>{
+      const day = stockRaw.days[d];
+      typesToInclude.forEach(t=> Object.entries(day[t].brokerNet).forEach(([code,net])=>{ tjBrokerNet[code]=(tjBrokerNet[code]||0)+net; }));
+    });
+    const tjTop = Object.entries(tjBrokerNet).sort((a,b)=>b[1]-a[1])[0];
+    tanjakanTopBroker = tjTop ? tjTop[0] : "-";
+  }
+  const tanjakanIcon = tanjakan === "menanjak" ? "▲" : "▶";
+
+  // --- Top Broker & Tipe (dari total net value periode terpilih) ---
+  const topBrokerEntry = Object.entries(brokerNetTotal).sort((a,b)=>b[1]-a[1])[0];
+  const topBroker = topBrokerEntry ? topBrokerEntry[0] : "-";
+  const topBrokerTipe = topBroker !== "-" ? epsBrokerType(topBroker) : "-";
+  const topBrokerShare = topBrokerEntry && netBuyPeriode !== 0 ? Math.min(1, Math.abs(topBrokerEntry[1]) / Math.abs(netBuyPeriode || topBrokerEntry[1])) : 0;
+
+  // --- Mutu (0-100): kombinasi konsistensi arah (net buy positif berapa
+  // hari dari total hari yang ada data) + konsentrasi broker dominan.
+  // Heuristik sendiri, BUKAN dari sumber luar — lihat catatan di atas.
+  const daysWithBuy = periodeDates.filter(d=> typesToInclude.some(t=>stockRaw.days[d][t].buyVal>0)).length;
+  const consistencyScore = periodeDates.length ? (daysWithBuy/periodeDates.length)*100 : 0;
+  const concentrationScore = Math.min(100, topBrokerShare*100);
+  const mutu = Math.round(consistencyScore*0.5 + concentrationScore*0.5);
+
+  // --- Score akhir (0-100): gabungan Mutu, Tanjakan, dan kedekatan ke
+  // VWAP (semakin dekat/"DI AREA" semakin bagus untuk entry). ---
+  const proximityScore = Math.max(0, 100 - Math.min(100, Math.abs(gapPct) * 5));
+  const score = Math.round(mutu*0.4 + tanjakanScore*0.3 + proximityScore*0.3);
+
+  return {
+    ticker, nama: s.name || "-", harga: currentPrice, sektor: s.sektor,
+    vwapBuy, gapPct, areaLabel, areaTone,
+    konvergensi, konvergensiIcon, konvergensiVal,
+    tanjakan, tanjakanIcon, tanjakanSlope, tanjakanScore, tanjakanTopBroker,
+    mutu, netBuy: netBuyPeriode, score,
+    topBroker, topBrokerTipe
+  };
+}
+
+function recomputeEpsResults(){
+  if(!state.epsRaw){ state.epsResults = []; return; }
+  const filters = state.epsFilters;
+  // enriched() dibangun SEKALI di sini (bukan per-saham di dalam loop) —
+  // dia lumayan berat (dihitung dari seluruh state.stocks), jadi kalau
+  // dipanggil ulang per-ticker di dalam computeEpsRowForStock() bisa jadi
+  // O(n²) dan bikin filter yang harusnya instan malah lag untuk ratusan saham.
+  const stockMap = new Map(enriched().map(x=>[x.ticker, x]));
+  const rows = [];
+  Object.entries(state.epsRaw.byStock).forEach(([ticker, stockRaw])=>{
+    const row = computeEpsRowForStock(ticker, stockRaw, filters, stockMap);
+    if(!row) return;
+    if(filters.konvergensi !== "all" && row.konvergensi !== filters.konvergensi) return;
+    if(filters.tanjakan === "menanjak" && row.tanjakan !== "menanjak") return;
+    if(filters.minMutu > 0 && row.mutu < filters.minMutu) return;
+    if(filters.minAkum > 0 && Math.abs(row.netBuy) < filters.minAkum) return;
+    if(filters.minGap === "dekat" && Math.abs(row.gapPct) > EPS_AREA_PCT) return;
+    if(filters.minGap === "nyangkut" && row.areaLabel !== "NYANGKUT") return;
+    rows.push(row);
+  });
+
+  const urutKeys = [...filters.urut];
+  const sorters = {
+    konvergensi: (a,b) => (a.konvergensi==="menyatu"?0:a.konvergensi==="diam"?1:2) - (b.konvergensi==="menyatu"?0:b.konvergensi==="diam"?1:2) || a.konvergensiVal - b.konvergensiVal,
+    tanjakan: (a,b) => (b.tanjakan==="menanjak"?1:0) - (a.tanjakan==="menanjak"?1:0) || b.tanjakanScore - a.tanjakanScore,
+    mutu: (a,b) => b.mutu - a.mutu,
+    terdekat: (a,b) => Math.abs(a.gapPct) - Math.abs(b.gapPct)
+  };
+  rows.sort((a,b)=>{
+    for(const key of (urutKeys.length ? urutKeys : ["mutu"])){
+      const fn = sorters[key];
+      if(!fn) continue;
+      const d = fn(a,b);
+      if(d !== 0) return d;
+    }
+    return b.score - a.score;
+  });
+
+  state.epsResults = rows;
+}
+
+function toggleEpsSort(key){
+  const s = state.epsFilters.urut;
+  if(s.has(key)) s.delete(key); else s.add(key);
+  recomputeEpsResults();
+  render();
+}
+
+function setEpsFilter(key, val){
+  state.epsFilters[key] = val;
+  recomputeEpsResults();
+  render();
+}
+
+function exportEpsToCsv(){
+  const rows = state.epsResults;
+  if(!rows.length) return alert("Belum ada hasil scan untuk diekspor.");
+  const header = ["Kode","Nama","Harga","VWAP Buy","Gap %","Area","Konvergensi","Tanjakan 10H","Mutu","Net Buy","Score","Top Broker","Tipe"];
+  const lines = [header.join(",")];
+  rows.forEach(r=>{
+    lines.push([
+      r.ticker, `"${(r.nama||"").replace(/"/g,'""')}"`, Math.round(r.harga), Math.round(r.vwapBuy),
+      r.gapPct.toFixed(2), r.areaLabel, r.konvergensi, r.tanjakan, r.mutu, Math.round(r.netBuy), r.score, r.topBroker, r.topBrokerTipe
+    ].join(","));
+  });
+  const blob = new Blob([lines.join("\\n")], { type: "text/csv;charset=utf-8;" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url; a.download = `EntryPriceScanner_${todayLocalISO()}.csv`;
+  document.body.appendChild(a); a.click(); document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
+function epsSegBtn(group, key, label, active){
+  return `<button type="button" class="btn ${active?'btn-primary':'btn-outline'}" data-eps-filter="${group}" data-eps-value="${key}" style="padding:8px 12px;font-size:12px;">${label}</button>`;
+}
+function epsSortBtn(key, label){
+  const active = state.epsFilters.urut.has(key);
+  return `<button type="button" class="btn ${active?'btn-primary':'btn-outline'}" data-eps-sort="${key}" style="padding:8px 12px;font-size:12px;">${label}</button>`;
+}
+
+function renderEntryPriceScanner(){
+  const f = state.epsFilters;
+  const raw = state.epsRaw;
+  const rows = state.epsResults;
+
+  const infoPanel = `
+    <details class="panel" id="epsInfoPanel" style="flex-direction:column;align-items:stretch;" ${state.epsInfoOpen?"open":""}>
+      <summary style="cursor:pointer;font-weight:700;font-size:14px;list-style:none;display:flex;justify-content:space-between;align-items:center;">
+        <span>📖 Logika &amp; Cara Pakai Entry Price Scanner</span><span style="color:var(--muted);font-size:11px;">${state.epsInfoOpen?"▲ Tutup":"▼ Buka"}</span>
+      </summary>
+      <div style="margin-top:16px;display:flex;flex-direction:column;gap:16px;font-size:12.5px;line-height:1.7;color:var(--text);">
+        <div>
+          <div style="font-weight:700;margin-bottom:6px;">Logika di baliknya</div>
+          <div style="color:var(--muted);">
+            Setiap broker punya <b>harga rata-rata beli</b> (VWAP Buy) = total nilai beli ÷ total volume beli.
+            Kalau harga sekarang <b>di bawah</b> rata-rata broker itu, broker tersebut sedang rugi. Orang yang rugi cenderung <i>menahan</i> atau <i>menambah</i>, bukan menjual murah.
+            Sebaliknya, kalau harga sudah jauh <b>di atas</b> rata-rata mereka, mereka sudah untung dan rawan ambil untung — saham seperti itu dilewati.
+          </div>
+          <div style="margin-top:8px;"><span style="color:var(--teal);font-weight:700;">NYANGKUT</span> — Harga di bawah VWAP broker. Ada dorongan mempertahankan harga.</div>
+          <div><span style="color:var(--teal);font-weight:700;">DI AREA</span> — Harga masih dalam ±${EPS_AREA_PCT}% dari VWAP. Level ini biasanya dijaga.</div>
+        </div>
+        <div>
+          <div style="font-weight:700;margin-bottom:6px;">Cara pakai</div>
+          <div style="color:var(--muted);">
+            1. Buka tab ini — kalau sudah pernah di-scan, hasil terakhir otomatis tampil.<br>
+            2. Atur filter sesuai kebutuhan (periode, broker, konvergensi, tanjakan, min akumulasi, dst).<br>
+            3. Semua filter berjalan <b>instan</b> — bebas diutak-atik tanpa scan ulang.
+          </div>
+          <div style="margin-top:8px;background:rgba(6,182,212,0.08);border:1px solid rgba(6,182,212,0.25);border-radius:8px;padding:10px 12px;">
+            Tombol <b>🔄 Scan Sekarang</b> menarik ulang seluruh data broker_summary (bisa berat kalau datanya besar) — sekali jalan sudah mencakup semua kombinasi filter (3 periode × asing/lokal/keduanya). Tidak perlu diklik tiap ganti filter.
+          </div>
+        </div>
+        <div>
+          <div style="font-weight:700;margin-bottom:6px;">Arti tiap filter</div>
+          <div style="color:var(--muted);">
+            <div><b style="color:var(--text);">Periode</b> — Rentang data broker: 1 minggu / 2 minggu / 1 bulan (hari bursa).</div>
+            <div><b style="color:var(--text);">Broker</b> — Asing, Lokal, atau Keduanya (klasifikasi best-effort, lihat EPS_FOREIGN_BROKER_CODES di app.js).</div>
+            <div><b style="color:var(--text);">Konvergensi</b> — Menyatu = harga mendekati VWAP (bagus). Menjauh = harga menjauh.</div>
+            <div><b style="color:var(--text);">Tanjakan 10H</b> — ▲ Menanjak = akumulasi broker 10 hari terakhir naik terus.</div>
+            <div><b style="color:var(--text);">Min Akum</b> — Nilai akumulasi (net buy) minimal dalam periode terpilih.</div>
+            <div><b style="color:var(--text);">Min Gap</b> — "Terdekat VWAP" = |gap| ≤ ${EPS_AREA_PCT}%. "Nyangkut" = harga di bawah VWAP.</div>
+            <div><b style="color:var(--text);">Urut</b> — Bisa digabung beberapa sekaligus, diterapkan berurutan.</div>
+          </div>
+          <div style="margin-top:8px;background:rgba(234,179,8,0.08);border:1px solid rgba(234,179,8,0.2);border-radius:8px;padding:10px 12px;color:var(--gold);">
+            Saham berharga di bawah Rp${EPS_MIN_PRICE} dan sektor Properties &amp; Real Estate diblokir otomatis untuk mengurangi jebakan.
+          </div>
+        </div>
+      </div>
+    </details>`;
+
+  const filterPanel = `
+    <div class="panel" style="flex-direction:column;align-items:stretch;">
+      <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;margin-bottom:14px;">
+        <div class="filter-section-title" style="margin:0;">🎯 Entry Price Scanner <span class="pill pill-teal">BROKER TRAP</span><span class="line"></span></div>
+        <div style="font-size:11px;color:var(--muted);">
+          ${raw ? `Server: ${raw.stockCount} saham · ${escapeHtml(f.periode)} · ${escapeHtml(f.broker)} · ${new Date(raw.scannedAt).toLocaleString('id-ID')}` : "Belum ada data"}
+        </div>
+      </div>
+      <div style="display:flex;flex-wrap:wrap;gap:18px;margin-bottom:12px;">
+        <div>
+          <div style="font-size:10px;color:var(--muted);text-transform:uppercase;font-weight:700;margin-bottom:6px;">Periode</div>
+          <div style="display:flex;gap:6px;">
+            ${epsSegBtn("periode","1w","1 Minggu",f.periode==="1w")}
+            ${epsSegBtn("periode","2w","2 Minggu",f.periode==="2w")}
+            ${epsSegBtn("periode","1m","1 Bulan",f.periode==="1m")}
+          </div>
+        </div>
+        <div>
+          <div style="font-size:10px;color:var(--muted);text-transform:uppercase;font-weight:700;margin-bottom:6px;">Broker</div>
+          <div style="display:flex;gap:6px;">
+            ${epsSegBtn("broker","asing","Asing",f.broker==="asing")}
+            ${epsSegBtn("broker","lokal","Lokal",f.broker==="lokal")}
+            ${epsSegBtn("broker","both","Keduanya",f.broker==="both")}
+          </div>
+        </div>
+        <div>
+          <div style="font-size:10px;color:var(--muted);text-transform:uppercase;font-weight:700;margin-bottom:6px;">Konvergensi</div>
+          <div style="display:flex;gap:6px;">
+            ${epsSegBtn("konvergensi","all","Semua",f.konvergensi==="all")}
+            ${epsSegBtn("konvergensi","menyatu","⇄ Menyatu",f.konvergensi==="menyatu")}
+            ${epsSegBtn("konvergensi","diam","▶ Diam",f.konvergensi==="diam")}
+            ${epsSegBtn("konvergensi","menjauh","↔ Menjauh",f.konvergensi==="menjauh")}
+          </div>
+        </div>
+        <div>
+          <div style="font-size:10px;color:var(--muted);text-transform:uppercase;font-weight:700;margin-bottom:6px;">Tanjakan 10H</div>
+          <div style="display:flex;gap:6px;">
+            ${epsSegBtn("tanjakan","all","Semua",f.tanjakan==="all")}
+            ${epsSegBtn("tanjakan","menanjak","▲ Menanjak",f.tanjakan==="menanjak")}
+          </div>
+        </div>
+      </div>
+      <div style="display:flex;flex-wrap:wrap;gap:18px;align-items:flex-end;">
+        <div>
+          <div style="font-size:10px;color:var(--muted);text-transform:uppercase;font-weight:700;margin-bottom:6px;">Urut (bisa digabung)</div>
+          <div style="display:flex;gap:6px;">
+            ${epsSortBtn("konvergensi","Konvergensi")}
+            ${epsSortBtn("tanjakan","Tanjakan 10H")}
+            ${epsSortBtn("mutu","Mutu")}
+            ${epsSortBtn("terdekat","Terdekat VWAP")}
+          </div>
+        </div>
+        <div class="field" style="max-width:150px;">
+          <label style="font-size:10px;">Min Mutu</label>
+          <select id="epsMinMutu" style="background:rgba(0,0,0,0.2);border:1px solid var(--border);color:var(--text);font-size:12.5px;border-radius:8px;padding:8px 10px;">
+            <option value="0" ${f.minMutu===0?"selected":""}>Semua</option>
+            <option value="50" ${f.minMutu===50?"selected":""}>≥ 50</option>
+            <option value="70" ${f.minMutu===70?"selected":""}>≥ 70</option>
+            <option value="85" ${f.minMutu===85?"selected":""}>≥ 85</option>
+          </select>
+        </div>
+        <div class="field" style="max-width:150px;">
+          <label style="font-size:10px;">Min Akumulasi</label>
+          <select id="epsMinAkum" style="background:rgba(0,0,0,0.2);border:1px solid var(--border);color:var(--text);font-size:12.5px;border-radius:8px;padding:8px 10px;">
+            <option value="0" ${f.minAkum===0?"selected":""}>Semua</option>
+            <option value="100000000" ${f.minAkum===100000000?"selected":""}>≥ 100 Jt</option>
+            <option value="1000000000" ${f.minAkum===1000000000?"selected":""}>≥ 1 M</option>
+            <option value="10000000000" ${f.minAkum===10000000000?"selected":""}>≥ 10 M</option>
+          </select>
+        </div>
+        <div class="field" style="max-width:150px;">
+          <label style="font-size:10px;">Min Gap</label>
+          <select id="epsMinGap" style="background:rgba(0,0,0,0.2);border:1px solid var(--border);color:var(--text);font-size:12.5px;border-radius:8px;padding:8px 10px;">
+            <option value="all" ${f.minGap==="all"?"selected":""}>Semua</option>
+            <option value="dekat" ${f.minGap==="dekat"?"selected":""}>Terdekat VWAP (≤${EPS_AREA_PCT}%)</option>
+            <option value="nyangkut" ${f.minGap==="nyangkut"?"selected":""}>Nyangkut (di bawah VWAP)</option>
+          </select>
+        </div>
+        <div style="display:flex;gap:8px;margin-left:auto;">
+          <button class="btn btn-outline" id="epsCsvBtn" style="color:#22d3ee;border-color:rgba(6,182,212,0.4);">CSV</button>
+          <button class="btn btn-outline" id="epsClearCacheBtn" style="color:#f87171;border-color:rgba(239,68,68,0.4);">Clear Cache</button>
+          <button class="btn btn-primary" id="epsScanBtn" ${state.epsScanning?"disabled":""}>${state.epsScanning?"⏳ Scanning...":"🔄 Scan Sekarang"}</button>
+        </div>
+      </div>
+      ${state.epsMsg ? `<div class="bs-msg ${state.epsMsgError?"bs-msg-error":"bs-msg-ok"}" style="margin-top:12px;">${escapeHtml(state.epsMsg)}</div>` : ""}
+    </div>`;
+
+  const resultsPanel = `
+    <div class="panel" style="flex-direction:column;align-items:stretch;">
+      <div class="filter-section-title">Hasil Scan <span class="count-badge">${rows.length} saham</span><span class="line"></span></div>
+      ${!rows.length ? `<div class="empty-box">${raw ? "Tidak ada saham yang lolos kombinasi filter ini — coba longgarkan Min Mutu/Akumulasi/Gap." : "Belum ada hasil. Klik \"🔄 Scan Sekarang\" di atas untuk mulai."}</div>` : `
+      <div class="table-wrap">
+        <table class="mono">
+          <thead>
+            <tr>
+              <th>#</th><th>Kode</th><th>Nama</th><th>Harga</th><th>VWAP Buy</th><th>Gap %</th><th>Konv</th><th>Tanjakan</th><th>Mutu</th><th>Net Buy</th><th>Score</th><th>Top Broker</th><th>Tipe</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${rows.map((r,i)=>`
+              <tr>
+                <td>${i+1}</td>
+                <td class="ticker-cell"><button class="ticker-link" data-detail="${r.ticker}" title="Lihat detail ${r.ticker}">${r.ticker}</button></td>
+                <td style="white-space:normal;max-width:180px;font-family:'Sora',sans-serif;font-size:12px;">${escapeHtml(r.nama)}</td>
+                <td>${fmtNum(Math.round(r.harga))}</td>
+                <td style="color:var(--gold);">${fmtNum(Math.round(r.vwapBuy))}</td>
+                <td>
+                  <span style="color:${r.gapPct>=0?'var(--up)':'var(--down)'};">${r.gapPct>=0?'+':''}${r.gapPct.toFixed(1)}%</span>
+                  ${pillHtml(r.areaLabel, r.areaTone)}
+                </td>
+                <td title="${r.konvergensiVal.toFixed(2)} poin">${r.konvergensiIcon} ${r.konvergensi}</td>
+                <td title="Top broker tren: ${escapeHtml(r.tanjakanTopBroker)}">${r.tanjakanIcon} ${r.tanjakanSlope.toFixed(1)}x ${r.tanjakanScore}</td>
+                <td>${r.mutu}</td>
+                <td style="color:${r.netBuy>=0?'var(--up)':'var(--down)'};">${r.netBuy>=0?'+':''}${fmtCap(r.netBuy)}</td>
+                <td style="font-weight:700;color:var(--gold);">${r.score}</td>
+                <td>${escapeHtml(r.topBroker)}</td>
+                <td>${pillHtml(r.topBrokerTipe==="asing"?"ASING":r.topBrokerTipe==="lokal"?"LOKAL":"-", r.topBrokerTipe==="asing"?"teal":"muted")}</td>
+              </tr>`).join("")}
+          </tbody>
+        </table>
+      </div>`}
+    </div>`;
+
+  return infoPanel + filterPanel + resultsPanel;
+}
+
+// ==========================================================================
+// KRAKEN FLOW (ORCA) — lihat blok komentar besar di state.orca* di atas
+// untuk penjelasan lengkap arsitektur & keterbatasan datanya.
+// ==========================================================================
+const ORCA_TOP_N = 25;
+const ORCA_BID_OFFER_RATIO_MIN = 2;    // bidVolume >= 2x offerVolume
+const ORCA_ATS_THRESHOLD = 50000000;   // Rp50 juta/transaksi dianggap "besar" (bukan ritel) untuk toggle umum High ATS
+const ORCA_NONREGULAR_PCT_MIN = 30;    // crossingPct >= 30%
+const ORCA_OFFER_SLENDER_RATIO_MAX = 0.15; // offerVolume <= 15% bidVolume (tapi offer masih >0, beda dari No Sell)
+
+const ORCA_FILTER_DEFS = [
+  { key:"bidOffer",    label:"High Bid/Offer",   desc:"Antrian beli jauh lebih tebal dari antrian jual — ada yang menampung." },
+  { key:"ats",         label:"High ATS",         desc:"Average Trade Size besar = transaksi per eksekusi besar = pemain besar, bukan ritel." },
+  { key:"noSell",      label:"No Sell",          desc:"Nyaris tidak ada tekanan jual pada periode itu (antrian jual kosong)." },
+  { key:"closeHigh",   label:"Close High",       desc:"Ditutup di harga tertinggi hari itu — tanda kekuatan." },
+  { key:"nonRegular",  label:"High Non-Regular", desc:"Banyak transaksi crossing/negosiasi di luar pasar reguler." },
+  { key:"topVolume",   label:"Top Volume",       desc:`Top ${ORCA_TOP_N} saham paling ramai secara volume transaksi.` },
+  { key:"frequency",   label:"Frequency",        desc:`Top ${ORCA_TOP_N} saham paling ramai secara frekuensi transaksi.` },
+  { key:"foreignPlus", label:"Foreign +",        desc:"Asing net beli pada jendela waktu terpilih." },
+  { key:"offerSlender",label:"Offer's Slender",  desc:"Antrian jual menipis drastis — sedikit yang mau melepas barang." },
+];
+
+const ORCA_MARKETCAP_OPTIONS = [
+  { key:"all",    label:"Semua", max:null },
+  { key:"1t",     label:"≤1T",   max:1e12 },
+  { key:"5t",     label:"≤5T",   max:5e12 },
+  { key:"10t",    label:"≤10T",  max:10e12 },
+  { key:"50t",    label:"≤50T",  max:50e12 },
+  { key:"100t",   label:"≤100T", max:100e12 },
+  { key:"custom", label:"Custom T", max:null },
+];
+
+function orcaForeignWindowField(duration){
+  if(duration <= 1) return { field:"foreignNet1D", label:"1 Hari" };
+  if(duration <= 5) return { field:"foreignNet5D", label:"5 Hari" };
+  return { field:"foreignNet20D", label:"20 Hari" };
+}
+
+function orcaMarketCapMax(){
+  const opt = ORCA_MARKETCAP_OPTIONS.find(o=>o.key===state.orcaMarketCap);
+  if(!opt) return null;
+  if(opt.key === "custom"){
+    const v = parseFloat(state.orcaCustomCapT);
+    return (v > 0) ? v * 1e12 : null;
+  }
+  return opt.max;
+}
+
+// ==========================================================================
+// Histori bid/offer/value/frequency/nonreg PER HARI dari `flows`, dipakai
+// supaya Durasi (1-7 hari) di Kraken Flow benar-benar mengagregasi semua
+// parameter -- bukan cuma Foreign+ seperti sebelum kolom bid/offer di
+// `flows` ada (lihat sql/07_flows_bid_offer.sql & sync-idx-full.mjs).
+// Ditarik SEKALI (7 hari bursa terakhir, semua emiten) lalu di-cache di
+// state.orcaHistoryByTicker -- computeOrcaResults() menghitung ulang
+// agregat jendela N-hari dari cache ini tiap render, instan, tanpa fetch
+// ulang tiap kali Durasi/filter diubah (pola sama seperti epsRaw di
+// Entry Price Scanner).
+// ==========================================================================
+const ORCA_HISTORY_TRADING_DAYS = 7;
+
+async function loadOrcaHistory(){
+  if(!SUPABASE_URL || !SUPABASE_KEY) return;
+  state.orcaHistoryLoading = true; state.orcaHistoryError = null; render();
+  try{
+    const cutoff = epsCutoffDate(ORCA_HISTORY_TRADING_DAYS);
+    const qs = new URLSearchParams({
+      date: `gte.${cutoff}`,
+      select: "ticker,date,bid,bid_volume,offer,offer_volume,value,frequency,nonreg_value,volume,close,high",
+      order: "date.desc"
+    });
+    const res = await fetch(`${SUPABASE_URL}/flows?${qs}`, { headers: getSupaHeaders(), cache: "no-store" });
+    if(!res.ok) throw new Error(`HTTP ${res.status} ${res.statusText}`);
+    const rows = await res.json();
+    if(rows.message) throw new Error(rows.message);
+
+    // Susun per ticker, simpan hanya ORCA_HISTORY_TRADING_DAYS tanggal
+    // TERBARU yang benar-benar ada datanya untuk ticker itu (tidak semua
+    // saham transaksi tiap hari bursa, mis. suspensi).
+    const byTicker = {};
+    rows.forEach(r=>{
+      const t = String(r.ticker||"").toUpperCase();
+      if(!t || !r.date) return;
+      if(!byTicker[t]) byTicker[t] = [];
+      byTicker[t].push(r);
+    });
+    Object.keys(byTicker).forEach(t=>{
+      byTicker[t].sort((a,b)=> a.date < b.date ? 1 : -1); // terbaru dulu
+      byTicker[t] = byTicker[t].slice(0, ORCA_HISTORY_TRADING_DAYS);
+    });
+
+    state.orcaHistoryByTicker = byTicker;
+    state.orcaHistoryLoadedAt = new Date().toISOString();
+  } catch(e){
+    state.orcaHistoryError = "Gagal menarik histori Kraken Flow: " + e.message + " (filter tetap jalan pakai snapshot hari terakhir).";
+  }
+  state.orcaHistoryLoading = false;
+  render();
+}
+
+function ensureOrcaHistoryLoaded(){
+  if(state.orcaHistoryByTicker || state.orcaHistoryLoading) return;
+  loadOrcaHistory();
+}
+
+// Hitung agregat jendela `duration` hari bursa TERBARU untuk satu ticker
+// dari cache histori. Null kalau ticker itu tidak ada di cache sama
+// sekali (belum ada baris `flows` sejak migration 07 dijalankan) --
+// pemanggil (computeOrcaResults) lalu jatuh balik ke snapshot stocks.
+function orcaWindowAggregate(ticker, duration){
+  const rowsAll = state.orcaHistoryByTicker ? state.orcaHistoryByTicker[ticker] : null;
+  if(!rowsAll || !rowsAll.length) return null;
+  const rows = rowsAll.slice(0, Math.max(1, duration));
+  const latest = rows[0]; // hari bursa paling baru dalam jendela
+
+  let sumValue = 0, sumFreq = 0, sumNonreg = 0, sumVolume = 0;
+  let hasValue = false, hasFreq = false;
+  rows.forEach(r=>{
+    if(r.value != null){ sumValue += Number(r.value)||0; hasValue = true; }
+    if(r.frequency != null){ sumFreq += Number(r.frequency)||0; hasFreq = true; }
+    if(r.nonreg_value != null) sumNonreg += Number(r.nonreg_value)||0;
+    if(r.volume != null) sumVolume += Number(r.volume)||0;
+  });
+
+  return {
+    // Bid/Offer adalah snapshot antrian (state sesaat), jadi dipakai dari
+    // hari PALING BARU dalam jendela -- bukan dijumlah/dirata-rata lintas
+    // hari (menjumlah antrian order book beberapa hari tidak bermakna).
+    bid: latest.bid != null ? Number(latest.bid) : null,
+    bidVolume: latest.bid_volume != null ? Number(latest.bid_volume) : null,
+    offer: latest.offer != null ? Number(latest.offer) : null,
+    offerVolume: latest.offer_volume != null ? Number(latest.offer_volume) : null,
+    cClose: latest.close != null ? Number(latest.close) : null,
+    cHigh: latest.high != null ? Number(latest.high) : null,
+    // ATS & Non-Regular% dihitung dari TOTAL jendela (rata-rata tertimbang),
+    // bukan rata-rata dari rata-rata harian -- lebih akurat kalau frekuensi
+    // hari-hari dalam jendela tidak sama.
+    avgTicket: (hasValue && hasFreq && sumFreq > 0) ? sumValue / sumFreq : null,
+    crossingPct: (hasValue && sumValue > 0) ? (sumNonreg / sumValue) * 100 : null,
+    frequency: hasFreq ? sumFreq : null,
+    cVol: sumVolume,
+    tradingDaysInWindow: rows.length,
+  };
+}
+
+function computeOrcaResults(){
+  const filters = state.orcaFilters;
+  if(!filters.size) return { rows:[], ranked:false, universeSize:0 };
+
+  const capMax = orcaMarketCapMax();
+  const foreignWin = orcaForeignWindowField(state.orcaDuration);
+
+  // Tempel agregat jendela N-hari (dari cache `flows`, lihat
+  // orcaWindowAggregate() di atas) ke tiap saham SEBELUM filter apa pun
+  // dijalankan -- jadi Bid/Offer, ATS, Non-Regular%, Frequency & Volume di
+  // bawah sudah mengikuti Durasi terpilih. Kalau histori belum ke-load
+  // (masih fetch) atau ticker itu belum punya baris histori sama sekali
+  // (migration baru dijalankan / belum pernah sync), field snapshot asli
+  // dari `stocks` (hari terakhir) dipakai sebagai fallback -- jadi tab
+  // tetap terpakai walau data historis belum lengkap.
+  const usingHistory = !!state.orcaHistoryByTicker;
+  let universe = enriched()
+    .map(s=>{
+      const w = usingHistory ? orcaWindowAggregate(s.ticker, state.orcaDuration) : null;
+      if(!w) return { ...s, orcaWindowDays: null };
+      return {
+        ...s,
+        bid: w.bid ?? s.bid, bidVolume: w.bidVolume ?? s.bidVolume,
+        offer: w.offer ?? s.offer, offerVolume: w.offerVolume ?? s.offerVolume,
+        avgTicket: w.avgTicket ?? s.avgTicket, crossingPct: w.crossingPct ?? s.crossingPct,
+        frequency: w.frequency ?? s.frequency, cVol: w.cVol || s.cVol,
+        cClose: w.cClose ?? s.cClose, cHigh: w.cHigh ?? s.cHigh,
+        orcaWindowDays: w.tradingDaysInWindow,
+      };
+    })
+    .filter(s=>{
+      if(s.cClose == null) return false; // suspensi / tanpa harga -> tidak relevan
+      if(capMax != null && (s.marketCap == null || s.marketCap > capMax)) return false;
+      return true;
+    });
+
+  // Rank-based (Top Volume / Frequency) dihitung dari universe SETELAH filter
+  // Market Cap, supaya "Top 25" konsisten dengan kategori cap yang dipilih.
+  const topVolumeTickers = new Set(
+    universe.filter(s=>(s.cVol||0) > 0).sort((a,b)=>(b.cVol||0)-(a.cVol||0)).slice(0, ORCA_TOP_N).map(s=>s.ticker)
+  );
+  const topFreqTickers = new Set(
+    universe.filter(s=>(s.frequency||0) > 0).sort((a,b)=>(b.frequency||0)-(a.frequency||0)).slice(0, ORCA_TOP_N).map(s=>s.ticker)
+  );
+
+  function passesAll(s){
+    for(const key of filters){
+      if(key === "bidOffer"){
+        if(!(s.bidVolume > 0 && s.offerVolume != null && (s.offerVolume === 0 || (s.bidVolume / s.offerVolume) >= ORCA_BID_OFFER_RATIO_MIN))) return false;
+      } else if(key === "ats"){
+        if(!(s.avgTicket != null && s.avgTicket >= ORCA_ATS_THRESHOLD)) return false;
+      } else if(key === "noSell"){
+        if(!(s.offerVolume != null && s.offerVolume <= 0 && s.bidVolume > 0)) return false;
+      } else if(key === "closeHigh"){
+        if(!(s.cClose != null && s.cHigh != null && s.cClose >= s.cHigh - 1e-6)) return false;
+      } else if(key === "nonRegular"){
+        if(!(s.crossingPct != null && s.crossingPct >= ORCA_NONREGULAR_PCT_MIN)) return false;
+      } else if(key === "topVolume"){
+        if(!topVolumeTickers.has(s.ticker)) return false;
+      } else if(key === "frequency"){
+        if(!topFreqTickers.has(s.ticker)) return false;
+      } else if(key === "foreignPlus"){
+        const v = s[foreignWin.field];
+        if(!(v != null && v > 0)) return false;
+      } else if(key === "offerSlender"){
+        if(!(s.offerVolume > 0 && s.bidVolume > 0 && (s.offerVolume / s.bidVolume) <= ORCA_OFFER_SLENDER_RATIO_MAX)) return false;
+        if(state.orcaMinAts > 0 && !(s.avgTicket != null && s.avgTicket >= state.orcaMinAts)) return false;
+        if(state.orcaMinFreq > 0 && !(s.frequency != null && s.frequency >= state.orcaMinFreq)) return false;
+      }
+    }
+    return true;
+  }
+
+  let rows = universe.filter(passesAll);
+
+  if(state.orcaSearch.trim()){
+    const q = state.orcaSearch.trim().toUpperCase();
+    rows = rows.filter(s => s.ticker.includes(q) || (s.name||"").toUpperCase().includes(q));
+  }
+
+  // Skor komposit heuristik v1 — HANYA dipakai untuk urutan tampil, bukan
+  // untuk lolos/tidaknya filter (itu murni AND di atas). Bukan dari sumber
+  // luar mana pun, dan boleh disetel ulang kalau ada masukan lebih baik.
+  rows = rows.map(s=>{
+    const bidOfferRatio = (s.bidVolume > 0 && s.offerVolume > 0) ? s.bidVolume / s.offerVolume : (s.bidVolume > 0 && s.offerVolume === 0 ? 999 : null);
+    const foreignVal = s[foreignWin.field];
+    const score = (bidOfferRatio != null ? Math.min(bidOfferRatio, 20) * 2 : 0)
+      + (s.avgTicket ? Math.min(s.avgTicket / 1e9, 10) * 3 : 0)
+      + (foreignVal > 0 ? Math.min(foreignVal / 1e9, 20) * 2 : 0)
+      + (s.crossingPct ? Math.min(s.crossingPct, 100) * 0.3 : 0)
+      + (s.frequency ? Math.min(s.frequency / 1000, 20) : 0)
+      + (s.cVol ? Math.min(s.cVol / 1e7, 20) : 0);
+    return { ...s, orcaBidOfferRatio: bidOfferRatio, orcaForeignVal: foreignVal, orcaScore: score };
+  }).sort((a,b)=> b.orcaScore - a.orcaScore).slice(0, ORCA_TOP_N);
+
+  return { rows, ranked:true, foreignWinLabel: foreignWin.label, universeSize: universe.length, usingHistory };
+}
+
+function toggleOrcaFilter(key){
+  state.orcaFilters.has(key) ? state.orcaFilters.delete(key) : state.orcaFilters.add(key);
+  render();
+}
+
+function setOrcaSeg(group, value){
+  if(group === "duration") state.orcaDuration = Number(value) || 1;
+  else if(group === "cap") state.orcaMarketCap = value;
+  else if(group === "minAts") state.orcaMinAts = Number(value) || 0;
+  else if(group === "minFreq") state.orcaMinFreq = Number(value) || 0;
+  render();
+}
+
+function resetOrcaFilters(){
+  state.orcaFilters = new Set();
+  state.orcaDuration = 3;
+  state.orcaMarketCap = "all";
+  state.orcaCustomCapT = "";
+  state.orcaMinAts = 0;
+  state.orcaMinFreq = 0;
+  state.orcaSearch = "";
+  render();
+}
+
+function orcaFilterChip(def){
+  const active = state.orcaFilters.has(def.key);
+  return `<button type="button" class="btn ${active?'btn-primary':'btn-outline'}" data-orca-filter="${def.key}" title="${escapeHtml(def.desc)}" style="padding:9px 14px;font-size:12px;">${active?'✓ ':''}${def.label}</button>`;
+}
+
+function orcaSegBtn(group, key, label, active){
+  return `<button type="button" class="btn ${active?'btn-primary':'btn-outline'}" data-orca-seg="${group}" data-orca-value="${key}" style="padding:7px 12px;font-size:11.5px;">${label}</button>`;
+}
+
+function renderKrakenFlow(){
+  const result = computeOrcaResults();
+  const rows = result.rows;
+
+  const infoPanel = `
+    <details class="panel" id="orcaInfoPanel" style="flex-direction:column;align-items:stretch;" ${state.orcaInfoOpen?"open":""}>
+      <summary style="cursor:pointer;font-weight:700;font-size:14px;list-style:none;display:flex;justify-content:space-between;align-items:center;">
+        <span>⬢ Cara Pakai &amp; Arti Parameter — Kraken Flow (ORCA)</span><span style="color:var(--muted);font-size:11px;">${state.orcaInfoOpen?"▲ Tutup":"▼ Buka"}</span>
+      </summary>
+      <div style="margin-top:16px;display:flex;flex-direction:column;gap:14px;font-size:12.5px;line-height:1.7;color:var(--text);">
+        <div>
+          <div style="font-weight:700;margin-bottom:6px;">Cara pakai</div>
+          <div style="color:var(--muted);">
+            1. Pilih <b>minimal satu filter</b> dari daftar parameter (bisa dikombinasikan).<br>
+            2. Atur Durasi (1-7 hari) dan batas Kapitalisasi Pasar bila perlu.<br>
+            3. Hasil langsung tampil — Top ${ORCA_TOP_N}, tanpa perlu tombol scan.
+          </div>
+          <div style="margin-top:8px;background:rgba(234,179,8,0.08);border:1px solid rgba(234,179,8,0.2);border-radius:8px;padding:10px 12px;color:var(--gold);">
+            Makin banyak filter digabung, makin sedikit dan makin selektif hasilnya (logika AND — harus lolos SEMUA filter aktif). Kalau hasilnya kosong, kurangi filternya.
+          </div>
+        </div>
+        <div>
+          <div style="font-weight:700;margin-bottom:6px;">Arti tiap parameter</div>
+          <div style="color:var(--muted);display:flex;flex-direction:column;gap:4px;">
+            ${ORCA_FILTER_DEFS.map(d=>`<div><b style="color:var(--text);">${d.label}</b> — ${d.desc}</div>`).join("")}
+          </div>
+        </div>
+        <div style="background:rgba(6,182,212,0.08);border:1px solid rgba(6,182,212,0.25);border-radius:8px;padding:10px 12px;">
+          <b style="color:var(--teal);">Catatan data:</b> Bid/Offer, ATS, Non-Regular%, Frequency & Volume sekarang mengikuti <b>Durasi (1-7 hari bursa) yang dipilih</b>, dihitung dari histori harian asli di tabel <code>flows</code> (bukan cuma snapshot hari terakhir lagi) — ATS & Non-Regular% dijumlah dulu lalu dibagi (rata-rata tertimbang), Bid/Offer diambil dari hari bursa paling baru dalam jendela (antrian order book tidak dijumlah lintas hari). Foreign+ tetap memakai agregat 1/5/20 hari yang memang sudah ada. Kalau sebuah saham belum punya baris histori sama sekali (mis. baru pertama kali disinkronkan setelah fitur ini aktif), filternya otomatis jatuh balik ke snapshot hari terakhir supaya tidak hilang dari hasil.
+          ${state.orcaHistoryLoading ? `<div style="margin-top:6px;color:var(--gold);">⏳ Menarik histori 7 hari bursa terakhir dari <code>flows</code>...</div>` : ""}
+          ${state.orcaHistoryError ? `<div style="margin-top:6px;color:#f87171;">${escapeHtml(state.orcaHistoryError)}</div>` : ""}
+          ${(!state.orcaHistoryLoading && state.orcaHistoryByTicker) ? `<div style="margin-top:6px;color:var(--muted);">Histori dimuat (${Object.keys(state.orcaHistoryByTicker).length} emiten punya baris <code>flows</code> dalam jendela ini)${state.orcaHistoryLoadedAt ? " — " + new Date(state.orcaHistoryLoadedAt).toLocaleTimeString("id-ID") : ""}. <button type="button" id="orcaHistoryRefreshBtn" style="background:none;border:none;color:var(--teal);text-decoration:underline;cursor:pointer;font-size:11.5px;padding:0;">Muat ulang</button></div>` : ""}
+        </div>
+      </div>
+    </details>`;
+
+  const filterChips = ORCA_FILTER_DEFS.map(orcaFilterChip).join("");
+
+  const strongPanel = `
+    <div style="margin-top:14px;padding-top:14px;border-top:1px dashed var(--border);">
+      <div style="font-size:10px;color:var(--muted);text-transform:uppercase;font-weight:700;margin-bottom:8px;">Filter Kuat · khusus Offer's Slender</div>
+      <div style="display:flex;flex-wrap:wrap;gap:18px;">
+        <div>
+          <div style="font-size:10px;color:var(--muted);margin-bottom:6px;">Min ATS</div>
+          <div style="display:flex;gap:6px;">
+            ${orcaSegBtn("minAts","0","Semua",state.orcaMinAts===0)}
+            ${orcaSegBtn("minAts","2000000000","≥2M",state.orcaMinAts===2000000000)}
+            ${orcaSegBtn("minAts","5000000000","≥5M",state.orcaMinAts===5000000000)}
+          </div>
+        </div>
+        <div>
+          <div style="font-size:10px;color:var(--muted);margin-bottom:6px;">Min Freq</div>
+          <div style="display:flex;gap:6px;">
+            ${orcaSegBtn("minFreq","0","Semua",state.orcaMinFreq===0)}
+            ${orcaSegBtn("minFreq","2000","≥2k",state.orcaMinFreq===2000)}
+            ${orcaSegBtn("minFreq","5000","≥5k",state.orcaMinFreq===5000)}
+          </div>
+        </div>
+      </div>
+      <div style="font-size:11px;color:var(--muted);margin-top:6px;">Nilai mengikuti angka di kartu (ATS dalam Miliar Rp — "M" = Miliar, Freq = jumlah transaksi hari itu). Semua = tak dibatasi. Hanya aktif kalau filter <b>Offer's Slender</b> dinyalakan.</div>
+    </div>`;
+
+  const durationBtns = [1,2,3,4,5,6,7].map(d=>orcaSegBtn("duration",String(d),`${d}H`,state.orcaDuration===d)).join("");
+  const capBtns = ORCA_MARKETCAP_OPTIONS.map(o=>orcaSegBtn("cap",o.key,o.label,state.orcaMarketCap===o.key)).join("");
+  const capLabel = ORCA_MARKETCAP_OPTIONS.find(o=>o.key===state.orcaMarketCap)?.label || "Semua";
+
+  const filterPanel = `
+    <div class="panel" style="flex-direction:column;align-items:stretch;">
+      <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;margin-bottom:14px;">
+        <div class="filter-section-title" style="margin:0;">⬢ Filter Order Flow — Bandarmology<span class="line"></span></div>
+        <input id="orcaSearchInput" type="text" placeholder="Cari emiten (mis. IATA)" value="${escapeHtml(state.orcaSearch)}" style="background:rgba(0,0,0,0.2);border:1px solid var(--border);color:var(--text);font-size:12.5px;border-radius:8px;padding:8px 12px;width:180px;">
+      </div>
+      <div style="font-size:10px;color:var(--muted);text-transform:uppercase;font-weight:700;margin-bottom:8px;">Parameter · bisa dikombinasikan · Top ${ORCA_TOP_N} hasil</div>
+      <div style="display:flex;flex-wrap:wrap;gap:8px;">${filterChips}</div>
+      ${strongPanel}
+      <div style="display:flex;flex-wrap:wrap;gap:24px;margin-top:16px;padding-top:14px;border-top:1px dashed var(--border);">
+        <div>
+          <div style="font-size:10px;color:var(--muted);text-transform:uppercase;font-weight:700;margin-bottom:8px;">Durasi · max 7 hari</div>
+          <div style="display:flex;gap:6px;flex-wrap:wrap;">${durationBtns}</div>
+        </div>
+        <div>
+          <div style="font-size:10px;color:var(--muted);text-transform:uppercase;font-weight:700;margin-bottom:8px;">Market Cap · maksimal ${escapeHtml(capLabel)}</div>
+          <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;">
+            ${capBtns}
+            ${state.orcaMarketCap==="custom" ? `<input id="orcaCustomCapInput" type="number" min="0" step="0.1" placeholder="mis. 25" value="${escapeHtml(state.orcaCustomCapT)}" style="background:rgba(0,0,0,0.2);border:1px solid var(--border);color:var(--text);font-size:12px;border-radius:8px;padding:7px 10px;width:90px;"> <span style="font-size:11px;color:var(--muted);">Triliun Rp</span>` : ""}
+          </div>
+        </div>
+        <div style="margin-left:auto;display:flex;align-items:flex-end;">
+          <button class="btn btn-outline" id="orcaResetBtn" style="color:#f87171;border-color:rgba(239,68,68,0.4);">↺ Reset ORCA</button>
+        </div>
+      </div>
+    </div>`;
+
+  const resultsPanel = `
+    <div class="panel" style="flex-direction:column;align-items:stretch;">
+      <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;margin-bottom:14px;">
+        <div class="filter-section-title" style="margin:0;">⊙ Hasil ORCA <span class="count-badge">${result.ranked ? rows.length : 0} saham</span><span class="line"></span></div>
+        ${rows.length ? `<button class="btn btn-outline" id="orcaCsvBtn" style="color:#22d3ee;border-color:rgba(6,182,212,0.4);">CSV</button>` : ""}
+      </div>
+      ${!result.ranked
+        ? `<div class="empty-box">⬢ Pilih minimal satu filter di atas — hasil akan langsung tampil di sini tanpa perlu scan.<br>${result.usingHistory ? `Data diagregasi dari histori ${ORCA_HISTORY_TRADING_DAYS} hari bursa terakhir (${state.stocks.length} emiten diikuti).` : `Data diambil dari snapshot Bandarmology terakhir (${state.stocks.length} emiten)${state.orcaHistoryLoading ? " — histori sedang dimuat..." : ""}.`}</div>`
+        : !rows.length
+          ? `<div class="empty-box">Tidak ada saham yang lolos kombinasi filter ini (dari ${result.universeSize} emiten setelah filter Market Cap) — coba kurangi filter atau longgarkan Market Cap.</div>`
+          : `<div class="table-wrap">
+        <table class="mono">
+          <thead>
+            <tr>
+              <th>#</th><th>Kode</th><th>Nama</th><th>Harga</th><th>1D%</th><th>Bid</th><th>Offer</th><th>B/O</th><th>ATS${result.usingHistory?` (${state.orcaDuration}H)`:""}</th><th>Freq${result.usingHistory?` (${state.orcaDuration}H)`:""}</th><th>Non-Reg%${result.usingHistory?` (${state.orcaDuration}H)`:""}</th><th>Foreign (${escapeHtml(result.foreignWinLabel||"")})</th><th>Volume</th><th>Mkt Cap</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${rows.map((r,i)=>`
+              <tr>
+                <td>${i+1}</td>
+                <td class="ticker-cell"><button class="ticker-link" data-detail="${r.ticker}" title="Lihat detail ${r.ticker}">${r.ticker}</button></td>
+                <td style="white-space:normal;max-width:160px;font-family:'Sora',sans-serif;font-size:12px;">${escapeHtml(r.name)}</td>
+                <td>${fmtNum(r.cClose)}</td>
+                <td style="color:${(r.changePct||0)>=0?'var(--up)':'var(--down)'};">${r.changePct!=null?((r.changePct>=0?'+':'')+r.changePct.toFixed(1)+'%'):'-'}</td>
+                <td>${fmtNum(r.bidVolume)}</td>
+                <td>${fmtNum(r.offerVolume)}</td>
+                <td>${r.orcaBidOfferRatio!=null ? (r.orcaBidOfferRatio>=999?'∞':r.orcaBidOfferRatio.toFixed(1)+'x') : '-'}</td>
+                <td>${r.avgTicket!=null?fmtCap(r.avgTicket):'-'}</td>
+                <td>${fmtNum(r.frequency)}</td>
+                <td>${r.crossingPct!=null?r.crossingPct.toFixed(1)+'%':'-'}</td>
+                <td style="color:${(r.orcaForeignVal||0)>=0?'var(--up)':'var(--down)'};">${r.orcaForeignVal!=null?fmtRp(r.orcaForeignVal):'-'}</td>
+                <td>${fmtCap(r.cVol)}</td>
+                <td>${r.marketCap!=null?fmtCap(r.marketCap):'-'}</td>
+              </tr>`).join("")}
+          </tbody>
+        </table>
+      </div>`}
+    </div>`;
+
+  return infoPanel + filterPanel + resultsPanel;
+}
+
+function exportOrcaToCsv(){
+  const result = computeOrcaResults();
+  const rows = result.rows;
+  if(!rows.length) return alert("Belum ada hasil ORCA untuk diekspor.");
+  const header = ["Kode","Nama","Harga","1D%","Bid","Offer","B/O Ratio","ATS","Frekuensi","Non-Reg %","Foreign","Volume","Market Cap"];
+  const lines = [header.join(",")];
+  rows.forEach(r=>{
+    lines.push([
+      r.ticker, `"${(r.name||"").replace(/"/g,'""')}"`, Math.round(r.cClose||0), (r.changePct||0).toFixed(2),
+      Math.round(r.bidVolume||0), Math.round(r.offerVolume||0), r.orcaBidOfferRatio!=null?r.orcaBidOfferRatio.toFixed(2):"",
+      Math.round(r.avgTicket||0), Math.round(r.frequency||0), r.crossingPct!=null?r.crossingPct.toFixed(2):"",
+      Math.round(r.orcaForeignVal||0), Math.round(r.cVol||0), Math.round(r.marketCap||0)
+    ].join(","));
+  });
+  const blob = new Blob([lines.join("\n")], { type: "text/csv;charset=utf-8;" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url; a.download = `KrakenFlowORCA_${todayLocalISO()}.csv`;
+  document.body.appendChild(a); a.click(); document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
 function attachContentEvents(){
   const advToggleBtn = document.getElementById("advToggleBtn");
   if(advToggleBtn) advToggleBtn.onclick = () => { state.showAdvancedFilters = !state.showAdvancedFilters; render(); };
@@ -6509,6 +7582,8 @@ function attachContentEvents(){
 
   const loadPresetBtn = document.getElementById("loadPresetBtn");
   if(loadPresetBtn) loadPresetBtn.onclick = loadSelectedPreset;
+  const ruleBuilderToggle = document.getElementById("ruleBuilderToggle");
+  if(ruleBuilderToggle) ruleBuilderToggle.onclick = () => { state.ruleBuilderOpen = !state.ruleBuilderOpen; render(); };
 
   const updatePresetBtn = document.getElementById("updatePresetBtn");
   if(updatePresetBtn) updatePresetBtn.onclick = updateSelectedPreset;
@@ -6645,20 +7720,13 @@ function attachContentEvents(){
   const saveBt = document.getElementById("saveBacktestBtn");
   if(saveBt) saveBt.onclick = saveToBacktest;
   
-  document.querySelectorAll("[data-del-bt-kriteria]").forEach(btn => {
-    btn.onclick = () => deleteBacktestGroup(decodeURIComponent(btn.dataset.delBtKriteria));
+  document.querySelectorAll("[data-del-bt]").forEach(btn => {
+    btn.onclick = () => deleteBacktestSession(parseInt(btn.dataset.delBt));
   });
 
-  document.querySelectorAll("[data-export-bt-kriteria]").forEach(btn => {
-    btn.onclick = () => exportBacktestGroupToExcel(decodeURIComponent(btn.dataset.exportBtKriteria));
+  document.querySelectorAll("[data-export-bt]").forEach(btn => {
+    btn.onclick = () => exportBacktestToExcel(parseInt(btn.dataset.exportBt));
   });
-
-  const btFromInput = document.getElementById("btFromInput");
-  if(btFromInput) btFromInput.onchange = (e) => { state.btFrom = e.target.value; render(); };
-  const btToInput = document.getElementById("btToInput");
-  if(btToInput) btToInput.onchange = (e) => { state.btTo = e.target.value; render(); };
-  const btClearFilterBtn = document.getElementById("btClearFilterBtn");
-  if(btClearFilterBtn) btClearFilterBtn.onclick = () => { state.btFrom = ""; state.btTo = ""; render(); };
 
   const exportAllBtBtn = document.getElementById("exportAllBtBtn");
   if(exportAllBtBtn) exportAllBtBtn.onclick = exportAllBacktestToExcel;
@@ -6734,13 +7802,17 @@ function attachContentEvents(){
   document.querySelectorAll("[data-del-bt-item]").forEach(btn=>{
     btn.onclick = ()=>{ const [sid,tk] = btn.dataset.delBtItem.split("|"); deleteBacktestItem(sid,tk); };
   });
+  document.querySelectorAll("[data-bt-add-porto]").forEach(btn=>{
+    btn.onclick = ()=>{ const [sid,tk] = btn.dataset.btAddPorto.split("|"); addBacktestItemToPortfolio(sid,tk); };
+  });
   const btManualAddBtn = document.getElementById("btManualAddBtn");
   if(btManualAddBtn) btManualAddBtn.onclick = ()=>{
     addManualBacktest(
       document.getElementById("btManualSession").value,
       document.getElementById("btManualTicker").value,
       document.getElementById("btManualPrice").value,
-      document.getElementById("btManualNote").value
+      document.getElementById("btManualNote").value,
+      document.getElementById("btManualDate").value
     );
   };
 
@@ -6829,6 +7901,55 @@ function attachContentEvents(){
   const tbHistoryBtn = document.getElementById("tbHistoryBtn");
   if(tbHistoryBtn) tbHistoryBtn.onclick = loadTargetHistory;
 
+  // --- Entry Price Scanner ---
+  const epsScanBtn = document.getElementById("epsScanBtn");
+  if(epsScanBtn) epsScanBtn.onclick = runEntryPriceScan;
+  const epsCsvBtn = document.getElementById("epsCsvBtn");
+  if(epsCsvBtn) epsCsvBtn.onclick = exportEpsToCsv;
+  const epsClearCacheBtn = document.getElementById("epsClearCacheBtn");
+  if(epsClearCacheBtn) epsClearCacheBtn.onclick = clearEpsCache;
+  document.querySelectorAll("[data-eps-filter]").forEach(btn=>{
+    btn.onclick = () => setEpsFilter(btn.dataset.epsFilter, btn.dataset.epsValue);
+  });
+  document.querySelectorAll("[data-eps-sort]").forEach(btn=>{
+    btn.onclick = () => toggleEpsSort(btn.dataset.epsSort);
+  });
+  const epsMinMutu = document.getElementById("epsMinMutu");
+  if(epsMinMutu) epsMinMutu.onchange = (e)=> setEpsFilter("minMutu", Number(e.target.value)||0);
+  const epsMinAkum = document.getElementById("epsMinAkum");
+  if(epsMinAkum) epsMinAkum.onchange = (e)=> setEpsFilter("minAkum", Number(e.target.value)||0);
+  const epsMinGap = document.getElementById("epsMinGap");
+  if(epsMinGap) epsMinGap.onchange = (e)=> setEpsFilter("minGap", e.target.value);
+  const epsInfoPanel = document.getElementById("epsInfoPanel");
+  if(epsInfoPanel) epsInfoPanel.ontoggle = (e)=> { state.epsInfoOpen = e.target.open; };
+
+  // --- Kraken Flow (ORCA) ---
+  document.querySelectorAll("[data-orca-filter]").forEach(btn=>{
+    btn.onclick = () => toggleOrcaFilter(btn.dataset.orcaFilter);
+  });
+  document.querySelectorAll("[data-orca-seg]").forEach(btn=>{
+    btn.onclick = () => setOrcaSeg(btn.dataset.orcaSeg, btn.dataset.orcaValue);
+  });
+  const orcaSearchInput = document.getElementById("orcaSearchInput");
+  if(orcaSearchInput){
+    orcaSearchInput.oninput = (e) => {
+      state.orcaSearch = e.target.value;
+      render();
+      const el = document.getElementById("orcaSearchInput");
+      if(el){ el.focus(); el.selectionStart = el.selectionEnd = el.value.length; }
+    };
+  }
+  const orcaCustomCapInput = document.getElementById("orcaCustomCapInput");
+  if(orcaCustomCapInput) orcaCustomCapInput.onchange = (e) => { state.orcaCustomCapT = e.target.value; render(); };
+  const orcaResetBtn = document.getElementById("orcaResetBtn");
+  if(orcaResetBtn) orcaResetBtn.onclick = resetOrcaFilters;
+  const orcaCsvBtn = document.getElementById("orcaCsvBtn");
+  if(orcaCsvBtn) orcaCsvBtn.onclick = exportOrcaToCsv;
+  const orcaInfoPanel = document.getElementById("orcaInfoPanel");
+  if(orcaInfoPanel) orcaInfoPanel.ontoggle = (e)=> { state.orcaInfoOpen = e.target.open; };
+  const orcaHistoryRefreshBtn = document.getElementById("orcaHistoryRefreshBtn");
+  if(orcaHistoryRefreshBtn) orcaHistoryRefreshBtn.onclick = () => { state.orcaHistoryByTicker = null; loadOrcaHistory(); };
+
   // --- Smart Pick ---
   document.querySelectorAll("[data-sp-toggle]").forEach(btn=>{
     btn.onclick = () => {
@@ -6857,10 +7978,6 @@ function attachContentEvents(){
   if(spFromInput) spFromInput.onchange = (e) => { state.spFrom = e.target.value; loadSmartPickHistory(); };
   const spToInput = document.getElementById("spToInput");
   if(spToInput) spToInput.onchange = (e) => { state.spTo = e.target.value; loadSmartPickHistory(); };
-  const spExportBtn = document.getElementById("spExportBtn");
-  if(spExportBtn) spExportBtn.onclick = exportSmartPickToExcel;
-  const spDeleteBtn = document.getElementById("spDeleteBtn");
-  if(spDeleteBtn) spDeleteBtn.onclick = deleteSmartPickHistory;
   const spRefreshBtn = document.getElementById("spRefreshBtn");
   if(spRefreshBtn) spRefreshBtn.onclick = loadSmartPickHistory;
 }
@@ -6879,9 +7996,25 @@ document.getElementById("tabs").addEventListener("click", (e)=>{
   if(!btn) return;
   state.tab = btn.dataset.tab;
   if(state.tab === "smartpick" && !state.spHistory.length && !state.spHistoryLoading) loadSmartPickHistory();
+  if(state.tab === "eps" && !state.epsRaw && !state.epsScanning) ensureEpsDataLoaded();
+  if(state.tab === "kraken") ensureOrcaHistoryLoaded();
   render();
 });
 document.getElementById("refreshBtn").onclick = ()=> loadLive();
+
+// Sidebar collapsible — status disimpan di localStorage supaya tetap
+// keciut/lebar sama seperti terakhir dipilih user kalau halaman di-reload.
+(function initSidebarToggle(){
+  const sidebar = document.getElementById("sidebarNav");
+  const toggleBtn = document.getElementById("sidebarToggleBtn");
+  if(!sidebar || !toggleBtn) return;
+  if(localStorage.getItem("ihsg_sidebar_collapsed") === "1") sidebar.classList.add("collapsed");
+  toggleBtn.onclick = () => {
+    const collapsed = sidebar.classList.toggle("collapsed");
+    localStorage.setItem("ihsg_sidebar_collapsed", collapsed ? "1" : "0");
+  };
+})();
+
 document.getElementById("portoModalClose").onclick = ()=> resetPortoForm();
 document.getElementById("portoModalOverlay").onclick = (e)=>{ if(e.target.id==="portoModalOverlay") resetPortoForm(); };
 document.getElementById("detailModalClose").onclick = ()=> closeDetail();

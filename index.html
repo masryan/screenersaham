@@ -37,20 +37,29 @@
   <div class="error-msg" id="errorMsg" style="display:none;"></div>
 </div>
 
-<div class="tabs" id="tabs">
-  <button class="tab-btn active" data-tab="screener">📋 Screener</button>
-  <button class="tab-btn" data-tab="smartpick">✨ Smart Pick</button>
-  <button class="tab-btn" data-tab="sektoral">🏢 Sektoral</button>
-  <button class="tab-btn" data-tab="watchlist">⭐ Watchlist</button>
-  <button class="tab-btn" data-tab="backtest">🔬 Backtest</button>
-  <button class="tab-btn" data-tab="portfolio">💼 Portofolio</button>
-  <button class="tab-btn" data-tab="chart">📈 Grafik</button>
-  <button class="tab-btn" data-tab="brokersum">📊 Broker Summary</button>
-  <button class="tab-btn" data-tab="target">🎯 Target Bandar</button>
-  <button class="tab-btn" data-tab="about">ℹ️ Info</button>
-</div>
+<div class="app-body">
+  <aside class="sidebar" id="sidebarNav">
+    <button type="button" class="sidebar-toggle" id="sidebarToggleBtn" title="Ciutkan/lebarkan menu" aria-label="Ciutkan/lebarkan menu">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="15 18 9 12 15 6"/></svg>
+    </button>
+    <div class="sidebar-tabs" id="tabs">
+      <button class="tab-btn active" data-tab="screener" title="Screener"><span class="tab-icon">📋</span><span class="tab-label">Screener</span></button>
+      <button class="tab-btn" data-tab="smartpick" title="Smart Pick"><span class="tab-icon">✨</span><span class="tab-label">Smart Pick</span></button>
+      <button class="tab-btn" data-tab="sektoral" title="Sektoral"><span class="tab-icon">🏢</span><span class="tab-label">Sektoral</span></button>
+      <button class="tab-btn" data-tab="watchlist" title="Watchlist"><span class="tab-icon">⭐</span><span class="tab-label">Watchlist</span></button>
+      <button class="tab-btn" data-tab="backtest" title="Backtest"><span class="tab-icon">🔬</span><span class="tab-label">Backtest</span></button>
+      <button class="tab-btn" data-tab="portfolio" title="Portofolio"><span class="tab-icon">💼</span><span class="tab-label">Portofolio</span></button>
+      <button class="tab-btn" data-tab="chart" title="Grafik"><span class="tab-icon">📈</span><span class="tab-label">Grafik</span></button>
+      <button class="tab-btn" data-tab="brokersum" title="Broker Summary"><span class="tab-icon">📊</span><span class="tab-label">Broker Summary</span></button>
+      <button class="tab-btn" data-tab="target" title="Target Bandar"><span class="tab-icon">🎯</span><span class="tab-label">Target Bandar</span></button>
+      <button class="tab-btn" data-tab="eps" title="Entry Price Scanner"><span class="tab-icon">🕵️</span><span class="tab-label">Entry Price Scanner</span></button>
+      <button class="tab-btn" data-tab="kraken" title="Kraken Flow (ORCA)"><span class="tab-icon">⬢</span><span class="tab-label">Kraken Flow (ORCA)</span></button>
+      <button class="tab-btn" data-tab="about" title="Info"><span class="tab-icon">ℹ️</span><span class="tab-label">Info</span></button>
+    </div>
+  </aside>
 
-<div class="content" id="content"></div>
+  <div class="content" id="content"></div>
+</div>
 
 <!-- Modal Form Pengaturan -->
 <div class="modal-overlay" id="settingsModalOverlay">
