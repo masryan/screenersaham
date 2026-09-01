@@ -26,11 +26,11 @@
     </div>
     <div class="header-actions" style="display:flex;gap:12px;">
       <button class="btn btn-outline" id="refreshBtn">
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0114.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0020.49 15"/></svg>
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" aria-hidden="true" focusable="false"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0114.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0020.49 15"/></svg>
         Refresh Data
       </button>
       <button class="btn btn-outline" onclick="openSettings()">
-        ⚙️ Pengaturan
+        <span aria-hidden="true">⚙️</span> Pengaturan
       </button>
     </div>
   </div>
@@ -40,21 +40,21 @@
 <div class="app-body">
   <aside class="sidebar" id="sidebarNav">
     <button type="button" class="sidebar-toggle" id="sidebarToggleBtn" title="Ciutkan/lebarkan menu" aria-label="Ciutkan/lebarkan menu">
-      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="15 18 9 12 15 6"/></svg>
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" aria-hidden="true" focusable="false"><polyline points="15 18 9 12 15 6"/></svg>
     </button>
     <div class="sidebar-tabs" id="tabs">
-      <button class="tab-btn active" data-tab="screener" title="Screener"><span class="tab-icon">📋</span><span class="tab-label">Screener</span></button>
-      <button class="tab-btn" data-tab="smartpick" title="Smart Pick"><span class="tab-icon">✨</span><span class="tab-label">Smart Pick</span></button>
-      <button class="tab-btn" data-tab="sektoral" title="Sektoral"><span class="tab-icon">🏢</span><span class="tab-label">Sektoral</span></button>
-      <button class="tab-btn" data-tab="watchlist" title="Watchlist"><span class="tab-icon">⭐</span><span class="tab-label">Watchlist</span></button>
-      <button class="tab-btn" data-tab="backtest" title="Backtest"><span class="tab-icon">🔬</span><span class="tab-label">Backtest</span></button>
-      <button class="tab-btn" data-tab="portfolio" title="Portofolio"><span class="tab-icon">💼</span><span class="tab-label">Portofolio</span></button>
-      <button class="tab-btn" data-tab="chart" title="Grafik"><span class="tab-icon">📈</span><span class="tab-label">Grafik</span></button>
-      <button class="tab-btn" data-tab="brokersum" title="Broker Summary"><span class="tab-icon">📊</span><span class="tab-label">Broker Summary</span></button>
-      <button class="tab-btn" data-tab="target" title="Target Bandar"><span class="tab-icon">🎯</span><span class="tab-label">Target Bandar</span></button>
-      <button class="tab-btn" data-tab="eps" title="Entry Price Scanner"><span class="tab-icon">🕵️</span><span class="tab-label">Entry Price Scanner</span></button>
-      <button class="tab-btn" data-tab="kraken" title="Kraken Flow (ORCA)"><span class="tab-icon">⬢</span><span class="tab-label">Kraken Flow (ORCA)</span></button>
-      <button class="tab-btn" data-tab="about" title="Info"><span class="tab-icon">ℹ️</span><span class="tab-label">Info</span></button>
+      <button class="tab-btn active" data-tab="screener" title="Screener" aria-label="Screener"><span class="tab-icon" aria-hidden="true">📋</span><span class="tab-label">Screener</span></button>
+      <button class="tab-btn" data-tab="smartpick" title="Smart Pick" aria-label="Smart Pick"><span class="tab-icon" aria-hidden="true">✨</span><span class="tab-label">Smart Pick</span></button>
+      <button class="tab-btn" data-tab="sektoral" title="Sektoral" aria-label="Sektoral"><span class="tab-icon" aria-hidden="true">🏢</span><span class="tab-label">Sektoral</span></button>
+      <button class="tab-btn" data-tab="watchlist" title="Watchlist" aria-label="Watchlist"><span class="tab-icon" aria-hidden="true">⭐</span><span class="tab-label">Watchlist</span></button>
+      <button class="tab-btn" data-tab="backtest" title="Backtest" aria-label="Backtest"><span class="tab-icon" aria-hidden="true">🔬</span><span class="tab-label">Backtest</span></button>
+      <button class="tab-btn" data-tab="portfolio" title="Portofolio" aria-label="Portofolio"><span class="tab-icon" aria-hidden="true">💼</span><span class="tab-label">Portofolio</span></button>
+      <button class="tab-btn" data-tab="chart" title="Grafik" aria-label="Grafik"><span class="tab-icon" aria-hidden="true">📈</span><span class="tab-label">Grafik</span></button>
+      <button class="tab-btn" data-tab="brokersum" title="Broker Summary" aria-label="Broker Summary"><span class="tab-icon" aria-hidden="true">📊</span><span class="tab-label">Broker Summary</span></button>
+      <button class="tab-btn" data-tab="target" title="Target Bandar" aria-label="Target Bandar"><span class="tab-icon" aria-hidden="true">🎯</span><span class="tab-label">Target Bandar</span></button>
+      <button class="tab-btn" data-tab="eps" title="Entry Price Scanner" aria-label="Entry Price Scanner"><span class="tab-icon" aria-hidden="true">🕵️</span><span class="tab-label">Entry Price Scanner</span></button>
+      <button class="tab-btn" data-tab="kraken" title="Kraken Flow (ORCA)" aria-label="Kraken Flow (ORCA)"><span class="tab-icon" aria-hidden="true">⬢</span><span class="tab-label">Kraken Flow (ORCA)</span></button>
+      <button class="tab-btn" data-tab="about" title="Info" aria-label="Info"><span class="tab-icon" aria-hidden="true">ℹ️</span><span class="tab-label">Info</span></button>
     </div>
   </aside>
 
@@ -63,10 +63,10 @@
 
 <!-- Modal Form Pengaturan -->
 <div class="modal-overlay" id="settingsModalOverlay">
-  <div class="modal" style="max-height:85vh;overflow-y:auto;">
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="settingsModalTitle" tabindex="-1" style="max-height:85vh;overflow-y:auto;">
     <div class="modal-top">
-      <h3>⚙️ Pengaturan Koneksi</h3>
-      <button class="close-btn" onclick="closeSettings()">✕</button>
+      <h3 id="settingsModalTitle">⚙️ Pengaturan Koneksi</h3>
+      <button class="close-btn" onclick="closeSettings()" aria-label="Tutup pengaturan">✕</button>
     </div>
     <div class="field">
       <label>Supabase REST URL</label>
@@ -99,10 +99,21 @@
       <label>Stockbit Token</label>
       <input id="setStockbitToken" type="password" placeholder="Bearer token dari extension">
     </div>
-    <div id="stockbitTokenStatus" style="font-size:11px;color:var(--muted);margin:-8px 0 12px;">Belum ada token.</div>
+    <div id="stockbitTokenStatus" style="font-size:11px;color:var(--muted);margin:-8px 0 4px;">Belum ada token.</div>
+    <div id="stockbitLastSuccessStatus" style="font-size:11px;color:var(--muted);margin:-4px 0 12px;">Belum pernah berhasil menarik data live dari Stockbit.</div>
     <div class="field">
       <label>Endpoint Quote/Orderbook (pakai {ticker} sebagai placeholder)</label>
       <input id="setStockbitQuoteEndpoint" type="text" placeholder="https://exodus.stockbit.com/stream/v3/symbol/{ticker}">
+    </div>
+    <div style="margin:-8px 0 14px; font-size: 11.5px; color: var(--gold); background: rgba(234,179,8,0.08); padding: 10px; border-radius: 8px; border: 1px solid rgba(234,179,8,0.2);">
+      ⚠️ Endpoint default TERBUKTI SALAH (itu API "Stream"/linimasa komentar, bukan API harga) — Open/High/Low/Last
+      tidak akan pernah muncul benar selama field ini masih kosong/default. Pakai kotak uji di bawah untuk mencari
+      & memverifikasi endpoint yang benar lewat DevTools browser (Network tab) di stockbit.com, sebelum disimpan.
+      <div style="display:flex;gap:8px;align-items:center;margin-top:10px;flex-wrap:wrap;">
+        <input id="testStockbitTicker" type="text" placeholder="Ticker uji, mis. BBCA" maxlength="6" style="text-transform:uppercase;max-width:140px;">
+        <button type="button" class="btn btn-outline" onclick="testStockbitQuoteEndpoint()" style="font-size:11.5px;padding:6px 10px;">🧪 Uji Endpoint Ini</button>
+      </div>
+      <div id="testStockbitQuoteResult" style="margin-top:8px;"></div>
     </div>
     <div class="field">
       <label>Endpoint Broker Summary (sudah terisi default — timpa hanya kalau Stockbit ganti skemanya)</label>
@@ -113,6 +124,16 @@
       <label>Endpoint Historical Data (sudah terisi default — timpa hanya kalau Stockbit ganti skemanya)</label>
       <input id="setStockbitHistoricalEndpoint" type="text" placeholder="https://exodus.stockbit.com/company-price-feed/historical/summary/{ticker}?period={period}&start_date={start_date}&end_date={end_date}&limit={limit}&page={page}">
       <div style="font-size:11px;color:var(--muted);margin-top:4px;">✅ Endpoint sudah dicek manual lewat DevTools (mode Daily). Mode Weekly/Monthly baru tebakan pola nama parameter — kalau ternyata salah/data janggal, kabari supaya bisa dikoreksi.</div>
+      <div style="display:flex;gap:8px;align-items:center;margin-top:8px;flex-wrap:wrap;">
+        <input id="testStockbitHistTicker" type="text" placeholder="Ticker uji" maxlength="6" style="text-transform:uppercase;max-width:120px;">
+        <select id="testStockbitHistPeriod" style="background:rgba(0,0,0,0.2);border:1px solid var(--border);color:var(--text);font-size:11.5px;border-radius:6px;padding:6px;">
+          <option value="daily">Daily</option>
+          <option value="weekly">Weekly</option>
+          <option value="monthly">Monthly</option>
+        </select>
+        <button type="button" class="btn btn-outline" onclick="testStockbitHistoricalEndpoint()" style="font-size:11.5px;padding:6px 10px;">🧪 Uji Mode Ini</button>
+      </div>
+      <div id="testStockbitHistResult" style="margin-top:8px;"></div>
     </div>
     <div class="field">
       <label>Proxy URL (opsional — isi kalau permintaan langsung gagal karena CORS)</label>
@@ -191,10 +212,10 @@
 
 <!-- Modal Form Portofolio -->
 <div class="modal-overlay" id="portoModalOverlay">
-  <div class="modal" style="max-width:760px;">
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="portoModalTitle" tabindex="-1" style="max-width:760px;">
     <div class="modal-top">
       <h3 id="portoModalTitle">Tambah Transaksi Portofolio</h3>
-      <button class="close-btn" id="portoModalClose">✕</button>
+      <button class="close-btn" id="portoModalClose" aria-label="Tutup transaksi portofolio">✕</button>
     </div>
     <div id="portoModalContent"></div>
   </div>
@@ -202,10 +223,10 @@
 
 <!-- Modal Detail Emiten -->
 <div class="modal-overlay" id="detailModalOverlay">
-  <div class="modal detail-modal">
+  <div class="modal detail-modal" role="dialog" aria-modal="true" aria-labelledby="detailModalTitle" tabindex="-1">
     <div class="modal-top">
       <h3 id="detailModalTitle">Detail Emiten</h3>
-      <button class="close-btn" id="detailModalClose">✕</button>
+      <button class="close-btn" id="detailModalClose" aria-label="Tutup detail emiten">✕</button>
     </div>
     <div id="detailModalContent"></div>
   </div>
@@ -213,10 +234,10 @@
 
 <!-- Modal Daftar Saham Smart Pick -->
 <div class="modal-overlay" id="spListModalOverlay">
-  <div class="modal detail-modal">
+  <div class="modal detail-modal" role="dialog" aria-modal="true" aria-labelledby="spListModalTitle" tabindex="-1">
     <div class="modal-top">
       <h3 id="spListModalTitle">Daftar Saham</h3>
-      <button class="close-btn" id="spListModalClose">✕</button>
+      <button class="close-btn" id="spListModalClose" aria-label="Tutup daftar saham">✕</button>
     </div>
     <div id="spListModalContent"></div>
   </div>

@@ -78,10 +78,28 @@ function getSupaHeaders() {
 // dan proxy itu yang meneruskan ke Stockbit dari sisi server (tidak kena
 // CORS) — lihat contoh proxy terpisah yang disediakan.
 // ==========================================
-async function stockbitFetch(endpointTemplate, ticker){
-  if(!state.stockbitToken) return { error: 'Token Stockbit belum diisi. Buka "⚙️ Pengaturan" → Live Data Stockbit.' };
-  if(!endpointTemplate) return { error: "Endpoint belum diisi di Pengaturan." };
-  const url = endpointTemplate.replace("{ticker}", encodeURIComponent(ticker));
+// ==========================================
+// stockbitRawRequest — satu titik request HTTP ke Stockbit (langsung atau
+// lewat proxy), dipakai bersama oleh stockbitFetch, stockbitFetchMarketDetector,
+// dan stockbitFetchHistorical. Sebelumnya ketiga fungsi ini menduplikasi logika
+// fetch yang sama persis (termasuk tidak ada retry sama sekali untuk 429).
+//
+// RETRY 429: kalau Stockbit membalas 429 (rate limit) — yang sangat mungkin
+// terjadi di tengah bulk fetch banyak ticker/hari — tunggu sesuai header
+// "Retry-After" (kalau proxy/Stockbit mengirimnya) atau exponential backoff
+// (1s, 2s, 4s) lalu coba lagi, maksimal STOCKBIT_MAX_RETRIES kali. Status
+// HTTP lain (401/403/5xx/dst) TIDAK diretry — itu bukan soal rate limit
+// sementara, jadi mencoba ulang cuma buang waktu tanpa hasil.
+//
+// STATUS "TERAKHIR BERHASIL": tiap kali request ini sukses (res.ok), waktunya
+// dicatat ke state.stockbitLastSuccessAt supaya UI (lihat
+// stockbitLiveDataStatus() & updateStockbitLastSuccessStatusUI()) bisa
+// menunjukkan dengan jelas kapan data live terakhir kali benar-benar
+// berhasil ditarik, tanpa user perlu buka console untuk tahu data sedang basi.
+// ==========================================
+const STOCKBIT_MAX_RETRIES = 3;
+
+async function stockbitRawRequest(url, extraHeaders = {}, attempt = 0){
   try{
     let res;
     if(state.stockbitProxyUrl){
@@ -91,19 +109,37 @@ async function stockbitFetch(endpointTemplate, ticker){
         body: JSON.stringify({ url, token: state.stockbitToken })
       });
     } else {
-      res = await fetch(url, { headers: { "Authorization": `Bearer ${state.stockbitToken}` } });
+      res = await fetch(url, { headers: { "Authorization": `Bearer ${state.stockbitToken}`, ...extraHeaders } });
+    }
+    if(res.status === 429 && attempt < STOCKBIT_MAX_RETRIES){
+      const retryAfterHeader = Number(res.headers.get("Retry-After"));
+      const waitMs = Number.isFinite(retryAfterHeader) && retryAfterHeader > 0
+        ? retryAfterHeader * 1000
+        : 1000 * Math.pow(2, attempt); // 1s, 2s, 4s
+      await new Promise(r => setTimeout(r, waitMs));
+      return stockbitRawRequest(url, extraHeaders, attempt + 1);
     }
     const text = await res.text();
     let json = null;
     try{ json = JSON.parse(text); }catch(e){ /* bukan JSON, biarkan null */ }
     if(!res.ok){
-      return { error: `HTTP ${res.status}${json && json.message ? " — " + json.message : ""}`, raw: json ?? text };
+      const retryNote = (res.status === 429 && attempt >= STOCKBIT_MAX_RETRIES)
+        ? ` (sudah dicoba ulang ${STOCKBIT_MAX_RETRIES}x dengan backoff, tetap kena rate limit)` : "";
+      return { error: `HTTP ${res.status}${json && json.message ? " — " + json.message : ""}${retryNote}`, raw: json ?? text };
     }
+    state.stockbitLastSuccessAt = Date.now();
     return { raw: json ?? text };
   }catch(e){
     const hint = state.stockbitProxyUrl ? "" : " — kemungkinan diblokir CORS oleh browser karena dipanggil langsung tanpa Proxy URL. Coba isi \"Proxy URL\" di Pengaturan.";
     return { error: e.message + hint };
   }
+}
+
+async function stockbitFetch(endpointTemplate, ticker){
+  if(!state.stockbitToken) return { error: 'Token Stockbit belum diisi. Buka "⚙️ Pengaturan" → Live Data Stockbit.' };
+  if(!endpointTemplate) return { error: "Endpoint belum diisi di Pengaturan." };
+  const url = endpointTemplate.replace("{ticker}", encodeURIComponent(ticker));
+  return stockbitRawRequest(url);
 }
 // ==========================================================
 // BROKER SUMMARY OTOMATIS DARI STOCKBIT (top 5 buy/sell per hari bursa)
@@ -221,28 +257,7 @@ async function stockbitFetchMarketDetector(ticker, fromDate, toDate, days){
     .replace("{from}", fromDate)   // format YYYY-MM-DD, sesuai contoh URL yang diverifikasi manual
     .replace("{to}", toDate)
     .replace("{limit}", computedLimit);
-  try{
-    let res;
-    if(state.stockbitProxyUrl){
-      res = await fetch(state.stockbitProxyUrl, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ url, token: state.stockbitToken })
-      });
-    } else {
-      res = await fetch(url, { headers: { "Authorization": `Bearer ${state.stockbitToken}` } });
-    }
-    const text = await res.text();
-    let json = null;
-    try{ json = JSON.parse(text); }catch(e){ /* bukan JSON, biarkan null */ }
-    if(!res.ok){
-      return { error: `HTTP ${res.status}${json && json.message ? " — " + json.message : ""}`, raw: json ?? text };
-    }
-    return { raw: json ?? text };
-  }catch(e){
-    const hint = state.stockbitProxyUrl ? "" : " — kemungkinan diblokir CORS. Coba isi \"Proxy URL\" di Pengaturan.";
-    return { error: e.message + hint };
-  }
+  return stockbitRawRequest(url);
 }
 
 // Endpoint /marketdetectors/{ticker} mengembalikan broker_summary.brokers_buy /
@@ -325,28 +340,7 @@ async function stockbitFetchHistorical(ticker, period, opts = {}){
     .replace("{end_date}", encodeURIComponent(endDate))
     .replace("{limit}", encodeURIComponent(limit))
     .replace("{page}", encodeURIComponent(page));
-  try{
-    let res;
-    if(state.stockbitProxyUrl){
-      res = await fetch(state.stockbitProxyUrl, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ url, token: state.stockbitToken })
-      });
-    } else {
-      res = await fetch(url, { headers: { "Authorization": `Bearer ${state.stockbitToken}`, "x-platform": "web" } });
-    }
-    const text = await res.text();
-    let json = null;
-    try{ json = JSON.parse(text); }catch(e){ /* bukan JSON, biarkan null */ }
-    if(!res.ok){
-      return { error: `HTTP ${res.status}${json && json.message ? " — " + json.message : ""}`, raw: json ?? text };
-    }
-    return { raw: json ?? text };
-  }catch(e){
-    const hint = state.stockbitProxyUrl ? "" : " — kemungkinan diblokir CORS. Coba isi \"Proxy URL\" di Pengaturan.";
-    return { error: e.message + hint };
-  }
+  return stockbitRawRequest(url, { "x-platform": "web" });
 }
 
 // Menerima response mentah dan mencoba menormalkannya jadi daftar baris
@@ -559,6 +553,10 @@ function mapStockbitQuote(raw){
   const pick = (...keys) => { for(const k of keys){ if(d && d[k]!=null && d[k]!=="") return d[k]; } return null; };
   return {
     last: pick("last","close","price","c"),
+    open: pick("open","open_price","previous_open","o"),
+    high: pick("high","high_price","h"),
+    low: pick("low","low_price","l"),
+    prevClose: pick("previous","prev_close","previousClose","yesterday_price","prevclose"),
     change: pick("change","chg"),
     changePct: pick("change_percent","changePercent","percentage_change","pct"),
     bid: pick("bid","best_bid","bid_price"),
@@ -592,6 +590,51 @@ async function syncStockbitTokenFromSupabase(){
   }catch(e){ /* tabel belum ada / offline — biarkan token manual yang dipakai */ }
   return false;
 }
+// Format selisih waktu jadi teks singkat berbahasa Indonesia, dipakai untuk
+// banner "terakhir berhasil ditarik" di bawah ini (dan bisa dipakai ulang di
+// tempat lain kalau perlu format relatif serupa).
+function fmtRelativeTimeID(ts){
+  if(!ts) return null;
+  const sec = Math.max(0, Math.round((Date.now() - ts) / 1000));
+  if(sec < 5) return "baru saja";
+  if(sec < 60) return `${sec} detik lalu`;
+  const min = Math.round(sec / 60);
+  if(min < 60) return `${min} menit lalu`;
+  const hr = Math.round(min / 60);
+  if(hr < 24) return `${hr} jam lalu`;
+  return new Date(ts).toLocaleString("id-ID");
+}
+
+// ==========================================
+// stockbitLiveDataStatus — status ringkas dipakai untuk banner "terakhir
+// berhasil ditarik: [waktu]" (lihat catatan performa & keandalan data:
+// endpoint Stockbit tidak resmi & rawan berhenti berfungsi tanpa
+// pemberitahuan, jadi user perlu tahu dari UI kalau data live sedang basi
+// tanpa perlu buka console). Dianggap "basi" (stale, warna kuning) kalau
+// sudah lebih dari 5 menit sejak sukses terakhir — angka ini sengaja longgar
+// karena live data di sini memang ditarik manual per klik, bukan auto-poll
+// tiap detik.
+// ==========================================
+const STOCKBIT_STALE_AFTER_MS = 5 * 60 * 1000;
+function stockbitLiveDataStatus(){
+  if(!state.stockbitLastSuccessAt){
+    return { text: "Belum pernah berhasil menarik data live dari Stockbit.", color: "var(--muted)" };
+  }
+  const rel = fmtRelativeTimeID(state.stockbitLastSuccessAt);
+  const isStale = (Date.now() - state.stockbitLastSuccessAt) > STOCKBIT_STALE_AFTER_MS;
+  return {
+    text: `${isStale ? "⚠️ " : "✅ "}Terakhir berhasil ditarik: ${rel}${isStale ? " — mungkin sudah basi, coba tarik ulang" : ""}`,
+    color: isStale ? "var(--gold)" : "var(--up)"
+  };
+}
+function updateStockbitLastSuccessStatusUI(){
+  const el = document.getElementById("stockbitLastSuccessStatus");
+  if(!el) return;
+  const st = stockbitLiveDataStatus();
+  el.textContent = st.text;
+  el.style.color = st.color;
+}
+
 function stockbitTokenStatus(){
   if(!state.stockbitToken) return { text: "Belum ada token.", color: "var(--muted)" };
   const nowSec = Date.now()/1000;
@@ -657,6 +700,88 @@ async function supaFetch(url, options) {
 }
 
 // ==========================================
+// UJI ENDPOINT STOCKBIT (dipanggil tombol "🧪 Uji" di modal Pengaturan)
+//
+// Sengaja baca langsung dari INPUT field (bukan state yang sudah tersimpan),
+// supaya user bisa coba-coba endpoint/token baru dulu sebelum klik "Simpan
+// & Reload" — tidak perlu simpan dulu baru ketahuan salah.
+//
+// CATATAN: fungsi ini menimpa state.stockbitToken /
+// state.stockbitHistoricalEndpoint SEMENTARA selama request berlangsung,
+// lalu mengembalikannya. Kalau kebetulan auto-refresh Stockbit (lihat blok
+// AUTO-REFRESH LIVE STOCKBIT di bagian akhir file) jalan tepat di detik yang
+// sama, ada kemungkinan kecil 1 request nyasar pakai token/endpoint uji —
+// bukan masalah serius untuk skala testing manual, tapi disebutkan di sini
+// supaya tidak membingungkan kalau terlihat di Network tab.
+// ==========================================
+async function testStockbitQuoteEndpoint(){
+  const resultEl = document.getElementById("testStockbitQuoteResult");
+  const tickerEl = document.getElementById("testStockbitTicker");
+  const epEl = document.getElementById("setStockbitQuoteEndpoint");
+  const tokenEl = document.getElementById("setStockbitToken");
+  if(!resultEl || !tickerEl || !epEl) return;
+  const ticker = (tickerEl.value||"").trim().toUpperCase();
+  if(!ticker){ resultEl.innerHTML = `<div style="font-size:11.5px;color:var(--down);">Isi ticker uji dulu (mis. BBCA).</div>`; return; }
+  const endpointTemplate = (epEl.value||"").trim() || STOCKBIT_DEFAULT_QUOTE_EP;
+
+  const prevToken = state.stockbitToken;
+  if(tokenEl && tokenEl.value.trim()) state.stockbitToken = tokenEl.value.trim();
+  resultEl.innerHTML = `<div style="font-size:11.5px;color:var(--muted);">Menguji ${escapeHtml(ticker)}...</div>`;
+  const res = await stockbitFetch(endpointTemplate, ticker);
+  state.stockbitToken = prevToken;
+
+  if(res.error){
+    resultEl.innerHTML = `<div style="font-size:11.5px;color:var(--down);">⚠️ ${escapeHtml(res.error)}</div>`;
+    return;
+  }
+  const mapped = mapStockbitQuote(res.raw) || {};
+  const foundFields = ["open","high","low","last"].filter(k => mapped[k]!=null);
+  const verdict = foundFields.length
+    ? `<span style="color:var(--up);">✅ Ketemu field: ${foundFields.join(", ")} (Last=${mapped.last}, O/H/L=${mapped.open}/${mapped.high}/${mapped.low}). Kalau angkanya masuk akal, endpoint ini kemungkinan besar BENAR — klik "Simpan &amp; Reload".</span>`
+    : `<span style="color:var(--down);">❌ Open/High/Low/Last tidak ketemu — kemungkinan besar ini BUKAN endpoint harga (mis. masih endpoint stream/komentar). Cek struktur JSON mentah di bawah, cari nama field harga aslinya lalu beri tahu saya supaya mapStockbitQuote() disesuaikan.</span>`;
+  resultEl.innerHTML = `
+    <div style="font-size:11.5px;margin-bottom:6px;">${verdict}</div>
+    <details><summary style="cursor:pointer;font-size:11px;color:var(--teal);">Lihat JSON mentah</summary>
+      <pre style="font-size:10.5px;background:rgba(0,0,0,0.3);padding:8px;border-radius:6px;overflow-x:auto;max-height:200px;">${escapeHtml(JSON.stringify(res.raw, null, 2))}</pre>
+    </details>`;
+}
+
+async function testStockbitHistoricalEndpoint(){
+  const resultEl = document.getElementById("testStockbitHistResult");
+  const tickerEl = document.getElementById("testStockbitHistTicker");
+  const periodEl = document.getElementById("testStockbitHistPeriod");
+  const epEl = document.getElementById("setStockbitHistoricalEndpoint");
+  const tokenEl = document.getElementById("setStockbitToken");
+  if(!resultEl || !tickerEl || !epEl) return;
+  const ticker = (tickerEl.value||"").trim().toUpperCase();
+  const period = periodEl ? periodEl.value : "daily";
+  if(!ticker){ resultEl.innerHTML = `<div style="font-size:11.5px;color:var(--down);">Isi ticker uji dulu.</div>`; return; }
+
+  const prevEndpoint = state.stockbitHistoricalEndpoint;
+  const prevToken = state.stockbitToken;
+  state.stockbitHistoricalEndpoint = (epEl.value||"").trim() || STOCKBIT_DEFAULT_HISTORICAL_EP;
+  if(tokenEl && tokenEl.value.trim()) state.stockbitToken = tokenEl.value.trim();
+  resultEl.innerHTML = `<div style="font-size:11.5px;color:var(--muted);">Menguji mode ${escapeHtml(period)}...</div>`;
+  const res = await stockbitFetchHistorical(ticker, period, { limit: 10 });
+  state.stockbitHistoricalEndpoint = prevEndpoint;
+  state.stockbitToken = prevToken;
+
+  if(res.error){
+    resultEl.innerHTML = `<div style="font-size:11.5px;color:var(--down);">⚠️ ${escapeHtml(res.error)}</div>`;
+    return;
+  }
+  const parsed = parseStockbitHistorical(res.raw);
+  const verdict = (parsed && parsed.length)
+    ? `<span style="color:var(--up);">✅ Terbaca ${parsed.length} baris. Baris pertama: tanggal ${escapeHtml(parsed[0]?.date||"-")}, Close ${parsed[0]?.close ?? "-"}. Cek jarak antar tanggal di JSON mentah — untuk mode "${escapeHtml(period)}" jaraknya seharusnya mingguan/bulanan, bukan harian, kalau period-nya benar-benar berpengaruh di sisi server.</span>`
+    : `<span style="color:var(--down);">❌ Formatnya tidak dikenali parseStockbitHistorical() untuk mode "${escapeHtml(period)}" — kemungkinan besar nama parameter period salah tebak. Cek JSON mentah di bawah lalu beri tahu saya strukturnya.</span>`;
+  resultEl.innerHTML = `
+    <div style="font-size:11.5px;margin-bottom:6px;">${verdict}</div>
+    <details><summary style="cursor:pointer;font-size:11px;color:var(--teal);">Lihat JSON mentah</summary>
+      <pre style="font-size:10.5px;background:rgba(0,0,0,0.3);padding:8px;border-radius:6px;overflow-x:auto;max-height:200px;">${escapeHtml(JSON.stringify(res.raw, null, 2))}</pre>
+    </details>`;
+}
+
+// ==========================================
 // PENGATURAN UI KONEKSI
 // ==========================================
 async function openSettings() {
@@ -678,6 +803,7 @@ async function openSettings() {
   if(stbProxy) stbProxy.value = state.stockbitProxyUrl || "";
   document.getElementById("settingsModalOverlay").classList.add("open");
   updateStockbitTokenStatusUI();
+  updateStockbitLastSuccessStatusUI();
   // Coba tarik token terbaru dari Supabase di background — kalau berhasil,
   // timpa field token yang baru saja ditampilkan supaya selalu yang terbaru.
   const synced = await syncStockbitTokenFromSupabase();
@@ -905,6 +1031,9 @@ const LS_CUSTOM_RULES = "ihsg_custom_rules_v1";
 const LS_STOCKBIT_TOKEN = "ihsg_stockbit_token", LS_STOCKBIT_QUOTE_EP = "ihsg_stockbit_quote_ep",
       LS_STOCKBIT_BROKER_EP = "ihsg_stockbit_broker_ep", LS_STOCKBIT_PROXY = "ihsg_stockbit_proxy",
       LS_STOCKBIT_HISTORICAL_EP = "ihsg_stockbit_historical_ep";
+const LS_STOCKBIT_AUTOREFRESH = "ihsg_stockbit_autorefresh", LS_STOCKBIT_AUTOREFRESH_SEC = "ihsg_stockbit_autorefresh_sec";
+const STOCKBIT_AUTOREFRESH_MIN_SEC = 30; // batas bawah supaya tidak membombardir Stockbit dengan token pribadi
+const STOCKBIT_AUTOREFRESH_MAX_TICKERS = 30; // di atas ini auto-refresh otomatis nonaktif sendiri (lihat maybeAutoRefreshStockbit)
 // Notifikasi Telegram — cuma URL Edge Function yang perlu disimpan lokal
 // (dipakai tombol "Uji Kirim Notifikasi" di browser). Bot token, chat ID,
 // status aktif, dan preset yang dipantau disimpan di Supabase (tabel
@@ -1097,7 +1226,13 @@ let state = {
   // otomatis, karena butuh 1 fetch tambahan ke tabel `flows`.
   detailCompareRows: [], detailCompareLoading: false, detailCompareMsg: "", detailCompareOpen: false,
   stockbitTokenExpiresAt: null, stockbitTokenSyncedAt: null, stockbitTokenSource: "manual",
+  // Waktu (Date.now()) request Stockbit APA SAJA (quote, broker summary,
+  // historical) terakhir kali benar-benar sukses — lihat stockbitRawRequest().
+  // Dipakai buat banner status supaya user tahu data live basi sejak kapan
+  // tanpa harus buka console. null = belum pernah berhasil sama sekali.
+  stockbitLastSuccessAt: null,
   stockbitLive: {}, stockbitBulkLoading: false, stockbitBulkProgress: null,
+  stockbitAutoRefresh: false, stockbitAutoRefreshIntervalSec: 60,
   // Riwayat Value (Rp) harian dari Stockbit per ticker, dipakai Smart Pick —
   // lihat catatan lengkap di loadLive() dan spStockbitValueRatio().
   stockbitValueHistory: {},
@@ -1236,6 +1371,11 @@ function loadSettings(){
     state.stockbitBrokerEndpoint = localStorage.getItem(LS_STOCKBIT_BROKER_EP) || STOCKBIT_DEFAULT_BROKER_EP;
     state.stockbitHistoricalEndpoint = localStorage.getItem(LS_STOCKBIT_HISTORICAL_EP) || STOCKBIT_DEFAULT_HISTORICAL_EP;
     state.stockbitProxyUrl = localStorage.getItem(LS_STOCKBIT_PROXY) || "";
+  }catch(e){}
+  try{
+    state.stockbitAutoRefresh = localStorage.getItem(LS_STOCKBIT_AUTOREFRESH) === "1";
+    const savedSec = parseInt(localStorage.getItem(LS_STOCKBIT_AUTOREFRESH_SEC), 10);
+    state.stockbitAutoRefreshIntervalSec = (Number.isFinite(savedSec) && savedSec >= STOCKBIT_AUTOREFRESH_MIN_SEC) ? savedSec : 60;
   }catch(e){}
   try{
     const savedRules = JSON.parse(localStorage.getItem(LS_CUSTOM_RULES)||"[]");
@@ -1968,6 +2108,10 @@ function renderStockbitPanel(s){
     body = `
       <div class="detail-grid" style="margin-bottom:8px;">
         ${dItem("Last Price", m.last!=null ? fmtNum(m.last) : "-", true)}
+        ${dItem("Open", m.open!=null ? fmtNum(m.open) : "-", true)}
+        ${dItem("High", m.high!=null ? fmtNum(m.high) : "-", true)}
+        ${dItem("Low", m.low!=null ? fmtNum(m.low) : "-", true)}
+        ${dItem("Prev Close", m.prevClose!=null ? fmtNum(m.prevClose) : "-", true)}
         ${dItem("Bid", m.bid!=null ? fmtNum(m.bid) : "-", true)}
         ${dItem("Offer", m.offer!=null ? fmtNum(m.offer) : "-", true)}
         ${dItem("Volume", m.volume!=null ? fmtNum(m.volume) : "-", true)}
@@ -1980,12 +2124,14 @@ function renderStockbitPanel(s){
       <button type="button" class="btn btn-outline" data-stockbit-live="${s.ticker}" style="font-size:11px;color:#f87171;border-color:rgba(239,68,68,0.4);">↻ Refresh</button>
     `;
   }
+  const liveStatus = stockbitLiveDataStatus();
   return `
     <div style="background: linear-gradient(135deg, rgba(30,41,59,0.9), rgba(15,23,42,0.95)); border: 1px solid rgba(239,68,68,0.35); border-radius: 12px; padding: 16px; margin-bottom: 16px;">
-      <div style="display:flex; align-items:center; gap: 8px; margin-bottom: 10px;">
+      <div style="display:flex; align-items:center; gap: 8px; margin-bottom: 4px;">
         <span style="font-size: 18px;">🔴</span>
         <div style="font-size: 12.5px; font-weight: 700; color: var(--text);">Live Data Stockbit <span style="font-weight:400;color:var(--muted);font-size:10.5px;">(tidak resmi — pakai token akunmu sendiri)</span></div>
       </div>
+      <div style="font-size:10.5px; color:${liveStatus.color}; margin: 0 0 10px 26px;">${liveStatus.text}</div>
       ${body}
     </div>
   `;
@@ -4157,6 +4303,7 @@ const SCREENER_COLUMNS = [
       const secAgo = Math.max(0, Math.round((Date.now()-live.fetchedAt)/1000));
       return `<td><div class="mono" style="font-size:11.5px;line-height:1.5;">
         ${m.last!=null ? `Last: <b>${fmtNum(m.last)}</b>` : "-"}
+        ${(m.open!=null||m.high!=null||m.low!=null) ? `<br>O/H/L: ${fmtNum(m.open)}/${fmtNum(m.high)}/${fmtNum(m.low)}` : ""}
         ${m.bid!=null||m.offer!=null ? `<br>Bid/Offer: ${fmtNum(m.bid)}/${fmtNum(m.offer)}` : ""}
         <br><span style="color:var(--muted);font-size:10px;">${secAgo}s lalu</span>
         <button type="button" class="btn btn-outline" data-stockbit-live="${s.ticker}" style="font-size:10px;padding:1px 5px;margin-left:4px;">↻</button>
@@ -4853,6 +5000,24 @@ function renderScreener(){
               : (state.selectedForBacktest.size>0 ? `🔴 Live Stockbit (${state.selectedForBacktest.size} dicentang)` : `🔴 Live Stockbit (${sorted.length} lolos)`)}
           </button>
         </div>
+        <div class="field" style="flex:0 0 auto;">
+          <label>&nbsp;</label>
+          <div style="display:flex; align-items:center; gap:8px; background:rgba(239,68,68,0.06); border:1px solid rgba(239,68,68,0.25); border-radius:8px; padding:6px 10px;">
+            <label style="display:flex;align-items:center;gap:6px;font-size:12px;cursor:pointer;white-space:nowrap;margin:0;">
+              <input type="checkbox" id="stockbitAutoRefreshChk" class="custom-checkbox" style="margin:0;" ${state.stockbitAutoRefresh ? "checked" : ""}>
+              🔄 Auto-refresh
+            </label>
+            <select id="stockbitAutoRefreshSec" style="background:rgba(0,0,0,0.2);border:1px solid var(--border);color:var(--text);font-size:11.5px;border-radius:6px;padding:4px 6px;">
+              ${[30,60,120,300].map(s=>`<option value="${s}" ${String(state.stockbitAutoRefreshIntervalSec)===String(s)?'selected':''}>${s<60?s+'d':(s/60)+'m'}</option>`).join("")}
+            </select>
+          </div>
+        </div>
+        ${state.stockbitAutoRefresh && (state.selectedForBacktest.size>0 ? state.selectedForBacktest.size : sorted.length) > STOCKBIT_AUTOREFRESH_MAX_TICKERS
+          ? `<div class="field" style="flex:0 0 auto;"><label>&nbsp;</label><span style="font-size:11px;color:var(--down);white-space:nowrap;">⚠️ &gt;${STOCKBIT_AUTOREFRESH_MAX_TICKERS} saham lolos filter — auto-refresh dijeda, centang saham tertentu dulu</span></div>`
+          : ""}
+        ${(state.stockbitQuoteEndpoint||"") === STOCKBIT_DEFAULT_QUOTE_EP
+          ? `<div class="field" style="flex:0 0 auto;"><label>&nbsp;</label><span style="font-size:11px;color:var(--gold);white-space:nowrap;" title="Endpoint default diketahui SALAH (API stream/komentar, bukan API harga) — lihat catatan di Pengaturan">⚠️ Endpoint Quote masih default (belum terbukti benar)</span></div>`
+          : ""}
         <div class="field" style="flex:0 0 auto;">
           <label>&nbsp;</label>
           <div style="display:flex; align-items:center; gap:6px;">
@@ -5863,15 +6028,86 @@ function renderSmartPick(){
   `;
 }
 
+// ==========================================
+// Panduan tab "ℹ️ Info" — SATU sumber kebenaran untuk daftar fitur yang
+// ditampilkan ke user. Kalau nambah tab baru atau ubah cakupan fitur
+// besar, update array ini juga supaya halaman Info tidak kembali basi
+// (versi lama cuma menyebut 6 hal dari puluhan fitur yang sudah ada).
+// ==========================================
+const ABOUT_TAB_GUIDE = [
+  { icon:"📋", title:"Screener", tone:"teal",
+    desc:"Tabel utama semua saham IHSG dengan filter teknikal &amp; fundamental siap pakai, preset DSI (Eri Ginanjar, RSI Cross, Golden Cross, Super Uptrend, Volatility Breakout, Pullback Uptrend), plus Rule Builder kustom untuk menyusun kombinasi filter sendiri (mirip \"Edit Screener\" Stockbit) — bisa disimpan sebagai preset pribadi.",
+    catatan:"Rule Builder saat ini menggabungkan semua rule dengan AND (seluruh syarat harus terpenuhi bersamaan, belum ada OR/grouping)." },
+  { icon:"✨", title:"Smart Pick", tone:"gold",
+    desc:"5 sinyal siap pakai — Area Demand, Throwback/Retest Breakout, Liquidity Sweep, Bull Divergence, Early Breakout — dihitung dari data live yang sama dengan Screener. Tombol \"Finalisasi Signal (EOD)\" mengunci snapshot harian ke database supaya win-rate &amp; rata-rata return tiap sinyal bisa dilacak dari waktu ke waktu.",
+    catatan:"Ini scoring rule-based dari data yang sudah ada, bukan model AI/machine learning — hasil bisa berubah tiap refresh sebelum difinalisasi." },
+  { icon:"🏢", title:"Sektoral", tone:"teal",
+    desc:"Saham dikelompokkan per sektor, lengkap dengan panel Top Movers (Gainer / Loser / Value / Volume / Frequency) 10 besar hari ini." },
+  { icon:"⭐", title:"Watchlist", tone:"muted",
+    desc:"Kumpulan saham yang ditandai bintang dari tab manapun. Tersimpan otomatis di penyimpanan browser (localStorage) perangkat ini, dan disinkronkan ke Supabase kalau koneksi aktif." },
+  { icon:"🔬", title:"Backtest", tone:"teal",
+    desc:"Catat sesi backtest manual (harga entry, tanggal, keterangan) per saham lalu bandingkan hasilnya dari waktu ke waktu. Bisa diekspor ke Excel per sesi atau digabung semua sekaligus." },
+  { icon:"💼", title:"Portofolio", tone:"up",
+    desc:"Pencatatan transaksi beli/jual saham nyata beserta kalkulasi P&amp;L. Bisa diisi otomatis dari saham yang lolos Screener atau dari item Backtest." },
+  { icon:"📈", title:"Grafik", tone:"teal",
+    desc:"Chart harga per saham (digambar langsung di aplikasi ini, tanpa library chart eksternal), plus tautan cepat ke TradingView dan Stockbit untuk analisis lebih lanjut." },
+  { icon:"📊", title:"Broker Summary", tone:"gold",
+    desc:"Top 5 broker beli/jual per saham per hari — diketik manual atau ditempel dari CSV berdasarkan data akun Stockbit Anda sendiri, lalu disimpan supaya bisa dipakai fitur lain (Target Bandar, Entry Price Scanner).",
+    catatan:"BUKAN hasil scraping otomatis dari Stockbit — datanya sepenuhnya bergantung pada apa yang Anda masukkan sendiri, jadi seakurat dan serutin Anda mengisinya." },
+  { icon:"🎯", title:"Target Bandar", tone:"up",
+    desc:"Dibangun di atas data Broker Summary: agregasi top bandar per emiten, kalkulator target harga (rata-rata harga bandar + ATR14 → level target R1/Max), dan ringkasan hit-rate dari kalkulasi sebelumnya dibanding harga aktual." },
+  { icon:"🕵️", title:"Entry Price Scanner", tone:"gold",
+    desc:"Menganalisis konvergensi VWAP broker (menyatu / diam / menjauh), tren akumulasi 10 hari (\"tanjakan\"), dan skor \"mutu\" untuk membantu mencari area entry yang dekat dengan harga rata-rata broker besar." },
+  { icon:"⬢", title:"Kraken Flow (ORCA)", tone:"gold",
+    desc:"Screener order-flow ala fitur \"ORCA System\" — mendeteksi pola antrian bid/offer, ukuran transaksi rata-rata (ATS), transaksi non-reguler, dan aliran dana asing, langsung dari data live tanpa perlu tombol \"Scan\" terpisah — cukup ubah filter, hasil update otomatis." },
+];
+
+const ABOUT_INTEGRATION_GUIDE = [
+  { title:"Data Teknikal &amp; Fundamental", tone:"teal",
+    desc:"Diambil dari Yahoo Finance (data publik) lewat Google Apps Script milik Anda sendiri. Indikator: EMA21 High/Low, RSI7 vs RSI21, MACD histogram, Volume MA20, PER, PBV, ROE, Dividend Yield." },
+  { title:"Bandarmologi (kolom Screener)", tone:"down",
+    desc:"PENTING: kolom \"Bandarmologi\" di tabel Screener BUKAN data transaksi broker asli — itu PROXY heuristik dari rasio volume hari ini terhadap rata-rata 20 hari, dikombinasikan arah harga. Data bandarmologi yang lebih mendekati transaksi asli (bid/offer, net asing, ATS) ada di tab Kraken Flow (ORCA) dan Target Bandar, yang bersumber dari data resmi IDX / input manual Broker Summary." },
+  { title:"Live Data Stockbit", tone:"down",
+    desc:"Opsional, pakai token dari extension Chrome Stockbit milik Anda sendiri. Ini API TIDAK RESMI (hasil pengamatan traffic, bukan dokumentasi resmi Stockbit) — endpoint bisa berubah atau berhenti berfungsi kapan saja tanpa pemberitahuan. Token hanya disimpan di Local Storage browser ini." },
+  { title:"Notifikasi Telegram", tone:"teal",
+    desc:"Opsional — mengirim notifikasi otomatis lewat Cron server (Supabase Edge Function) kalau ada saham baru lolos preset Rules Kustom pilihan Anda, tetap terkirim walau aplikasi ini tidak sedang dibuka. Butuh setup 1x lewat menu ⚙️ Pengaturan." },
+  { title:"Penyimpanan Kredensial", tone:"up",
+    desc:"Supabase URL/Key, token Stockbit, dan pengaturan Telegram disimpan di Local Storage browser perangkat ini — tidak tertanam di HTML, jadi tetap aman kalau aplikasi ini di-hosting publik. Selalu pakai anon key Supabase, jangan pernah service_role key." },
+];
+
 function renderAbout(){
   const row=(title,tone,desc)=>`<div class="about-row">${pillHtml(title,tone)}<p>${desc}</p></div>`;
+  const tabRow=(t)=>`
+    <details class="about-row" style="display:block;padding:10px 0;">
+      <summary style="cursor:pointer;list-style:none;display:flex;align-items:center;gap:10px;">
+        <span style="font-size:15px;">${t.icon}</span>${pillHtml(t.title,t.tone)}
+        <span style="font-size:11.5px;color:var(--muted);font-weight:400;">▾ detail</span>
+      </summary>
+      <div style="margin-top:8px;padding-left:24px;">
+        <p style="margin:0 0 6px;">${t.desc}</p>
+        ${t.catatan ? `<p style="margin:0;font-size:11.5px;color:var(--gold);">⚠️ ${t.catatan}</p>` : ""}
+      </div>
+    </details>`;
   return `
-    ${row("Teknikal","teal","Diambil dari Yahoo Finance (data publik, gratis) lewat Google Apps Script Anda sendiri. Indikator: EMA21 High/Low, RSI7 vs RSI21, MACD histogram, Volume MA20 — persis logika di script screener.txt Anda.")}
-    ${row("Screener DSI","gold","Terdapat tombol preset yang akan menyaring data secara otomatis berdasarkan kondisi DSI (Eri Ginanjar, RSI Cross, Golden Cross, Super Uptrend, Volatility Breakout, Pullback Uptrend).")}
-    ${row("Penyimpanan Koneksi","up","Semua API Key Supabase dan URL Anda sekarang disimpan aman di dalam Local Storage browser perangkat ini. Tidak tertanam di dalam HTML sehingga aman jika di-hosting publik.")}
-    ${row("Fundamental","teal","PER, PBV, ROE, dan Dividend Yield dari modul quoteSummary Yahoo Finance.")}
-    ${row("Bandarmologi","down","PENTING: ini BUKAN data transaksi broker asli. Yang ditampilkan di sini hanyalah PROXY heuristik: rasio volume hari ini terhadap volume rata-rata 20 hari, dikombinasikan arah harga.")}
-    ${row("Watchlist","muted","Disimpan otomatis di penyimpanan browser Anda (localStorage) di perangkat ini. Jika Web App terhubung, tanda bintang juga akan disinkronkan ke Supabase.")}
+    <div class="panel" style="flex-direction:column;align-items:stretch;margin-bottom:16px;">
+      <p style="margin:0;font-size:13px;color:var(--text);line-height:1.6;">
+        IHSG Screener Pro adalah alat bantu screening &amp; analisis saham IHSG pribadi —
+        menggabungkan data teknikal/fundamental, sinyal siap pakai (Smart Pick), pelacakan
+        bandarmologi (Broker Summary, Target Bandar, Kraken Flow), backtest, dan portofolio
+        dalam satu aplikasi. Ini <b>bukan nasihat/rekomendasi investasi</b> — semua sinyal
+        &amp; skor di sini adalah alat bantu keputusan, keputusan akhir tetap di tangan Anda.
+      </p>
+    </div>
+
+    <div class="filter-section-title">📚 Peta Fitur (klik tiap baris untuk detail)<span class="line"></span></div>
+    <div class="panel" style="flex-direction:column;align-items:stretch;margin-bottom:16px;">
+      ${ABOUT_TAB_GUIDE.map(tabRow).join("")}
+    </div>
+
+    <div class="filter-section-title">🔌 Sumber Data &amp; Integrasi<span class="line"></span></div>
+    <div class="panel" style="flex-direction:column;align-items:stretch;">
+      ${ABOUT_INTEGRATION_GUIDE.map(g=>row(g.title,g.tone,g.desc)).join("")}
+    </div>
   `;
 }
 
@@ -7563,6 +7799,42 @@ function exportOrcaToCsv(){
   URL.revokeObjectURL(url);
 }
 
+// ==========================================
+// bindSearchInputPreservingCursor — pengganti pola oninput manual lama
+// (state.x = e.target.value; render(); ...selectionStart = value.length).
+//
+// KENAPA INI PERLU: render() mengganti innerHTML tab yang aktif secara
+// PENUH tiap kali state berubah, jadi elemen <input> lama "dibuang" dan
+// diganti elemen baru — fokus & posisi kursor otomatis hilang. Kode lama
+// menutupi ini dengan memaksa fokus balik + kursor SELALU ke UJUNG teks
+// (selectionStart = value.length). Akibatnya: begitu user mencoba
+// mengedit di TENGAH teks (bukan di ujung), kursor selalu melompat balik
+// ke akhir setiap kali mengetik satu huruf — mustahil menyisipkan atau
+// menghapus karakter di tengah kata tanpa kursor "kabur".
+//
+// Fungsi ini menyimpan posisi kursor ASLI (selectionStart/selectionEnd)
+// SEBELUM state berubah & re-render, lalu mengembalikan ke posisi yang
+// SAMA (di-clamp ke panjang teks baru, bukan otomatis ke ujung) setelah
+// elemen input baru terpasang di DOM.
+// ==========================================
+function bindSearchInputPreservingCursor(id, onValueChange){
+  const el = document.getElementById(id);
+  if(!el) return;
+  el.oninput = (e) => {
+    const start = e.target.selectionStart;
+    const end = e.target.selectionEnd;
+    onValueChange(e.target.value);
+    render();
+    const newEl = document.getElementById(id);
+    if(newEl){
+      newEl.focus();
+      const pos = Math.min(start, newEl.value.length);
+      const posEnd = Math.min(end, newEl.value.length);
+      newEl.setSelectionRange(pos, posEnd);
+    }
+  };
+}
+
 function attachContentEvents(){
   const advToggleBtn = document.getElementById("advToggleBtn");
   if(advToggleBtn) advToggleBtn.onclick = () => { state.showAdvancedFilters = !state.showAdvancedFilters; render(); };
@@ -7626,17 +7898,11 @@ function attachContentEvents(){
     }, 0);
   }
 
-  const s = document.getElementById("searchInput");
-  if(s) s.oninput = (e)=>{ state.search=e.target.value; state.page=1; render(); document.getElementById("searchInput").focus(); document.getElementById("searchInput").selectionStart = document.getElementById("searchInput").value.length; };
+  bindSearchInputPreservingCursor("searchInput", (val) => { state.search = val; state.page = 1; });
 
   const chartSearchInput = document.getElementById("chartSearchInput");
   if(chartSearchInput){
-    chartSearchInput.oninput = (e) => {
-      state.chartSearch = e.target.value;
-      render();
-      const el = document.getElementById("chartSearchInput");
-      if(el){ el.focus(); el.selectionStart = el.selectionEnd = el.value.length; }
-    };
+    bindSearchInputPreservingCursor("chartSearchInput", (val) => { state.chartSearch = val; });
     chartSearchInput.addEventListener("keydown", (e) => {
       if(e.key === "Enter"){
         const val = (e.target.value||"").trim().toUpperCase();
@@ -7743,6 +8009,19 @@ function attachContentEvents(){
     const tickers = checked.length ? checked : getSorted(getFiltered()).map(s=>s.ticker);
     if(tickers.length) fetchStockbitLiveBulk(tickers);
   };
+  const stockbitAutoRefreshChk = document.getElementById("stockbitAutoRefreshChk");
+  if(stockbitAutoRefreshChk) stockbitAutoRefreshChk.onchange = (e) => {
+    if(e.target.checked && !state.stockbitToken){ e.target.checked = false; openSettings(); return; }
+    state.stockbitAutoRefresh = e.target.checked;
+    localStorage.setItem(LS_STOCKBIT_AUTOREFRESH, state.stockbitAutoRefresh ? "1" : "0");
+    if(state.stockbitAutoRefresh) stockbitAutoRefreshTick(); // langsung tarik sekali begitu dinyalakan, tidak nunggu interval penuh
+  };
+  const stockbitAutoRefreshSec = document.getElementById("stockbitAutoRefreshSec");
+  if(stockbitAutoRefreshSec) stockbitAutoRefreshSec.onchange = (e) => {
+    const sec = parseInt(e.target.value, 10);
+    state.stockbitAutoRefreshIntervalSec = (Number.isFinite(sec) && sec >= STOCKBIT_AUTOREFRESH_MIN_SEC) ? sec : 60;
+    localStorage.setItem(LS_STOCKBIT_AUTOREFRESH_SEC, String(state.stockbitAutoRefreshIntervalSec));
+  };
   const screenerBsFromInput = document.getElementById("screenerBsFromInput");
   if(screenerBsFromInput) screenerBsFromInput.onchange = (e) => { state.bsAutoBulkFrom = e.target.value || state.bsAutoBulkFrom; };
   const screenerBsToInput = document.getElementById("screenerBsToInput");
@@ -7773,14 +8052,7 @@ function attachContentEvents(){
       render();
     };
   });
-  const sektorSearchInput = document.getElementById("sektorSearchInput");
-  if(sektorSearchInput){
-    sektorSearchInput.oninput = (e)=>{
-      state.sektorSearch = e.target.value; render();
-      const el = document.getElementById("sektorSearchInput");
-      if(el){ el.focus(); el.selectionStart = el.value.length; }
-    };
-  }
+  bindSearchInputPreservingCursor("sektorSearchInput", (val) => { state.sektorSearch = val; });
   const sektorSortSelect = document.getElementById("sektorSortSelect");
   if(sektorSortSelect){
     sektorSortSelect.onchange = (e)=>{ state.sektorSort = e.target.value; render(); };
@@ -7930,15 +8202,7 @@ function attachContentEvents(){
   document.querySelectorAll("[data-orca-seg]").forEach(btn=>{
     btn.onclick = () => setOrcaSeg(btn.dataset.orcaSeg, btn.dataset.orcaValue);
   });
-  const orcaSearchInput = document.getElementById("orcaSearchInput");
-  if(orcaSearchInput){
-    orcaSearchInput.oninput = (e) => {
-      state.orcaSearch = e.target.value;
-      render();
-      const el = document.getElementById("orcaSearchInput");
-      if(el){ el.focus(); el.selectionStart = el.selectionEnd = el.value.length; }
-    };
-  }
+  bindSearchInputPreservingCursor("orcaSearchInput", (val) => { state.orcaSearch = val; });
   const orcaCustomCapInput = document.getElementById("orcaCustomCapInput");
   if(orcaCustomCapInput) orcaCustomCapInput.onchange = (e) => { state.orcaCustomCapT = e.target.value; render(); };
   const orcaResetBtn = document.getElementById("orcaResetBtn");
@@ -8055,6 +8319,62 @@ async function autoRefreshLiveTick(){
 
 setInterval(autoRefreshLiveTick, LIVE_REFRESH_INTERVAL_MS);
 document.addEventListener("visibilitychange", () => { if(!document.hidden) autoRefreshLiveTick(); });
+
+// ==========================================
+// AUTO-REFRESH LIVE STOCKBIT (Screener) — beda dari AUTO-REFRESH HARGA LIVE
+// di atas (yang narik dari Supabase). Ini khusus buat kolom "🔴 Live
+// Stockbit" di tabel Screener, dan SENGAJA jauh lebih hati-hati karena:
+//
+// 1. Pakai token pribadi user ke API tidak resmi — tiap siklus bisa memicu
+//    N request berurutan (N = jumlah saham dicentang / lolos filter).
+// 2. Makanya ada 3 pengaman TAMBAHAN di luar yang sudah dipakai
+//    autoRefreshLiveTick() (skip kalau tab background / user sedang ngetik):
+//      a. Cuma jalan kalau tab "screener" yang sedang dibuka (state.tab) —
+//         tidak berguna narik data ini kalau user sedang di tab lain.
+//      b. Interval MINIMAL 30 detik (STOCKBIT_AUTOREFRESH_MIN_SEC), tidak
+//         bisa diset lebih cepat dari itu lewat dropdown.
+//      c. Kalau jumlah ticker (dicentang, atau semua yang lolos filter
+//         kalau tak ada yang dicentang) melebihi STOCKBIT_AUTOREFRESH_MAX_TICKERS,
+//         auto-refresh DIJEDA OTOMATIS (bukan dimatikan — toggle tetap ON,
+//         tinggal skip siklus itu) sampai user mempersempit filter atau
+//         mencentang saham tertentu. Badge peringatan sudah muncul di UI
+//         Screener kalau kondisi ini aktif.
+// 3. Dipakai clock 5 detik (bukan setInterval langsung sebesar interval
+//    pilihan user) supaya ganti pilihan dropdown interval efektif LANGSUNG
+//    di siklus berikutnya, tanpa perlu clearInterval/setInterval ulang.
+// ==========================================
+let stockbitAutoRefreshInFlight = false;
+let lastStockbitAutoRefreshAt = 0;
+
+function getStockbitAutoRefreshTickers(){
+  const checked = [...state.selectedForBacktest];
+  return checked.length ? checked : getSorted(getFiltered()).map(s=>s.ticker);
+}
+
+async function stockbitAutoRefreshTick(){
+  if(!state.stockbitAutoRefresh || !state.stockbitToken) return;
+  if(state.tab !== "screener") return;
+  if(document.hidden || shouldSkipAutoRefreshLive()) return;
+  if(stockbitAutoRefreshInFlight || state.stockbitBulkLoading) return;
+
+  const tickers = getStockbitAutoRefreshTickers();
+  if(!tickers.length || tickers.length > STOCKBIT_AUTOREFRESH_MAX_TICKERS) return;
+
+  stockbitAutoRefreshInFlight = true;
+  try{ await fetchStockbitLiveBulk(tickers); }
+  finally{ stockbitAutoRefreshInFlight = false; }
+}
+
+function stockbitAutoRefreshClockTick(){
+  if(!state.stockbitAutoRefresh) return;
+  const intervalMs = Math.max(STOCKBIT_AUTOREFRESH_MIN_SEC, state.stockbitAutoRefreshIntervalSec||60) * 1000;
+  if(Date.now() - lastStockbitAutoRefreshAt < intervalMs) return;
+  lastStockbitAutoRefreshAt = Date.now();
+  stockbitAutoRefreshTick();
+}
+
+setInterval(stockbitAutoRefreshClockTick, 5000); // "jam" granularitas 5 detik, lihat catatan poin 3 di atas
+document.addEventListener("visibilitychange", () => { if(!document.hidden) stockbitAutoRefreshClockTick(); });
 
 // ==========================================
 // PWA: daftarkan service worker supaya browser menganggap app ini
