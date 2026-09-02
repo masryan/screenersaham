@@ -217,7 +217,7 @@
   .count-badge{color:var(--text); font-weight: 500; font-size:12px; background: rgba(0,0,0,0.2); padding: 6px 12px; border-radius: 20px; border: 1px solid var(--border);}
 
   /* MODERN TABLE */
-  table{width:100%;border-collapse:separate; border-spacing: 0; font-size:12.5px;}
+  table{width:max-content;min-width:100%;border-collapse:separate; border-spacing: 0; font-size:12.5px;}
   .table-wrap{background: var(--surface); backdrop-filter: var(--glass-blur); border:1px solid var(--border); border-radius:12px; overflow:auto; max-height:70vh; box-shadow: var(--shadow-md);}
   
   thead th {
@@ -503,22 +503,12 @@
     /* SIDEBAR — di layar sempit dikembalikan jadi bar horizontal yang bisa
        discroll (seperti tabs lama), bukan sidebar vertikal — lebih pas
        untuk layar sempit/satu tangan. Tombol ciutkan disembunyikan karena
-       tidak relevan lagi dalam mode ini.
-       CATATAN PENTING: SENGAJA "position: static" (bukan sticky) di sini.
-       Tinggi .header di HP tidak tetap (subtitle + tombol Refresh/Pengaturan
-       bisa turun ke baris baru tergantung lebar layar), jadi angka "top"
-       tetap (mis. top:58px) gampang meleset dan bikin bar menu ini malah
-       ketutup/ketimpa header yang sama-sama sticky (z-index header lebih
-       tinggi). Statis lebih aman: bar menu selalu full terlihat tepat di
-       bawah header saat halaman dibuka, ikut ter-scroll ke atas bareng
-       konten kalau di-scroll ke bawah (bukan nempel), tapi TIDAK PERNAH
-       ketutup elemen lain. */
+       tidak relevan lagi dalam mode ini. */
     .app-body{ flex-direction:column; }
     .sidebar{
-      position:static; width:100%; flex-basis:auto; height:auto; z-index:auto;
+      position:sticky; top:58px; width:100%; flex-basis:auto; height:auto;
       flex-direction:row; align-items:center; gap:6px; overflow-x:auto; overflow-y:hidden;
       padding:8px 10px; border-right:none; border-bottom:1px solid var(--border);
-      -webkit-overflow-scrolling:touch;
     }
     .sidebar.collapsed{ width:100%; padding:8px 10px; }
     .sidebar-toggle{ display:none; }
@@ -796,42 +786,4 @@
 @media (max-width: 640px) {
   .sp-crit-grid { grid-template-columns: 1fr; }
   .sp-finalize-bar { flex-direction: column; align-items: stretch; text-align: left; }
-}
-
-/* ==========================================
-   KALKULATOR (Position Sizing & Averaging) — dipakai di panel Trading Plan
-   (detail saham) dan di modal Edit Portofolio. Kotak putus-putus emas/teal
-   supaya jelas ini alat bantu hitung, bukan data tersimpan.
-   ========================================== */
-.calc-box {
-  background: rgba(245,158,11,0.05); border: 1px dashed rgba(245,158,11,0.4);
-  border-radius: 10px; padding: 16px; margin-bottom: 16px;
-}
-.calc-input-grid {
-  display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px; margin-top: 8px;
-}
-.calc-input-grid input {
-  width: 100%; margin-top: 4px; background: rgba(0,0,0,0.25); border: 1px solid var(--border);
-  border-radius: 6px; padding: 8px 10px; color: var(--text); font-family: 'JetBrains Mono', monospace; font-size: 12.5px;
-}
-.calc-result {
-  margin-top: 14px; font-size: 14px; font-weight: 700; color: var(--text);
-  border-top: 1px dashed var(--border); padding-top: 10px;
-}
-@media (max-width: 480px) {
-  .calc-input-grid { grid-template-columns: 1fr; }
-}
-
-/* ==========================================
-   TOAST — notifikasi ringan pojok layar (showToast() di app.js). Ditumpuk
-   dari bawah, otomatis hilang; dipakai untuk peringatan umum non-blocking.
-   ========================================== */
-#toastContainer {
-  position: fixed; bottom: 20px; right: 20px; z-index: 9999;
-  display: flex; flex-direction: column; gap: 8px; max-width: 320px;
-}
-.toast {
-  background: rgba(15,23,42,0.96); border: 1px solid var(--border); border-left: 3px solid var(--up);
-  border-radius: 8px; padding: 10px 14px; box-shadow: 0 8px 20px rgba(0,0,0,0.35);
-  color: var(--text); transition: opacity 0.3s ease; animation: fadeInDown 0.2s ease;
 }
