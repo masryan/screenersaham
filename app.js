@@ -734,8 +734,12 @@ async function fetchStockbitLive(ticker){
     }
   }
 
+  const prevLast = state.stockbitLive[ticker]?.mapped?.last ?? null;
   state.stockbitLive[ticker] = { loading: false, error: finalError, raw: finalRaw, mapped, source, fetchedAt: Date.now() };
   render();
+  // Flash hijau/merah kalau harga berubah dari fetch sebelumnya — lihat
+  // updateLivePriceUI() di bagian akhir file.
+  if(mapped && mapped.last != null && prevLast != null) updateLivePriceUI(ticker, mapped.last, prevLast);
 }
 // Tarik live data berurutan (bukan paralel) dengan jeda antar-request,
 // KHUSUS untuk ticker yang lolos filter Screener saat ini — supaya tidak
@@ -2021,6 +2025,32 @@ function dNum(n, opts){
   return (opts.plusSign && num>=0 ? "+" : "") + fmtNum(opts.decimals!=null ? +num.toFixed(opts.decimals) : num) + (opts.suffix||"");
 }
 
+// ==========================================
+// renderImbalanceBar — visual "Tekanan Orderbook" (Bid vs Offer) berbentuk
+// bar dua warna, dipakai di renderDetailTeknikal() persis di bawah Bid/Offer
+// Volume. Murni turunan dari bidVolume/offerVolume yang sudah ada di data
+// screener — tidak butuh field baru.
+// ==========================================
+function renderImbalanceBar(bidVol, offerVol) {
+    const tb = Number(bidVol) || 0;
+    const to = Number(offerVol) || 0;
+    const total = tb + to;
+    if(total === 0) return '';
+    const bidPct = (tb / total) * 100;
+    const offerPct = 100 - bidPct;
+    return `
+    <div style="margin-top:12px; margin-bottom:12px; padding: 12px; background: rgba(0,0,0,0.2); border-radius: 8px; border: 1px solid var(--border);">
+        <div style="font-size:11px; color:var(--muted); text-transform:uppercase; margin-bottom:8px; text-align:center;">⚖️ Tekanan Orderbook (Bid vs Offer)</div>
+        <div style="display:flex; justify-content:space-between; font-size:11px; margin-bottom:4px; font-weight:bold;">
+            <span style="color:var(--up);">Bid Power: ${bidPct.toFixed(1)}%</span>
+            <span style="color:var(--down);">Offer Power: ${offerPct.toFixed(1)}%</span>
+        </div>
+        <div style="height:8px; background:var(--down); border-radius:4px; display:flex; overflow:hidden; box-shadow: inset 0 1px 3px rgba(0,0,0,0.5);">
+            <div style="width:${bidPct}%; background:var(--up); height:100%;"></div>
+        </div>
+    </div>`;
+}
+
 function renderDetailTeknikal(s){
   return `
     <div class="detail-subtitle">Harga & Volume Hari Ini</div>
@@ -2044,6 +2074,7 @@ function renderDetailTeknikal(s){
       ${dItem("Offer", `<span style="color:var(--down)">${dNum(s.offer)}</span>`, true)}
       ${dItem("Offer Volume", dNum(s.offerVolume))}
     </div>
+    ${renderImbalanceBar(s.bidVolume, s.offerVolume)}
 
     <div class="detail-subtitle">Hari Sebelumnya (Pembanding)</div>
     <div class="detail-grid">
@@ -2485,6 +2516,25 @@ function renderDetailAnalisa(s){
       Take Profit ${tpFromResistance ? "diambil dari level resisten teknikal terdekat" : "diperkirakan +5% dari harga entry (resisten belum tersedia di data)"}.
       Stop Loss ${slFromSupport ? "diambil dari level support teknikal terdekat" : `dihitung dari ATR-14 (${s.atr14!=null?dNum(s.atr14):"default 3%"} di bawah entry, karena jarak ke support dianggap terlalu jauh untuk risk yang wajar)`}.
       Ini bukan rekomendasi baku — sesuaikan dengan toleransi risiko dan ukuran posisi masing-masing.
+    </div>
+
+    <!-- KALKULATOR POSITION SIZING -->
+    <div class="calc-box">
+      <div style="font-size: 13px; font-weight: 700; color: var(--up);">🧮 Kalkulator Money Management (Position Sizing)</div>
+      <div style="font-size: 11px; color: var(--muted); margin-bottom: 8px;">Hitung maksimal Lot yang boleh dibeli agar kerugian tidak melebihi batas risiko Anda jika terkena Stop Loss.</div>
+      <div class="calc-input-grid">
+        <div>
+          <label style="font-size: 11px; color: var(--muted);">Modal Tersedia (Rp)</label>
+          <input type="number" id="calcCapital" value="10000000" oninput="calculatePositionSizing(${entry}, ${sl})">
+        </div>
+        <div>
+          <label style="font-size: 11px; color: var(--muted);">Risiko per Trade (%)</label>
+          <input type="number" id="calcRiskPct" value="1" step="0.1" oninput="calculatePositionSizing(${entry}, ${sl})">
+        </div>
+      </div>
+      <div class="calc-result" id="calcResultStr">
+        Maksimal Pembelian: 0 Lot
+      </div>
     </div>
 
     ${rsiSetup ? `
@@ -3739,7 +3789,14 @@ function enriched(){
 }
 
 function getFiltered(){
+  // Checkbox "🛡️ Sembunyikan Gocap & Suspend" di footer toolbar Screener —
+  // dibaca langsung dari DOM (bukan state) supaya konsisten dengan pola
+  // checkbox lain di file ini yang tidak perlu ikut siklus render().
+  // "Gocap" (harga Rp50, batas bawah bursa) & saham tanpa volume hari ini
+  // dianggap tidak likuid untuk discreening aktif.
+  const hideGocap = document.getElementById("hideGocapChk")?.checked;
   return enriched().filter(s=>{
+    if(hideGocap && (s.cClose <= 50 || !s.cVol)) return false;
     if(state.search && !s.ticker.toLowerCase().includes(state.search.toLowerCase())) return false;
     
     // --- PRESET DSI ---
@@ -5205,7 +5262,7 @@ function renderScreener(){
   const rows = pagedData.map(s=>{
     const bodyCells = visibleColumns.map(c => c.cell(s)).join("");
     return `
-    <tr>
+    <tr id="row-${s.ticker}">
       <td class="col-freeze" style="width:${FREEZE_W.chk}px;left:${FREEZE_LEFT.chk}px;"><input type="checkbox" class="custom-checkbox chk-row" data-check="${s.ticker}" ${state.selectedForBacktest.has(s.ticker)?'checked':''}></td>
       <td class="col-freeze" style="width:${FREEZE_W.star}px;left:${FREEZE_LEFT.star}px;"><button class="star-btn" data-fav="${s.ticker}">
         <svg width="16" height="16" viewBox="0 0 24 24" fill="${state.watchlist.has(s.ticker)?'var(--gold)':'none'}" stroke="${state.watchlist.has(s.ticker)?'var(--gold)':'var(--muted)'}" stroke-width="2.5" style="filter: ${state.watchlist.has(s.ticker)?'drop-shadow(0 0 3px rgba(245,158,11,0.5))':'none'};"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>
@@ -5399,7 +5456,13 @@ function renderScreener(){
       ${renderActiveFilterChips()}
 
       <div class="toolbar-footer">
-        <span class="count-badge" style="margin:0;">${filtered.length} emiten sesuai filter &middot; ${state.selectedForBacktest.size} dipilih</span>
+        <div style="display:flex; align-items:center; gap:12px; flex-wrap:wrap;">
+          <span class="count-badge" style="margin:0;">${filtered.length} emiten sesuai filter &middot; ${state.selectedForBacktest.size} dipilih</span>
+          <label style="display:flex;align-items:center;gap:6px;font-size:12px;cursor:pointer; background:rgba(34,211,238,0.06); border:1px solid rgba(34,211,238,0.3); padding:4px 10px; border-radius:6px; color:var(--teal); font-weight:bold;">
+            <input type="checkbox" id="hideGocapChk" class="custom-checkbox" onchange="render()" ${document.getElementById("hideGocapChk")?.checked ? "checked" : ""}>
+            🛡️ Sembunyikan Gocap & Suspend
+          </label>
+        </div>
         <div style="display:flex; gap:12px;">
           ${hasActiveFilters() ? `<button class="btn btn-outline" id="resetFiltersBtn" style="color:#f87171;border-color:rgba(239,68,68,0.3);">Reset Filter</button>` : ""}
           <button class="btn btn-gold-outline" id="saveBacktestBtn">Simpan Pilihan ke Backtest</button>
@@ -5913,6 +5976,21 @@ function renderPortoFormFields(){
 
   document.getElementById("portoModalTitle") && (document.getElementById("portoModalTitle").textContent = editing ? "✏️ Edit Transaksi Portofolio" : "➕ Tambah Transaksi Portofolio");
 
+  // Kalkulator Averaging (hanya muncul saat mode Edit) — simulasi harga
+  // rata-rata baru kalau nambah beli lagi di harga & lot tertentu, tanpa
+  // mengubah data transaksi yang sudah tersimpan.
+  const avgCalcHtml = editing ? `
+    <div style="grid-column: 1/-1; background: rgba(34,211,238,0.05); border: 1px dashed rgba(34,211,238,0.4); border-radius: 10px; padding: 16px; margin-top: 12px;">
+      <div style="font-size: 13px; font-weight: 700; color: var(--teal); margin-bottom: 8px;">⚖️ Kalkulator Averaging (Simulasi)</div>
+      <div style="font-size: 11px; color: var(--muted); margin-bottom: 12px;">Masukkan skenario pembelian baru untuk melihat perubahan harga rata-rata Anda.</div>
+      <div style="display:flex; gap:12px; flex-wrap:wrap;">
+          <div class="field" style="flex:1;"><label>Harga Beli Baru</label><input type="number" id="avgNewPrice" placeholder="Misal: 1200" oninput="calcAveraging(${f.hargaBeli}, ${f.lotBeli})"></div>
+          <div class="field" style="flex:1;"><label>Lot Beli Baru</label><input type="number" id="avgNewLot" placeholder="Misal: 50" oninput="calcAveraging(${f.hargaBeli}, ${f.lotBeli})"></div>
+      </div>
+      <div id="avgResult" style="margin-top: 14px; font-size: 14px; font-weight: bold; color: var(--gold);">Harga Rata-rata Baru: -</div>
+    </div>
+  ` : '';
+
   return `
       <div class="porto-form">
         <div class="field"><label>Nama Emiten *</label><input id="pfTicker" list="pfTickerList" value="${f.ticker}" placeholder="BBCA" style="text-transform:uppercase;"><datalist id="pfTickerList">${tickerOptions}</datalist></div>
@@ -5936,11 +6014,47 @@ function renderPortoFormFields(){
         <div class="field"><label>Nilai P/L (Rp)</label><input id="pfNilaiPL" readonly value="${c.nilaiPL!==""?fmtNum(c.nilaiPL):""}"></div>
         <div class="field"><label>Status</label><input id="pfStatus" readonly value="${c.status}" class="${c.status==='Win'?'status-win':c.status==='Loss'?'status-loss':'status-open'}" style="font-weight:700;"></div>
         <div class="field wide" style="grid-column:1/-1;"><label>Catatan</label><textarea id="pfCatatan" rows="2">${f.catatan||""}</textarea></div>
+        ${avgCalcHtml}
       </div>
       <div style="display:flex;gap:12px;margin-top:24px;">
         <button class="btn btn-primary" id="pfSubmitBtn" style="border-radius:8px; padding: 12px; font-size: 14px;">${editing?"Update Transaksi":"Simpan Transaksi"}</button>
         <button class="btn btn-outline" id="pfCancelBtn" style="border-radius:8px; padding: 12px; font-size: 14px;">Batal</button>
       </div>`;
+}
+
+// ==========================================
+// renderPortfolioStrategyStats — ringkasan win-rate dikelompokkan per
+// "strategi" (dideteksi sederhana dari isi field Catatan: kalau mengandung
+// "Dari Backtest" berarti entry-nya berasal dari hasil Screener/Backtest,
+// selain itu dianggap manual). Hanya menghitung transaksi yang sudah
+// closed (nilaiPL terisi), ditampilkan di bawah ringkasan Portofolio.
+// ==========================================
+function renderPortfolioStrategyStats() {
+    const closed = state.portfolio.filter(p => p.nilaiPL !== "" && p.nilaiPL !== undefined && p.nilaiPL !== null);
+    if(closed.length === 0) return '';
+    const strategyStats = {};
+    closed.forEach(p => {
+        let strat = "Manual / Umum";
+        if (p.catatan && p.catatan.includes("Dari Backtest")) strat = "Hasil Screener/Backtest";
+        if (!strategyStats[strat]) strategyStats[strat] = { wins: 0, total: 0 };
+        strategyStats[strat].total++;
+        if (p.status === "Win") strategyStats[strat].wins++;
+    });
+    const rows = Object.keys(strategyStats).map(key => {
+        const s = strategyStats[key];
+        const rate = (s.wins / s.total) * 100;
+        const tone = rate >= 50 ? "up" : "down";
+        return `
+        <div style="display:flex; justify-content:space-between; font-size:12px; border-bottom:1px dashed var(--border); padding:8px 0;">
+            <span style="color:var(--text);">${escapeHtml(key)}</span>
+            <span style="color:var(--${tone}); font-weight:bold;">${rate.toFixed(0)}% <span style="font-size:10px;color:var(--muted)">(${s.wins}/${s.total})</span></span>
+        </div>`;
+    }).join("");
+    return `
+    <div class="porto-stat" style="grid-column: 1 / -1; margin-top: 10px;">
+        <div class="lbl">📊 Win Rate Berdasarkan Strategi / Tipe Entry</div>
+        <div style="margin-top:8px;">${rows}</div>
+    </div>`;
 }
 
 function renderPortfolio(){
@@ -5962,6 +6076,7 @@ function renderPortfolio(){
       <div class="porto-stat"><div class="lbl">Total Modal Dibeli</div><div class="val">${fmtNum(totalInvest)}</div></div>
       <div class="porto-stat"><div class="lbl">Total P/L Realisasi</div><div class="val" style="color:${totalPL>=0?'var(--up)':'var(--down)'}">${totalPL>=0?'+':''}${fmtNum(totalPL)}</div></div>
       <div class="porto-stat"><div class="lbl">Win Rate</div><div class="val">${winRate}% <span style="font-size:12px;color:var(--muted); font-weight:500;">(${winCount}/${closed.length})</span></div></div>
+      ${renderPortfolioStrategyStats()}
     </div>`;
 
   if(state.portfolio.length === 0){
@@ -8760,4 +8875,106 @@ if("serviceWorker" in navigator && (location.protocol === "https:" || location.h
   window.addEventListener("load", () => {
     navigator.serviceWorker.register("sw.js").catch(() => { /* diamkan — bukan fatal */ });
   });
+}
+// ==========================================
+// UI PEMANIS: flash warna hijau/merah di baris tabel saat harga live
+// berubah (dipanggil manual setelah fetchStockbitLive/-Bulk berhasil dapat
+// harga baru — lihat pemanggilan di fetchStockbitLive()). Butuh <tr
+// id="row-{ticker}"> di rendering tabel Screener (sudah ditambahkan).
+// ==========================================
+window.updateLivePriceUI = function(ticker, currentPrice, prevPrice) {
+    if (!currentPrice || currentPrice === prevPrice) return;
+    const row = document.getElementById('row-' + ticker);
+    if (row) {
+        const flashColor = currentPrice > prevPrice ? 'rgba(16,185,129,0.3)' : 'rgba(239,68,68,0.3)';
+        row.style.transition = 'none';
+        row.style.backgroundColor = flashColor;
+        setTimeout(() => {
+            row.style.transition = 'background-color 0.8s ease';
+            row.style.backgroundColor = '';
+        }, 500);
+    }
+};
+
+// ==========================================
+// KALKULATOR POSITION SIZING — dipanggil dari input di panel "Trading Plan
+// Otomatis" (lihat renderDetailAnalisa()). Rumus: risiko maksimal per trade
+// (dalam Rp) dibagi kerugian per lot (selisih Entry-SL x 100 lembar/lot),
+// dibulatkan ke bawah supaya tidak melebihi batas risiko.
+// ==========================================
+window.calculatePositionSizing = function(entryPrice, slPrice) {
+  const capital = parseFloat(document.getElementById('calcCapital').value) || 0;
+  const riskPct = parseFloat(document.getElementById('calcRiskPct').value) || 0;
+
+  if (!capital || !riskPct || !entryPrice || !slPrice || entryPrice <= slPrice) {
+    document.getElementById('calcResultStr').innerHTML = 'Maksimal Pembelian: <span style="color:var(--muted)">- Lot</span>';
+    return;
+  }
+
+  const riskAmount = capital * (riskPct / 100);
+  const lossPerShare = entryPrice - slPrice;
+  const lossPerLot = lossPerShare * 100;
+
+  const maxLot = Math.floor(riskAmount / lossPerLot);
+  const totalValue = maxLot * 100 * entryPrice;
+
+  document.getElementById('calcResultStr').innerHTML =
+    `Maksimal Pembelian: <span style="color:var(--up)">${fmtNum(maxLot)} Lot</span><br>
+     <span style="font-size: 12px; color: var(--muted); font-weight: 500;">(Total Beli: Rp ${fmtNum(totalValue)} | Potensi Rugi: Rp ${fmtNum(riskAmount)})</span>`;
+};
+
+// ==========================================
+// KALKULATOR AVERAGING — dipanggil dari panel "⚖️ Kalkulator Averaging"
+// yang muncul saat mode Edit di modal Portofolio (lihat renderPortoModal()).
+// Rumus rata-rata tertimbang: (nilai lama + nilai baru) / total lot.
+// ==========================================
+window.calcAveraging = function(oldPrice, oldLot) {
+    const newPrice = parseFloat(document.getElementById('avgNewPrice').value) || 0;
+    const newLot = parseFloat(document.getElementById('avgNewLot').value) || 0;
+    const resEl = document.getElementById('avgResult');
+    if(!resEl) return;
+
+    if (!newPrice || !newLot || !oldPrice || !oldLot) {
+        resEl.innerHTML = 'Harga Rata-rata Baru: <span style="color:var(--muted)">-</span>';
+        return;
+    }
+
+    const totalOldValue = oldPrice * oldLot;
+    const totalNewValue = newPrice * newLot;
+    const totalLot = oldLot + newLot;
+    const avgPrice = (totalOldValue + totalNewValue) / totalLot;
+
+    resEl.innerHTML = `Harga Rata-rata Baru: <span style="color:var(--up); font-size:18px;">Rp ${fmtNum(Math.round(avgPrice))}</span> <span style="font-size:12px;color:var(--muted); font-weight:normal;">(Total Kepemilikan: ${totalLot} Lot)</span>`;
+};
+
+// ==========================================
+// TOAST + SUARA NOTIFIKASI — utilitas umum, dipakai untuk peringatan
+// ringan di layar (mis. nantinya untuk sinyal Day Trade kalau fitur WS
+// live-tick sudah matang). playAlertSound() diam-diam gagal kalau browser
+// memblokir autoplay sebelum ada interaksi user — itu wajar, bukan bug.
+// ==========================================
+function playAlertSound() {
+    const audio = new Audio('https://assets.mixkit.co/active_storage/sfx/2869/2869-preview.mp3');
+    audio.play().catch(e => console.log("Autoplay diblokir browser, user harus interaksi dengan layar dulu.", e));
+}
+
+function showToast(message, tone = "up") {
+    let container = document.getElementById('toastContainer');
+    if(!container) {
+        container = document.createElement('div');
+        container.id = 'toastContainer';
+        document.body.appendChild(container);
+    }
+    const toast = document.createElement('div');
+    toast.className = 'toast';
+    toast.style.borderLeftColor = `var(--${tone})`;
+    toast.innerHTML = `<div style="font-size:12px; font-weight:bold;">🔔 Notifikasi</div><div style="font-size:11px;">${escapeHtml(message)}</div>`;
+
+    container.appendChild(toast);
+    playAlertSound();
+
+    setTimeout(() => {
+        toast.style.opacity = '0';
+        setTimeout(() => toast.remove(), 300);
+    }, 5000);
 }
