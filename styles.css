@@ -503,12 +503,22 @@
     /* SIDEBAR — di layar sempit dikembalikan jadi bar horizontal yang bisa
        discroll (seperti tabs lama), bukan sidebar vertikal — lebih pas
        untuk layar sempit/satu tangan. Tombol ciutkan disembunyikan karena
-       tidak relevan lagi dalam mode ini. */
+       tidak relevan lagi dalam mode ini.
+       CATATAN PENTING: SENGAJA "position: static" (bukan sticky) di sini.
+       Tinggi .header di HP tidak tetap (subtitle + tombol Refresh/Pengaturan
+       bisa turun ke baris baru tergantung lebar layar), jadi angka "top"
+       tetap (mis. top:58px) gampang meleset dan bikin bar menu ini malah
+       ketutup/ketimpa header yang sama-sama sticky (z-index header lebih
+       tinggi). Statis lebih aman: bar menu selalu full terlihat tepat di
+       bawah header saat halaman dibuka, ikut ter-scroll ke atas bareng
+       konten kalau di-scroll ke bawah (bukan nempel), tapi TIDAK PERNAH
+       ketutup elemen lain. */
     .app-body{ flex-direction:column; }
     .sidebar{
-      position:sticky; top:58px; width:100%; flex-basis:auto; height:auto;
+      position:static; width:100%; flex-basis:auto; height:auto; z-index:auto;
       flex-direction:row; align-items:center; gap:6px; overflow-x:auto; overflow-y:hidden;
       padding:8px 10px; border-right:none; border-bottom:1px solid var(--border);
+      -webkit-overflow-scrolling:touch;
     }
     .sidebar.collapsed{ width:100%; padding:8px 10px; }
     .sidebar-toggle{ display:none; }
