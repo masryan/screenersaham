@@ -217,7 +217,7 @@
   .count-badge{color:var(--text); font-weight: 500; font-size:12px; background: rgba(0,0,0,0.2); padding: 6px 12px; border-radius: 20px; border: 1px solid var(--border);}
 
   /* MODERN TABLE */
-  table{width:max-content;min-width:100%;border-collapse:separate; border-spacing: 0; font-size:12.5px;}
+  table{width:100%;border-collapse:separate; border-spacing: 0; font-size:12.5px;}
   .table-wrap{background: var(--surface); backdrop-filter: var(--glass-blur); border:1px solid var(--border); border-radius:12px; overflow:auto; max-height:70vh; box-shadow: var(--shadow-md);}
   
   thead th {
@@ -786,4 +786,398 @@
 @media (max-width: 640px) {
   .sp-crit-grid { grid-template-columns: 1fr; }
   .sp-finalize-bar { flex-direction: column; align-items: stretch; text-align: left; }
+}
+
+
+.calc-box {
+  background: rgba(16,185,129,0.05);
+  border: 1px solid rgba(16,185,129,0.3);
+  border-radius: 10px;
+  padding: 16px;
+  margin-top: 16px;
+}
+.calc-input-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 12px;
+  margin-top: 10px;
+}
+.calc-input-grid input {
+  background: rgba(0,0,0,0.3);
+  border: 1px solid var(--border);
+  color: var(--text);
+  padding: 8px;
+  border-radius: 6px;
+  width: 100%;
+}
+.calc-result {
+  font-size: 20px;
+  font-weight: 700;
+  color: var(--up);
+  margin-top: 12px;
+  text-align: center;
+  padding-top: 12px;
+  border-top: 1px dashed var(--border);
+}
+.toast-container { position: fixed; bottom: 20px; right: 20px; z-index: 9999; display: flex; flex-direction: column; gap: 10px; }
+.toast { 
+  background: rgba(15,23,42,0.95); backdrop-filter: blur(8px);
+  border-left: 4px solid var(--up); padding: 12px 16px; border-radius: 8px; color: #fff; 
+  box-shadow: 0 4px 12px rgba(0,0,0,0.5); 
+  animation: slideIn 0.3s ease forwards; 
+}
+@keyframes slideIn { from { transform: translateX(100%); opacity: 0; } to { transform: translateX(0); opacity: 1; } }
+
+/* ═══════════════════════════════════════════════════════════
+   UI ENHANCEMENTS — IHSG Screener Pro
+   Salin isi file ini ke bagian paling AKHIR styles.css kamu
+   ═══════════════════════════════════════════════════════════ */
+
+/* ── #marketStatus pill ────────────────────────────────── */
+#marketStatus {
+  display: inline-flex;
+  align-items: center;
+  margin-left: 8px;
+}
+#marketStatus .pill {
+  font-size: 11px !important;
+  padding: 4px 10px;
+  border-radius: 20px;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+}
+
+/* ── Summary Cards — elevate + subtle hover ────────────── */
+.summary-card {
+  background: linear-gradient(135deg, rgba(0,0,0,0.2), rgba(0,0,0,0.3));
+  border-radius: 12px;
+  transition: all 0.3s ease;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+}
+.summary-card:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 4px 16px rgba(0,0,0,0.2);
+  border-color: var(--teal);
+}
+.summary-card .summary-lbl {
+  font-size: 10.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+  margin-bottom: 4px;
+  font-weight: 600;
+}
+.summary-card .summary-val {
+  font-size: 22px;
+  font-weight: 700;
+  font-family: 'JetBrains Mono', monospace;
+}
+
+/* ── Table row hover + sticky header ───────────────────── */
+.mono tbody tr {
+  transition: background-color 0.15s ease;
+}
+.mono tbody tr:hover {
+  background-color: rgba(6,182,212,0.05);
+}
+.mono thead {
+  position: sticky;
+  top: 0;
+  background: var(--bg, #0b0e17);
+  z-index: 10;
+}
+.mono td, .mono th {
+  padding: 11px 14px;
+}
+.ticker-link {
+  transition: text-shadow 0.2s ease;
+}
+.ticker-link:hover {
+  text-shadow: 0 0 8px rgba(6,182,212,0.5);
+}
+
+/* ── Star button pulse on watchlist ────────────────────── */
+.star-btn svg {
+  transition: transform 0.2s ease, filter 0.2s ease;
+}
+.star-btn:hover svg {
+  transform: scale(1.15);
+}
+
+/* ── Filter toolbar — group sections visually ──────────── */
+.filter-toolbar {
+  gap: 14px;
+}
+.filter-toolbar .field label {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+  font-weight: 600;
+  margin-bottom: 4px;
+  display: block;
+}
+
+/* ── Column picker — group title ───────────────────────── */
+.col-picker-group-title {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--teal);
+  padding: 6px 0 4px;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 6px;
+}
+.col-picker-item {
+  font-size: 12px;
+  padding: 3px 0;
+  cursor: pointer;
+  color: var(--text);
+}
+.col-picker-item:hover {
+  color: var(--teal);
+}
+.col-picker-item input[type="checkbox"] {
+  margin-right: 6px;
+}
+
+/* ── Preset buttons — smaller, grouped ─────────────────── */
+.col-picker-head .link-btn {
+  font-size: 10.5px;
+  padding: 3px 8px;
+  border-radius: 4px;
+}
+.col-picker-head .link-btn:hover {
+  background: rgba(6,182,212,0.1);
+}
+
+/* ── Button group: uniform sizing ──────────────────────── */
+.btn-group {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+.btn-group .btn {
+  padding: 8px 14px;
+  font-size: 12px;
+  border-radius: 8px;
+  white-space: nowrap;
+}
+
+/* ── Toast notifications — professional ────────────────── */
+.toast-container {
+  position: fixed;
+  bottom: 20px;
+  right: 20px;
+  z-index: 9999;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  pointer-events: none;
+}
+.toast {
+  background: rgba(15,23,42,0.95);
+  backdrop-filter: blur(12px);
+  border-left: 4px solid var(--up);
+  padding: 12px 18px;
+  border-radius: 10px;
+  color: #fff;
+  font-size: 12px;
+  font-family: 'Sora', sans-serif;
+  box-shadow: 0 4px 20px rgba(0,0,0,0.4);
+  animation: toastIn 0.3s ease forwards;
+  transition: opacity 0.3s ease, transform 0.3s ease;
+  pointer-events: auto;
+  max-width: 360px;
+}
+.toast:hover {
+  opacity: 0.85;
+}
+@keyframes toastIn {
+  from { transform: translateX(100%) scale(0.9); opacity: 0; }
+  to   { transform: translateX(0) scale(1); opacity: 1; }
+}
+
+/* ── Modal — backdrop blur + smooth open ───────────────── */
+.modal-overlay {
+  backdrop-filter: blur(6px);
+}
+.modal {
+  animation: modalSlideIn 0.25s ease;
+}
+@keyframes modalSlideIn {
+  from { opacity: 0; transform: translateY(-16px) scale(0.96); }
+  to   { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+/* ── Filter chips — pill style ─────────────────────────── */
+.pill-active {
+  background: rgba(6,182,212,0.15) !important;
+  border-color: var(--teal) !important;
+  color: var(--teal) !important;
+  font-weight: 600;
+}
+
+/* ── Pagination — polished ─────────────────────────────── */
+.pagination {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 12px 0;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.pagination .btn {
+  min-width: 36px;
+  text-align: center;
+}
+
+/* ── Empty state — better visual ───────────────────────── */
+.empty-box {
+  background: rgba(0,0,0,0.15);
+  border: 1px dashed var(--border);
+  border-radius: 12px;
+  padding: 28px 20px;
+  text-align: center;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+/* ── Sektor card — smoother expand ─────────────────────── */
+.sektor-card-body {
+  animation: expandIn 0.2s ease;
+}
+@keyframes expandIn {
+  from { opacity: 0; max-height: 0; }
+  to   { opacity: 1; max-height: 2000px; }
+}
+
+/* ── Skeleton loading shimmer ──────────────────────────── */
+@keyframes shimmer {
+  0%   { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
+}
+.skeleton-cell {
+  height: 14px;
+  border-radius: 4px;
+  background: linear-gradient(90deg,
+    rgba(255,255,255,0.04) 25%,
+    rgba(255,255,255,0.08) 50%,
+    rgba(255,255,255,0.04) 75%
+  );
+  background-size: 200% 100%;
+  animation: shimmer 1.5s infinite;
+}
+
+/* ── Smart Pick card — hover glow ──────────────────────── */
+.sp-card {
+  transition: all 0.2s ease;
+}
+.sp-card:hover {
+  border-color: rgba(234,179,8,0.3);
+  box-shadow: 0 2px 12px rgba(234,179,8,0.08);
+}
+
+/* ── Chart toolbar — cleaner layout ────────────────────── */
+.chart-toolbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+.chart-external-links {
+  display: flex;
+  gap: 8px;
+}
+
+/* ── Broker Summary — bar chart refinement ─────────────── */
+.bs-bar-fill {
+  border-radius: 4px;
+  transition: width 0.4s ease;
+}
+.bs-bar-row:hover .bs-bar-fill {
+  filter: brightness(1.1);
+}
+
+/* ── Entry Price Scanner — score badge ─────────────────── */
+.mono td:nth-child(11) { /* Score column */
+  font-weight: 700;
+}
+
+/* ── ORCA/Kraken Flow — filter chip hover ──────────────── */
+[data-orca-filter].btn:hover,
+[data-eps-filter].btn:hover {
+  transform: translateY(-1px);
+}
+
+/* ── MOBILE RESPONSIVE ─────────────────────────────────── */
+@media (max-width: 768px) {
+  .filter-toolbar {
+    flex-direction: column;
+    gap: 10px;
+  }
+  .summary-card .summary-val {
+    font-size: 18px;
+  }
+  .table-wrap {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+  .modal {
+    width: 95%;
+    max-width: none;
+    margin: 10px;
+    max-height: 90vh;
+    overflow-y: auto;
+  }
+  .chart-toolbar {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+  .pagination {
+    justify-content: center;
+  }
+  .sektor-card-mid {
+    flex-direction: column;
+    gap: 6px;
+  }
+  .toast-container {
+    left: 12px;
+    right: 12px;
+  }
+  .toast {
+    max-width: 100%;
+  }
+  .sidebar .tab-btn {
+    min-height: 38px;
+    gap: 8px;
+  }
+  .detail-modal {
+    max-width: 100%;
+    padding: 16px 12px;
+  }
+  .detail-grid {
+    grid-template-columns: 1fr 1fr;
+    gap: 6px;
+  }
+  .bs-wrap .bs-toolbar {
+    flex-direction: column;
+    gap: 8px;
+  }
+}
+
+/* ── Print-friendly ────────────────────────────────────── */
+@media print {
+  .sidebar, .header-actions, .pagination, .toast-container {
+    display: none !important;
+  }
+  .content {
+    margin: 0 !important;
+    width: 100% !important;
+  }
+  .modal-overlay {
+    display: none !important;
+  }
 }

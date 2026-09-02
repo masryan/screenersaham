@@ -55,7 +55,6 @@
       <button class="tab-btn" data-tab="eps" title="Entry Price Scanner" aria-label="Entry Price Scanner"><span class="tab-icon" aria-hidden="true">🕵️</span><span class="tab-label">Entry Price Scanner</span></button>
       <button class="tab-btn" data-tab="kraken" title="Kraken Flow (ORCA)" aria-label="Kraken Flow (ORCA)"><span class="tab-icon" aria-hidden="true">⬢</span><span class="tab-label">Kraken Flow (ORCA)</span></button>
       <button class="tab-btn" data-tab="about" title="Info" aria-label="Info"><span class="tab-icon" aria-hidden="true">ℹ️</span><span class="tab-label">Info</span></button>
-      <button class="tab-btn" data-tab="wsdebug" title="WS Debug" aria-label="WS Debug"><span class="tab-icon" aria-hidden="true">🧪</span><span class="tab-label">WS Debug</span></button>
     </div>
   </aside>
 
@@ -115,24 +114,6 @@
         <button type="button" class="btn btn-outline" onclick="testStockbitQuoteEndpoint()" style="font-size:11.5px;padding:6px 10px;">🧪 Uji Endpoint Ini</button>
       </div>
       <div id="testStockbitQuoteResult" style="margin-top:8px;"></div>
-    </div>
-    <div class="field">
-      <label>Endpoint Chart — fallback Last Price (opsional, pakai {ticker} dan {date} sebagai placeholder)</label>
-      <input id="setStockbitChartEndpoint" type="text" placeholder="https://exodus.stockbit.com/order-trade/trade-book/chart?symbol={ticker}&time_interval=1m&date={date}">
-    </div>
-    <div style="margin:-8px 0 14px; font-size: 11.5px; color: var(--muted); background: rgba(6,182,212,0.06); padding: 10px; border-radius: 8px; border: 1px solid rgba(6,182,212,0.15);">
-      ℹ️ Dipakai HANYA sebagai cadangan kalau Endpoint Quote/Orderbook di atas gagal — endpoint ini bersumber
-      dari data chart tradebook per-menit, bukan quote/orderbook resmi, jadi Last/Open/High/Low perkiraan saja
-      dan Prev Close/Change tidak akan pernah terisi dari sini. <b>{date} otomatis diisi tanggal hari ini (WIB)
-      saat request dikirim</b> — jangan ganti jadi tanggal tetap, kalau tidak data tidak akan pernah update.
-      Ambil URL-nya dari DevTools → Network → filter Fetch/XHR → buka halaman detail saham di stockbit.com →
-      klik request yang namanya mengandung "chart" → tab Headers → copy Request URL lengkap, lalu ganti kode
-      saham dengan <code>{ticker}</code> dan tanggalnya dengan <code>{date}</code>.
-      <div style="display:flex;gap:8px;align-items:center;margin-top:10px;flex-wrap:wrap;">
-        <input id="testStockbitChartTicker" type="text" placeholder="Ticker uji, mis. BBCA" maxlength="6" style="text-transform:uppercase;max-width:140px;">
-        <button type="button" class="btn btn-outline" onclick="testStockbitChartEndpoint()" style="font-size:11.5px;padding:6px 10px;">🧪 Uji Endpoint Ini</button>
-      </div>
-      <div id="testStockbitChartResult" style="margin-top:8px;"></div>
     </div>
     <div class="field">
       <label>Endpoint Broker Summary (sudah terisi default — timpa hanya kalau Stockbit ganti skemanya)</label>

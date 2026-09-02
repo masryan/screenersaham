@@ -1473,6 +1473,27 @@ function setColumnPreset(preset){
   if(preset === "ringkas") state.visibleCols = new Set(DEFAULT_VISIBLE_COLS);
   else if(preset === "semua") state.visibleCols = new Set(SCREENER_COLUMNS.map(c=>c.key));
   else if(preset === "kosong") state.visibleCols = new Set();
+  else if(preset === "fundamental") state.visibleCols = new Set([
+    "sektor","baggerScoreTotal","stockbitLive","cClose","changePct",
+    "per","forwardPer","pbv","psr","peg","roe","roa","npm","opm",
+    "eps","revenueGrowth","earningsGrowth","divYield","der",
+    "currentRatio","beta","valuasi","marketCap"
+  ]);
+  else if(preset === "teknikal") state.visibleCols = new Set([
+    "sektor","baggerScoreTotal","stockbitLive","cClose","changePct","cVol","volRatio",
+    "rsi7","rsi21","cekHarga","cekRsi","cekMacd","trendHarga",
+    "polaCandle","bbWidth","atr14","support","resistance",
+    "ma21","ma50","ma100","ma200"
+  ]);
+  else if(preset === "bandarmologi") state.visibleCols = new Set([
+    "sektor","baggerScoreTotal","stockbitLive","cClose","changePct","cVol","volRatio","turnover",
+    "frequency","foreignNet1D","foreignNet5D","foreignNet20D","foreignUpDays",
+    "avgTicket","crossingPct","uangGedeMasuk","band","keyakinanNaik"
+  ]);
+  else if(preset === "sahamSyariah") state.visibleCols = new Set([
+    "sektor","syariahLabel","baggerScoreTotal","stockbitLive","cClose","changePct",
+    "per","pbv","roe","divYield","valuasi","trendHarga"
+  ]);
   saveVisibleCols(); render();
 }
 function saveWatchlist(){ localStorage.setItem(LS_WATCHLIST, JSON.stringify([...state.watchlist])); }
@@ -2404,7 +2425,7 @@ function renderDetailAnalisa(s){
 
     <!-- TRADING PLAN (Dipertahankan) -->
     <div class="detail-subtitle">Trading Plan Otomatis (Risk/Reward)</div>
-    <<!-- KALKULATOR POSITION SIZING -->
+    <!-- KALKULATOR POSITION SIZING -->
     <div class="calc-box">
       <div style="font-size: 13px; font-weight: 700; color: var(--up);">🧮 Kalkulator Money Management (Position Sizing)</div>
       <div style="font-size: 11px; color: var(--muted); margin-bottom: 8px;">Hitung maksimal Lot yang boleh dibeli agar kerugian tidak melebihi batas risiko Anda jika terkena Stop Loss.</div>
@@ -3418,6 +3439,7 @@ function exportAllBacktestToExcel() {
     {wch: 14}, // Tanggal Entry
     {wch: 10}, // Ticker
     {wch: 12}, // Sumber
+    {wch: 40}, // Kriteria Screener
     {wch: 12}, // Harga Entry
     {wch: 12}, // Harga Live
     {wch: 15}, // Profit/Loss (%)
@@ -4160,6 +4182,8 @@ async function loadSmartPickHistory(){
 function render(){
   document.getElementById("modePill").className = "pill pill-up";
   document.getElementById("modePill").textContent = "Data Live";
+  if(typeof updateMarketStatusUI === 'function') updateMarketStatusUI();
+  if(typeof updateMarketStatusUI === 'function') updateMarketStatusUI();
   document.querySelectorAll(".tab-btn").forEach(b=> b.classList.toggle("active", b.dataset.tab===state.tab));
 
   const content = document.getElementById("content");
@@ -5267,6 +5291,14 @@ function renderScreener(){
             <button class="link-btn" data-col-preset="ringkas">Ringkas</button>
             <button class="link-btn" data-col-preset="semua">Semua</button>
             <button class="link-btn" data-col-preset="kosong">Kosongkan</button>
+            <button class="link-btn" data-col-preset="fundamental" title="Preset Fundamental">💰Fund</button>
+            <button class="link-btn" data-col-preset="teknikal" title="Preset Teknikal">📊Teknik</button>
+            <button class="link-btn" data-col-preset="bandarmologi" title="Preset Bandarmologi">🐋Bandar</button>
+            <button class="link-btn" data-col-preset="sahamSyariah" title="Preset Saham Syariah">☪️Syariah</button>
+            <button class="link-btn" data-col-preset="fundamental">💰Fund</button>
+            <button class="link-btn" data-col-preset="teknikal">📊Teknik</button>
+            <button class="link-btn" data-col-preset="bandarmologi">🐋Bandar</button>
+            <button class="link-btn" data-col-preset="sahamSyariah">☪️Syariah</button>
           </div>
         </div>
         ${["Umum","Harga","Fundamental","Teknikal","Bandarmologi","Analisa"].map(group => {
@@ -8162,21 +8194,52 @@ function attachContentEvents(){
   const exportScreenerBtn = document.getElementById("exportScreenerBtn");
   if(exportScreenerBtn) exportScreenerBtn.onclick = exportScreenerToExcel;
   const stockbitBulkBtn = document.getElementById("stockbitBulkBtn");
-  if(stockbitBulkBtn) stockbitBulkBtn.onclick = () => {
-    if(!state.stockbitToken){ openSettings(); return; }
-    // Kalau ada baris yang dicentang (kolom checkbox), pakai itu saja.
-    // Kalau tidak ada yang dicentang, fallback ke semua yang lolos filter
-    // (perilaku lama) supaya tombol tetap berguna tanpa harus centang dulu.
+  if(stockbitBulkBtn) stockbitBulkBtn.onclick = async () => {
+    if(!isValidStockbitToken(state.stockbitToken)){
+      if(typeof showToast === 'function') showToast("Token Stockbit belum valid/ kosong. Isi di Pengaturan.", "down");
+      openSettings(); return;
+    }
+    if(!isStockbitQuoteEndpointValid()){
+      if(typeof showToast === 'function') showToast("Endpoint Quote belum benar (masih default / tanpa {ticker}). Cek Pengaturan.", "down");
+      openSettings(); return;
+    }
     const checked = [...state.selectedForBacktest];
     const tickers = checked.length ? checked : getSorted(getFiltered()).map(s=>s.ticker);
+    if(!tickers.length){
+      if(typeof showToast === 'function') showToast("Tidak ada saham yang lolos filter / dicentang.", "down");
+      return;
+    }
+    if(!confirmBulkFetch("menarik data live", tickers.length)) return;
     if(tickers.length) fetchStockbitLiveBulk(tickers);
   };
   const stockbitAutoRefreshChk = document.getElementById("stockbitAutoRefreshChk");
   if(stockbitAutoRefreshChk) stockbitAutoRefreshChk.onchange = (e) => {
-    if(e.target.checked && !state.stockbitToken){ e.target.checked = false; openSettings(); return; }
+    if(e.target.checked){
+      if(!isValidStockbitToken(state.stockbitToken)){
+        e.target.checked = false;
+        if(typeof showToast === 'function') showToast("Token Stockbit belum valid. Isi di Pengaturan dulu.", "down");
+        openSettings(); return;
+      }
+      if(!isStockbitQuoteEndpointValid()){
+        e.target.checked = false;
+        if(typeof showToast === 'function') showToast("Endpoint Quote belum benar. Cek Pengaturan dulu.", "down");
+        openSettings(); return;
+      }
+      const tickers = state.selectedForBacktest.size > 0
+        ? [...state.selectedForBacktest]
+        : getSorted(getFiltered()).map(s=>s.ticker);
+      if(tickers.length > STOCKBIT_AUTOREFRESH_MAX_TICKERS){
+        e.target.checked = false;
+        if(typeof showToast === 'function') showToast("Auto-refresh dijeda: terlalu banyak ticker. Centang maksimal " + STOCKBIT_AUTOREFRESH_MAX_TICKERS + " saham.", "down");
+        return;
+      }
+    }
     state.stockbitAutoRefresh = e.target.checked;
     localStorage.setItem(LS_STOCKBIT_AUTOREFRESH, state.stockbitAutoRefresh ? "1" : "0");
-    if(state.stockbitAutoRefresh) stockbitAutoRefreshTick(); // langsung tarik sekali begitu dinyalakan, tidak nunggu interval penuh
+    if(state.stockbitAutoRefresh){
+      if(typeof showToast === 'function') showToast("Auto-refresh aktif.", "up");
+      stockbitAutoRefreshTick();
+    }
   };
   const stockbitAutoRefreshSec = document.getElementById("stockbitAutoRefreshSec");
   if(stockbitAutoRefreshSec) stockbitAutoRefreshSec.onchange = (e) => {
@@ -8190,8 +8253,26 @@ function attachContentEvents(){
   if(screenerBsToInput) screenerBsToInput.onchange = (e) => { state.bsAutoBulkTo = e.target.value || state.bsAutoBulkTo; };
   const screenerBsBulkBtn = document.getElementById("screenerBsBulkBtn");
   if(screenerBsBulkBtn) screenerBsBulkBtn.onclick = () => {
+    if(!isValidStockbitToken(state.stockbitToken)){
+      if(typeof showToast === 'function') showToast("Token Stockbit belum valid. Isi di Pengaturan.", "down");
+      openSettings(); return;
+    }
+    if(!state.stockbitBrokerEndpoint){
+      if(typeof showToast === 'function') showToast("Endpoint Broker Summary belum diisi di Pengaturan.", "down");
+      openSettings(); return;
+    }
+    const range = isValidDateRange(state.bsAutoBulkFrom, state.bsAutoBulkTo);
+    if(!range.valid){
+      if(typeof showToast === 'function') showToast("Periode tidak valid: " + range.error, "down");
+      return;
+    }
     const checked = [...state.selectedForBacktest];
     const tickers = checked.length ? checked : getSorted(getFiltered()).map(s=>s.ticker);
+    if(!tickers.length){
+      if(typeof showToast === 'function') showToast("Tidak ada saham yang lolos filter / dicentang.", "down");
+      return;
+    }
+    if(!confirmBulkFetch("menarik Broker Summary", tickers.length, range.days + " hari")) return;
     fetchAndSaveBrokerSummaryBulk(tickers, state.bsAutoBulkFrom, state.bsAutoBulkTo);
   };
   const screenerHdFromInput = document.getElementById("screenerHdFromInput");
@@ -8200,8 +8281,26 @@ function attachContentEvents(){
   if(screenerHdToInput) screenerHdToInput.onchange = (e) => { state.hdAutoBulkTo = e.target.value || state.hdAutoBulkTo; };
   const screenerHdBulkBtn = document.getElementById("screenerHdBulkBtn");
   if(screenerHdBulkBtn) screenerHdBulkBtn.onclick = () => {
+    if(!isValidStockbitToken(state.stockbitToken)){
+      if(typeof showToast === 'function') showToast("Token Stockbit belum valid. Isi di Pengaturan.", "down");
+      openSettings(); return;
+    }
+    if(!state.stockbitHistoricalEndpoint){
+      if(typeof showToast === 'function') showToast("Endpoint Historical Data belum diisi di Pengaturan.", "down");
+      openSettings(); return;
+    }
+    const range = isValidDateRange(state.hdAutoBulkFrom, state.hdAutoBulkTo);
+    if(!range.valid){
+      if(typeof showToast === 'function') showToast("Periode tidak valid: " + range.error, "down");
+      return;
+    }
     const checked = [...state.selectedForBacktest];
     const tickers = checked.length ? checked : getSorted(getFiltered()).map(s=>s.ticker);
+    if(!tickers.length){
+      if(typeof showToast === 'function') showToast("Tidak ada saham yang lolos filter / dicentang.", "down");
+      return;
+    }
+    if(!confirmBulkFetch("menarik Historical Data", tickers.length, range.days + " hari")) return;
     fetchAndSaveHistoricalBulk(tickers, state.hdAutoBulkFrom, state.hdAutoBulkTo);
   };
   const hdBulkResultsPanel = document.getElementById("hdBulkResultsPanel");
@@ -8543,6 +8642,175 @@ function stockbitAutoRefreshClockTick(){
 setInterval(stockbitAutoRefreshClockTick, 5000); // "jam" granularitas 5 detik, lihat catatan poin 3 di atas
 document.addEventListener("visibilitychange", () => { if(!document.hidden) stockbitAutoRefreshClockTick(); });
 
+
+// ==========================================
+// FITUR: MARKET STATUS INDICATOR (WIB)
+// ==========================================
+function getMarketStatus() {
+  const now = new Date();
+  const wibMs = now.getTime() + (7 * 60 * 60 * 1000) - (now.getTimezoneOffset() * 60000);
+  const wib = new Date(wibMs);
+  const day = wib.getUTCDay();
+  const hour = wib.getUTCHours();
+  const minute = wib.getUTCMinutes();
+  const t = hour * 100 + minute;
+  if (day === 0 || day === 6) return { label: "Minggu", color: "var(--muted)", icon: "🔴", desc: "Bursa tutup (weekend)" };
+  if (t < 830)  return { label: "Pre-Market", color: "var(--gold)", icon: "🟡", desc: "Sesi pra-pembukaan" };
+  if (t < 900)  return { label: "Opening", color: "var(--up)", icon: "🟢", desc: "Sesi pembukaan (auction)" };
+  if (t < 1200) return { label: "Buka", color: "var(--up)", icon: "🟢", desc: "Sesi perdagangan 1" };
+  if (t < 1300) return { label: "Istirahat", color: "var(--gold)", icon: "🟡", desc: "Jeda istirahat makan siang" };
+  if (t < 1500) return { label: "Buka", color: "var(--up)", icon: "🟢", desc: "Sesi perdagangan 2" };
+  if (t < 1600) return { label: "Closing", color: "var(--gold)", icon: "🟡", desc: "Sesi penutupan (closing auction)" };
+  return { label: "Tutup", color: "var(--muted)", icon: "🔴", desc: "Bursa sudah tutup" };
+}
+
+function updateMarketStatusUI() {
+  const el = document.getElementById("marketStatus");
+  if (!el) return;
+  const s = getMarketStatus();
+  el.innerHTML = `<span class="pill pill-muted" style="border-color:${s.color};color:${s.color};font-size:11px;">${s.icon} ${s.label} · WIB</span>`;
+  el.title = s.desc;
+}
+
+
+// ==========================================
+// FITUR: KEYBOARD SHORTCUTS
+// ==========================================
+document.addEventListener("keydown", (e) => {
+  const tag = e.target.tagName;
+  const isInput = tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT";
+  // Ctrl/Cmd+K = Quick search di Screener
+  if ((e.ctrlKey || e.metaKey) && e.key === "k") {
+    e.preventDefault();
+    state.tab = "screener"; render();
+    setTimeout(() => { const el = document.getElementById("searchInput"); if(el){ el.focus(); el.select(); } }, 100);
+    return;
+  }
+  if (isInput) return;
+  // 1-9 = switch tab
+  const tabMap = { "1":"screener","2":"smartpick","3":"sektoral","4":"watchlist","5":"backtest","6":"portfolio","7":"chart","8":"brokersum","9":"target" };
+  if (tabMap[e.key]) {
+    state.tab = tabMap[e.key]; render();
+    if(state.tab==="smartpick" && !state.spHistory.length) loadSmartPickHistory();
+    return;
+  }
+  // Escape = close modals
+  if (e.key === "Escape") {
+    if(state.detailTicker) closeDetail();
+    else if(state.portoModalOpen) resetPortoForm();
+    else if(state.spListOpenDefId) closeSmartPickList();
+    return;
+  }
+  // R = refresh data
+  if (e.key === "r" || e.key === "R") { e.preventDefault(); loadLive(); }
+});
+
+
+// ==========================================
+// FITUR: VALIDASI TOKEN & ENDPOINT STOCKBIT
+// Dipakai tombol-tombol tarik data supaya gagal cepat dengan pesan jelas,
+// bukan diam-diam fetch ratusan request ke endpoint yang salah.
+// ==========================================
+function isValidStockbitToken(token) {
+  if (!token || typeof token !== 'string') return false;
+  const t = sanitizeStockbitToken(token);
+  if (t.length < 20) return false;
+  if (/^(token|your_token|bearer|xxx)$/i.test(t)) return false;
+  return true;
+}
+
+function isStockbitQuoteEndpointValid() {
+  const ep = (state.stockbitQuoteEndpoint || "").trim();
+  if (!ep) return false;
+  if (typeof STOCKBIT_DEFAULT_QUOTE_EP !== 'undefined' && ep === STOCKBIT_DEFAULT_QUOTE_EP) return false;
+  return ep.includes('{ticker}');
+}
+
+function isValidDateRange(from, to) {
+  if (!from || !to) return { valid: false, error: 'Tanggal Dari dan Sampai harus diisi' };
+  const f = new Date(from), t = new Date(to);
+  if (isNaN(f.getTime()) || isNaN(t.getTime())) return { valid: false, error: 'Format tanggal tidak valid' };
+  if (f > t) return { valid: false, error: 'Tanggal Dari harus sebelum tanggal Sampai' };
+  const days = Math.ceil((t - f) / 86400000);
+  if (days > 365) return { valid: false, error: 'Maksimal rentang 1 tahun' };
+  return { valid: true, days };
+}
+
+function confirmBulkFetch(actionLabel, tickerCount, daysInfo) {
+  const msg = daysInfo
+    ? `Akan ${actionLabel} untuk ${tickerCount} saham dalam ${daysInfo}. Bisa memakan waktu & banyak request. Lanjutkan?`
+    : `Akan ${actionLabel} untuk ${tickerCount} saham. Lanjutkan?`;
+  if (tickerCount <= 10) return true; // sedikit — tidak perlu konfirmasi
+  return confirm(msg);
+}
+
+
+// ==========================================
+// FITUR: MARKET STATUS INDICATOR (WIB)
+// Element #marketStatus dibuat otomatis di header kalau belum ada —
+// tidak perlu edit index.html.
+// ==========================================
+function getMarketStatus() {
+  const now = new Date();
+  const wibMs = now.getTime() + (7 * 60 * 60 * 1000) - (now.getTimezoneOffset() * 60000);
+  const wib = new Date(wibMs);
+  const day = wib.getUTCDay();
+  const t = wib.getUTCHours() * 100 + wib.getUTCMinutes();
+  if (day === 0 || day === 6) return { label: "Tutup", color: "var(--muted)", icon: "🔴", desc: "Bursa tutup (weekend)" };
+  if (t < 830)  return { label: "Pre-Market", color: "var(--gold)", icon: "🟡", desc: "Sesi pra-pembukaan" };
+  if (t < 900)  return { label: "Opening", color: "var(--up)", icon: "🟢", desc: "Sesi pembukaan (auction)" };
+  if (t < 1200) return { label: "Buka", color: "var(--up)", icon: "🟢", desc: "Sesi perdagangan 1" };
+  if (t < 1300) return { label: "Istirahat", color: "var(--gold)", icon: "🟡", desc: "Jeda istirahat" };
+  if (t < 1500) return { label: "Buka", color: "var(--up)", icon: "🟢", desc: "Sesi perdagangan 2" };
+  if (t < 1600) return { label: "Closing", color: "var(--gold)", icon: "🟡", desc: "Sesi penutupan" };
+  return { label: "Tutup", color: "var(--muted)", icon: "🔴", desc: "Bursa sudah tutup" };
+}
+
+function updateMarketStatusUI() {
+  let el = document.getElementById("marketStatus");
+  if (!el) {
+    const headerRow = document.querySelector(".header .header-row");
+    if (!headerRow) return;
+    el = document.createElement("span");
+    el.id = "marketStatus";
+    headerRow.appendChild(el);
+  }
+  const s = getMarketStatus();
+  el.innerHTML = `<span class="pill pill-muted" style="border-color:${s.color};color:${s.color};font-size:11px;">${s.icon} ${s.label} · WIB</span>`;
+  el.title = s.desc;
+}
+setInterval(() => { if(typeof updateMarketStatusUI === 'function') updateMarketStatusUI(); }, 60000);
+
+
+// ==========================================
+// FITUR: KEYBOARD SHORTCUTS
+// Ctrl+K = cari · 1-9 = pindah tab · Esc = tutup modal · R = refresh
+// ==========================================
+document.addEventListener("keydown", (e) => {
+  const tag = e.target.tagName;
+  const isInput = tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT";
+  if ((e.ctrlKey || e.metaKey) && e.key === "k") {
+    e.preventDefault();
+    state.tab = "screener"; render();
+    setTimeout(() => { const el = document.getElementById("searchInput"); if(el){ el.focus(); el.select(); } }, 100);
+    return;
+  }
+  if (isInput) return;
+  const tabMap = { "1":"screener","2":"smartpick","3":"sektoral","4":"watchlist","5":"backtest","6":"portfolio","7":"chart","8":"brokersum","9":"target" };
+  if (tabMap[e.key]) {
+    state.tab = tabMap[e.key]; render();
+    if(state.tab==="smartpick" && !state.spHistory.length) loadSmartPickHistory();
+    return;
+  }
+  if (e.key === "Escape") {
+    if(state.detailTicker) closeDetail();
+    else if(state.portoModalOpen) resetPortoForm();
+    else if(state.spListOpenDefId) closeSmartPickList();
+    return;
+  }
+  if (e.key === "r" || e.key === "R") { e.preventDefault(); loadLive(); }
+});
+
 // ==========================================
 // PWA: daftarkan service worker supaya browser menganggap app ini
 // "installable" (syarat "Add to Home Screen"/install prompt di Android
@@ -8614,7 +8882,7 @@ function showToast(message, tone = "up") {
     const toast = document.createElement('div');
     toast.className = 'toast';
     toast.style.borderLeftColor = `var(--${tone})`;
-    toast.innerHTML = `<div style="font-size:12px; font-weight:bold;">🔥 Radar Day Trade</div><div style="font-size:11px;">${message}</div>`;
+    toast.innerHTML = `<div style="font-size:11px;">${escapeHtml(message)}</div>`;
     
     container.appendChild(toast);
     playAlertSound();
@@ -8628,12 +8896,6 @@ function showToast(message, tone = "up") {
 
 
 
-// --- LISTENER UNTUK DATA LIVE WEBSOCKET DARI EKSTENSI ---
-window.addEventListener('message', function(event) {
-  if (event.data && event.data.type === 'FROM_EXTENSION_WS') {
-      console.log("🔥 DATA LIVE MASUK DARI STOCKBIT:", event.data.data);
-  }
-});
 
 // ==========================================
 // 🥷 WEBSOCKET INTERCEPTOR (DAY TRADE MODE)
@@ -8705,11 +8967,9 @@ function handleLiveTick(parsedData) {
          }
     }
 
-    // Perbarui UI jika saham ini sedang dirender di layar (tanpa me-render seluruh tabel agar tidak lag)
+    // Perbarui UI jika saham ini sedang dirender di layar
     updateLivePriceUI(ticker, currentPrice, prevPrice);
-// (Panggil fungsi animasi kedip di akhir handleLiveTick)
-    updateLivePriceUI(ticker, currentPrice, prevPrice);
-} // <--- Ini adalah kurung tutup dari fungsi handleLiveTick}
+}
 
 // 3. Fungsi Pemanis UI (Berkedip Hijau/Merah)
 function updateLivePriceUI(ticker, currentPrice, prevPrice) {
