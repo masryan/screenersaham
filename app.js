@@ -314,17 +314,17 @@ function parseStockbitMarketDetector(raw, fetchDate){
 
   buyRows.forEach(r => {
     ensure(rowDate(r)).buy.push({
-      broker_code: String(r.broker || r.broker_code || r.netbs_code || "").toUpperCase(),
-      lot: Number(r.blot ?? r.lot) || null,
-      value_idr: Number(r.bval ?? r.value ?? r.value_idr) || 0,
+      broker_code: String(r.netbs_broker_code || r.broker || r.broker_code || "").toUpperCase(),
+      lot: Math.abs(Number(r.blot)) || null,
+      value_idr: Math.abs(Number(r.bval)) || 0,
     });
   });
   
   sellRows.forEach(r => {
     ensure(rowDate(r)).sell.push({
-      broker_code: String(r.broker || r.broker_code || r.netbs_code || "").toUpperCase(),
-      lot: Number(r.slot ?? r.lot) || null,
-      value_idr: Number(r.sval ?? r.value ?? r.value_idr) || 0,
+      broker_code: String(r.netbs_broker_code || r.broker || r.broker_code || "").toUpperCase(),
+      lot: Math.abs(Number(r.slot)) || null,
+      value_idr: Math.abs(Number(r.sval)) || 0,
     });
   });
 
