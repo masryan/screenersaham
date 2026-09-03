@@ -164,6 +164,14 @@
   .sidebar.collapsed .tab-label { display:none; }
   .sidebar.collapsed .tab-btn { justify-content:center; padding:10px 0; }
 
+  /* HAMBURGER + DRAWER — elemen ini hanya dipakai di mode drawer mobile
+     (lihat @media max-width:640px di bawah). Disembunyikan di desktop
+     supaya tidak mengganggu layout sidebar tetap yang sudah ada. */
+  .hamburger-btn{ display:none; align-items:center; justify-content:center; width:36px; height:36px; border-radius:8px; border:1px solid var(--border); background:rgba(255,255,255,0.05); color:var(--text); flex-shrink:0; transition:all .2s; }
+  .hamburger-btn:hover{ background:rgba(255,255,255,0.1); border-color:var(--border-light); }
+  .sidebar-drawer-head{ display:none; }
+  .sidebar-backdrop{ display:none; }
+
   .content{padding:24px; flex:1 1 auto; min-width:0;}
   
   /* GLASS PANELS */
@@ -218,7 +226,11 @@
 
   /* MODERN TABLE */
   table{width:100%;border-collapse:separate; border-spacing: 0; font-size:12.5px;}
-  .table-wrap{background: var(--surface); backdrop-filter: var(--glass-blur); border:1px solid var(--border); border-radius:12px; overflow:auto; max-height:70vh; box-shadow: var(--shadow-md);}
+  .table-wrap{background: var(--surface); backdrop-filter: var(--glass-blur); border:1px solid var(--border); border-radius:12px; overflow:auto; -webkit-overflow-scrolling:touch; max-height:70vh; box-shadow: var(--shadow-md);}
+  /* Safety-net: tabel manapun yang dibungkus div inline overflow-x:auto
+     (bukan .table-wrap) tetap dapat scroll horizontal yang mulus di touch,
+     mis. tabel Historical Data & Bandingkan IDX di Detail Emiten. */
+  [style*="overflow-x:auto"]{-webkit-overflow-scrolling:touch;}
   
   thead th {
     position:sticky; top:0; z-index:3;
@@ -500,22 +512,45 @@
     .header-actions{width:100%;gap:8px;}
     .header-actions .btn{flex:1;justify-content:center;padding:9px 10px;font-size:12px;}
 
-    /* SIDEBAR — di layar sempit dikembalikan jadi bar horizontal yang bisa
-       discroll (seperti tabs lama), bukan sidebar vertikal — lebih pas
-       untuk layar sempit/satu tangan. Tombol ciutkan disembunyikan karena
-       tidak relevan lagi dalam mode ini. */
+    /* SIDEBAR -> MENU DRAWER di layar sempit. Sembunyi di luar layar
+       lewat translateX(-100%) secara default, digeser masuk begitu kelas
+       .drawer-open ditambahkan (lihat initSidebarToggle() di app.js).
+       Dibuka lewat tombol hamburger di header (#hamburgerBtn), ditutup
+       lewat tombol ✕ di kepala drawer, tap area gelap di luar drawer
+       (#sidebarBackdrop), tombol Esc, atau otomatis begitu satu menu
+       dipilih (supaya tidak perlu tap 2x: pilih menu -> drawer nutup
+       sendiri -> langsung lihat kontennya). */
     .app-body{ flex-direction:column; }
+    .hamburger-btn{ display:flex; }
     .sidebar{
-      position:sticky; top:58px; width:100%; flex-basis:auto; height:auto;
-      flex-direction:row; align-items:center; gap:6px; overflow-x:auto; overflow-y:hidden;
-      padding:8px 10px; border-right:none; border-bottom:1px solid var(--border);
+      position:fixed; top:0; left:0; width:82vw; max-width:300px; flex-basis:auto;
+      height:100vh; height:100dvh; z-index:210;
+      flex-direction:column; align-items:stretch; gap:0; overflow-y:auto; overflow-x:hidden;
+      padding:14px 12px calc(14px + env(safe-area-inset-bottom));
+      border-right:1px solid var(--border); border-bottom:none;
+      background: rgba(15, 23, 42, 0.97);
+      transform: translateX(-100%);
+      transition: transform .22s ease;
+      box-shadow: 8px 0 30px rgba(0,0,0,0.4);
     }
-    .sidebar.collapsed{ width:100%; padding:8px 10px; }
-    .sidebar-toggle{ display:none; }
-    .sidebar-tabs{ flex-direction:row; gap:6px; }
-    .sidebar .tab-btn{ flex-shrink:0; padding:7px 12px; font-size:12px; border-radius:20px; }
+    .sidebar.drawer-open{ transform: translateX(0); }
+    /* Status "collapsed" dari toggle desktop diabaikan sepenuhnya di mode
+       drawer — drawer selalu tampil lebar penuh (82vw) begitu dibuka. */
+    .sidebar.collapsed{ width:82vw; max-width:300px; padding:14px 12px calc(14px + env(safe-area-inset-bottom)); }
     .sidebar.collapsed .tab-label{ display:inline; }
-    .sidebar.collapsed .tab-btn{ justify-content:flex-start; padding:7px 12px; }
+    .sidebar.collapsed .tab-btn{ justify-content:flex-start; padding:11px 12px; }
+    .sidebar-toggle{ display:none; } /* tombol ciutkan desktop tidak relevan di mode drawer */
+
+    .sidebar-drawer-head{ display:flex; align-items:center; justify-content:space-between; padding:2px 2px 14px; border-bottom:1px solid var(--border); margin-bottom:10px; flex-shrink:0; }
+    .sidebar-drawer-head span{ font-size:12.5px; font-weight:700; color:var(--muted); text-transform:uppercase; letter-spacing:.06em; }
+    .sidebar-drawer-close{ display:flex; align-items:center; justify-content:center; width:30px; height:30px; border-radius:8px; border:1px solid var(--border); background:rgba(255,255,255,0.05); color:var(--muted); flex-shrink:0; }
+    .sidebar-drawer-close:hover{ color:var(--text); background:rgba(255,255,255,0.1); }
+
+    .sidebar-tabs{ flex-direction:column; gap:4px; }
+    .sidebar .tab-btn{ width:100%; flex-shrink:0; justify-content:flex-start; padding:11px 12px; font-size:13.5px; border-radius:10px; }
+
+    .sidebar-backdrop.show{ display:block; position:fixed; inset:0; background:rgba(0,0,0,0.55); z-index:200; animation:sidebarFadeIn .18s ease; }
+    @keyframes sidebarFadeIn{ from{opacity:0;} to{opacity:1;} }
 
     .content{ padding:12px; }
     .panel{padding:14px;border-radius:12px;margin-bottom:16px;}

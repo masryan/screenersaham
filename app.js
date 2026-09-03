@@ -8546,20 +8546,53 @@ document.getElementById("tabs").addEventListener("click", (e)=>{
   if(state.tab === "eps" && !state.epsRaw && !state.epsScanning) ensureEpsDataLoaded();
   if(state.tab === "kraken") ensureOrcaHistoryLoaded();
   render();
+  if(window._closeSidebarDrawer) window._closeSidebarDrawer(); // di mobile: drawer nutup sendiri setelah pilih menu
 });
 document.getElementById("refreshBtn").onclick = ()=> loadLive();
 
-// Sidebar collapsible — status disimpan di localStorage supaya tetap
-// keciut/lebar sama seperti terakhir dipilih user kalau halaman di-reload.
+// Sidebar collapsible (desktop) — status disimpan di localStorage supaya
+// tetap keciut/lebar sama seperti terakhir dipilih user kalau halaman
+// di-reload. + Sidebar sebagai MENU DRAWER di layar sempit (<=640px,
+// lihat styles.css) — dibuka/ditutup lewat #hamburgerBtn di header,
+// #sidebarDrawerClose, tap #sidebarBackdrop, tombol Esc, atau otomatis
+// setelah memilih satu menu (lihat listener klik #tabs di atas).
 (function initSidebarToggle(){
   const sidebar = document.getElementById("sidebarNav");
   const toggleBtn = document.getElementById("sidebarToggleBtn");
-  if(!sidebar || !toggleBtn) return;
-  if(localStorage.getItem("ihsg_sidebar_collapsed") === "1") sidebar.classList.add("collapsed");
-  toggleBtn.onclick = () => {
-    const collapsed = sidebar.classList.toggle("collapsed");
-    localStorage.setItem("ihsg_sidebar_collapsed", collapsed ? "1" : "0");
+  if(!sidebar) return;
+
+  if(toggleBtn){
+    if(localStorage.getItem("ihsg_sidebar_collapsed") === "1") sidebar.classList.add("collapsed");
+    toggleBtn.onclick = () => {
+      const collapsed = sidebar.classList.toggle("collapsed");
+      localStorage.setItem("ihsg_sidebar_collapsed", collapsed ? "1" : "0");
+    };
+  }
+
+  const hamburgerBtn = document.getElementById("hamburgerBtn");
+  const backdrop = document.getElementById("sidebarBackdrop");
+  const drawerCloseBtn = document.getElementById("sidebarDrawerClose");
+
+  const openDrawer = () => {
+    sidebar.classList.add("drawer-open");
+    if(backdrop) backdrop.classList.add("show");
+    if(hamburgerBtn) hamburgerBtn.setAttribute("aria-expanded", "true");
+    document.body.style.overflow = "hidden"; // kunci scroll body selagi drawer terbuka
   };
+  const closeDrawer = () => {
+    sidebar.classList.remove("drawer-open");
+    if(backdrop) backdrop.classList.remove("show");
+    if(hamburgerBtn) hamburgerBtn.setAttribute("aria-expanded", "false");
+    document.body.style.overflow = "";
+  };
+  if(hamburgerBtn) hamburgerBtn.onclick = () => sidebar.classList.contains("drawer-open") ? closeDrawer() : openDrawer();
+  if(backdrop) backdrop.onclick = closeDrawer;
+  if(drawerCloseBtn) drawerCloseBtn.onclick = closeDrawer;
+  document.addEventListener("keydown", (e) => { if(e.key === "Escape") closeDrawer(); });
+  // Kalau layar dilebarkan balik ke ukuran desktop (mis. rotate tablet /
+  // resize jendela), pastikan drawer tidak "nyangkut" ke luar layar.
+  window.matchMedia("(min-width: 641px)").addEventListener("change", (e) => { if(e.matches) closeDrawer(); });
+  window._closeSidebarDrawer = closeDrawer; // dipanggil dari listener klik #tabs
 })();
 
 document.getElementById("portoModalClose").onclick = ()=> resetPortoForm();
