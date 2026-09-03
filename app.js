@@ -265,10 +265,17 @@ async function stockbitFetchMarketDetector(ticker, fromDate, toDate, days){
   // manual tiap kali "Periode" diubah. Kalau URL endpoint kamu (custom di
   // Pengaturan) masih pakai angka mati (mis. "limit=200"), ganti jadi
   // "limit={limit}" dulu supaya nilai otomatis ini kepakai.
+  // "limit" dihitung otomatis dari jumlah hari yang diminta (dengan margin
+  // 50 baris/hari, minimal 50) — supaya endpoint {from}-{to} yang custom di
+  // Pengaturan tidak kepotong datanya. Lihat catatan panjang di atas.
+  const limit = Math.max(50, days * 50);
   const url = state.stockbitBrokerEndpoint
     .replace("{ticker}", encodeURIComponent(ticker))
-    .replace("{date}", fromDate); 
-    
+    .replace("{date}", fromDate)
+    .replace("{from}", encodeURIComponent(fromDate))
+    .replace("{to}", encodeURIComponent(toDate))
+    .replace("{limit}", encodeURIComponent(limit));
+
   return stockbitRawRequest(url);
 }
 
