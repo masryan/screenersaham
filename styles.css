@@ -1238,3 +1238,132 @@
     display: none !important;
   }
 }
+/* =========================================================
+   MOBILE TABLE HORIZONTAL SCROLL FIX
+   ========================================================= */
+
+@media screen and (max-width: 768px) {
+  /* Pastikan semua induk tabel boleh menyusut */
+  .content,
+  #content,
+  .panel,
+  .card,
+  .section,
+  .table-section,
+  .table-card {
+    min-width: 0 !important;
+  }
+
+  /*
+   * Jangan memotong tabel dari parent panel.
+   * Scroll horizontal dilakukan oleh pembungkus tabel.
+   */
+  .panel {
+    overflow: visible !important;
+  }
+
+  /*
+   * Semua kemungkinan nama pembungkus tabel
+   */
+  .table-wrap,
+  .table-container,
+  .table-responsive,
+  .table-scroll,
+  .responsive-table,
+  .overflow-table,
+  .data-table-wrap {
+    display: block !important;
+    width: 100% !important;
+    max-width: 100% !important;
+    min-width: 0 !important;
+    overflow-x: auto !important;
+    overflow-y: visible !important;
+    -webkit-overflow-scrolling: touch !important;
+    overscroll-behavior-x: contain;
+    touch-action: pan-x pan-y;
+    scrollbar-width: thin;
+  }
+
+  /*
+   * Tabel dibuat lebih lebar dari layar.
+   * User dapat menggeser ke kiri/kanan di dalam table-wrap.
+   */
+  .table-wrap > table,
+  .table-container > table,
+  .table-responsive > table,
+  .table-scroll > table,
+  .responsive-table > table,
+  .overflow-table > table,
+  .data-table-wrap > table {
+    width: max-content !important;
+    min-width: 760px !important;
+    max-width: none !important;
+  }
+
+  /*
+   * Untuk tabel yang dibungkus div tambahan
+   */
+  .table-wrap table,
+  .table-container table,
+  .table-responsive table,
+  .table-scroll table,
+  .responsive-table table,
+  .overflow-table table,
+  .data-table-wrap table {
+    width: max-content !important;
+    min-width: 760px !important;
+    max-width: none !important;
+  }
+
+  /*
+   * Jangan biarkan cell membungkus atau memperkecil kolom
+   */
+  .table-wrap th,
+  .table-wrap td,
+  .table-container th,
+  .table-container td,
+  .table-responsive th,
+  .table-responsive td,
+  .table-scroll th,
+  .table-scroll td {
+    white-space: nowrap !important;
+  }
+
+  /*
+   * Tabel yang muncul langsung di dalam panel.
+   * Dibungkus secara visual agar tetap dapat digeser.
+   */
+  .panel > table {
+    display: block !important;
+    width: max-content !important;
+    min-width: 760px !important;
+    max-width: none !important;
+    overflow-x: auto !important;
+  }
+
+  /*
+   * Hindari tombol/filter membuat lebar parent tabel membesar.
+   */
+  .panel,
+  .table-wrap,
+  .table-container,
+  .table-responsive {
+    box-sizing: border-box !important;
+  }
+
+  /*
+   * Penanda visual bahwa tabel bisa digeser.
+   */
+  .table-wrap::after,
+  .table-container::after,
+  .table-responsive::after {
+    content: "Geser tabel ke kiri/kanan";
+    display: block;
+    width: 100%;
+    padding: 6px 0 2px;
+    color: var(--muted);
+    font-size: 10px;
+    text-align: center;
+    opacity: 0.7;
+  }
+}
