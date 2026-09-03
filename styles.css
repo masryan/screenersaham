@@ -247,12 +247,34 @@
   .col-freeze{position:sticky;z-index:2;background: var(--bg-main);}
   thead th.col-freeze{z-index:4; background: rgba(15, 23, 42, 0.95) !important;}
   .col-freeze-shadow{box-shadow: 4px 0 8px rgba(0,0,0,0.3); border-right: 1px solid var(--border);}
+
+  /* FREEZE KOLOM PERTAMA OTOMATIS untuk semua tabel di dalam .table-wrap —
+     supaya pas discroll ke samping (terutama di HP), kolom identitas paling
+     kiri (Ticker/Tanggal/Broker, dst) tetap kelihatan tanpa perlu setup
+     manual per tabel. Tabel Screener utama sudah punya freeze multi-kolom
+     manual (checkbox + star + ticker) lewat .col-freeze + FREEZE_LEFT di
+     app.js — aturan generik ini tidak bentrok, karena cuma menyentuh kolom
+     PERTAMA (checkbox), yang posisinya (left:0) memang sama persis.
+     Kasih class="no-freeze-first" di <table> untuk tabel yang tidak perlu
+     kolom beku (mis. tabel ringkas yang sudah muat penuh tanpa scroll). */
+  .table-wrap table:not(.no-freeze-first) > tbody > tr > td:first-child {
+    position: sticky; left: 0; z-index: 2;
+    background: var(--bg-main);
+    box-shadow: 4px 0 8px rgba(0,0,0,0.3);
+    border-right: 1px solid var(--border);
+  }
+  .table-wrap table:not(.no-freeze-first) > thead > tr > th:first-child {
+    position: sticky; left: 0; z-index: 4;
+    background: rgba(15, 23, 42, 0.95) !important;
+    border-right: 1px solid var(--border);
+  }
   
   td{padding:10px 16px; white-space:nowrap; border-bottom: 1px solid rgba(255,255,255,0.08);}
   tbody tr { transition: background 0.15s; }
   tbody tr:nth-child(even) { background: rgba(255,255,255,0.035); }
   tbody tr:hover { background: rgba(255,255,255,0.09); }
-  tbody tr:hover td.col-freeze { background: #1e293b; } /* Match hover color */
+  tbody tr:hover td.col-freeze,
+  .table-wrap table:not(.no-freeze-first) tbody tr:hover > td:first-child { background: #1e293b; } /* Match hover color */
 
   /* PEMILIH KOLOM — supaya tabel tidak menampilkan puluhan kolom sekaligus */
   .col-picker-wrap{ position:relative; display:inline-block; margin-bottom:12px; }

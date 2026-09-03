@@ -1389,8 +1389,16 @@ let state = {
 function fmtNum(n){ if(n===null||n===undefined) return "-"; return new Intl.NumberFormat("id-ID").format(n); }
 function fmtDateID(iso){ // "2026-08-24" -> "24/08/2026"
   if(!iso) return "-";
-  const [y,m,d] = iso.split("-");
-  if(!y||!m||!d) return iso;
+  // Toleran juga ke datetime penuh ala timestamptz Supabase, mis.
+  // "2026-08-24T00:00:00+00:00" — kalau kolom entry_date di server ternyata
+  // timestamptz (bukan date polos), field ini akan berisi jam & offset zona
+  // waktu sekaligus. Ambil 10 karakter pertama dulu (YYYY-MM-DD murni)
+  // sebelum di-parse, supaya "T00:00:00+00:00" dkk tidak ikut kepotong ke
+  // bagian tanggal/bulan dan menghasilkan tampilan rusak seperti
+  // "03T00:00:00+00:00/09/2026".
+  const s = String(iso).slice(0, 10);
+  const [y,m,d] = s.split("-");
+  if(!y||!m||!d || y.length!==4 || m.length!==2 || d.length!==2) return iso;
   return `${d}/${m}/${y}`;
 }
 // ==========================================
@@ -1401,7 +1409,9 @@ function fmtDateID(iso){ // "2026-08-24" -> "24/08/2026"
 // ==========================================
 function daysSinceEntry(entryDateIso){
   if(!entryDateIso) return null;
-  const parts = String(entryDateIso).split("-").map(Number);
+  // Sama seperti fmtDateID() — toleran ke timestamptz penuh ("...T00:00:00+00:00"),
+  // ambil 10 karakter pertama (YYYY-MM-DD murni) dulu sebelum di-parse.
+  const parts = String(entryDateIso).slice(0, 10).split("-").map(Number);
   if(parts.length !== 3 || parts.some(isNaN)) return null;
   const [y,m,d] = parts;
   const entry = new Date(y, m-1, d);
@@ -2788,7 +2798,7 @@ function renderDetailHistorical(s){
       ${state.detailHistoricalMsg ? `<div class="bs-msg ${state.detailHistoricalMsgError?"bs-msg-error":"bs-msg-ok"}">${escapeHtml(state.detailHistoricalMsg)}</div>` : ""}
 
       ${!rows.length ? `<div class="empty-box" style="margin-top:12px;">Belum ada data. Klik "Tarik Data dari Stockbit" di atas (butuh Token Stockbit &amp; Endpoint Historical Data terisi di ⚙️ Pengaturan).</div>` : `
-      <div style="overflow-x:auto;margin-top:12px;">
+      <div class="table-wrap" style="margin-top:12px;max-height:60vh;">
         <table style="width:100%;border-collapse:collapse;font-size:12.5px;">
           <thead>
             <tr style="color:var(--muted);text-align:right;">
@@ -2811,7 +2821,7 @@ function renderDetailHistorical(s){
             🔍 Bandingkan dengan IDX (flows) ${state.detailCompareMsg ? `— ${escapeHtml(state.detailCompareMsg)}` : ""}
           </summary>
           ${state.detailCompareRows && state.detailCompareRows.length ? `
-          <div style="overflow-x:auto;margin-top:10px;">
+          <div class="table-wrap" style="margin-top:10px;max-height:60vh;">
             <table style="width:100%;border-collapse:collapse;font-size:11.5px;">
               <thead>
                 <tr style="color:var(--muted);text-align:right;">
@@ -5462,7 +5472,7 @@ function renderBacktest(){
       <div class="panel" style="flex-direction:column; align-items:stretch; margin-bottom: 24px;">
         <div style="display:flex; justify-content:space-between; align-items:flex-start; border-bottom: 1px solid var(--border); padding-bottom: 16px; margin-bottom: 16px;">
           <div>
-            <h3 style="margin:0; font-size: 15px; font-weight:700;">Waktu Tangkap: ${session.date}</h3>
+            <h3 style="margin:0; font-size: 15px; font-weight:700;">Waktu Tangkap: ${fmtDateID(session.date)}</h3>
             <div style="font-size: 12px; color: var(--muted); margin-top: 6px; font-weight:500;">${session.items.length} Emiten Disimpan</div>
           </div>
           <div style="display:flex; gap:10px;">
