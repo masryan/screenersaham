@@ -1,0 +1,17 @@
+/* Mobile responsive fix for IHSG Screener Pro
+   Copy this file into the repository root and load it after styles.css. */
+.app-body,.content,.content>*,.content section,.content .panel,.content .card,.content .grid,.content .row{min-width:0;max-width:100%}
+html,body{max-width:100%;overflow-x:hidden}
+.content{overflow-x:hidden}
+.table-wrap,.table-container,.table-responsive,.data-table-wrap,[class*="table-wrap"]{display:block;width:100%;max-width:100%;overflow-x:auto;overflow-y:visible;-webkit-overflow-scrolling:touch;overscroll-behavior-x:contain;scrollbar-width:thin;touch-action:pan-x pan-y}
+.table-wrap>table,.table-container>table,.table-responsive>table,.data-table-wrap>table,[class*="table-wrap"]>table{width:max-content;min-width:760px;max-width:none;table-layout:auto}
+.table-wrap table,.table-container table,.table-responsive table,.data-table-wrap table,[class*="table-wrap"] table{white-space:nowrap}
+.content .toolbar,.content .filter-bar,.content .filter-row,.content .action-row,.content .control-row,.content .form-row,.content .button-row{min-width:0;max-width:100%;flex-wrap:wrap}
+.content input,.content select,.content textarea{max-width:100%;min-width:0}
+@media(max-width:768px){
+.header{padding:12px 14px}.header-row{align-items:flex-start;gap:10px}.title-row{min-width:0;flex-wrap:wrap;gap:6px}.title-row h1{min-width:0;font-size:16px;line-height:1.25}.subtitle{max-width:100%;overflow-wrap:anywhere;line-height:1.4}.header-actions{flex:0 0 auto;gap:6px!important}.header-actions .btn{width:36px;height:36px;padding:0;overflow:hidden;white-space:nowrap;font-size:0}.header-actions .btn svg,.header-actions .btn span{font-size:initial}.content{padding:14px 10px}.content .panel,.content .card{padding:12px}
+.content .toolbar,.content .filter-bar,.content .filter-row,.content .action-row,.content .control-row,.content .form-row,.content .button-row{align-items:stretch;gap:8px}.content .toolbar>*,.content .filter-bar>*,.content .filter-row>*,.content .action-row>*,.content .control-row>*,.content .form-row>*,.content .button-row>*{min-width:0}.content .toolbar .btn,.content .filter-bar .btn,.content .filter-row .btn,.content .action-row .btn,.content .control-row .btn,.content .button-row .btn{flex:1 1 auto}
+.table-wrap::after,.table-container::after,.table-responsive::after,.data-table-wrap::after,[class*="table-wrap"]::after{content:"Geser tabel ke samping";display:block;width:max-content;margin:4px 0 0 auto;color:var(--muted);font-size:10px;pointer-events:none}.table-wrap>table,.table-container>table,.table-responsive>table,.data-table-wrap>table,[class*="table-wrap"]>table{min-width:820px}
+.modal-overlay{padding:10px;align-items:flex-start}.modal{width:100%;max-width:100%;max-height:calc(100dvh - 20px);overflow-x:hidden}
+}
+@media(max-width:420px){.header-row{display:block}.header-actions{margin-top:10px;justify-content:flex-end}.content{padding-left:8px;padding-right:8px}}
