@@ -276,6 +276,8 @@ async function stockbitFetchMarketDetector(ticker, fromDate, toDate, days){
     .replace("{to}", encodeURIComponent(toDate))
     .replace("{limit}", encodeURIComponent(limit));
 
+  console.log("[BROKER_FIX_v3] URL:", url); // penanda debug sementara — hapus setelah beres
+
   return stockbitRawRequest(url);
 }
 
@@ -290,6 +292,7 @@ function parseStockbitMarketDetector(raw, fetchDate){
   if(!raw || typeof raw !== "object") return null;
   // Path asli: data.broker_summary.{brokers_buy,brokers_sell} — bukan data.buy/data.sell.
   const bs = raw?.data?.broker_summary || null;
+  console.log("[BROKER_FIX_v3] parse", fetchDate, "bs found:", !!bs, "buy:", bs?.brokers_buy?.length, "sell:", bs?.brokers_sell?.length); // penanda debug sementara — hapus setelah beres
   if(!bs) return null;
 
   const buyRows = Array.isArray(bs.brokers_buy) ? bs.brokers_buy : [];
