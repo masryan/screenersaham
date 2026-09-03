@@ -1,9 +1,9 @@
-// ==========================================
+﻿// ==========================================
 // VARIABEL KONEKSI LOKAL (DINAMIS)
 //
 // Kredensial default sekarang datang dari config.js (window.APP_CONFIG),
 // bukan ditulis langsung di sini. INI SENGAJA: file ini boleh dibaca
-// publik (view-source), jadi hanya anon key yang boleh muncul di sini —
+// publik (view-source), jadi hanya anon key yang boleh muncul di sini â€”
 // tidak pernah service_role. Isolasi lewat RLS di database, bukan lewat
 // menyembunyikan kunci di kode client (itu tidak pernah benar-benar
 // tersembunyi).
@@ -41,17 +41,17 @@ function getSupaHeaders() {
 }
 
 // ==========================================
-// supaFetch — pengganti fetch() polos untuk semua request TULIS
+// supaFetch â€” pengganti fetch() polos untuk semua request TULIS
 // (POST/PATCH/DELETE) ke Supabase.
 //
 // KENAPA INI PERLU: fetch() browser TIDAK melempar error untuk respons
-// HTTP 4xx/5xx — hanya melempar kalau koneksi jaringan benar-benar putus.
+// HTTP 4xx/5xx â€” hanya melempar kalau koneksi jaringan benar-benar putus.
 // Kalau Supabase menolak insert (RLS, kolom salah, atau "Prefer:
 // resolution=merge-duplicates" tanpa unique constraint yang cocok di
 // tabel), balasannya tetap berupa response yang valid (cuma dengan
 // status 400/401/409/dst + body {message,...}). Kode lama membungkus
 // fetch dengan try{...}catch(e){} kosong dan TIDAK PERNAH mengecek
-// res.ok — jadi kalau Supabase menolak, tidak ada error yang pernah
+// res.ok â€” jadi kalau Supabase menolak, tidak ada error yang pernah
 // muncul: data kelihatan "tersimpan" (karena localStorage sudah lebih
 // dulu diupdate) padahal sebenarnya gagal sinkron ke server.
 //
@@ -64,7 +64,7 @@ function getSupaHeaders() {
 //
 // PENTING: exodus.stockbit.com/stream/v3/symbol/{ticker} adalah endpoint
 // yang diamati dari traffic stockbit.com sendiri (bukan API publik
-// terdokumentasi resmi) — jadi bisa berubah/rusak kapan saja, dan skema
+// terdokumentasi resmi) â€” jadi bisa berubah/rusak kapan saja, dan skema
 // response-nya belum 100% terverifikasi. mapStockbitQuote() di bawah
 // mencoba beberapa nama field yang umum (last/close/price, bid/offer,
 // volume) secara defensif; kalau tidak cocok, JSON mentah tetap
@@ -76,19 +76,19 @@ function getSupaHeaders() {
 // besar diblokir browser. Kalau state.stockbitProxyUrl diisi (Supabase
 // Edge Function dsb.), request dikirim ke situ sebagai POST {url, token}
 // dan proxy itu yang meneruskan ke Stockbit dari sisi server (tidak kena
-// CORS) — lihat contoh proxy terpisah yang disediakan.
+// CORS) â€” lihat contoh proxy terpisah yang disediakan.
 // ==========================================
 // ==========================================
-// stockbitRawRequest — satu titik request HTTP ke Stockbit (langsung atau
+// stockbitRawRequest â€” satu titik request HTTP ke Stockbit (langsung atau
 // lewat proxy), dipakai bersama oleh stockbitFetch, stockbitFetchMarketDetector,
 // dan stockbitFetchHistorical. Sebelumnya ketiga fungsi ini menduplikasi logika
 // fetch yang sama persis (termasuk tidak ada retry sama sekali untuk 429).
 //
-// RETRY 429: kalau Stockbit membalas 429 (rate limit) — yang sangat mungkin
-// terjadi di tengah bulk fetch banyak ticker/hari — tunggu sesuai header
+// RETRY 429: kalau Stockbit membalas 429 (rate limit) â€” yang sangat mungkin
+// terjadi di tengah bulk fetch banyak ticker/hari â€” tunggu sesuai header
 // "Retry-After" (kalau proxy/Stockbit mengirimnya) atau exponential backoff
 // (1s, 2s, 4s) lalu coba lagi, maksimal STOCKBIT_MAX_RETRIES kali. Status
-// HTTP lain (401/403/5xx/dst) TIDAK diretry — itu bukan soal rate limit
+// HTTP lain (401/403/5xx/dst) TIDAK diretry â€” itu bukan soal rate limit
 // sementara, jadi mencoba ulang cuma buang waktu tanpa hasil.
 //
 // STATUS "TERAKHIR BERHASIL": tiap kali request ini sukses (res.ok), waktunya
@@ -101,10 +101,10 @@ const STOCKBIT_MAX_RETRIES = 3;
 
 // Bersihkan whitespace nyasar & prefix "Bearer " yang mungkin kebawa ikut
 // tersimpan (baik dari copy-paste manual di Pengaturan, dari tabel Supabase,
-// maupun dari extension) — soalnya getSupaHeaders()/stockbitRawRequest() SUDAH
+// maupun dari extension) â€” soalnya getSupaHeaders()/stockbitRawRequest() SUDAH
 // menambahkan "Bearer " sendiri di depan token saat mengirim request. Kalau
 // token yang tersimpan sudah mengandung "Bearer " juga, hasilnya jadi
-// "Bearer Bearer eyJ..." (atau ada \n/spasi di ujung) — dan itu 401 instan,
+// "Bearer Bearer eyJ..." (atau ada \n/spasi di ujung) â€” dan itu 401 instan,
 // terus-menerus, TIDAK ADA HUBUNGANNYA dengan token itu sendiri masih
 // berlaku/tidak.
 function sanitizeStockbitToken(raw){
@@ -139,18 +139,18 @@ async function stockbitRawRequest(url, extraHeaders = {}, attempt = 0){
     if(!res.ok){
       const retryNote = (res.status === 429 && attempt >= STOCKBIT_MAX_RETRIES)
         ? ` (sudah dicoba ulang ${STOCKBIT_MAX_RETRIES}x dengan backoff, tetap kena rate limit)` : "";
-      return { error: `HTTP ${res.status}${json && json.message ? " — " + json.message : ""}${retryNote}`, raw: json ?? text };
+      return { error: `HTTP ${res.status}${json && json.message ? " â€” " + json.message : ""}${retryNote}`, raw: json ?? text };
     }
     state.stockbitLastSuccessAt = Date.now();
     return { raw: json ?? text };
   }catch(e){
-    const hint = state.stockbitProxyUrl ? "" : " — kemungkinan diblokir CORS oleh browser karena dipanggil langsung tanpa Proxy URL. Coba isi \"Proxy URL\" di Pengaturan.";
+    const hint = state.stockbitProxyUrl ? "" : " â€” kemungkinan diblokir CORS oleh browser karena dipanggil langsung tanpa Proxy URL. Coba isi \"Proxy URL\" di Pengaturan.";
     return { error: e.message + hint };
   }
 }
 
 async function stockbitFetch(endpointTemplate, ticker){
-  if(!state.stockbitToken) return { error: 'Token Stockbit belum diisi. Buka "⚙️ Pengaturan" → Live Data Stockbit.' };
+  if(!state.stockbitToken) return { error: 'Token Stockbit belum diisi. Buka "âš™ï¸ Pengaturan" â†’ Live Data Stockbit.' };
   if(!endpointTemplate) return { error: "Endpoint belum diisi di Pengaturan." };
   const url = endpointTemplate.replace("{ticker}", encodeURIComponent(ticker));
   return stockbitRawRequest(url);
@@ -160,7 +160,7 @@ async function stockbitFetch(endpointTemplate, ticker){
 //
 // BEDA dari fitur live quote di atas: ini bisa memicu BANYAK request
 // sekaligus (N ticker x M hari), jadi SENGAJA hanya jalan untuk ticker
-// yang dicentang manual oleh user (state.selectedForBacktest) — tidak
+// yang dicentang manual oleh user (state.selectedForBacktest) â€” tidak
 // ada opsi "semua yang lolos filter" supaya tidak sengaja membombardir
 // akun Stockbit sendiri dengan ratusan request.
 //
@@ -177,7 +177,7 @@ async function stockbitFetch(endpointTemplate, ticker){
 // (idx.co.id/id/berita/jadwal-libur-bursa) + berita yang mengutipnya. 21 tanggal di luar
 // weekend, sudah dicocokkan dengan angka resmi "21 hari libur bursa 2026" yang diberitakan.
 // PENTING: kalender ini WAJIB diupdate tiap tahun (IDX biasanya umumkan kalender tahun
-// berikutnya sekitar September) — kalau BURSA_HOLIDAYS tidak ada entri untuk suatu tahun,
+// berikutnya sekitar September) â€” kalau BURSA_HOLIDAYS tidak ada entri untuk suatu tahun,
 // tradingDaysBack() otomatis fallback ke exclude-weekend-saja untuk tahun itu (lihat di bawah).
 const BURSA_HOLIDAYS = new Set([
   // 2026
@@ -205,11 +205,11 @@ const BURSA_HOLIDAYS = new Set([
 ]);
 
 // Selalu pakai komponen tanggal LOKAL (getFullYear/getMonth/getDate), JANGAN
-// toISOString() untuk merepresentasikan "tanggal kalender" — toISOString()
+// toISOString() untuk merepresentasikan "tanggal kalender" â€” toISOString()
 // mengonversi ke UTC, dan karena WIB = UTC+7, tengah malam lokal (mis. dari
 // input <input type="date">, yang selalu diparse sebagai "T00:00:00" lokal)
 // mundur jadi jam 17:00 UTC HARI SEBELUMNYA, sehingga tanggalnya salah (bug
-// ini yang bikin rentang "28/08–29/08" kepetakan jadi 27/08). Semua tempat
+// ini yang bikin rentang "28/08â€“29/08" kepetakan jadi 27/08). Semua tempat
 // yang butuh "tanggal hari ini"/"tanggal dari Date object" WAJIB pakai
 // helper ini, bukan .toISOString().slice(0,10).
 function toLocalISODate(d){
@@ -223,7 +223,7 @@ function todayLocalISO(){ return toLocalISODate(new Date()); }
 function tradingDaysBack(n, fromDate = new Date()){
   // Hari bursa = Senin-Jumat DIKURANGI tanggal di BURSA_HOLIDAYS (kalau tahunnya terdaftar).
   // Untuk tahun yang belum ada di kalender di atas, otomatis fallback ke exclude-weekend-saja
-  // (perilaku lama) — lebih baik sedikit kurang akurat daripada berhenti total.
+  // (perilaku lama) â€” lebih baik sedikit kurang akurat daripada berhenti total.
   const days = [];
   let d = new Date(fromDate);
   while(days.length < n){
@@ -235,15 +235,15 @@ function tradingDaysBack(n, fromDate = new Date()){
   return days.reverse(); // urut lama -> baru
 }
 
-// Sama seperti tradingDaysBack, tapi rentangnya ditentukan lewat tanggal Dari–Sampai
-// eksplisit (bukan "mundur N hari dari sekarang") — dipakai untuk Periode Tarik Otomatis
+// Sama seperti tradingDaysBack, tapi rentangnya ditentukan lewat tanggal Dariâ€“Sampai
+// eksplisit (bukan "mundur N hari dari sekarang") â€” dipakai untuk Periode Tarik Otomatis
 // yang sekarang bisa dipilih bebas lewat 2 input tanggal di UI.
 function tradingDaysInRange(fromDateStr, toDateStr){
   const days = [];
   if(!fromDateStr || !toDateStr) return days;
   let d = new Date(fromDateStr + "T00:00:00");
   const end = new Date(toDateStr + "T00:00:00");
-  if(d > end) return days; // Dari lebih baru dari Sampai — dianggap tidak valid, biar kelihatan kosong
+  if(d > end) return days; // Dari lebih baru dari Sampai â€” dianggap tidak valid, biar kelihatan kosong
   while(d <= end){
     const dow = d.getDay();
     const iso = toLocalISODate(d);
@@ -254,11 +254,11 @@ function tradingDaysInRange(fromDateStr, toDateStr){
 }
 
 async function stockbitFetchMarketDetector(ticker, fromDate, toDate, days){
-  if(!state.stockbitToken) return { error: 'Token Stockbit belum diisi. Buka "⚙️ Pengaturan" → Live Data Stockbit.' };
+  if(!state.stockbitToken) return { error: 'Token Stockbit belum diisi. Buka "âš™ï¸ Pengaturan" â†’ Live Data Stockbit.' };
   if(!state.stockbitBrokerEndpoint) return { error: 'Endpoint Broker Summary belum diisi di Pengaturan.' };
   // Endpoint /marketdetectors mengembalikan baris CAMPUR banyak tanggal
   // sekaligus dalam satu response, dan "limit" di URL membatasi TOTAL baris
-  // gabungan itu — bukan per hari. Kalau limit terlalu kecil untuk rentang
+  // gabungan itu â€” bukan per hari. Kalau limit terlalu kecil untuk rentang
   // hari & keaktifan saham, tanggal-tanggal lama bisa kepotong (tidak ikut
   // ke-return sama sekali). Di sini limit dihitung otomatis dari jumlah
   // hari yang diminta (dengan margin), supaya tidak perlu diutak-atik
@@ -266,7 +266,7 @@ async function stockbitFetchMarketDetector(ticker, fromDate, toDate, days){
   // Pengaturan) masih pakai angka mati (mis. "limit=200"), ganti jadi
   // "limit={limit}" dulu supaya nilai otomatis ini kepakai.
   // "limit" dihitung otomatis dari jumlah hari yang diminta (dengan margin
-  // 50 baris/hari, minimal 50) — supaya endpoint {from}-{to} yang custom di
+  // 50 baris/hari, minimal 50) â€” supaya endpoint {from}-{to} yang custom di
   // Pengaturan tidak kepotong datanya. Lihat catatan panjang di atas.
   const limit = Math.max(50, days * 50);
   const url = state.stockbitBrokerEndpoint
@@ -276,23 +276,23 @@ async function stockbitFetchMarketDetector(ticker, fromDate, toDate, days){
     .replace("{to}", encodeURIComponent(toDate))
     .replace("{limit}", encodeURIComponent(limit));
 
-  console.log("[BROKER_FIX_v3] URL:", url); // penanda debug sementara — hapus setelah beres
+  console.log("[BROKER_FIX_v3] URL:", url); // penanda debug sementara â€” hapus setelah beres
 
   return stockbitRawRequest(url);
 }
 
 // Endpoint /marketdetectors/{ticker} mengembalikan broker_summary.brokers_buy /
 // .brokers_sell sebagai daftar baris CAMPUR banyak tanggal sekaligus (field
-// netbs_date per baris, format YYYYMMDD) — bukan sudah dikelompokkan per hari.
+// netbs_date per baris, format YYYYMMDD) â€” bukan sudah dikelompokkan per hari.
 // Fungsi ini mengelompokkan per tanggal lalu ambil top 5 net value per sisi
 // (buy/sell) untuk tiap tanggal. Field asli (blot/bval untuk buy,
-// slot/sval untuk sell) diverifikasi manual dari DevTools tanggal 25 Agu 2026 —
+// slot/sval untuk sell) diverifikasi manual dari DevTools tanggal 25 Agu 2026 â€”
 // kalau Stockbit ganti skema respons di masa depan, sesuaikan lagi di sini.
 function parseStockbitMarketDetector(raw, fetchDate){
   if(!raw || typeof raw !== "object") return null;
-  // Path asli: data.broker_summary.{brokers_buy,brokers_sell} — bukan data.buy/data.sell.
+  // Path asli: data.broker_summary.{brokers_buy,brokers_sell} â€” bukan data.buy/data.sell.
   const bs = raw?.data?.broker_summary || null;
-  console.log("[BROKER_FIX_v3] parse", fetchDate, "bs found:", !!bs, "buy:", bs?.brokers_buy?.length, "sell:", bs?.brokers_sell?.length); // penanda debug sementara — hapus setelah beres
+  console.log("[BROKER_FIX_v3] parse", fetchDate, "bs found:", !!bs, "buy:", bs?.brokers_buy?.length, "sell:", bs?.brokers_sell?.length); // penanda debug sementara â€” hapus setelah beres
   if(!bs) return null;
 
   const buyRows = Array.isArray(bs.brokers_buy) ? bs.brokers_buy : [];
@@ -301,7 +301,7 @@ function parseStockbitMarketDetector(raw, fetchDate){
 
   const byDate = {}; 
   const ensure = (date) => (byDate[date] ||= { buy: [], sell: [] });
-  // netbs_date per baris (format YYYYMMDD) dipakai kalau ada — response ini
+  // netbs_date per baris (format YYYYMMDD) dipakai kalau ada â€” response ini
   // bisa berisi campuran banyak tanggal sekaligus. Fallback ke fetchDate
   // kalau baris tidak punya tanggal sendiri (aman karena request sekarang
   // per 1 hari, lihat STOCKBIT_BROKER_CHUNK_DAYS).
@@ -343,16 +343,16 @@ function parseStockbitMarketDetector(raw, fetchDate){
 
 // ==========================================
 // HISTORICAL DATA STOCKBIT (tabel Date/Close/Change/Value/Volume di tab
-// "Historical Data" halaman detail saham — Daily/Weekly/Monthly).
+// "Historical Data" halaman detail saham â€” Daily/Weekly/Monthly).
 // Endpoint belum diverifikasi (lihat catatan di STOCKBIT_DEFAULT_HISTORICAL_EP),
 // jadi parseStockbitHistorical() di bawah mencoba banyak kemungkinan nama
-// field secara defensif (mirip mapStockbitQuote) — kalau skema Stockbit
+// field secara defensif (mirip mapStockbitQuote) â€” kalau skema Stockbit
 // ternyata beda, tinggal tambah alias nama field baru di pick(...) masing2
 // kolom, tidak perlu ubah struktur lain.
 // ==========================================
 async function stockbitFetchHistorical(ticker, period, opts = {}){
-  if(!state.stockbitToken) return { error: 'Token Stockbit belum diisi. Buka "⚙️ Pengaturan" → Live Data Stockbit.' };
-  if(!state.stockbitHistoricalEndpoint) return { error: 'Endpoint Historical Data belum diisi di Pengaturan. Ambil dari DevTools → Network saat membuka tab "Historical Data" di stockbit.com (lihat komentar STOCKBIT_DEFAULT_HISTORICAL_EP di app.js untuk caranya).' };
+  if(!state.stockbitToken) return { error: 'Token Stockbit belum diisi. Buka "âš™ï¸ Pengaturan" â†’ Live Data Stockbit.' };
+  if(!state.stockbitHistoricalEndpoint) return { error: 'Endpoint Historical Data belum diisi di Pengaturan. Ambil dari DevTools â†’ Network saat membuka tab "Historical Data" di stockbit.com (lihat komentar STOCKBIT_DEFAULT_HISTORICAL_EP di app.js untuk caranya).' };
   // startDate/endDate: ISO YYYY-MM-DD. Default kalau tidak dikasih: 1 tahun
   // terakhir sampai hari ini (cukup luas untuk isi awal chart/backtest).
   const endDate = opts.endDate || todayLocalISO();
@@ -410,7 +410,7 @@ function parseStockbitHistorical(raw){
     changePct: Number(pick(row, "change_percentage", "change_percent", "changePercent", "pct")) || null,
     value: Number(pick(row, "value", "value_idr", "val", "trade_value")) || null,
     volume: Number(pick(row, "volume", "vol", "trade_volume")) || null,
-    // Field bonus yang ternyata sudah disediakan endpoint ini sekalian —
+    // Field bonus yang ternyata sudah disediakan endpoint ini sekalian â€”
     // termasuk FOREIGN FLOW HARIAN per ticker (foreign_buy/foreign_sell/
     // net_foreign), jadi tidak perlu endpoint marketdetectors terpisah untuk
     // data asing (lihat diskusi "Data foreign bisa diambil dari stockbit?").
@@ -424,18 +424,18 @@ function parseStockbitHistorical(raw){
   })).filter(r => r.date);
 }
 
-// Endpoint /marketdetectors membatasi TOTAL baris gabungan lewat "limit" —
+// Endpoint /marketdetectors membatasi TOTAL baris gabungan lewat "limit" â€”
 // tapi dari pengujian lapangan (25 Agu 2026), ada masalah yang LEBIH
 // MENDASAR: endpoint ini kelihatannya TIDAK benar-benar mendukung rentang
-// from–to. Waktu dicoba pecah jadi beberapa chunk beberapa hari (mis. 4
-// hari per request), hasilnya PERSIS 1 hari data per chunk — cocok dengan
+// fromâ€“to. Waktu dicoba pecah jadi beberapa chunk beberapa hari (mis. 4
+// hari per request), hasilnya PERSIS 1 hari data per chunk â€” cocok dengan
 // pola "cuma mengembalikan data untuk tanggal `to`, mengabaikan `from`".
 // Jadi satu-satunya cara yang terbukti dapat semua hari adalah: minta
 // SATU hari per request (from = to = tanggal itu), bukan rentang.
 // Ini artinya jumlah request ke Stockbit jadi = jumlah hari yang diminta
-// (bukan lagi dibagi jadi beberapa chunk besar) — lebih banyak request,
+// (bukan lagi dibagi jadi beberapa chunk besar) â€” lebih banyak request,
 // tapi ini yang terbukti benar-benar mengembalikan datanya.
-const STOCKBIT_BROKER_CHUNK_DAYS = 1; // JANGAN naikkan kecuali endpoint terbukti mendukung rentang beneran — lihat catatan di atas
+const STOCKBIT_BROKER_CHUNK_DAYS = 1; // JANGAN naikkan kecuali endpoint terbukti mendukung rentang beneran â€” lihat catatan di atas
 
 function chunkArray(arr, size){
   const out = [];
@@ -471,19 +471,19 @@ async function fetchAndSaveBrokerSummaryBulk(tickers, rangeFrom, rangeTo){
   }
   if(!state.stockbitToken){ openSettings(); return; }
   if(!state.stockbitBrokerEndpoint){
-    state.stockbitBrokerBulkResults = [{ ticker:"-", date:"-", ok:false, msg:'Isi dulu "Endpoint Broker Summary" di ⚙️ Pengaturan.' }];
+    state.stockbitBrokerBulkResults = [{ ticker:"-", date:"-", ok:false, msg:'Isi dulu "Endpoint Broker Summary" di âš™ï¸ Pengaturan.' }];
     render(); return;
   }
   if(!SUPABASE_URL || !SUPABASE_KEY){ openSettings(); return; }
 
   const tradingDates = tradingDaysInRange(rangeFrom, rangeTo); // urut lama -> baru
   if(!tradingDates.length){
-    state.stockbitBrokerBulkResults = [{ ticker:"-", date:"-", ok:false, msg:'Periode tanggal tidak valid atau tidak ada hari bursa di rentang itu — cek lagi tanggal "Dari" dan "Sampai".' }];
+    state.stockbitBrokerBulkResults = [{ ticker:"-", date:"-", ok:false, msg:'Periode tanggal tidak valid atau tidak ada hari bursa di rentang itu â€” cek lagi tanggal "Dari" dan "Sampai".' }];
     render(); return;
   }
   const fromDate = tradingDates[0];
   const toDate = tradingDates[tradingDates.length - 1];
-  const latestDate = toDate; // hari bursa paling baru dalam periode ini — SELALU ditarik ulang, lihat catatan di bawah
+  const latestDate = toDate; // hari bursa paling baru dalam periode ini â€” SELALU ditarik ulang, lihat catatan di bawah
 
   state.stockbitBrokerBulkLoading = true;
   state.stockbitBrokerBulkProgress = { done: 0, total: tickers.length }; // progress tetap dihitung per SAHAM (tiap saham di dalamnya bisa beberapa request kecil)
@@ -492,7 +492,7 @@ async function fetchAndSaveBrokerSummaryBulk(tickers, rangeFrom, rangeTo){
 
   for(const ticker of tickers){
     // Skip hari yang datanya SUDAH ada di database (broker summary hari yang
-    // sudah lewat itu final, tidak berubah lagi) — kecuali hari bursa paling
+    // sudah lewat itu final, tidak berubah lagi) â€” kecuali hari bursa paling
     // baru dalam periode ini, yang tetap ditarik ulang tiap kali karena
     // kemungkinan datanya masih berjalan/belum final saat sesi bursa berlangsung.
     const existingDates = await fetchExistingBrokerDates(ticker, tradingDates);
@@ -538,7 +538,7 @@ async function fetchAndSaveBrokerSummaryBulk(tickers, rangeFrom, rangeTo){
           dd.buy.forEach(r => rows.push({ stock_code:ticker, trade_date:d, side:"buy", rank:r.rank, broker_code:r.broker_code, lot:r.lot, value_idr:r.value_idr }));
           dd.sell.forEach(r => rows.push({ stock_code:ticker, trade_date:d, side:"sell", rank:r.rank, broker_code:r.broker_code, lot:r.lot, value_idr:r.value_idr }));
         });
-        // "Hilang" di sini = hari yang sebelumnya belum ada di DB DAN gagal ditarik sekarang —
+        // "Hilang" di sini = hari yang sebelumnya belum ada di DB DAN gagal ditarik sekarang â€”
         // hari yang sudah ada di DB (di-skip) tidak dianggap hilang.
         const missingDates = datesToFetch.filter(d => !byDate[d]);
         if(!rows.length){
@@ -554,9 +554,9 @@ async function fetchAndSaveBrokerSummaryBulk(tickers, rangeFrom, rangeTo){
             if(skippedCount) msg += ` (${skippedCount} hari lain dilewati, sudah ada di database.)`;
             // Sekarang tiap request cuma mencakup STOCKBIT_BROKER_CHUNK_DAYS hari
             // (lihat catatan di atas fetchAndSaveBrokerSummaryBulk), jadi kalau
-            // masih ada hari kosong itu BUKAN lagi soal "limit" di URL — lebih
+            // masih ada hari kosong itu BUKAN lagi soal "limit" di URL â€” lebih
             // mungkin memang hari libur bursa, atau salah satu request chunk gagal.
-            if(missingDates.length) msg += ` ⚠️ ${missingDates.length} hari tidak ada data: ${missingDates.join(", ")} (cek dulu apakah tanggal itu ada di BURSA_HOLIDAYS di app.js — kalau BUKAN hari libur bursa dan STOCKBIT_BROKER_CHUNK_DAYS sudah 1, kemungkinan besar Stockbit memang tidak punya data broker net untuk saham ini di hari itu, mis. saham tidak likuid / tidak ada transaksi signifikan)`;
+            if(missingDates.length) msg += ` âš ï¸ ${missingDates.length} hari tidak ada data: ${missingDates.join(", ")} (cek dulu apakah tanggal itu ada di BURSA_HOLIDAYS di app.js â€” kalau BUKAN hari libur bursa dan STOCKBIT_BROKER_CHUNK_DAYS sudah 1, kemungkinan besar Stockbit memang tidak punya data broker net untuk saham ini di hari itu, mis. saham tidak likuid / tidak ada transaksi signifikan)`;
             state.stockbitBrokerBulkResults.push({ ticker, date: `${fromDate}..${toDate}`, ok:true, msg });
           }catch(e){
             state.stockbitBrokerBulkResults.push({ ticker, date: `${fromDate}..${toDate}`, ok:false, msg: "Gagal simpan ke DB: " + e.message });
@@ -596,12 +596,12 @@ function mapStockbitQuote(raw){
 // AUTO-SYNC TOKEN dari tabel `stockbit_session` (diisi oleh extension
 // Chrome stockbit-token-extension via sql/05_stockbit_token_sync.sql).
 // Kalau tabelnya belum dibuat (migration SQL belum dijalankan), fetch ini
-// gagal diam-diam — fitur live Stockbit tetap jalan dengan token manual.
+// gagal diam-diam â€” fitur live Stockbit tetap jalan dengan token manual.
 // ==========================================================
 async function syncStockbitTokenFromSupabase(){
   if(!SUPABASE_URL || !SUPABASE_KEY) return false;
   // Kalau token yang aktif sekarang datang dari extension (WS Interceptor),
-  // JANGAN ditimpa oleh jalur Supabase ini — dua jalur ini independen dan
+  // JANGAN ditimpa oleh jalur Supabase ini â€” dua jalur ini independen dan
   // Supabase bisa saja berisi baris basi dari lama. Extension menangkap
   // token dari request nyata yang baru terjadi, jadi lebih dipercaya. Kalau
   // dibiarkan, sync ini juga akan menulis balik ke localStorage (baris di
@@ -621,24 +621,24 @@ async function syncStockbitTokenFromSupabase(){
       localStorage.setItem(LS_STOCKBIT_TOKEN, state.stockbitToken);
       return true;
     }
-  }catch(e){ /* tabel belum ada / offline — biarkan token manual yang dipakai */ }
+  }catch(e){ /* tabel belum ada / offline â€” biarkan token manual yang dipakai */ }
   return false;
 }
 
 // ==========================================================
 // AUTO-PICKUP TOKEN dari extension Chrome "WS Interceptor"
-// (background.js + content_screener.js) — jalur INI TERPISAH TOTAL dari
+// (background.js + content_screener.js) â€” jalur INI TERPISAH TOTAL dari
 // syncStockbitTokenFromSupabase() di atas. Extension itu menangkap header
 // Authorization langsung dari request stockbit.com lalu menulisnya ke
 // localStorage['ihsg_stockbit_token'] di tab aplikasi ini (lewat
-// chrome.storage.local -> content_screener.js) — TIDAK PERNAH menyentuh
+// chrome.storage.local -> content_screener.js) â€” TIDAK PERNAH menyentuh
 // tabel Supabase `stockbit_session`. Jadi badge "Auto-sync dari extension"
 // yang sebelumnya cuma bersumber dari Supabase itu SAMA SEKALI TIDAK
 // MEREFLEKSIKAN token yang ditulis extension ini.
 //
 // KENAPA HARUS DI-POLL (bukan cukup addEventListener('storage', ...)):
 // event `storage` browser HANYA terpicu di tab/dokumen LAIN yang beda dari
-// yang melakukan penulisan — dan content_screener.js menulis ke
+// yang melakukan penulisan â€” dan content_screener.js menulis ke
 // localStorage di DALAM tab aplikasi ini sendiri (document yang sama,
 // cuma beda isolated world JS). Jadi event storage TIDAK PERNAH nyala di
 // sini walau extension berhasil menulis token baru. Satu-satunya cara
@@ -646,7 +646,7 @@ async function syncStockbitTokenFromSupabase(){
 // baca ulang localStorage secara berkala dan bandingkan.
 //
 // Kalau token yang ditemukan beda dari yang sedang dipakai, expires_at
-// lama (kalau ada, dari sync Supabase sebelumnya) DIBUANG — itu milik
+// lama (kalau ada, dari sync Supabase sebelumnya) DIBUANG â€” itu milik
 // token yang BEDA, jadi countdown lama yang ditampilkan ke user tidak lagi
 // relevan/menyesatkan untuk token baru ini.
 // ==========================================================
@@ -664,7 +664,7 @@ function pollExtensionStockbitToken(){
     localStorage.setItem(LS_STOCKBIT_TOKEN_SYNCED_AT, String(state.stockbitTokenSyncedAt));
   }catch(e){}
   // Kalau field token di modal Pengaturan sedang tampil TAPI tidak sedang
-  // diketik user (bukan activeElement), sinkronkan juga tampilannya —
+  // diketik user (bukan activeElement), sinkronkan juga tampilannya â€”
   // supaya kalau user buka Pengaturan, yang kelihatan bukan nilai basi.
   const stbTokenEl = document.getElementById("setStockbitToken");
   if(stbTokenEl && document.activeElement !== stbTokenEl) stbTokenEl.value = clean;
@@ -687,12 +687,12 @@ function fmtRelativeTimeID(ts){
 }
 
 // ==========================================
-// stockbitLiveDataStatus — status ringkas dipakai untuk banner "terakhir
+// stockbitLiveDataStatus â€” status ringkas dipakai untuk banner "terakhir
 // berhasil ditarik: [waktu]" (lihat catatan performa & keandalan data:
 // endpoint Stockbit tidak resmi & rawan berhenti berfungsi tanpa
 // pemberitahuan, jadi user perlu tahu dari UI kalau data live sedang basi
 // tanpa perlu buka console). Dianggap "basi" (stale, warna kuning) kalau
-// sudah lebih dari 5 menit sejak sukses terakhir — angka ini sengaja longgar
+// sudah lebih dari 5 menit sejak sukses terakhir â€” angka ini sengaja longgar
 // karena live data di sini memang ditarik manual per klik, bukan auto-poll
 // tiap detik.
 // ==========================================
@@ -704,7 +704,7 @@ function stockbitLiveDataStatus(){
   const rel = fmtRelativeTimeID(state.stockbitLastSuccessAt);
   const isStale = (Date.now() - state.stockbitLastSuccessAt) > STOCKBIT_STALE_AFTER_MS;
   return {
-    text: `${isStale ? "⚠️ " : "✅ "}Terakhir berhasil ditarik: ${rel}${isStale ? " — mungkin sudah basi, coba tarik ulang" : ""}`,
+    text: `${isStale ? "âš ï¸ " : "âœ… "}Terakhir berhasil ditarik: ${rel}${isStale ? " â€” mungkin sudah basi, coba tarik ulang" : ""}`,
     color: isStale ? "var(--gold)" : "var(--up)"
   };
 }
@@ -721,21 +721,21 @@ function stockbitTokenStatus(){
   const nowSec = Date.now()/1000;
   // Sumber "extension" TIDAK punya info expires_at yang valid (extension WS
   // Interceptor cuma menangkap nilai token mentah, tidak tahu klaim `exp`
-  // JWT-nya) — jadi jangan pernah tampilkan countdown untuk sumber ini,
+  // JWT-nya) â€” jadi jangan pernah tampilkan countdown untuk sumber ini,
   // supaya tidak menyesatkan seperti badge lama yang basi.
   if(state.stockbitTokenSource === "extension"){
     const rel = state.stockbitTokenSyncedAt ? fmtRelativeTimeID(state.stockbitTokenSyncedAt) : null;
-    return { text: `🧩 Auto dari extension (WS Interceptor)${rel ? " · ditangkap " + rel : ""} — belum tentu masih valid di sisi server Stockbit, cek dari hasil tarik data.`, color: "var(--up)" };
+    return { text: `ðŸ§© Auto dari extension (WS Interceptor)${rel ? " Â· ditangkap " + rel : ""} â€” belum tentu masih valid di sisi server Stockbit, cek dari hasil tarik data.`, color: "var(--up)" };
   }
   let expiryTxt = "";
   if(state.stockbitTokenExpiresAt){
     if(state.stockbitTokenExpiresAt < nowSec){
-      return { text: "⚠️ Token kadaluarsa — buka stockbit.com & login ulang supaya extension menyinkron token baru.", color: "var(--down)" };
+      return { text: "âš ï¸ Token kadaluarsa â€” buka stockbit.com & login ulang supaya extension menyinkron token baru.", color: "var(--down)" };
     }
     const minsLeft = Math.round((state.stockbitTokenExpiresAt - nowSec)/60);
-    expiryTxt = ` · berlaku ~${minsLeft} menit lagi`;
+    expiryTxt = ` Â· berlaku ~${minsLeft} menit lagi`;
   }
-  const src = state.stockbitTokenSource === "auto" ? "🔄 Auto-sync dari Supabase" : "✍️ Diisi manual";
+  const src = state.stockbitTokenSource === "auto" ? "ðŸ”„ Auto-sync dari Supabase" : "âœï¸ Diisi manual";
   return { text: `${src}${expiryTxt}`, color: "var(--up)" };
 }
 
@@ -748,7 +748,7 @@ async function fetchStockbitLive(ticker){
   render();
 }
 // Tarik live data berurutan (bukan paralel) dengan jeda antar-request,
-// KHUSUS untuk ticker yang lolos filter Screener saat ini — supaya tidak
+// KHUSUS untuk ticker yang lolos filter Screener saat ini â€” supaya tidak
 // membombardir Stockbit dengan puluhan request sekaligus pakai 1 token
 // akun pribadi (rawan rate-limit/flag oleh sistem mereka).
 async function fetchStockbitLiveBulk(tickers){
@@ -778,7 +778,7 @@ async function supaFetch(url, options) {
         if (body.hint) msg += ` (hint: ${body.hint})`;
       }
     } catch (e) { /* body bukan JSON, pakai status text saja */ }
-    // Sertakan nama tabel/endpoint di pesan error — tanpa ini, error yang
+    // Sertakan nama tabel/endpoint di pesan error â€” tanpa ini, error yang
     // sama persis bisa muncul dari beberapa request berbeda (mis.
     // backtest_sessions vs backtest_items) dan tidak mungkin dibedakan
     // dari pesan Postgrest saja.
@@ -789,17 +789,17 @@ async function supaFetch(url, options) {
 }
 
 // ==========================================
-// UJI ENDPOINT STOCKBIT (dipanggil tombol "🧪 Uji" di modal Pengaturan)
+// UJI ENDPOINT STOCKBIT (dipanggil tombol "ðŸ§ª Uji" di modal Pengaturan)
 //
 // Sengaja baca langsung dari INPUT field (bukan state yang sudah tersimpan),
 // supaya user bisa coba-coba endpoint/token baru dulu sebelum klik "Simpan
-// & Reload" — tidak perlu simpan dulu baru ketahuan salah.
+// & Reload" â€” tidak perlu simpan dulu baru ketahuan salah.
 //
 // CATATAN: fungsi ini menimpa state.stockbitToken /
 // state.stockbitHistoricalEndpoint SEMENTARA selama request berlangsung,
 // lalu mengembalikannya. Kalau kebetulan auto-refresh Stockbit (lihat blok
 // AUTO-REFRESH LIVE STOCKBIT di bagian akhir file) jalan tepat di detik yang
-// sama, ada kemungkinan kecil 1 request nyasar pakai token/endpoint uji —
+// sama, ada kemungkinan kecil 1 request nyasar pakai token/endpoint uji â€”
 // bukan masalah serius untuk skala testing manual, tapi disebutkan di sini
 // supaya tidak membingungkan kalau terlihat di Network tab.
 // ==========================================
@@ -820,14 +820,14 @@ async function testStockbitQuoteEndpoint(){
   state.stockbitToken = prevToken;
 
   if(res.error){
-    resultEl.innerHTML = `<div style="font-size:11.5px;color:var(--down);">⚠️ ${escapeHtml(res.error)}</div>`;
+    resultEl.innerHTML = `<div style="font-size:11.5px;color:var(--down);">âš ï¸ ${escapeHtml(res.error)}</div>`;
     return;
   }
   const mapped = mapStockbitQuote(res.raw) || {};
   const foundFields = ["open","high","low","last"].filter(k => mapped[k]!=null);
   const verdict = foundFields.length
-    ? `<span style="color:var(--up);">✅ Ketemu field: ${foundFields.join(", ")} (Last=${mapped.last}, O/H/L=${mapped.open}/${mapped.high}/${mapped.low}). Kalau angkanya masuk akal, endpoint ini kemungkinan besar BENAR — klik "Simpan &amp; Reload".</span>`
-    : `<span style="color:var(--down);">❌ Open/High/Low/Last tidak ketemu — kemungkinan besar ini BUKAN endpoint harga (mis. masih endpoint stream/komentar). Cek struktur JSON mentah di bawah, cari nama field harga aslinya lalu beri tahu saya supaya mapStockbitQuote() disesuaikan.</span>`;
+    ? `<span style="color:var(--up);">âœ… Ketemu field: ${foundFields.join(", ")} (Last=${mapped.last}, O/H/L=${mapped.open}/${mapped.high}/${mapped.low}). Kalau angkanya masuk akal, endpoint ini kemungkinan besar BENAR â€” klik "Simpan &amp; Reload".</span>`
+    : `<span style="color:var(--down);">âŒ Open/High/Low/Last tidak ketemu â€” kemungkinan besar ini BUKAN endpoint harga (mis. masih endpoint stream/komentar). Cek struktur JSON mentah di bawah, cari nama field harga aslinya lalu beri tahu saya supaya mapStockbitQuote() disesuaikan.</span>`;
   resultEl.innerHTML = `
     <div style="font-size:11.5px;margin-bottom:6px;">${verdict}</div>
     <details><summary style="cursor:pointer;font-size:11px;color:var(--teal);">Lihat JSON mentah</summary>
@@ -856,13 +856,13 @@ async function testStockbitHistoricalEndpoint(){
   state.stockbitToken = prevToken;
 
   if(res.error){
-    resultEl.innerHTML = `<div style="font-size:11.5px;color:var(--down);">⚠️ ${escapeHtml(res.error)}</div>`;
+    resultEl.innerHTML = `<div style="font-size:11.5px;color:var(--down);">âš ï¸ ${escapeHtml(res.error)}</div>`;
     return;
   }
   const parsed = parseStockbitHistorical(res.raw);
   const verdict = (parsed && parsed.length)
-    ? `<span style="color:var(--up);">✅ Terbaca ${parsed.length} baris. Baris pertama: tanggal ${escapeHtml(parsed[0]?.date||"-")}, Close ${parsed[0]?.close ?? "-"}. Cek jarak antar tanggal di JSON mentah — untuk mode "${escapeHtml(period)}" jaraknya seharusnya mingguan/bulanan, bukan harian, kalau period-nya benar-benar berpengaruh di sisi server.</span>`
-    : `<span style="color:var(--down);">❌ Formatnya tidak dikenali parseStockbitHistorical() untuk mode "${escapeHtml(period)}" — kemungkinan besar nama parameter period salah tebak. Cek JSON mentah di bawah lalu beri tahu saya strukturnya.</span>`;
+    ? `<span style="color:var(--up);">âœ… Terbaca ${parsed.length} baris. Baris pertama: tanggal ${escapeHtml(parsed[0]?.date||"-")}, Close ${parsed[0]?.close ?? "-"}. Cek jarak antar tanggal di JSON mentah â€” untuk mode "${escapeHtml(period)}" jaraknya seharusnya mingguan/bulanan, bukan harian, kalau period-nya benar-benar berpengaruh di sisi server.</span>`
+    : `<span style="color:var(--down);">âŒ Formatnya tidak dikenali parseStockbitHistorical() untuk mode "${escapeHtml(period)}" â€” kemungkinan besar nama parameter period salah tebak. Cek JSON mentah di bawah lalu beri tahu saya strukturnya.</span>`;
   resultEl.innerHTML = `
     <div style="font-size:11.5px;margin-bottom:6px;">${verdict}</div>
     <details><summary style="cursor:pointer;font-size:11px;color:var(--teal);">Lihat JSON mentah</summary>
@@ -893,10 +893,10 @@ async function openSettings() {
   document.getElementById("settingsModalOverlay").classList.add("open");
   updateStockbitTokenStatusUI();
   updateStockbitLastSuccessStatusUI();
-  // Coba tarik token terbaru dari Supabase di background — kalau berhasil,
+  // Coba tarik token terbaru dari Supabase di background â€” kalau berhasil,
   // timpa field token yang baru saja ditampilkan supaya selalu yang terbaru.
   // (syncStockbitTokenFromSupabase() sendiri akan no-op kalau token yang
-  // aktif sekarang datang dari extension — lihat catatan di fungsi itu.)
+  // aktif sekarang datang dari extension â€” lihat catatan di fungsi itu.)
   const synced = await syncStockbitTokenFromSupabase();
   if(synced && stbToken) stbToken.value = state.stockbitToken;
   updateStockbitTokenStatusUI();
@@ -905,7 +905,7 @@ async function openSettings() {
   const tgFnEl = document.getElementById("setTelegramFunctionUrl");
   if(tgFnEl) tgFnEl.value = state.telegramFunctionUrl || ""; // isi awal dari localStorage, sambil menunggu fetch di bawah
   await Promise.all([refreshCustomPresets(), loadTelegramSettingsFromSupabase()]);
-  // Timpa lagi setelah fetch selesai — kalau Supabase punya function_url tersimpan,
+  // Timpa lagi setelah fetch selesai â€” kalau Supabase punya function_url tersimpan,
   // itu yang dipakai (lihat loadTelegramSettingsFromSupabase), bukan cuma localStorage.
   if(tgFnEl) tgFnEl.value = state.telegramFunctionUrl || "";
   const tgTokenEl = document.getElementById("setTelegramBotToken");
@@ -920,7 +920,7 @@ async function openSettings() {
   const tgLastRunEl = document.getElementById("telegramLastRunStatus");
   if(tgLastRunEl){
     tgLastRunEl.textContent = state.telegramLastRunAt
-      ? `Terakhir cek server: ${new Date(state.telegramLastRunAt).toLocaleString("id-ID")} — ${state.telegramLastRunNote || ""}`
+      ? `Terakhir cek server: ${new Date(state.telegramLastRunAt).toLocaleString("id-ID")} â€” ${state.telegramLastRunNote || ""}`
       : "Belum pernah dijalankan Cron server (atau tabel telegram_settings belum dibuat).";
   }
 }
@@ -984,7 +984,7 @@ function saveSettings() {
   if(SUPABASE_URL && SUPABASE_KEY) {
     loadLive();
   } else {
-    document.getElementById("content").innerHTML = `<div class="empty-box">Koneksi belum diatur. Klik "⚙️ Pengaturan" di pojok kanan atas.</div>`;
+    document.getElementById("content").innerHTML = `<div class="empty-box">Koneksi belum diatur. Klik "âš™ï¸ Pengaturan" di pojok kanan atas.</div>`;
   }
 }
 
@@ -992,7 +992,7 @@ function saveSettings() {
 // NOTIFIKASI TELEGRAM (tabel telegram_settings di Supabase)
 //
 // Dipantau & dikirim oleh Edge Function `telegram-notifier` yang jalan
-// di server lewat Cron (lihat sql/06_telegram_notifikasi.sql) — bagian
+// di server lewat Cron (lihat sql/06_telegram_notifikasi.sql) â€” bagian
 // di sini hanya UI untuk mengisi/menyimpan konfigurasinya dan tombol
 // uji-kirim manual.
 // ==========================================
@@ -1000,7 +1000,7 @@ async function loadTelegramSettingsFromSupabase(){
   if(!SUPABASE_URL || !SUPABASE_KEY) return;
   try{
     const res = await fetch(`${SUPABASE_URL}/telegram_settings?id=eq.1&select=*`, { headers: getSupaHeaders(), cache: "no-store" });
-    if(!res.ok) return; // tabel belum ada (belum jalankan sql/06_telegram_notifikasi.sql) — biarkan default
+    if(!res.ok) return; // tabel belum ada (belum jalankan sql/06_telegram_notifikasi.sql) â€” biarkan default
     const rows = await res.json();
     const row = Array.isArray(rows) ? rows[0] : null;
     if(!row) return;
@@ -1018,7 +1018,7 @@ async function loadTelegramSettingsFromSupabase(){
       state.telegramFunctionUrl = row.function_url;
       try{ localStorage.setItem(LS_TELEGRAM_FUNCTION_URL, state.telegramFunctionUrl); }catch(e){}
     }
-  }catch(e){ /* offline / tabel belum ada — abaikan, form tetap terisi default */ }
+  }catch(e){ /* offline / tabel belum ada â€” abaikan, form tetap terisi default */ }
 }
 
 async function saveTelegramSettingsToSupabase(){
@@ -1038,11 +1038,11 @@ async function saveTelegramSettingsToSupabase(){
       })
     });
   }catch(e){
-    showError("Gagal menyimpan Pengaturan Notifikasi Telegram: " + e.message + " — pastikan sudah menjalankan sql/06_telegram_notifikasi.sql di Supabase.");
+    showError("Gagal menyimpan Pengaturan Notifikasi Telegram: " + e.message + " â€” pastikan sudah menjalankan sql/06_telegram_notifikasi.sql di Supabase.");
   }
 }
 
-// Centang/hapus centang 1 preset di daftar "preset yang dipantau" —
+// Centang/hapus centang 1 preset di daftar "preset yang dipantau" â€”
 // langsung disimpan ke Supabase supaya Edge Function di server melihat
 // perubahan ini di cron berikutnya, tidak perlu klik "Simpan & Reload".
 function toggleTelegramPreset(id){
@@ -1059,7 +1059,7 @@ function renderTelegramPresetChecklist(){
 
   // Grup 1: 9 Preset DSI bawaan. Kunci disimpan dengan prefix "dsi:" (mis.
   // "dsi:bagger") supaya Edge Function bisa bedakan dari id Preset Kustom
-  // (angka polos, tanpa prefix) — lihat functions/telegram-notifier/index.ts.
+  // (angka polos, tanpa prefix) â€” lihat functions/telegram-notifier/index.ts.
   const dsiKeys = Object.keys(PRESET_LABELS);
   const dsiHtml = dsiKeys.map(key => {
     const fullId = `dsi:${key}`;
@@ -1070,7 +1070,7 @@ function renderTelegramPresetChecklist(){
     </label>`;
   }).join("");
 
-  // Grup 2: Preset Kustom (id polos angka, TANPA prefix — sama seperti
+  // Grup 2: Preset Kustom (id polos angka, TANPA prefix â€” sama seperti
   // sebelumnya, supaya query custom_presets?id=in.(...) di Edge Function
   // tidak perlu diubah untuk yang ini).
   const customHtml = state.customPresets.length
@@ -1079,7 +1079,7 @@ function renderTelegramPresetChecklist(){
         <input type="checkbox" class="custom-checkbox" style="margin:0;justify-self:start;" ${state.telegramPresetIds.includes(String(p.id)) ? "checked" : ""} onchange="toggleTelegramPreset('${p.id}')">
         <span style="text-align:left;">${escapeHtml(p.name)}</span>
       </label>`).join("")
-    : `<div style="font-size:11.5px;color:var(--muted);padding:4px 0;">Belum ada Preset Kustom tersimpan. Buat dulu lewat "+ Tambah Rule" di tab Screener, lalu "💾 Simpan sebagai Preset...".</div>`;
+    : `<div style="font-size:11.5px;color:var(--muted);padding:4px 0;">Belum ada Preset Kustom tersimpan. Buat dulu lewat "+ Tambah Rule" di tab Screener, lalu "ðŸ’¾ Simpan sebagai Preset...".</div>`;
 
   el.innerHTML = `
     <div style="font-size:10.5px;color:var(--muted);text-transform:uppercase;letter-spacing:.04em;margin-bottom:2px;">Preset DSI Bawaan</div>
@@ -1111,9 +1111,9 @@ async function testTelegramNotification(){
     const res = await fetch(fnUrl, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ test: true }) });
     const body = await res.json().catch(()=>({}));
     if(!res.ok) throw new Error(body.message || `HTTP ${res.status}`);
-    if(statusEl){ statusEl.textContent = "✅ Test terkirim — cek chat Telegram kamu."; statusEl.style.color = "var(--up)"; }
+    if(statusEl){ statusEl.textContent = "âœ… Test terkirim â€” cek chat Telegram kamu."; statusEl.style.color = "var(--up)"; }
   }catch(e){
-    if(statusEl){ statusEl.textContent = "❌ Gagal: " + e.message; statusEl.style.color = "var(--down)"; }
+    if(statusEl){ statusEl.textContent = "âŒ Gagal: " + e.message; statusEl.style.color = "var(--down)"; }
   }
   state.telegramTesting = false;
 }
@@ -1128,37 +1128,37 @@ const LS_STOCKBIT_TOKEN = "ihsg_stockbit_token", LS_STOCKBIT_QUOTE_EP = "ihsg_st
       LS_STOCKBIT_BROKER_EP = "ihsg_stockbit_broker_ep", LS_STOCKBIT_PROXY = "ihsg_stockbit_proxy",
       LS_STOCKBIT_HISTORICAL_EP = "ihsg_stockbit_historical_ep";
 // Menyimpan SUMBER token (bukan cuma token-nya sendiri) supaya label status
-// ("🧩 Auto dari extension" vs "✍️ Diisi manual") tetap akurat setelah
-// halaman di-reload — bukan cuma benar selama tab masih terbuka.
+// ("ðŸ§© Auto dari extension" vs "âœï¸ Diisi manual") tetap akurat setelah
+// halaman di-reload â€” bukan cuma benar selama tab masih terbuka.
 const LS_STOCKBIT_TOKEN_SOURCE = "ihsg_stockbit_token_source", LS_STOCKBIT_TOKEN_SYNCED_AT = "ihsg_stockbit_token_synced_at";
 const LS_STOCKBIT_AUTOREFRESH = "ihsg_stockbit_autorefresh", LS_STOCKBIT_AUTOREFRESH_SEC = "ihsg_stockbit_autorefresh_sec";
 const STOCKBIT_AUTOREFRESH_MIN_SEC = 30; // batas bawah supaya tidak membombardir Stockbit dengan token pribadi
 const STOCKBIT_AUTOREFRESH_MAX_TICKERS = 30; // di atas ini auto-refresh otomatis nonaktif sendiri (lihat maybeAutoRefreshStockbit)
-// Notifikasi Telegram — cuma URL Edge Function yang perlu disimpan lokal
+// Notifikasi Telegram â€” cuma URL Edge Function yang perlu disimpan lokal
 // (dipakai tombol "Uji Kirim Notifikasi" di browser). Bot token, chat ID,
 // status aktif, dan preset yang dipantau disimpan di Supabase (tabel
-// telegram_settings), bukan localStorage — supaya Edge Function di server
+// telegram_settings), bukan localStorage â€” supaya Edge Function di server
 // (dipanggil Cron, bukan dari browser ini) bisa membacanya juga.
 const LS_TELEGRAM_FUNCTION_URL = "ihsg_telegram_function_url";
 const STOCKBIT_DEFAULT_QUOTE_EP = "https://exodus.stockbit.com/stream/v3/symbol/{ticker}";
-// NOTE (25 Agu 2026): endpoint di atas TERBUKTI SALAH — itu API "Stream"
+// NOTE (25 Agu 2026): endpoint di atas TERBUKTI SALAH â€” itu API "Stream"
 // (linimasa komentar komunitas), bukan API harga. Endpoint quote/orderbook
 // yang benar belum ketemu (sempat ditelusuri sampai ke WebSocket Primus
 // ws-gen.stockbit.com, tapi dihentikan karena rawan trigger rate-limit kalau
-// dipakai ganti-ganti ticker cepat). Dibiarkan seperti ini dulu — field
+// dipakai ganti-ganti ticker cepat). Dibiarkan seperti ini dulu â€” field
 // "Endpoint Quote/Orderbook" di Pengaturan tetap bisa ditimpa manual kalau
 // endpoint yang benar sudah ketemu.
 const STOCKBIT_DEFAULT_BROKER_EP = "https://exodus.stockbit.com/order-trade/broker/distribution?date={date}&symbol={ticker}&investor_type=INVESTOR_TYPE_ALL&market_board=MARKET_TYPE_REGULER&data_type=BROKER_DISTRIBUTION_DATA_TYPE_VALUE&period=TB_PERIOD_LAST_1_DAY";// Endpoint Historical Data (tabel Date/Close/Change/Value/Volume di halaman
-// detail saham Stockbit — toggle Daily/Weekly/Monthly). Sudah diverifikasi
-// dari traffic asli lewat DevTools (30 Agu 2026) — beda dengan marketdetectors,
+// detail saham Stockbit â€” toggle Daily/Weekly/Monthly). Sudah diverifikasi
+// dari traffic asli lewat DevTools (30 Agu 2026) â€” beda dengan marketdetectors,
 // endpoint ini SUDAH mendukung rentang tanggal beneran lewat start_date/end_date
 // + pagination lewat limit/page, jadi tidak perlu trik "tarik semua lalu saring"
 // seperti broker summary. Placeholder {period} diisi lewat
 // stockbitHistoricalPeriodParam() (map "daily"/"weekly"/"monthly" ->
-// HS_PERIOD_DAILY/HS_PERIOD_WEEKLY/HS_PERIOD_MONTHLY — dua yang terakhir baru
+// HS_PERIOD_DAILY/HS_PERIOD_WEEKLY/HS_PERIOD_MONTHLY â€” dua yang terakhir baru
 // tebakan pola penamaan, belum dicek manual; kalau salah, field Endpoint di
 // Pengaturan bisa ditimpa manual). Bentuk JSON response-nya SENDIRI belum
-// dikonfirmasi — parseStockbitHistorical() di bawah menebak nama field secara
+// dikonfirmasi â€” parseStockbitHistorical() di bawah menebak nama field secara
 // defensif, jadi kalau muncul pesan "formatnya tidak dikenali", tinggal cek
 // console (F12) untuk lihat JSON asli dan tambah alias field yang cocok.
 const STOCKBIT_DEFAULT_HISTORICAL_EP = "https://exodus.stockbit.com/company-price-feed/historical/summary/{ticker}?period={period}&start_date={start_date}&end_date={end_date}&limit={limit}&page={page}";
@@ -1168,7 +1168,7 @@ function stockbitHistoricalPeriodParam(period){
   return "HS_PERIOD_DAILY";
 }
 // Diverifikasi manual dari DevTools tanggal 25 Agu 2026 (menu "Bandar
-// Detector" stockbit.com) — {ticker} di path URL, {from}/{to} format
+// Detector" stockbit.com) â€” {ticker} di path URL, {from}/{to} format
 // YYYY-MM-DD. limit dinaikkan dari default Stockbit (25) ke 200 supaya lebih
 // besar peluang semua hari dalam rentang 10 hari kebagian baris; kalau ada
 // saham yang sangat aktif dan masih ada hari kosong, naikkan lagi manual di
@@ -1200,17 +1200,17 @@ let state = {
   // Tab Sektoral: sektor mana yang sedang di-expand untuk melihat daftar
   // sahamnya, dan urutan sortir daftar saham di dalam tiap sektor.
   sektorExpanded: new Set(), sektorSearch: "", sektorSort: "changeDesc",
-  // Sub-tab aktif di panel "🔥 Top Movers" (bagian atas tab Sektoral):
+  // Sub-tab aktif di panel "ðŸ”¥ Top Movers" (bagian atas tab Sektoral):
   // gainer / loser / value / volume / frequency.
   topMoversTab: "gainer",
   // "Frequency Analyzer" = kolom baseline (rata-rata Frekuensi) di DB yang
   // dipakai sebagai pembanding di rule builder, namanya bisa beda-beda
-  // tergantung skema tiap orang — jadi dibuat konfigurasi lewat Pengaturan,
-  // bukan di-hardcode. Default "freq_ma20" (isi lewat "⚙️ Pengaturan").
+  // tergantung skema tiap orang â€” jadi dibuat konfigurasi lewat Pengaturan,
+  // bukan di-hardcode. Default "freq_ma20" (isi lewat "âš™ï¸ Pengaturan").
   freqAnalyzerCol: "freq_ma20",
   // Rules kustom ala "Edit Screener" Stockbit: {id, aKey, op, mult, bType, bKey, bConst}
   customRules: [],
-  ruleBuilderOpen: true, // collapsible panel Rules Kustom — auto-collapse setelah "Muat" preset
+  ruleBuilderOpen: true, // collapsible panel Rules Kustom â€” auto-collapse setelah "Muat" preset
   // Preset Screener kustom (disimpan di tabel custom_presets Supabase):
   // {id, name, rules, created_at}. selectedPresetId = preset yang dipilih
   // di dropdown (belum tentu sudah "dimuat" ke customRules).
@@ -1218,7 +1218,7 @@ let state = {
   selectedPresetId: "",
   presetsLoading: false,
   // Data Top 3 Broker Beli/Jual per saham (dari broker_summary, hari
-  // trading terakhir yang tercatat) — dipakai rule kustom "Top 3 Broker
+  // trading terakhir yang tercatat) â€” dipakai rule kustom "Top 3 Broker
   // (Beli/Jual) contains <kode>" untuk cari saham yang didominasi broker
   // tertentu. Bentuk: { TICKER: { buy:["AK","YP","PD"], sell:[...] } }.
   top3BrokerData: {},
@@ -1226,7 +1226,7 @@ let state = {
   top3BrokerLoading: false,
   // Tab Broker Summary: top 5 broker buy/sell per saham per tanggal.
   // Data diisi MANUAL (dari screenshot akun Stockbit sendiri) lewat
-  // form atau tempel CSV — bukan hasil scraping otomatis.
+  // form atau tempel CSV â€” bukan hasil scraping otomatis.
   bsStockCode: "", bsDate: todayLocalISO(),
   bsRows: [], bsEditRows: [], bsLoading: false,
   bsEditorOpen: false, bsMsg: "", bsMsgError: false, bsCsvText: "",
@@ -1236,7 +1236,7 @@ let state = {
   detailBsRows: [], detailBsEditRows: [], detailBsLoading: false,
   detailBsEditorOpen: false, detailBsMsg: "", detailBsMsgError: false, detailBsCsvText: "",
   // ==========================================
-  // Tab "🎯 Target Bandar": dibangun DI ATAS data broker_summary yang
+  // Tab "ðŸŽ¯ Target Bandar": dibangun DI ATAS data broker_summary yang
   // sudah ada (top 5 buy/sell manual per hari). Tiga bagian:
   // 1) Top 5 Bandar per emiten (agregat & klasifikasi selama N hari)
   // 2) Kalkulator Target Harga (Avg Bandar + ATR14 -> R1 / Max)
@@ -1250,15 +1250,15 @@ let state = {
   targetSummaryScope: "ticker", // "ticker" = emiten ini saja, "all" = semua emiten
   targetHistory: [], targetHistoryLoading: false,
   // ==========================================
-  // Tab "🎯 Entry Price Scanner" — dibangun DI ATAS data broker_summary
+  // Tab "ðŸŽ¯ Entry Price Scanner" â€” dibangun DI ATAS data broker_summary
   // yang sama (bukan tabel baru), tapi dipakai LINTAS SEMUA saham
   // sekaligus (bukan 1 ticker seperti Target Bandar). Lihat blok komentar
   // besar "ENTRY PRICE SCANNER" di dekat fungsi runEntryPriceScan() untuk
   // penjelasan lengkap logika & keterbatasannya.
   // ==========================================
   epsScanning: false, epsMsg: "", epsMsgError: false,
-  epsRaw: null, // hasil scan mentah (per saham, per hari, per tipe broker) — lihat runEntryPriceScan()
-  epsResults: [], // hasil scan yang SUDAH kena filter+urut aktif — dihitung ulang instan dari epsRaw
+  epsRaw: null, // hasil scan mentah (per saham, per hari, per tipe broker) â€” lihat runEntryPriceScan()
+  epsResults: [], // hasil scan yang SUDAH kena filter+urut aktif â€” dihitung ulang instan dari epsRaw
   epsFilters: {
     periode: "1w",          // "1w" | "2w" | "1m"
     broker: "both",         // "asing" | "lokal" | "both"
@@ -1271,37 +1271,37 @@ let state = {
   },
   epsInfoOpen: false,
   // ==========================================
-  // Tab "⬢ Kraken Flow (ORCA)" — order-flow/bandarmology screener yang
+  // Tab "â¬¢ Kraken Flow (ORCA)" â€” order-flow/bandarmology screener yang
   // meniru fitur "ORCA System" di ihsgscreener.com. BEDA dari Entry Price
-  // Scanner: tidak butuh scan/fetch terpisah — semua sinyalnya dihitung
+  // Scanner: tidak butuh scan/fetch terpisah â€” semua sinyalnya dihitung
   // LANGSUNG dari snapshot EOD yang sudah ada di state.stocks (bid,
   // bidVolume, offer, offerVolume, avgTicket, crossingPct, frequency,
-  // cClose/cHigh, foreignNet1D/5D/20D — semua kolom ini SUDAH dipetakan
+  // cClose/cHigh, foreignNet1D/5D/20D â€” semua kolom ini SUDAH dipetakan
   // di loadLive(), lihat komentar "Antrian bid/offer terbaik" & "Bandarmologi
-  // ASLI dari IDX" di atas). Jadi tab ini reaktif — tidak ada tombol "Scan",
+  // ASLI dari IDX" di atas). Jadi tab ini reaktif â€” tidak ada tombol "Scan",
   // hasil langsung update tiap filter diubah (lihat computeOrcaResults()).
   //
   // UPDATE: bid/offer sekarang disimpan HISTORIS per hari di `flows`
-  // (lihat sync-idx-full.mjs & sql/07_flows_bid_offer.sql) — jadi
+  // (lihat sync-idx-full.mjs & sql/07_flows_bid_offer.sql) â€” jadi
   // "Durasi" di bawah bisa benar-benar mengagregasi SEMUA parameter
   // (Bid/Offer, ATS, Non-Regular, Frequency, dst) lewat jendela N hari,
   // bukan cuma Foreign+ seperti sebelumnya. Datanya ditarik LAZY (sekali,
   // 7 hari bursa terakhir) lewat ensureOrcaHistoryLoaded() begitu tab ini
-  // dibuka — lihat orcaHistory* di bawah & loadOrcaHistory(). Selama
+  // dibuka â€” lihat orcaHistory* di bawah & loadOrcaHistory(). Selama
   // masih loading atau untuk tanggal SEBELUM migration 07 dijalankan
   // (bid/offer historis masih NULL), filter otomatis jatuh balik ke
   // snapshot hari terakhir dari state.stocks supaya tab tetap terpakai.
   // ==========================================
   orcaFilters: new Set(), // subset dari ORCA_FILTER_DEFS: bidOffer, ats, noSell, closeHigh, nonRegular, topVolume, frequency, foreignPlus, offerSlender
-  orcaDuration: 3,        // 1..7 "hari" — jendela agregasi utk semua filter (lihat computeOrcaResults()) + Foreign+ (1D/5D/20D)
+  orcaDuration: 3,        // 1..7 "hari" â€” jendela agregasi utk semua filter (lihat computeOrcaResults()) + Foreign+ (1D/5D/20D)
   orcaMarketCap: "all",   // all | 1t | 5t | 10t | 50t | 100t | custom
   orcaCustomCapT: "",     // dipakai kalau orcaMarketCap === "custom" (nilai dalam Triliun Rupiah)
-  orcaMinAts: 0,          // 0 | 2e9 | 5e9 — "Filter Kuat" khusus Offer's Slender
-  orcaMinFreq: 0,         // 0 | 2000 | 5000 — "Filter Kuat" khusus Offer's Slender
+  orcaMinAts: 0,          // 0 | 2e9 | 5e9 â€” "Filter Kuat" khusus Offer's Slender
+  orcaMinFreq: 0,         // 0 | 2000 | 5000 â€” "Filter Kuat" khusus Offer's Slender
   orcaSearch: "",
   orcaInfoOpen: false,
   // Histori mentah dari `flows` (7 hari bursa terakhir, SEMUA emiten),
-  // ditarik sekali lewat ensureOrcaHistoryLoaded() — map ticker -> array
+  // ditarik sekali lewat ensureOrcaHistoryLoaded() â€” map ticker -> array
   // baris harian terurut TERBARU dulu. computeOrcaResults() menghitung
   // ulang agregat jendela N-hari dari sini secara instan tiap render,
   // tanpa fetch ulang tiap kali Durasi diubah.
@@ -1312,7 +1312,7 @@ let state = {
   // ==========================================
   // Live Data Stockbit (opsional, via token extension Chrome milik user).
   // stockbitLive: map ticker -> {loading, error, raw, mapped, fetchedAt}
-  // Hanya diisi kalau user menekan tombol "Tarik" — tidak otomatis, supaya
+  // Hanya diisi kalau user menekan tombol "Tarik" â€” tidak otomatis, supaya
   // tidak menghabiskan rate limit/kena banned dari akun Stockbit sendiri.
   // ==========================================
   stockbitToken: "", stockbitQuoteEndpoint: STOCKBIT_DEFAULT_QUOTE_EP,
@@ -1320,34 +1320,34 @@ let state = {
   stockbitHistoricalEndpoint: STOCKBIT_DEFAULT_HISTORICAL_EP,
   detailHistoricalPeriod: "daily", detailHistoricalRows: [],
   detailHistoricalLoading: false, detailHistoricalMsg: "", detailHistoricalMsgError: false,
-  // Panel "Bandingkan dengan IDX (flows)" di tab Historical Data — lihat
+  // Panel "Bandingkan dengan IDX (flows)" di tab Historical Data â€” lihat
   // loadDetailCompare(). Cuma dihitung on-demand (klik tombol), tidak
   // otomatis, karena butuh 1 fetch tambahan ke tabel `flows`.
   detailCompareRows: [], detailCompareLoading: false, detailCompareMsg: "", detailCompareOpen: false,
   stockbitTokenExpiresAt: null, stockbitTokenSyncedAt: null, stockbitTokenSource: "manual",
   // Waktu (Date.now()) request Stockbit APA SAJA (quote, broker summary,
-  // historical) terakhir kali benar-benar sukses — lihat stockbitRawRequest().
+  // historical) terakhir kali benar-benar sukses â€” lihat stockbitRawRequest().
   // Dipakai buat banner status supaya user tahu data live basi sejak kapan
   // tanpa harus buka console. null = belum pernah berhasil sama sekali.
   stockbitLastSuccessAt: null,
   stockbitLive: {}, stockbitBulkLoading: false, stockbitBulkProgress: null,
   stockbitAutoRefresh: false, stockbitAutoRefreshIntervalSec: 60,
-  // Riwayat Value (Rp) harian dari Stockbit per ticker, dipakai Smart Pick —
+  // Riwayat Value (Rp) harian dari Stockbit per ticker, dipakai Smart Pick â€”
   // lihat catatan lengkap di loadLive() dan spStockbitValueRatio().
   stockbitValueHistory: {},
   // Tarik otomatis Top 5 Broker Buy/Sell (jumlah hari bursa bisa diatur
   // lewat input di UI, default 10) HANYA untuk ticker yang dicentang
-  // (state.selectedForBacktest) — lihat fetchAndSaveBrokerSummaryBulk().
+  // (state.selectedForBacktest) â€” lihat fetchAndSaveBrokerSummaryBulk().
   stockbitBrokerBulkLoading: false, stockbitBrokerBulkProgress: null, stockbitBrokerBulkResults: [],
   bsAutoBulkDays: 10,
-  // Periode Tarik Otomatis sekarang dipilih lewat tanggal Dari–Sampai (bukan cuma "N hari
+  // Periode Tarik Otomatis sekarang dipilih lewat tanggal Dariâ€“Sampai (bukan cuma "N hari
   // terakhir"), supaya bisa ambil rentang tanggal bebas di masa lalu, bukan cuma mundur dari
   // hari ini. Default diisi otomatis saat pertama render (lihat renderBrokerSummary) mengikuti
   // bsAutoBulkDays lama supaya perilaku awal tetap sama.
   bsAutoBulkFrom: null, bsAutoBulkTo: null,
   bsBulkResultsOpen: true, // status buka/tutup panel hasil Tarik Otomatis (accordion panah)
   // Tarik otomatis Historical Data (Daily) HANYA untuk ticker yang dicentang
-  // di tab Screener — lihat fetchAndSaveHistoricalBulk(). Beda dengan broker
+  // di tab Screener â€” lihat fetchAndSaveHistoricalBulk(). Beda dengan broker
   // summary, endpoint historical TIDAK menerima rentang tanggal (cuma
   // {ticker}+{period}), jadi tiap ticker cukup 1x request lalu hasilnya
   // disaring ke rentang Dari-Sampai yang dipilih di UI.
@@ -1356,9 +1356,9 @@ let state = {
   hdBulkResultsOpen: true,
   // ==========================================
   // Notifikasi Telegram (tabel telegram_settings di Supabase, dieksekusi
-  // oleh Edge Function `telegram-notifier` yang dijadwalkan Cron server —
+  // oleh Edge Function `telegram-notifier` yang dijadwalkan Cron server â€”
   // lihat sql/06_telegram_notifikasi.sql). State di sini cuma cerminan
-  // untuk ditampilkan/diedit di ⚙️ Pengaturan, sumber kebenarannya tetap
+  // untuk ditampilkan/diedit di âš™ï¸ Pengaturan, sumber kebenarannya tetap
   // tabel telegram_settings.
   // ==========================================
   telegramBotToken: "", telegramChatId: "", telegramEnabled: false,
@@ -1367,15 +1367,15 @@ let state = {
   telegramLastRunAt: null, telegramLastRunNote: null,
   telegramTestMsg: "", telegramTestMsgError: false, telegramTesting: false,
   // ==========================================
-  // Tab "✨ Smart Pick": 5 sinyal siap-pakai (Area Demand, Throwback/Retest
+  // Tab "âœ¨ Smart Pick": 5 sinyal siap-pakai (Area Demand, Throwback/Retest
   // Breakout, Liquidity Sweep, Bull Divergence, Early Breakout) dihitung
-  // dari data live yang SUDAH ADA di enriched() — bukan model AI beneran,
+  // dari data live yang SUDAH ADA di enriched() â€” bukan model AI beneran,
   // cuma scoring rule-based dikemas mirip "AI Screener" ala Stockbit.
   // Hasil di kartu = live/hari-ini saja (bisa berubah tiap refresh).
-  // Begitu "✓ Finalisasi Signal (EOD)" ditekan (idealnya setelah market
+  // Begitu "âœ“ Finalisasi Signal (EOD)" ditekan (idealnya setelah market
   // close), snapshot hari itu (ticker+signal+harga entry) dikunci ke
   // tabel Supabase `smart_pick_signals` supaya performanya (win rate,
-  // rata-rata return) bisa dilacak dari waktu ke waktu — lihat
+  // rata-rata return) bisa dilacak dari waktu ke waktu â€” lihat
   // sql/07_smart_pick.sql.
   // ==========================================
   spOpenCriteria: null, // id sinyal yang panel "Kriteria"-nya sedang terbuka
@@ -1390,7 +1390,7 @@ function fmtNum(n){ if(n===null||n===undefined) return "-"; return new Intl.Numb
 function fmtDateID(iso){ // "2026-08-24" -> "24/08/2026"
   if(!iso) return "-";
   // Toleran juga ke datetime penuh ala timestamptz Supabase, mis.
-  // "2026-08-24T00:00:00+00:00" — kalau kolom entry_date di server ternyata
+  // "2026-08-24T00:00:00+00:00" â€” kalau kolom entry_date di server ternyata
   // timestamptz (bukan date polos), field ini akan berisi jam & offset zona
   // waktu sekaligus. Ambil 10 karakter pertama dulu (YYYY-MM-DD murni)
   // sebelum di-parse, supaya "T00:00:00+00:00" dkk tidak ikut kepotong ke
@@ -1402,14 +1402,14 @@ function fmtDateID(iso){ // "2026-08-24" -> "24/08/2026"
   return `${d}/${m}/${y}`;
 }
 // ==========================================
-// HARI SEJAK TANGGAL ENTRY — dipakai kolom "Hari" di tab Backtest.
+// HARI SEJAK TANGGAL ENTRY â€” dipakai kolom "Hari" di tab Backtest.
 // Dihitung dari tanggal kalender lokal (bukan selisih ms mentah, supaya
-// tidak kepengaruh jam/timezone — lihat catatan toLocalISODate di atas).
+// tidak kepengaruh jam/timezone â€” lihat catatan toLocalISODate di atas).
 // Menerima "YYYY-MM-DD"; kalau kosong/tidak valid, return null (dirender "-").
 // ==========================================
 function daysSinceEntry(entryDateIso){
   if(!entryDateIso) return null;
-  // Sama seperti fmtDateID() — toleran ke timestamptz penuh ("...T00:00:00+00:00"),
+  // Sama seperti fmtDateID() â€” toleran ke timestamptz penuh ("...T00:00:00+00:00"),
   // ambil 10 karakter pertama (YYYY-MM-DD murni) dulu sebelum di-parse.
   const parts = String(entryDateIso).slice(0, 10).split("-").map(Number);
   if(parts.length !== 3 || parts.some(isNaN)) return null;
@@ -1551,14 +1551,14 @@ function volumeSignal(row, ratio){
 // ==========================================
 // FREQUENCY ANALYZER (mirip kolom "Frequency" di screener Stockbit)
 //
-// "Frekuensi" = jumlah transaksi (kali matched) suatu saham dalam sehari —
+// "Frekuensi" = jumlah transaksi (kali matched) suatu saham dalam sehari â€”
 // beda dari Volume (jumlah lembar/lot). Frekuensi tinggi dengan volume
 // relatif kecil sering menandakan banyak investor ritel aktif keluar-masuk
 // (bukan satu order besar), jadi dianalisis terpisah dari Volume.
 //
 // Rasio dihitung dari `frequency / freqAnalyzer` kalau backend sudah mengirim
 // rata-rata 20 hari (freq_ma20); kalau kolom itu belum ada di skema DB,
-// ratio-nya null dan UI menampilkan "-" (bukan 0) — sama seperti pola
+// ratio-nya null dan UI menampilkan "-" (bukan 0) â€” sama seperti pola
 // avgVolume3m/vol_ma20 di atas.
 // ==========================================
 function frequencySignal(ratio){
@@ -1596,15 +1596,15 @@ function keyakinanToneFromLabel(label){
 }
 
 // ==========================================
-// SKOR BAGGER — implementasi persis dari formula_screening_saham_bagger.md
+// SKOR BAGGER â€” implementasi persis dari formula_screening_saham_bagger.md
 //
 // Composite score 0-100 = Fundamental (40) + Momentum Teknikal (35) +
 // Volume/Smart Money (25). Tiap sub-kriteria pass/fail sesuai section 2
 // file .md tsb (tidak ada nilai parsial), supaya hasilnya bisa diaudit
 // satu-satu lewat breakdown di Detail Emiten > tab Analisa.
 //
-// ≥75 = kandidat kuat, 50-74 = menarik tunggu konfirmasi, <50 = skip.
-// Red flag (section 4 file .md) dihitung terpisah dari skor — dipakai
+// â‰¥75 = kandidat kuat, 50-74 = menarik tunggu konfirmasi, <50 = skip.
+// Red flag (section 4 file .md) dihitung terpisah dari skor â€” dipakai
 // sebagai peringatan tambahan, bukan pengurang skor.
 // ==========================================
 function computeBaggerScore(s){
@@ -1622,14 +1622,14 @@ function computeBaggerScore(s){
 
   const momItems = [
     { label:"RSI7 cross up RSI21 (RSI14 < 70)", pass: rsiCrossUp && rsi14 != null && rsi14 < 70, points:10 },
-    { label:"MACD Histogram negatif → positif", pass: num(s.prevMacdHist) != null && num(s.hist) != null && num(s.prevMacdHist) <= 0 && num(s.hist) > 0, points:10 },
+    { label:"MACD Histogram negatif â†’ positif", pass: num(s.prevMacdHist) != null && num(s.hist) != null && num(s.prevMacdHist) <= 0 && num(s.hist) > 0, points:10 },
     { label:"Harga > MA21 > MA50 > MA200", pass: [s.cClose,s.ma21,s.ma50,s.ma200].every(v=>v!=null) && s.cClose > s.ma21 && s.ma21 > s.ma50 && s.ma50 > s.ma200, points:10 },
     { label:"Stoch K cross up Stoch D dari oversold", pass: [s.prevStochK,s.prevStochD,s.stochK,s.stochD].every(v=>v!=null) && s.prevStochK < s.prevStochD && s.stochK > s.stochD && s.prevStochK <= 30, points:5 },
   ];
 
   const volItems = [
     { label:"Volume Ratio > 1,5x", pass: num(s.volRatio) > 1.5, points:10 },
-    { label:"Foreign Net 5D > 0 & Hari Asing+ ≥ 3", pass: num(s.foreignNet5D) > 0 && num(s.foreignUpDays) >= 3, points:10 },
+    { label:"Foreign Net 5D > 0 & Hari Asing+ â‰¥ 3", pass: num(s.foreignNet5D) > 0 && num(s.foreignUpDays) >= 3, points:10 },
     { label:"BB Squeeze lalu breakout EMA21 H", pass: String(s.isBBSqueeze||"").includes("Ya") && s.cClose != null && s.ema21H != null && s.cClose > s.ema21H, points:5 },
   ];
 
@@ -1642,22 +1642,22 @@ function computeBaggerScore(s){
   else if (total >= 50) { tier = "Menarik, Tunggu Konfirmasi"; tone = "gold"; }
   else { tier = "Skip"; tone = "down"; }
 
-  // Red flag — section 4 formula.md
+  // Red flag â€” section 4 formula.md
   const flags = [];
   if (String(s.valuasi||"").includes("Kemahalan") && rsi14 != null && rsi14 > 80) {
-    flags.push("Valuasi Overvalued + RSI14 > 80 → rawan profit taking, hati-hati entry baru (pola ini persis kasus AADI di contoh formula).");
+    flags.push("Valuasi Overvalued + RSI14 > 80 â†’ rawan profit taking, hati-hati entry baru (pola ini persis kasus AADI di contoh formula).");
   }
   const der = num(s.der), currentRatio = num(s.currentRatio);
   if (der != null && der > 1 && currentRatio != null && currentRatio < 1) {
-    flags.push("DER tinggi (>1) & Current Ratio < 1 → risiko keuangan, gain teknikal bisa berbalik cepat kalau ada bad news.");
+    flags.push("DER tinggi (>1) & Current Ratio < 1 â†’ risiko keuangan, gain teknikal bisa berbalik cepat kalau ada bad news.");
   }
   const fn5 = num(s.foreignNet5D), fn20 = num(s.foreignNet20D);
   if (num(s.volRatio) > 1.5 && fn5 != null && fn5 < 0 && fn20 != null && fn20 < 0) {
-    flags.push("Volume breakout tapi Net Asing negatif terus → kemungkinan cuma ritel/bandar lokal, lebih rawan distribusi.");
+    flags.push("Volume breakout tapi Net Asing negatif terus â†’ kemungkinan cuma ritel/bandar lokal, lebih rawan distribusi.");
   }
   const pola = String(s.polaCandle||"");
   if (/bearish|shooting star|hanging man/i.test(pola) && s.resistance != null && s.cClose != null && s.cClose >= s.resistance*0.98) {
-    flags.push("Pola candle bearish reversal di area resisten kuat → tunda entry meski skor fundamental tinggi.");
+    flags.push("Pola candle bearish reversal di area resisten kuat â†’ tunda entry meski skor fundamental tinggi.");
   }
 
   return { total, fundScore, momScore, volScore, fundItems, momItems, volItems, tier, tone, flags };
@@ -1681,11 +1681,11 @@ async function loadLive(){
       fetch(`${SUPABASE_URL}/watchlists?select=ticker`, { headers: getSupaHeaders(), cache: "no-store" }).then(r => r.json()),
       fetch(`${SUPABASE_URL}/custom_presets?select=*&order=created_at.desc`, { headers: getSupaHeaders(), cache: "no-store" }).then(r => r.json()),
       // Riwayat Value (Rp) harian dari Stockbit (tabel price_history_stockbit,
-      // diisi lewat tombol "📅 Historical" di Screener / tab Historical Data
-      // di modal Detail Emiten) — dipakai Smart Pick (Area Demand & Liquidity
+      // diisi lewat tombol "ðŸ“… Historical" di Screener / tab Historical Data
+      // di modal Detail Emiten) â€” dipakai Smart Pick (Area Demand & Liquidity
       // Sweep) untuk memvalidasi volume spike pakai NILAI transaksi riil,
       // bukan cuma rasio volume lembar dari `flows`. Cuma ticker yang PERNAH
-      // ditarik manual yang akan punya data di sini — untuk ticker lain,
+      // ditarik manual yang akan punya data di sini â€” untuk ticker lain,
       // Smart Pick tetap fallback ke volRatio seperti biasa (lihat
       // spStockbitValueRatio()). .catch(()=>[]) supaya kalau tabelnya belum
       // dibuat (migration 08 belum dijalankan), loadLive() tidak ikut gagal.
@@ -1703,23 +1703,23 @@ async function loadLive(){
       // SYARIAH_TICKERS di atas supaya filter tetap bisa dipakai.
       syariah: (r.syariah === null || r.syariah === undefined || r.syariah === "") ? isSyariah(r.ticker) : r.syariah,
       // Catatan mapping: skema gabungan tidak lagi punya c_high/c_low/c_vol
-      // terpisah — dipetakan ke kolom fundamental yang sudah ada supaya
+      // terpisah â€” dipetakan ke kolom fundamental yang sudah ada supaya
       // tidak ada dua kolom untuk hal yang sama (day_high dulu diisi Yahoo
       // quote, sekarang jadi satu-satunya sumber High hari ini).
       cOpen: r.c_open, cHigh: r.day_high, cLow: r.day_low, cClose: r.price, cVol: r.volume,
       changePct: r.change_pct, turnover: r.turnover, valueTraded: numOrNull(r.value_traded), vwap20: r.vwap20,
       volRatio: numOrNull(r.vol_ratio), volMA20: numOrNull(r.vol_ma20), avgVolume3m: numOrNull(r.avg_volume_3m),
-      // Frekuensi transaksi (jumlah kali matched, bukan jumlah lembar) —
+      // Frekuensi transaksi (jumlah kali matched, bukan jumlah lembar) â€”
       // nama kolom di beberapa skema IDX kadang "frequency", kadang
       // "frekuensi", jadi dua-duanya dicoba.
       // "freqAnalyzer" = baseline rata-rata Frekuensi (mirip "Volume MA 100"
       // punya Volume) yang dipakai rule builder, misal "Frequency > 5 *
-      // Frequency Analyzer" — nama kolomnya di DB dikonfigurasi lewat
+      // Frequency Analyzer" â€” nama kolomnya di DB dikonfigurasi lewat
       // Pengaturan (state.freqAnalyzerCol) karena bisa beda tiap skema.
       frequency: numOrNull(r.frequency ?? r.frekuensi),
       freqAnalyzer: numOrNull(r[state.freqAnalyzerCol] ?? r.freq_ma20 ?? r.frequency_ma20),
       avgFrequency3m: numOrNull(r.avg_frequency_3m ?? r.avg_frekuensi_3m),
-      // Antrian bid/offer terbaik — snapshot EOD dari sync-idx-full.mjs
+      // Antrian bid/offer terbaik â€” snapshot EOD dari sync-idx-full.mjs
       // (bukan live order book, lihat catatan di skrip). Null kalau
       // memang tidak ada antrian tercatat hari itu.
       bid: numOrNull(r.bid), bidVolume: numOrNull(r.bid_volume),
@@ -1733,7 +1733,7 @@ async function loadLive(){
       support: r.support, resistance: r.resistance, high52w: r.week52_high, low52w: r.week52_low,
       week52ChangePct: numOrNull(r.week52_change_pct),
       ema21H: r.ema21h, ema21L: r.ema21l, ma21: r.ma21, ma50: r.ma50, ma100: r.ma100, ma200: r.ma200,
-      rsi7: r.rsi7, rsi21: r.rsi21, hist: r.macd_hist, histPrev: 0,
+      rsi7: r.rsi7, rsi21: r.rsi21, hist: r.macd_hist, histPrev: numOrNull(r.prev_macd_hist),
       fib: r.fibonacci, 
       cekHarga: r.cek_harga, cekRsi: r.cek_rsi, statusRsi: r.status_rsi, cekMacd: r.cek_macd, cekVolume: r.cek_volume,
       keyakinanNaik: r.keyakinan_naik,
@@ -1746,7 +1746,7 @@ async function loadLive(){
       // --- Sudah ada di DB tapi sebelumnya belum pernah dipetakan ---
       prevClose: numOrNull(r.prev_close), macd: numOrNull(r.macd), signal: numOrNull(r.signal),
       changeAbs: numOrNull(r.change_abs),
-      // Kapan baris ini terakhir diupdate sync-idx-full.mjs — dipakai untuk
+      // Kapan baris ini terakhir diupdate sync-idx-full.mjs â€” dipakai untuk
       // indikator "data seberapa fresh" di UI (mis. badge "diupdate 2j lalu"
       // atau warning kalau data lebih tua dari 1 hari bursa).
       updatedAt: r.updated_at,
@@ -1776,13 +1776,13 @@ async function loadLive(){
       fibS1: numOrNull(r.fib_s1), fibS2: numOrNull(r.fib_s2), fibS3: numOrNull(r.fib_s3),
 
       // --- Bandarmologi ASLI dari IDX (bukan proxy volume) ---
-      // Null berarti "belum ditransaksikan" (suspensi dsb), bukan nol —
+      // Null berarti "belum ditransaksikan" (suspensi dsb), bukan nol â€”
       // lihat catatan flow_summary di database. Jangan format null jadi 0.
       capCategory: r.cap_category, pos52w: numOrNull(r.pos_52w),
       // Market Cap: dipakai kalau kolom `market_cap` sudah ada di
       // stocks_screener. Kalau belum, coba turunkan dari
       // `shares_outstanding` x harga. Kalau dua-duanya belum ada di
-      // skema, nilainya null dan UI menampilkan "-" (bukan 0) —
+      // skema, nilainya null dan UI menampilkan "-" (bukan 0) â€”
       // lihat catatan di README/SQL soal menambah kolom ini.
       sharesOutstanding: numOrNull(r.shares_outstanding),
       marketCap: numOrNull(r.market_cap) ?? (numOrNull(r.shares_outstanding) != null ? numOrNull(r.shares_outstanding) * (numOrNull(r.price) || 0) : null),
@@ -1795,7 +1795,7 @@ async function loadLive(){
     }));
 
     // Kalau salah satu dari ketiga fetch ini gagal (mis. RLS menolak),
-    // Supabase membalas objek {message:...}, bukan array — dulu ini
+    // Supabase membalas objek {message:...}, bukan array â€” dulu ini
     // dilewati diam-diam tanpa pemberitahuan apa pun ke user. Sekarang
     // dikumpulkan jadi peringatan yang ditampilkan di errorMsg supaya
     // kelihatan kalau porto/backtest/watchlist gagal dimuat.
@@ -1823,7 +1823,7 @@ async function loadLive(){
             ticker: it.ticker, entryPrice: it.entry_price, filterStr: it.notes, sumber: it.source, kriteria: it.criteria,
             // it.entry_date butuh kolom `entry_date` di backtest_items (lihat
             // catatan migrasi di syncBacktestToSupabase). Selama kolom itu
-            // belum ada di server, it.entry_date akan undefined — fallback ke
+            // belum ada di server, it.entry_date akan undefined â€” fallback ke
             // tanggal sesi (b.session_date, format "YYYY-MM-DD" dari Supabase)
             // supaya kolom "Tanggal Entry"/"Hari" tetap menampilkan sesuatu
             // yang masuk akal, bukan kosong.
@@ -1851,10 +1851,10 @@ async function loadLive(){
        warnings.push("Preset screener gagal dimuat" + (presetsRes && presetsRes.message ? ` (${presetsRes.message})` : ""));
     }
 
-    if (warnings.length) showError(warnings.join(" · "));
+    if (warnings.length) showError(warnings.join(" Â· "));
 
     // Susun state.stockbitValueHistory: { TICKER: [{date, value_idr}, ...] }
-    // Tidak perlu warning kalau kosong — ini fitur opsional (fallback ke
+    // Tidak perlu warning kalau kosong â€” ini fitur opsional (fallback ke
     // volRatio biasa kalau tidak ada), bukan data wajib.
     if(Array.isArray(stockbitHistRes) && stockbitHistRes.length){
       const grouped = {};
@@ -1873,14 +1873,14 @@ async function loadLive(){
   state.loading = false; render();
 
   // Top 3 Broker Beli/Jual dimuat terpisah (tidak di-await bareng fetch di
-  // atas) supaya screener utama tetap cepat tampil — begitu selesai, dia
+  // atas) supaya screener utama tetap cepat tampil â€” begitu selesai, dia
   // render() ulang sendiri untuk mengisi filter "Top 3 Broker".
   loadTop3BrokerData();
 }
 
 // Ambil top 3 broker BELI dan top 3 broker JUAL per saham, dari trade_date
 // PALING BARU yang tercatat di tabel broker_summary (bukan per-saham,
-// karena kolomnya diisi manual/bulk — kalau ditarik per saham query bisa
+// karena kolomnya diisi manual/bulk â€” kalau ditarik per saham query bisa
 // sangat banyak). Asumsinya sama seperti logic skip-fetch broker summary:
 // hari trading terakhir dianggap representatif untuk "kondisi terkini".
 async function loadTop3BrokerData(){
@@ -1937,7 +1937,7 @@ async function toggleFav(ticker){
       await supaFetch(`${SUPABASE_URL}/watchlists?ticker=eq.${ticker}`, { method: "DELETE", headers: getSupaHeaders() });
     }
   } catch(e){
-    // Gagal sinkron ke Supabase — batalkan perubahan lokal supaya UI
+    // Gagal sinkron ke Supabase â€” batalkan perubahan lokal supaya UI
     // tidak "berbohong" bahwa item sudah tersimpan, dan beri tahu user
     // alasannya (bukan diam-diam gagal seperti sebelumnya).
     isFav ? state.watchlist.add(ticker) : state.watchlist.delete(ticker);
@@ -1980,7 +1980,7 @@ function dItem(label, valueHtml, isText){
 }
 function baggerBreakdownRows(items){
   return items.map(i => `<div style="display:flex;align-items:center;justify-content:space-between;gap:8px;padding:3px 0;font-size:11.5px;line-height:1.3;">
-    <span style="color:${i.pass?'var(--up)':'var(--muted)'};">${i.pass?'✅':'▫️'} ${i.label}</span>
+    <span style="color:${i.pass?'var(--up)':'var(--muted)'};">${i.pass?'âœ…':'â–«ï¸'} ${i.label}</span>
     <span class="mono" style="color:${i.pass?'var(--up)':'var(--muted)'};white-space:nowrap;">${i.pass?'+':''}${i.pass?i.points:0}/${i.points}</span>
   </div>`).join("");
 }
@@ -2001,7 +2001,7 @@ function renderImbalanceBar(bidVol, offerVol) {
     const offerPct = 100 - bidPct;
     return `
     <div style="margin-top:12px; margin-bottom:12px; padding: 12px; background: rgba(0,0,0,0.2); border-radius: 8px; border: 1px solid var(--border);">
-        <div style="font-size:11px; color:var(--muted); text-transform:uppercase; margin-bottom:8px; text-align:center;">⚖️ Tekanan Orderbook (Bid vs Offer)</div>
+        <div style="font-size:11px; color:var(--muted); text-transform:uppercase; margin-bottom:8px; text-align:center;">âš–ï¸ Tekanan Orderbook (Bid vs Offer)</div>
         <div style="display:flex; justify-content:space-between; font-size:11px; margin-bottom:4px; font-weight:bold;">
             <span style="color:var(--up);">Bid Power: ${bidPct.toFixed(1)}%</span>
             <span style="color:var(--down);">Offer Power: ${offerPct.toFixed(1)}%</span>
@@ -2184,7 +2184,7 @@ function renderDetailFundamental(s){
       ${dItem("Nama Perusahaan", s.name||"-", true)}
       ${dItem("Sektor", s.sektor||"-", true)}
       ${dItem("Industri", s.industry||"-", true)}
-      ${dItem("Syariah", s.syariahLabel==="Ya"?"✅ Ya":(s.syariahLabel||"-"), true)}
+      ${dItem("Syariah", s.syariahLabel==="Ya"?"âœ… Ya":(s.syariahLabel||"-"), true)}
       ${dItem("Valuasi", pillHtml(s.valuasi||"-", valuasiTone(s.valuasi)), true)}
       ${dItem("Kategori Cap", s.capCategory||"-", true)}
       ${dItem("Market Cap", s.marketCap!=null ? `Rp ${fmtCap(s.marketCap)}` : "-", true)}
@@ -2229,7 +2229,7 @@ function renderDetailFundamental(s){
         ? `Berdasarkan PER ${s.per} dan PBV ${s.pbv}, valuasi saham ini saat ini tergolong <b>${(s.valuasi||"-").toLowerCase()}</b>.
            ${s.divYield ? `Emiten ini memberikan dividend yield sekitar ${dNum(s.divYield,{decimals:2})}% pada harga saat ini.` : "Belum ada data dividend yield untuk emiten ini."}
            ${graham!=null
-             ? ` Dihitung dengan formula Graham Number (√(22,5 × EPS × BVPS), EPS & BVPS diturunkan dari PER/PBV saat ini), nilai wajarnya sekitar ${dNum(graham,{decimals:0})} — ${marginOfSafetyPct>=0 ? `harga saat ini ${Math.abs(marginOfSafetyPct).toFixed(1)}% di bawah nilai wajar` : `harga saat ini ${Math.abs(marginOfSafetyPct).toFixed(1)}% di atas nilai wajar`}. Graham Number cocok untuk saham dengan EPS & ekuitas positif (umumnya sektor non-cyclical); kurang relevan untuk emiten rugi, bank, atau komoditas yang labanya fluktuatif.`
+             ? ` Dihitung dengan formula Graham Number (âˆš(22,5 Ã— EPS Ã— BVPS), EPS & BVPS diturunkan dari PER/PBV saat ini), nilai wajarnya sekitar ${dNum(graham,{decimals:0})} â€” ${marginOfSafetyPct>=0 ? `harga saat ini ${Math.abs(marginOfSafetyPct).toFixed(1)}% di bawah nilai wajar` : `harga saat ini ${Math.abs(marginOfSafetyPct).toFixed(1)}% di atas nilai wajar`}. Graham Number cocok untuk saham dengan EPS & ekuitas positif (umumnya sektor non-cyclical); kurang relevan untuk emiten rugi, bank, atau komoditas yang labanya fluktuatif.`
              : " PER atau PBV emiten ini negatif/tidak tersedia, sehingga Nilai Wajar (Graham Number) tidak bisa dihitung secara valid."}`
         : "Data fundamental (PER/PBV) untuk emiten ini belum lengkap di database, sehingga valuasi maupun nilai wajar belum bisa dihitung."}
     </div>
@@ -2241,14 +2241,14 @@ function renderStockbitPanel(s){
   const hasToken = !!state.stockbitToken;
   let body;
   if(!hasToken){
-    body = `<div style="font-size:12px;color:var(--muted);">Token Stockbit belum diisi. Buka <button type="button" onclick="closeDetail();openSettings();" style="background:none;border:none;color:var(--teal);text-decoration:underline;cursor:pointer;padding:0;font-size:12px;">⚙️ Pengaturan</button> untuk mengisi token dari extension Chrome-mu.</div>`;
+    body = `<div style="font-size:12px;color:var(--muted);">Token Stockbit belum diisi. Buka <button type="button" onclick="closeDetail();openSettings();" style="background:none;border:none;color:var(--teal);text-decoration:underline;cursor:pointer;padding:0;font-size:12px;">âš™ï¸ Pengaturan</button> untuk mengisi token dari extension Chrome-mu.</div>`;
   } else if(!live){
-    body = `<button type="button" class="btn btn-outline" data-stockbit-live="${s.ticker}" style="color:#f87171;border-color:rgba(239,68,68,0.4);">🔴 Tarik Live Sekarang</button>`;
+    body = `<button type="button" class="btn btn-outline" data-stockbit-live="${s.ticker}" style="color:#f87171;border-color:rgba(239,68,68,0.4);">ðŸ”´ Tarik Live Sekarang</button>`;
   } else if(live.loading){
     body = `<div style="font-size:12px;color:var(--muted);">Menarik data dari Stockbit...</div>`;
   } else if(live.error){
-    body = `<div style="font-size:12px;color:var(--down);margin-bottom:8px;">⚠️ ${escapeHtml(live.error)}</div>
-      <button type="button" class="btn btn-outline" data-stockbit-live="${s.ticker}" style="color:#f87171;border-color:rgba(239,68,68,0.4);">↻ Coba Lagi</button>`;
+    body = `<div style="font-size:12px;color:var(--down);margin-bottom:8px;">âš ï¸ ${escapeHtml(live.error)}</div>
+      <button type="button" class="btn btn-outline" data-stockbit-live="${s.ticker}" style="color:#f87171;border-color:rgba(239,68,68,0.4);">â†» Coba Lagi</button>`;
   } else {
     const m = live.mapped || {};
     const secAgo = Math.max(0, Math.round((Date.now()-live.fetchedAt)/1000));
@@ -2263,20 +2263,20 @@ function renderStockbitPanel(s){
         ${dItem("Offer", m.offer!=null ? fmtNum(m.offer) : "-", true)}
         ${dItem("Volume", m.volume!=null ? fmtNum(m.volume) : "-", true)}
       </div>
-      <div style="font-size:10.5px;color:var(--muted);margin-bottom:8px;">Ditarik ${secAgo} detik lalu · field yang tidak muncul berarti nama field-nya belum cocok dengan skema respons Stockbit (lihat JSON mentah).</div>
+      <div style="font-size:10.5px;color:var(--muted);margin-bottom:8px;">Ditarik ${secAgo} detik lalu Â· field yang tidak muncul berarti nama field-nya belum cocok dengan skema respons Stockbit (lihat JSON mentah).</div>
       <details style="margin-bottom:8px;">
         <summary style="cursor:pointer;font-size:11px;color:var(--teal);">Lihat JSON mentah</summary>
         <pre style="font-size:10.5px;background:rgba(0,0,0,0.3);padding:8px;border-radius:6px;overflow-x:auto;max-height:200px;">${escapeHtml(JSON.stringify(live.raw, null, 2))}</pre>
       </details>
-      <button type="button" class="btn btn-outline" data-stockbit-live="${s.ticker}" style="font-size:11px;color:#f87171;border-color:rgba(239,68,68,0.4);">↻ Refresh</button>
+      <button type="button" class="btn btn-outline" data-stockbit-live="${s.ticker}" style="font-size:11px;color:#f87171;border-color:rgba(239,68,68,0.4);">â†» Refresh</button>
     `;
   }
   const liveStatus = stockbitLiveDataStatus();
   return `
     <div style="background: linear-gradient(135deg, rgba(30,41,59,0.9), rgba(15,23,42,0.95)); border: 1px solid rgba(239,68,68,0.35); border-radius: 12px; padding: 16px; margin-bottom: 16px;">
       <div style="display:flex; align-items:center; gap: 8px; margin-bottom: 4px;">
-        <span style="font-size: 18px;">🔴</span>
-        <div style="font-size: 12.5px; font-weight: 700; color: var(--text);">Live Data Stockbit <span style="font-weight:400;color:var(--muted);font-size:10.5px;">(tidak resmi — pakai token akunmu sendiri)</span></div>
+        <span style="font-size: 18px;">ðŸ”´</span>
+        <div style="font-size: 12.5px; font-weight: 700; color: var(--text);">Live Data Stockbit <span style="font-weight:400;color:var(--muted);font-size:10.5px;">(tidak resmi â€” pakai token akunmu sendiri)</span></div>
       </div>
       <div style="font-size:10.5px; color:${liveStatus.color}; margin: 0 0 10px 26px;">${liveStatus.text}</div>
       ${body}
@@ -2301,9 +2301,9 @@ function renderDetailAnalisa(s){
   const slPct = entry ? ((sl - entry) / entry) * 100 : null;
   
   let tradeTone = "muted"; let tradeStatus = "Netral";
-  if (rrr >= 1.5 && s.keyakinanTone === "up" && s.volTone === "up") { tradeTone = "up"; tradeStatus = "🔥 Highly Recommended"; } 
-  else if (rrr >= 1) { tradeTone = "gold"; tradeStatus = "⭐ Layak Pantau"; } 
-  else { tradeTone = "down"; tradeStatus = "⚠️ High Risk"; }
+  if (rrr >= 1.5 && s.keyakinanTone === "up" && s.volTone === "up") { tradeTone = "up"; tradeStatus = "ðŸ”¥ Highly Recommended"; } 
+  else if (rrr >= 1) { tradeTone = "gold"; tradeStatus = "â­ Layak Pantau"; } 
+  else { tradeTone = "down"; tradeStatus = "âš ï¸ High Risk"; }
 
   // --- Target TP & SL Versi RSI (jarak EMA21 Low <-> harga sekarang, rasio 1:1) ---
   // Tiga sinyal yang jadi kriteria (field sama dengan label pill Sinyal
@@ -2316,7 +2316,7 @@ function renderDetailAnalisa(s){
   // ditampilkan, statusnya "partial" (belum full-konfirmasi) supaya
   // kelihatan progress-nya, bukan langsung disembunyikan.
   // Kalau EMA21 Low belum ada di data sama sekali, ATAU tidak ada satupun
-  // dari 3 sinyal yang match, blok ini disembunyikan total — jatuh balik
+  // dari 3 sinyal yang match, blok ini disembunyikan total â€” jatuh balik
   // ke Trading Plan resistance/support/ATR di atas saja. Sesuaikan
   // substring di bawah kalau format teks cek_harga/cek_rsi berubah.
   //
@@ -2325,7 +2325,7 @@ function renderDetailAnalisa(s){
   //   SL       = EMA21 Low (dipakai apa adanya untuk target & RRR, supaya
   //              box-nya persis simetris 1:1 seperti acuan/referensi)
   //   TP       = entry + jarak
-  //   slOrder  = EMA21 Low - buffer (1-2 tik harga IDX) — HANYA saran
+  //   slOrder  = EMA21 Low - buffer (1-2 tik harga IDX) â€” HANYA saran
   //              penempatan order stop aktual (margin eksekusi), tidak
   //              dipakai untuk hitung RRR/Target supaya rasio tetap 1:1.
   const cekHargaLower = String(s.cekHarga || "").toLowerCase();
@@ -2389,10 +2389,10 @@ function renderDetailAnalisa(s){
 
   // Keputusan Akhir AI
   let aiVerdict = ""; let aiTone = "muted";
-  if (aiScore >= 5) { aiVerdict = "🟢 STRONG BUY (Sangat Menarik)"; aiTone = "up"; }
-  else if (aiScore >= 3) { aiVerdict = "🟢 BUY (Menarik)"; aiTone = "up"; }
-  else if (aiScore >= 1) { aiVerdict = "🟡 HOLD / WAIT & SEE"; aiTone = "gold"; }
-  else { aiVerdict = "🔴 AVOID / SELL (Hindari)"; aiTone = "down"; }
+  if (aiScore >= 5) { aiVerdict = "ðŸŸ¢ STRONG BUY (Sangat Menarik)"; aiTone = "up"; }
+  else if (aiScore >= 3) { aiVerdict = "ðŸŸ¢ BUY (Menarik)"; aiTone = "up"; }
+  else if (aiScore >= 1) { aiVerdict = "ðŸŸ¡ HOLD / WAIT & SEE"; aiTone = "gold"; }
+  else { aiVerdict = "ðŸ”´ AVOID / SELL (Hindari)"; aiTone = "down"; }
 
   // Link Pencarian Berita Otomatis
   const newsUrl = `https://www.google.com/search?q=saham+${s.ticker}+berita+terbaru&tbm=nws`;
@@ -2401,56 +2401,56 @@ function renderDetailAnalisa(s){
     <!-- LIVE DATA STOCKBIT (opsional, tidak resmi) -->
     ${renderStockbitPanel(s)}
 
-    <!-- SKOR BAGGER — formula_screening_saham_bagger.md -->
+    <!-- SKOR BAGGER â€” formula_screening_saham_bagger.md -->
     <div style="background: linear-gradient(135deg, rgba(30,41,59,0.9), rgba(15,23,42,0.95)); border: 1px solid var(--${s.bagger.tone}); border-radius: 12px; padding: 16px; margin-bottom: 16px; box-shadow: 0 4px 15px rgba(0,0,0,0.2);">
       <div style="display:flex; align-items:center; gap: 8px; margin-bottom: 12px; border-bottom: 1px dashed var(--border); padding-bottom: 12px;">
-        <span style="font-size: 20px;">🎯</span>
+        <span style="font-size: 20px;">ðŸŽ¯</span>
         <div>
           <div style="font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.05em; font-weight: 600;">Skor Bagger (Formula Multibagger)</div>
-          <div style="font-size: 20px; font-weight: 800; color: var(--${s.bagger.tone});">${s.bagger.total}<span style="font-size:12px;color:var(--muted);font-weight:500;"> /100 · ${s.bagger.tier}</span></div>
+          <div style="font-size: 20px; font-weight: 800; color: var(--${s.bagger.tone});">${s.bagger.total}<span style="font-size:12px;color:var(--muted);font-weight:500;"> /100 Â· ${s.bagger.tier}</span></div>
         </div>
       </div>
       <div style="display:flex; flex-wrap:wrap; gap: 16px;">
         <div style="flex:1; min-width:180px;">
-          <div style="font-size:10.5px; color:var(--muted); text-transform:uppercase; letter-spacing:.04em; margin-bottom:2px;">Fundamental (40%) — <b class="mono" style="color:var(--text);">${s.bagger.fundScore}/40</b></div>
+          <div style="font-size:10.5px; color:var(--muted); text-transform:uppercase; letter-spacing:.04em; margin-bottom:2px;">Fundamental (40%) â€” <b class="mono" style="color:var(--text);">${s.bagger.fundScore}/40</b></div>
           ${baggerBreakdownRows(s.bagger.fundItems)}
         </div>
         <div style="flex:1; min-width:180px;">
-          <div style="font-size:10.5px; color:var(--muted); text-transform:uppercase; letter-spacing:.04em; margin-bottom:2px;">Momentum Teknikal (35%) — <b class="mono" style="color:var(--text);">${s.bagger.momScore}/35</b></div>
+          <div style="font-size:10.5px; color:var(--muted); text-transform:uppercase; letter-spacing:.04em; margin-bottom:2px;">Momentum Teknikal (35%) â€” <b class="mono" style="color:var(--text);">${s.bagger.momScore}/35</b></div>
           ${baggerBreakdownRows(s.bagger.momItems)}
         </div>
         <div style="flex:1; min-width:180px;">
-          <div style="font-size:10.5px; color:var(--muted); text-transform:uppercase; letter-spacing:.04em; margin-bottom:2px;">Volume/Smart Money (25%) — <b class="mono" style="color:var(--text);">${s.bagger.volScore}/25</b></div>
+          <div style="font-size:10.5px; color:var(--muted); text-transform:uppercase; letter-spacing:.04em; margin-bottom:2px;">Volume/Smart Money (25%) â€” <b class="mono" style="color:var(--text);">${s.bagger.volScore}/25</b></div>
           ${baggerBreakdownRows(s.bagger.volItems)}
         </div>
       </div>
       ${s.bagger.flags.length ? `
       <div style="margin-top: 12px; padding-top: 12px; border-top: 1px dashed var(--border);">
-        <div style="font-size: 11px; color: var(--down); font-weight: 700; margin-bottom: 6px;">⚠️ Red Flag (Bagian 4 Formula)</div>
-        ${s.bagger.flags.map(f=>`<div style="font-size:11.5px; color:var(--down); margin-bottom:4px; line-height:1.4;">• ${f}</div>`).join("")}
+        <div style="font-size: 11px; color: var(--down); font-weight: 700; margin-bottom: 6px;">âš ï¸ Red Flag (Bagian 4 Formula)</div>
+        ${s.bagger.flags.map(f=>`<div style="font-size:11.5px; color:var(--down); margin-bottom:4px; line-height:1.4;">â€¢ ${f}</div>`).join("")}
       </div>` : ""}
       <div style="margin-top:10px; font-size:10.5px; color:var(--muted); line-height:1.4;">
-        ≥75 kandidat kuat (worth watchlist utama) · 50–74 menarik tapi tunggu konfirmasi tambahan · &lt;50 skip, belum ada "bahan bakar" cukup. Sesuai <i>formula_screening_saham_bagger.md</i>.
+        â‰¥75 kandidat kuat (worth watchlist utama) Â· 50â€“74 menarik tapi tunggu konfirmasi tambahan Â· &lt;50 skip, belum ada "bahan bakar" cukup. Sesuai <i>formula_screening_saham_bagger.md</i>.
       </div>
     </div>
 
     <!-- PANEL AI BARU -->
     <div style="background: linear-gradient(135deg, rgba(30,41,59,0.9), rgba(15,23,42,0.95)); border: 1px solid var(--${aiTone}); border-radius: 12px; padding: 16px; margin-bottom: 24px; box-shadow: 0 4px 15px rgba(0,0,0,0.2);">
       <div style="display:flex; align-items:center; gap: 8px; margin-bottom: 12px; border-bottom: 1px dashed var(--border); padding-bottom: 12px;">
-        <span style="font-size: 20px;">🤖</span>
+        <span style="font-size: 20px;">ðŸ¤–</span>
         <div>
           <div style="font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.05em; font-weight: 600;">Kesimpulan Asisten AI</div>
           <div style="font-size: 16px; font-weight: 700; color: var(--${aiTone});">${aiVerdict}</div>
         </div>
       </div>
       <div style="display:grid; gap: 8px; font-size: 12.5px; color: var(--text);">
-        <div><b style="color:var(--teal);">📈 Teknikal:</b> ${techDesc}</div>
-        <div><b style="color:var(--gold);">🏦 Fundamental:</b> ${fundDesc}</div>
-        <div><b style="color:#a78bfa;">🐋 Bandarmologi:</b> ${bandDesc}</div>
+        <div><b style="color:var(--teal);">ðŸ“ˆ Teknikal:</b> ${techDesc}</div>
+        <div><b style="color:var(--gold);">ðŸ¦ Fundamental:</b> ${fundDesc}</div>
+        <div><b style="color:#a78bfa;">ðŸ‹ Bandarmologi:</b> ${bandDesc}</div>
       </div>
       <div style="margin-top: 16px; display: flex; gap: 8px;">
         <a class="btn btn-outline" href="${newsUrl}" target="_blank" rel="noopener" style="flex:1; justify-content:center; color:#38bdf8; border-color:rgba(56,189,248,0.3);">
-          📰 Cek Sentimen Berita/News Terkini
+          ðŸ“° Cek Sentimen Berita/News Terkini
         </a>
       </div>
     </div>
@@ -2459,7 +2459,7 @@ function renderDetailAnalisa(s){
     <div class="detail-subtitle">Trading Plan Otomatis (Risk/Reward)</div>
     <!-- KALKULATOR POSITION SIZING -->
     <div class="calc-box">
-      <div style="font-size: 13px; font-weight: 700; color: var(--up);">🧮 Kalkulator Money Management (Position Sizing)</div>
+      <div style="font-size: 13px; font-weight: 700; color: var(--up);">ðŸ§® Kalkulator Money Management (Position Sizing)</div>
       <div style="font-size: 11px; color: var(--muted); margin-bottom: 8px;">Hitung maksimal Lot yang boleh dibeli agar kerugian tidak melebihi batas risiko Anda jika terkena Stop Loss.</div>
       <div class="calc-input-grid">
         <div>
@@ -2478,20 +2478,20 @@ function renderDetailAnalisa(s){
 
     ${rsiSetup ? `
     <!-- TARGET TP & SL VERSI RSI (Breakout EMA21, rasio 1:1) -->
-    <div class="detail-subtitle">🎯 Target TP & SL — Versi RSI (Breakout EMA21) ${rsiSetup.confirmed ? pillHtml("Confirmed", "up") : pillHtml("Belum Full-Konfirmasi", "gold")}</div>
+    <div class="detail-subtitle">ðŸŽ¯ Target TP & SL â€” Versi RSI (Breakout EMA21) ${rsiSetup.confirmed ? pillHtml("Confirmed", "up") : pillHtml("Belum Full-Konfirmasi", "gold")}</div>
     <div class="detail-grid" style="border-left: 3px solid var(--${rsiSetup.confirmed ? "teal" : "gold"}); padding-left: 10px; margin-bottom: 8px;">
       ${dItem("Stop Loss (EMA21 Low)", '<span style="color:var(--down)">' + dNum(rsiSetup.slRsi) + ' <span style="font-size:11px;opacity:0.8;">(' + rsiSetup.slRsiPct.toFixed(1) + '%)</span></span>', true)}
       ${dItem("Take Profit (Proyeksi 1:1)", '<span style="color:var(--up)">' + dNum(rsiSetup.tpRsi) + ' <span style="font-size:11px;opacity:0.8;">(' + (rsiSetup.tpRsiPct>=0?'+':'') + rsiSetup.tpRsiPct.toFixed(1) + '%)</span></span>', true)}
-      ${dItem("Jarak EMA21 Low → Harga Sekarang", dNum(rsiSetup.jarak), true)}
+      ${dItem("Jarak EMA21 Low â†’ Harga Sekarang", dNum(rsiSetup.jarak), true)}
       ${dItem("Risk/Reward Ratio", '<span style="color:var(--up)">' + rsiSetup.rrrLive.toFixed(2) + 'x</span>', true)}
     </div>
     <div class="detail-narrative" style="margin-bottom: 16px;">
       ${rsiSetup.confirmed
         ? `Setup breakout EMA21 <b>terkonfirmasi penuh</b>: harga crossup EMA21 H &amp; L, RSI 7 cross up RSI 21, dan Keyakinan Naik di tier Tinggi/Sangat Tinggi.`
-        : `Setup breakout EMA21 <b>belum full-konfirmasi</b> — masih menunggu: ${rsiSetup.missing.join("; ")}.`}
+        : `Setup breakout EMA21 <b>belum full-konfirmasi</b> â€” masih menunggu: ${rsiSetup.missing.join("; ")}.`}
       Jarak dihitung dari EMA21 Low ke harga sekarang. Stop Loss = EMA21 Low, Take Profit = harga sekarang + jarak tersebut, sehingga rasio persis 1:1.
-      Untuk eksekusi order aktual, disarankan taruh stop sedikit di bawah level SL di atas — sekitar ${dNum(rsiSetup.slOrder)} (buffer ±2 tik harga) — supaya tidak kena stop karena noise/wick tipis, tanpa mengubah target TP.
-      ${!rsiSetup.confirmed ? " Level ini indikatif — pertimbangkan menunggu konfirmasi penuh sebelum entry." : ""}
+      Untuk eksekusi order aktual, disarankan taruh stop sedikit di bawah level SL di atas â€” sekitar ${dNum(rsiSetup.slOrder)} (buffer Â±2 tik harga) â€” supaya tidak kena stop karena noise/wick tipis, tanpa mengubah target TP.
+      ${!rsiSetup.confirmed ? " Level ini indikatif â€” pertimbangkan menunggu konfirmasi penuh sebelum entry." : ""}
     </div>
     ` : ``}
 
@@ -2518,7 +2518,7 @@ function fmtRp(n){
   if(abs>=1e6)  return sign+(abs/1e6).toFixed(1)+" jt";
   return sign+fmtNum(abs);
 }
-// Sama seperti fmtRp tapi tanpa tanda +/- di depan — dipakai untuk
+// Sama seperti fmtRp tapi tanpa tanda +/- di depan â€” dipakai untuk
 // kuantitas non-arah seperti Market Cap (bukan Net Asing yang berarah).
 function fmtCap(n){
   if(n===null||n===undefined) return "-";
@@ -2584,12 +2584,12 @@ function renderDetailBandarmologi(s){
     </div>
 
     <div class="detail-narrative">
-      <b>Data asing bukan data bandar.</b> Ini proksi, dan proksi yang kasar — institusi lokal besar
+      <b>Data asing bukan data bandar.</b> Ini proksi, dan proksi yang kasar â€” institusi lokal besar
       (dana pensiun, asuransi, manajer investasi dalam negeri) tidak muncul sebagai "asing" sama sekali,
       sementara sebagian dana lokal yang dititipkan lewat kustodian asing justru tercatat sebagai asing.
-      Data ini juga harian (bukan real-time) — angka di atas adalah data ${s.flowDate || "hari perdagangan terakhir"},
+      Data ini juga harian (bukan real-time) â€” angka di atas adalah data ${s.flowDate || "hari perdagangan terakhir"},
       berguna untuk pola berminggu-minggu, bukan keputusan intraday. Sumber: IDX resmi, terpisah dari
-      indikator "BPJS" di tab Analisa yang murni proxy dari lonjakan volume — dua hal ini tidak sama.
+      indikator "BPJS" di tab Analisa yang murni proxy dari lonjakan volume â€” dua hal ini tidak sama.
     </div>
   `;
 }
@@ -2644,7 +2644,7 @@ function renderDetailBrokerSummary(s){
       </div>
 
       <details class="bs-editor-panel" id="dbsEditorPanel" ${state.detailBsEditorOpen?"open":""}>
-        <summary>✏️ Input / Edit Manual (dari screenshot Stockbit Anda)</summary>
+        <summary>âœï¸ Input / Edit Manual (dari screenshot Stockbit Anda)</summary>
         <div class="bs-editor-grid">
           <div>
             <div class="bs-col-title bs-buy">Top 5 Buy</div>
@@ -2780,7 +2780,7 @@ function renderDetailHistorical(s){
       <td class="mono" style="text-align:right;color:${(r.change??0)>=0?'var(--up)':'var(--down)'}">${r.change!=null?dNum(r.change,{plusSign:true}):"-"}${r.changePct!=null?` (${dNum(r.changePct,{plusSign:true,decimals:2,suffix:'%'})})`:""}</td>
       <td class="mono" style="text-align:right;">${r.value!=null?fmtNum(r.value):"-"}</td>
       <td class="mono" style="text-align:right;">${r.volume!=null?fmtNum(r.volume):"-"}</td>
-      <td class="mono" style="text-align:right;color:${r.netForeign==null?'inherit':(r.netForeign>=0?'var(--up)':'var(--down)')}" title="Foreign Buy: ${r.foreignBuy!=null?fmtNum(r.foreignBuy):'-'} · Foreign Sell: ${r.foreignSell!=null?fmtNum(r.foreignSell):'-'}">${r.netForeign!=null?dNum(r.netForeign,{plusSign:true}):"-"}</td>
+      <td class="mono" style="text-align:right;color:${r.netForeign==null?'inherit':(r.netForeign>=0?'var(--up)':'var(--down)')}" title="Foreign Buy: ${r.foreignBuy!=null?fmtNum(r.foreignBuy):'-'} Â· Foreign Sell: ${r.foreignSell!=null?fmtNum(r.foreignSell):'-'}">${r.netForeign!=null?dNum(r.netForeign,{plusSign:true}):"-"}</td>
     </tr>`).join("");
 
   return `
@@ -2790,14 +2790,14 @@ function renderDetailHistorical(s){
         ${periodBtn("daily","Daily")}
         ${periodBtn("weekly","Weekly")}
         ${periodBtn("monthly","Monthly")}
-        <button class="btn btn-outline" id="dhistLoadBtn" ${state.detailHistoricalLoading?"disabled":""}>${state.detailHistoricalLoading?"Menarik data...":"⬇️ Tarik Data dari Stockbit"}</button>
-        ${rows.length ? `<button class="btn btn-outline" id="dhistSaveBtn">💾 Simpan ke Database</button>` : ""}
-        ${rows.length ? `<button class="btn btn-outline" id="dhistCompareBtn" ${state.detailCompareLoading?"disabled":""} style="color:#a78bfa;border-color:rgba(167,139,250,0.4);">${state.detailCompareLoading?"Membandingkan...":"🔍 Bandingkan dengan IDX"}</button>` : ""}
+        <button class="btn btn-outline" id="dhistLoadBtn" ${state.detailHistoricalLoading?"disabled":""}>${state.detailHistoricalLoading?"Menarik data...":"â¬‡ï¸ Tarik Data dari Stockbit"}</button>
+        ${rows.length ? `<button class="btn btn-outline" id="dhistSaveBtn">ðŸ’¾ Simpan ke Database</button>` : ""}
+        ${rows.length ? `<button class="btn btn-outline" id="dhistCompareBtn" ${state.detailCompareLoading?"disabled":""} style="color:#a78bfa;border-color:rgba(167,139,250,0.4);">${state.detailCompareLoading?"Membandingkan...":"ðŸ” Bandingkan dengan IDX"}</button>` : ""}
       </div>
 
       ${state.detailHistoricalMsg ? `<div class="bs-msg ${state.detailHistoricalMsgError?"bs-msg-error":"bs-msg-ok"}">${escapeHtml(state.detailHistoricalMsg)}</div>` : ""}
 
-      ${!rows.length ? `<div class="empty-box" style="margin-top:12px;">Belum ada data. Klik "Tarik Data dari Stockbit" di atas (butuh Token Stockbit &amp; Endpoint Historical Data terisi di ⚙️ Pengaturan).</div>` : `
+      ${!rows.length ? `<div class="empty-box" style="margin-top:12px;">Belum ada data. Klik "Tarik Data dari Stockbit" di atas (butuh Token Stockbit &amp; Endpoint Historical Data terisi di âš™ï¸ Pengaturan).</div>` : `
       <div class="table-wrap" style="margin-top:12px;max-height:60vh;">
         <table style="width:100%;border-collapse:collapse;font-size:12.5px;">
           <thead>
@@ -2818,7 +2818,7 @@ function renderDetailHistorical(s){
       <div style="margin-top:16px;">
         <details id="dhistComparePanel" ${state.detailCompareOpen?"open":""}>
           <summary style="cursor:pointer; font-size:12px; color:var(--muted); user-select:none;">
-            🔍 Bandingkan dengan IDX (flows) ${state.detailCompareMsg ? `— ${escapeHtml(state.detailCompareMsg)}` : ""}
+            ðŸ” Bandingkan dengan IDX (flows) ${state.detailCompareMsg ? `â€” ${escapeHtml(state.detailCompareMsg)}` : ""}
           </summary>
           ${state.detailCompareRows && state.detailCompareRows.length ? `
           <div class="table-wrap" style="margin-top:10px;max-height:60vh;">
@@ -2852,7 +2852,7 @@ function renderDetailHistorical(s){
               </tbody>
             </table>
             <div style="font-size:10.5px;color:var(--muted);margin-top:6px;">
-              Kolom kiri tiap pasangan = Stockbit, kanan = IDX (<code>flows</code>). Angka <span style="color:var(--gold);">kuning</span> = beda &gt;1% antar sumber (bukan error — dua penyedia data independen, wajar sedikit beda metodologi/timing).
+              Kolom kiri tiap pasangan = Stockbit, kanan = IDX (<code>flows</code>). Angka <span style="color:var(--gold);">kuning</span> = beda &gt;1% antar sumber (bukan error â€” dua penyedia data independen, wajar sedikit beda metodologi/timing).
             </div>
           </div>` : ""}
         </details>
@@ -2914,10 +2914,10 @@ async function saveDetailHistoricalRows(){
 }
 
 // ==========================================
-// PANEL "BANDINGKAN DENGAN IDX" — validasi silang angka Stockbit
+// PANEL "BANDINGKAN DENGAN IDX" â€” validasi silang angka Stockbit
 // (price_history_stockbit) vs angka IDX resmi (tabel `flows`, hasil
 // sync-idx-full.mjs) untuk ticker & rentang tanggal yang sama. Dua sumber
-// ini independen (lihat diskusi sebelumnya) — TIDAK saling menimpa di
+// ini independen (lihat diskusi sebelumnya) â€” TIDAK saling menimpa di
 // stocks_screener, tapi angkanya bisa sedikit beda karena metodologi/timing
 // pencatatan tiap penyedia data. Panel ini murni buat verifikasi manual,
 // tidak mengubah data apa pun.
@@ -2926,7 +2926,7 @@ async function loadDetailCompare(){
   const ticker = state.detailTicker;
   const rows = state.detailHistoricalRows || [];
   if(!ticker || !rows.length){
-    state.detailCompareMsg = 'Tarik data Stockbit dulu (tombol "⬇️ Tarik Data dari Stockbit" di atas) sebelum membandingkan.';
+    state.detailCompareMsg = 'Tarik data Stockbit dulu (tombol "â¬‡ï¸ Tarik Data dari Stockbit" di atas) sebelum membandingkan.';
     render(); return;
   }
   state.detailCompareLoading = true; state.detailCompareMsg = ""; render();
@@ -2958,7 +2958,7 @@ async function loadDetailCompare(){
     const matchedCount = combined.filter(r => r.closeIdx != null).length;
     state.detailCompareMsg = matchedCount
       ? `${matchedCount}/${combined.length} hari ditemukan juga di \`flows\` (IDX).`
-      : `Tidak ada tanggal yang cocok di \`flows\` untuk ${ticker} — kemungkinan sync-idx-full.mjs belum pernah menjangkau ticker/periode ini.`;
+      : `Tidak ada tanggal yang cocok di \`flows\` untuk ${ticker} â€” kemungkinan sync-idx-full.mjs belum pernah menjangkau ticker/periode ini.`;
     state.detailCompareOpen = true;
   }catch(e){
     state.detailCompareMsg = "Gagal membandingkan: " + e.message;
@@ -2969,7 +2969,7 @@ async function loadDetailCompare(){
 }
 
 // ==========================================
-// TARIK OTOMATIS (BULK) — Historical Data untuk banyak ticker sekaligus,
+// TARIK OTOMATIS (BULK) â€” Historical Data untuk banyak ticker sekaligus,
 // dipicu dari toolbar tab Screener (mirip Tarik Otomatis Broker Summary).
 // Beda dengan broker summary: endpoint historical TIDAK menerima rentang
 // tanggal ({ticker}+{period} saja), jadi per ticker cukup SATU request,
@@ -3000,19 +3000,19 @@ async function fetchAndSaveHistoricalBulk(tickers, rangeFrom, rangeTo){
   }
   if(!state.stockbitToken){ openSettings(); return; }
   if(!state.stockbitHistoricalEndpoint){
-    state.stockbitHistoricalBulkResults = [{ ticker:"-", date:"-", ok:false, msg:'Isi dulu "Endpoint Historical Data" di ⚙️ Pengaturan.' }];
+    state.stockbitHistoricalBulkResults = [{ ticker:"-", date:"-", ok:false, msg:'Isi dulu "Endpoint Historical Data" di âš™ï¸ Pengaturan.' }];
     render(); return;
   }
   if(!SUPABASE_URL || !SUPABASE_KEY){ openSettings(); return; }
 
   const tradingDates = tradingDaysInRange(rangeFrom, rangeTo);
   if(!tradingDates.length){
-    state.stockbitHistoricalBulkResults = [{ ticker:"-", date:"-", ok:false, msg:'Periode tanggal tidak valid atau tidak ada hari bursa di rentang itu — cek lagi tanggal "Dari" dan "Sampai".' }];
+    state.stockbitHistoricalBulkResults = [{ ticker:"-", date:"-", ok:false, msg:'Periode tanggal tidak valid atau tidak ada hari bursa di rentang itu â€” cek lagi tanggal "Dari" dan "Sampai".' }];
     render(); return;
   }
   const fromDate = tradingDates[0];
   const toDate = tradingDates[tradingDates.length - 1];
-  const latestDate = toDate; // hari bursa paling baru — tetap ditarik ulang walau sudah ada, sama seperti broker summary
+  const latestDate = toDate; // hari bursa paling baru â€” tetap ditarik ulang walau sudah ada, sama seperti broker summary
 
   state.stockbitHistoricalBulkLoading = true;
   state.stockbitHistoricalBulkProgress = { done: 0, total: tickers.length };
@@ -3041,7 +3041,7 @@ async function fetchAndSaveHistoricalBulk(tickers, rangeFrom, rangeTo){
       } else {
         const inRange = parsed.filter(r => r.date >= fromDate && r.date <= toDate);
         if(!inRange.length){
-          state.stockbitHistoricalBulkResults.push({ ticker, date: `${fromDate}..${toDate}`, ok:false, msg: `Endpoint mengembalikan ${parsed.length} baris tapi tidak ada yang jatuh di rentang ${fromDate}..${toDate} — kemungkinan start_date/end_date/limit di endpoint belum sesuai skema aslinya (cek raw JSON di console).` });
+          state.stockbitHistoricalBulkResults.push({ ticker, date: `${fromDate}..${toDate}`, ok:false, msg: `Endpoint mengembalikan ${parsed.length} baris tapi tidak ada yang jatuh di rentang ${fromDate}..${toDate} â€” kemungkinan start_date/end_date/limit di endpoint belum sesuai skema aslinya (cek raw JSON di console).` });
         } else {
           try{
             const payload = inRange.map(r => ({
@@ -3080,12 +3080,12 @@ function renderDetailModalContent(){
     return `<div class="empty-box">Data untuk ${state.detailTicker} tidak ditemukan di database.</div>`;
   }
   const tabs = [
-    { key:"teknikal", label:"📊 Teknikal" },
-    { key:"fundamental", label:"💰 Fundamental" },
-    { key:"bandarmologi", label:"🐋 Bandarmologi (IDX)" },
-    { key:"brokersum", label:"🏦 Broker Summary" },
-    { key:"historical", label:"📅 Historical Data" },
-    { key:"analisa", label:"🧠 Analisa" }
+    { key:"teknikal", label:"ðŸ“Š Teknikal" },
+    { key:"fundamental", label:"ðŸ’° Fundamental" },
+    { key:"bandarmologi", label:"ðŸ‹ Bandarmologi (IDX)" },
+    { key:"brokersum", label:"ðŸ¦ Broker Summary" },
+    { key:"historical", label:"ðŸ“… Historical Data" },
+    { key:"analisa", label:"ðŸ§  Analisa" }
   ];
   const tabBtns = tabs.map(t => `<button type="button" class="detail-tab-btn ${state.detailTab===t.key?'active':''}" data-detail-tab="${t.key}">${t.label}</button>`).join("");
   let body = "";
@@ -3100,7 +3100,7 @@ function renderDetailModalContent(){
     <div class="detail-head">
       <div>
         <div class="detail-head-price">${dNum(s.cClose)} <span style="font-size:15px;font-weight:600;color:${(s.changePct??0)>=0?'var(--up)':'var(--down)'}">${s.changePct!=null?dNum(s.changePct,{plusSign:true,decimals:2,suffix:'%'}):''}</span></div>
-        <div class="detail-head-sub">${s.sektor||"Sektor tidak diketahui"} ${s.syariahLabel==="Ya" ? "· Syariah" : ""}</div>
+        <div class="detail-head-sub">${s.sektor||"Sektor tidak diketahui"} ${s.syariahLabel==="Ya" ? "Â· Syariah" : ""}</div>
       </div>
       <div style="display:flex;gap:10px;">
         <button class="btn btn-outline" data-chart="${s.ticker}">Lihat Grafik</button>
@@ -3124,7 +3124,7 @@ async function loadChart(ticker){
 
   // Histori harga close ASLI dari tabel `flows` (diisi sync-flow.mjs dari
   // IDX), bukan lagi deret acak (genDemoSeries lama). `flows` disimpan
-  // sampai ~200 hari terakhir per ticker — lihat MAX_DAYS di sync-flow.mjs.
+  // sampai ~200 hari terakhir per ticker â€” lihat MAX_DAYS di sync-flow.mjs.
   state.chartData = [];
   state.chartLoading = true;
   render();
@@ -3146,7 +3146,7 @@ async function loadChart(ticker){
   render();
 }
 
-// Return true kalau sinkron ke Supabase berhasil, false kalau gagal —
+// Return true kalau sinkron ke Supabase berhasil, false kalau gagal â€”
 // dulu fungsi ini tidak mengembalikan apa pun sehingga pemanggil
 // (saveToBacktest, addManualBacktest) tidak pernah tahu apakah data
 // betulan tersimpan di server atau cuma di localStorage.
@@ -3155,11 +3155,11 @@ async function syncBacktestToSupabase(sessionId, sessionDate, items) {
     // `session_date` di Supabase bertipe kolom `date` (YYYY-MM-DD), tapi
     // `sessionDate` yang dikirim ke fungsi ini adalah string tampilan
     // locale Indonesia (mis. "23/8/2026, 11.29.08" dari
-    // toLocaleString('id-ID')) — Postgres tidak bisa parse format itu sama
+    // toLocaleString('id-ID')) â€” Postgres tidak bisa parse format itu sama
     // sekali (error: "invalid input syntax for type date"). Daripada
     // ikut-ikutan parse string locale itu (rawan salah locale/format lain
     // di kemudian hari), turunkan tanggal ISO langsung dari sessionId
-    // (yang selalu berupa String(Date.now()) — lihat saveToBacktest &
+    // (yang selalu berupa String(Date.now()) â€” lihat saveToBacktest &
     // addManualBacktest) sehingga selalu valid terlepas dari format
     // tampilan yang dipakai UI.
     const ts = Number(sessionId);
@@ -3173,12 +3173,12 @@ async function syncBacktestToSupabase(sessionId, sessionDate, items) {
       body: JSON.stringify({ id: sessionId, session_date: sessionDateIso })
     });
     
-    // JANGAN kirim `id` di sini — kolom id di tabel backtest_items adalah
+    // JANGAN kirim `id` di sini â€” kolom id di tabel backtest_items adalah
     // GENERATED ALWAYS AS IDENTITY (auto-increment di sisi Supabase), jadi
     // dia MENOLAK kalau client menyertakan nilai id sendiri (error: "cannot
     // insert a non-DEFAULT value into column "id" ... Use OVERRIDING SYSTEM
     // VALUE to override"). Sebelumnya kode ini generate id manual
-    // (Date.now()+random) dan selalu gagal di sini — makanya backtest tidak
+    // (Date.now()+random) dan selalu gagal di sini â€” makanya backtest tidak
     // pernah benar-benar tersimpan di Supabase meskipun sukses di
     // localStorage. Tidak ada bagian lain di app yang butuh id ini (hapus
     // item pakai session_id+ticker), jadi aman dihilangkan.
@@ -3186,17 +3186,17 @@ async function syncBacktestToSupabase(sessionId, sessionDate, items) {
       session_id: sessionId, ticker: it.ticker,
       entry_price: it.entryPrice || it.hargaEntry || 0,
       source: it.sumber || "Screener", notes: it.filterStr || it.keterangan || "",
-      // Kolom baru — nama preset/rule kustom yang menghasilkan entry ini.
+      // Kolom baru â€” nama preset/rule kustom yang menghasilkan entry ini.
       // Butuh kolom `criteria text` di tabel backtest_items (lihat catatan
       // migrasi SQL di bawah); kalau kolom belum ada, Supabase akan
-      // menolak insert dengan error "column ... does not exist" — jalankan
+      // menolak insert dengan error "column ... does not exist" â€” jalankan
       // dulu migrasinya sebelum mencoba lagi.
       criteria: it.kriteria || null,
-      // Kolom baru — tanggal entry PER ITEM (bukan cuma tanggal sesi),
+      // Kolom baru â€” tanggal entry PER ITEM (bukan cuma tanggal sesi),
       // dipakai kolom "Tanggal Entry" & "Hari" di tab Backtest. Butuh
       // kolom `entry_date date` di tabel backtest_items:
       //   ALTER TABLE backtest_items ADD COLUMN entry_date date;
-      // Kalau kolom belum ada, Supabase menolak insert — jalankan migrasi
+      // Kalau kolom belum ada, Supabase menolak insert â€” jalankan migrasi
       // dulu. Selama itu belum dijalankan, data tetap tersimpan lokal
       // (localStorage) dan UI tetap menampilkan tanggal entry dari sana.
       entry_date: it.entryDate || null
@@ -3228,10 +3228,10 @@ async function saveToBacktest(){
   const sessionId = String(Date.now());
   const tglSesi = new Date().toLocaleString('id-ID');
   // Tanggal entry PER ITEM dikunci ke tanggal hari ini SEKALI SAJA saat
-  // disimpan (bukan dihitung ulang tiap render) — inilah yang membuat
+  // disimpan (bukan dihitung ulang tiap render) â€” inilah yang membuat
   // harga & tanggal entry "terkunci": begitu tersimpan, refresh data live
   // di layar tidak pernah menulis ulang entryPrice/entryDate yang sudah
-  // ada (lihat renderBacktest — hanya "Harga Live" yang diambil dari data
+  // ada (lihat renderBacktest â€” hanya "Harga Live" yang diambil dari data
   // live, "Harga Entry" & "Tanggal Entry" selalu dari item yang tersimpan).
   const tglEntryIso = todayLocalISO();
   const items = toSave.map(s => ({
@@ -3264,7 +3264,7 @@ async function addManualBacktest(sessionId, ticker, entryPrice, keterangan, entr
   if(!entryPrice) return alert("Harga entry wajib diisi.");
   const note = keterangan && keterangan.trim() ? keterangan.trim() : "Input manual (uji di luar screener)";
   // Tanggal entry: pakai yang diisi user di form (kalau ada), fallback ke
-  // hari ini. Ini yang dikunci sebagai "Tanggal Entry" item — tidak pernah
+  // hari ini. Ini yang dikunci sebagai "Tanggal Entry" item â€” tidak pernah
   // berubah lagi setelah tersimpan (lihat catatan di saveToBacktest).
   const tglEntryIso = (entryDate && /^\d{4}-\d{2}-\d{2}$/.test(entryDate)) ? entryDate : todayLocalISO();
 
@@ -3279,7 +3279,7 @@ async function addManualBacktest(sessionId, ticker, entryPrice, keterangan, entr
   // KUNCI HARGA ENTRY: kalau ticker ini sudah ada di sesi yang sama,
   // JANGAN timpa item lama (baik lokal maupun saat upsert ke Supabase
   // lewat "Prefer: resolution=merge-duplicates" pada session_id+ticker
-  // yang sama) — tolak dan minta user hapus dulu item lama kalau memang
+  // yang sama) â€” tolak dan minta user hapus dulu item lama kalau memang
   // mau mengganti harga/tanggal entry-nya. Tanpa guard ini, menambahkan
   // ticker yang sama dua kali diam-diam mengganti harga entry yang sudah
   // "terkunci" sebelumnya.
@@ -3291,7 +3291,7 @@ async function addManualBacktest(sessionId, ticker, entryPrice, keterangan, entr
   // sendiri di luar hasil filter), jadi kolom Kriteria diisi keterangan
   // netral, bukan ikut-ikutan preset yang mungkin kebetulan sedang aktif
   // di tab Screener saat ini (itu tidak relevan untuk entry manual).
-  const manualKriteria = "Input manual — tidak melalui filter screener";
+  const manualKriteria = "Input manual â€” tidak melalui filter screener";
   session.items.push({ ticker, entryPrice, entryDate: tglEntryIso, filterStr: note, kriteria: manualKriteria, sumber: "Manual" });
   saveBacktests();
   render();
@@ -3323,12 +3323,12 @@ async function deleteBacktestItem(sessionId, ticker){
 }
 
 // ==========================================
-// EKSPOR EXCEL — TAB SCREENER
+// EKSPOR EXCEL â€” TAB SCREENER
 //
 // Mengekspor hasil screener yang SEDANG TAMPIL (sudah kena filter,
-// Rules Kustom, preset DSI, pencarian, dan urutan sort) — bukan cuma
+// Rules Kustom, preset DSI, pencarian, dan urutan sort) â€” bukan cuma
 // halaman aktif, tapi SELURUH baris hasil filter. Kolom yang diekspor
-// mengikuti kolom yang sedang dipilih lewat panel "🧩 Kolom" (state.visibleCols),
+// mengikuti kolom yang sedang dipilih lewat panel "ðŸ§© Kolom" (state.visibleCols),
 // supaya konsisten dengan apa yang dilihat user di tabel.
 // ==========================================
 let lastScreenerExport = { rows: [], columns: [] };
@@ -3641,12 +3641,12 @@ function openPortoModal(id){
 }
 
 // ==========================================
-// TAMBAH KE PORTOFOLIO DARI TAB BACKTEST — dipicu klik kode emiten
+// TAMBAH KE PORTOFOLIO DARI TAB BACKTEST â€” dipicu klik kode emiten
 // (ticker) di baris tabel Backtest. Membuka modal "Tambah Transaksi
 // Portofolio" dalam mode TAMBAH BARU (bukan edit), dengan Ticker, Tanggal
 // Beli, dan Harga Beli sudah terisi dari harga/tanggal entry backtest
-// yang SUDAH TERKUNCI (item.entryPrice/item.entryDate — lihat catatan di
-// saveToBacktest/addManualBacktest) — bukan dari harga live saat ini,
+// yang SUDAH TERKUNCI (item.entryPrice/item.entryDate â€” lihat catatan di
+// saveToBacktest/addManualBacktest) â€” bukan dari harga live saat ini,
 // supaya entry backtest dan entry portofolio konsisten.
 // ==========================================
 function addBacktestItemToPortfolio(sessionId, ticker){
@@ -3689,7 +3689,7 @@ function enriched(){
     const sinyalVolume = s.sinyalVolume ?? vol.label;
 
     // Rasio frekuensi hanya dihitung kalau ada basis pembandingnya
-    // (freqAnalyzer atau avgFrequency3m dari DB) — tidak diakal-akali dari
+    // (freqAnalyzer atau avgFrequency3m dari DB) â€” tidak diakal-akali dari
     // Volume, karena Frekuensi & Volume adalah dua metrik berbeda.
     const freqBase = s.freqAnalyzer ?? s.avgFrequency3m ?? null;
     const freqRatio = (s.frequency!=null && freqBase) ? (s.frequency/freqBase) : null;
@@ -3698,7 +3698,7 @@ function enriched(){
     // (frekuensi transaksi HARI INI, beda dari frequency_ma20/ma50), rasio
     // di atas selalu null. Kalau itu terjadi tapi backend sudah menghitung
     // kolom freq_spike ("Ya"/lainnya) sendiri, pakai itu langsung sebagai
-    // sinyal — jangan biarkan filter kosong padahal datanya sebenarnya ada.
+    // sinyal â€” jangan biarkan filter kosong padahal datanya sebenarnya ada.
     if (freqRatio == null && s.freqSpike != null) {
       const isSpike = String(s.freqSpike).trim().toLowerCase() === "ya";
       freq = isSpike
@@ -3707,7 +3707,7 @@ function enriched(){
     }
     const sinyalFrekuensi = freq.label;
 
-    // Dipakai rule builder ("1 Day Volume Change") — persentase perubahan
+    // Dipakai rule builder ("1 Day Volume Change") â€” persentase perubahan
     // Volume hari ini vs Volume kemarin (prevVol).
     const volChangePct = (s.prevVol!=null && s.prevVol!==0 && s.cVol!=null) ? ((s.cVol - s.prevVol)/s.prevVol)*100 : null;
 
@@ -3721,8 +3721,8 @@ function enriched(){
     const isBreakout = s.isBBSqueeze && s.isBBSqueeze.indexOf("Ya") > -1 && ratio >= 1.5 && s.cClose > s.ema21H && (s.changePct || 0) > 0;
     const isPullback = s.trendHarga && s.trendHarga.indexOf("Bullish") === 0 && s.cClose <= s.ema21L * 1.03 && s.cClose >= (s.support || 0) * 0.98 && s.stochK != null && s.stochD != null && s.prevStochK < s.prevStochD && s.stochK > s.stochD;
 
-    if (isBreakout) { rekomendasi = "🚀 Breakout"; rekTone = "up"; } 
-    else if (isPullback) { rekomendasi = "🧲 Pullback"; rekTone = "gold"; }
+    if (isBreakout) { rekomendasi = "ðŸš€ Breakout"; rekTone = "up"; } 
+    else if (isPullback) { rekomendasi = "ðŸ§² Pullback"; rekTone = "gold"; }
 
     // Skor Bagger dihitung setelah volRatio "asli" (ratio) sudah dipastikan,
     // karena formula.md butuh vol_ratio yang sama dipakai sinyal Bandarmologi
@@ -3748,8 +3748,8 @@ function getFiltered(){
     
     // --- PRESET DSI ---
     if(state.activePreset === 'bagger') {
-      // Skor Bagger — composite formula.md (Fundamental 40% + Momentum 35%
-      // + Volume/Smart Money 25%). ≥75 = kandidat kuat.
+      // Skor Bagger â€” composite formula.md (Fundamental 40% + Momentum 35%
+      // + Volume/Smart Money 25%). â‰¥75 = kandidat kuat.
       if ((s.baggerScoreTotal||0) < 75) return false;
     } else if(state.activePreset === 'eri') {
       if (!(s.rsi7 >= 58 && s.rsi7 <= 70 && s.rsi21 >= 50 && s.rsi21 <= 70 && s.rsi7 > s.rsi21)) return false;
@@ -3761,7 +3761,7 @@ function getFiltered(){
       if (!(s.cLow < s.ema21L && s.cClose > s.ema21H && s.cClose > s.cOpen)) return false;
       if (!(s.cClose >= (s.cHigh + s.cLow)/2 && s.turnover > 200000000 && s.cClose > s.ma100)) return false;
     } else if(state.activePreset === 'golden') {
-      if (!(s.histPrev <= 0 && s.hist > 0)) return false;
+      if (!(s.histPrev != null && s.histPrev <= 0 && s.hist > 0)) return false;
       if (!(s.prevStochK < s.prevStochD && s.stochK > s.stochD)) return false;
     } else if (state.activePreset === 'uptrend') {
       if (!(s.cClose > s.ma21 && s.ma21 > s.ma50 && s.ma50 > s.ma100 && s.ma100 > s.ma200)) return false;
@@ -3866,18 +3866,18 @@ function getSorted(data) {
 function uniqueOpts(list, key){ return [...new Set(list.map(s=> key==="band" ? s.band.label : s[key]))]; }
 
 // ==========================================================
-// ✨ SMART PICK — mesin deteksi & skor 5 sinyal
+// âœ¨ SMART PICK â€” mesin deteksi & skor 5 sinyal
 //
 // PENTING soal keterbatasan: ini BUKAN model AI/machine-learning beneran.
 // Ini scoring rule-based di atas data teknikal yang sudah ada di
-// enriched() (posisi 52W, rasio volume, RSI, MA, dst) — dikemas mirip
+// enriched() (posisi 52W, rasio volume, RSI, MA, dst) â€” dikemas mirip
 // "AI Screener" ala Stockbit supaya gampang dibaca. Threshold di bawah
 // heuristik pribadi, silakan disesuaikan lewat konstanta di tiap
 // detect() kalau hasilnya kurang cocok dengan gaya trading Anda.
 // ==========================================================
 function clamp01(x){ return Math.max(0, Math.min(1, x)); }
 // Likuiditas harian dipakai sebagai syarat minimum tiap sinyal (supaya
-// tidak menyarankan saham yang susah dieksekusi) — pakai value_traded
+// tidak menyarankan saham yang susah dieksekusi) â€” pakai value_traded
 // kalau ada, fallback ke turnover.
 function spLiquidity(s){ return (s.valueTraded!=null ? s.valueTraded : s.turnover) || 0; }
 // Posisi harga dalam range 52 minggu (0% = di low52w, 100% = di high52w).
@@ -3893,9 +3893,9 @@ function spPos52w(s){
 // Rata-rata Value (Rp) historis dari Stockbit (price_history_stockbit),
 // EXCLUDE hari ini (kalau kebawa) supaya tidak membandingkan angka hari ini
 // dengan dirinya sendiri. null kalau datanya kurang dari 3 hari (belum
-// cukup untuk baseline yang wajar) — caller WAJIB fallback ke volRatio biasa
+// cukup untuk baseline yang wajar) â€” caller WAJIB fallback ke volRatio biasa
 // kalau null, karena ini fitur opsional (cuma ticker yang pernah ditarik
-// manual lewat tombol "📅 Historical" yang akan punya data).
+// manual lewat tombol "ðŸ“… Historical" yang akan punya data).
 function spStockbitAvgValue(ticker){
   const rows = state.stockbitValueHistory?.[ticker];
   if(!rows || rows.length < 3) return null;
@@ -3906,7 +3906,7 @@ function spStockbitAvgValue(ticker){
   return avg > 0 ? avg : null;
 }
 // Rasio Value hari ini (live, dari stocks_screener) vs rata-rata Value
-// historis Stockbit — versi "volRatio" tapi pakai NILAI transaksi riil
+// historis Stockbit â€” versi "volRatio" tapi pakai NILAI transaksi riil
 // (value_idr), bukan cuma jumlah lembar. null kalau tidak ada data Stockbit
 // untuk ticker ini (lihat spStockbitAvgValue).
 function spStockbitValueRatio(s){
@@ -3917,21 +3917,21 @@ function spStockbitValueRatio(s){
 
 const SMART_PICK_DEFS = [
   {
-    id: "area_demand", icon: "📥", tone: "gold",
+    id: "area_demand", icon: "ðŸ“¥", tone: "gold",
     title: "Area Demand",
-    shortDesc: "Saham profitabel + volume tinggi di area support 52W — siap bounce.",
-    definisi: "Saham fundamental sehat yang harganya masuk ke zona bawah range 52 minggu (area support/demand), tapi belum benar-benar rontok — kandidat pantulan (bounce) dari area akumulasi.",
-    filter: "Volume Tinggi: wajib ≥ Rp1 M/hari. Saham Hidup: harga ≥ Rp100 (tidak rugi/gocap), Range 52W ≥ 15%. Profitabel: NPM ≥ 0 & ROE ≥ 0. Posisi ≤ 30% range 52W (zona bawah). Reaksi di Support: perubahan harga hari ini &gt; -4% (bukan dump).",
-    scoring: "Skor Zona 100 = Support 25 + Reaksi 20 + Volume 25 (rasio spike ATAU nilai transaksi absolut, mana yang lebih tinggi) + Pullback 15 (toleransi ±10% dari support) + Struktur 15 (bonus multi-minggu).",
-    sinyalKuat: "Volume spike 2×–5×+ dari rata-rata (badge otomatis) di dekat area support = smart money mulai serap.",
+    shortDesc: "Saham profitabel + volume tinggi di area support 52W â€” siap bounce.",
+    definisi: "Saham fundamental sehat yang harganya masuk ke zona bawah range 52 minggu (area support/demand), tapi belum benar-benar rontok â€” kandidat pantulan (bounce) dari area akumulasi.",
+    filter: "Volume Tinggi: wajib â‰¥ Rp1 M/hari. Saham Hidup: harga â‰¥ Rp100 (tidak rugi/gocap), Range 52W â‰¥ 15%. Profitabel: NPM â‰¥ 0 & ROE â‰¥ 0. Posisi â‰¤ 30% range 52W (zona bawah). Reaksi di Support: perubahan harga hari ini &gt; -4% (bukan dump).",
+    scoring: "Skor Zona 100 = Support 25 + Reaksi 20 + Volume 25 (rasio spike ATAU nilai transaksi absolut, mana yang lebih tinggi) + Pullback 15 (toleransi Â±10% dari support) + Struktur 15 (bonus multi-minggu).",
+    sinyalKuat: "Volume spike 2Ã—â€“5Ã—+ dari rata-rata (badge otomatis) di dekat area support = smart money mulai serap.",
     detect(s){
       const pos = spPos52w(s);
       const liq = spLiquidity(s);
       const changePct = s.changePct || 0;
-      // "Saham profitabel" (klaim di shortDesc/definisi) & "Saham Hidup" —
+      // "Saham profitabel" (klaim di shortDesc/definisi) & "Saham Hidup" â€”
       // dua syarat ini SEBELUMNYA cuma teks doang, tidak pernah dicek di
       // detect(). Null diperlakukan netral/lolos (bukan otomatis gagal),
-      // konsisten dengan gaya defensif di kode lain — cuma yang JELAS
+      // konsisten dengan gaya defensif di kode lain â€” cuma yang JELAS
       // negatif/sempit yang digugurkan.
       const npmOk = s.npm == null || s.npm >= 0;
       const roeOk = s.roe == null || s.roe >= 0;
@@ -3942,26 +3942,26 @@ const SMART_PICK_DEFS = [
       const supportScore = 25 * clamp01((30 - pos) / 30);
       const reaksiScore = 20 * clamp01((changePct + 4) / 8);
       // Kalau ada riwayat Value Stockbit untuk ticker ini, pakai rasio Value
-      // riil (bukan cuma volRatio lembar) — ambil yang LEBIH TINGGI di antara
+      // riil (bukan cuma volRatio lembar) â€” ambil yang LEBIH TINGGI di antara
       // keduanya, karena keduanya sama-sama indikasi valid smart money masuk,
       // dan volRatio dari `flows`/Yahoo kadang telat/kurang presisi dibanding
       // Value Stockbit yang ditarik manual.
       const stockbitRatio = spStockbitValueRatio(s);
       const volRatioEffective = stockbitRatio != null ? Math.max(s.volRatio || 0, stockbitRatio) : s.volRatio;
       // Volume Score sekarang diambil dari YANG TERBAIK antara dua cara nilai:
-      // (a) rasio spike vs rata-rata (cara lama) — bagus buat nangkep saham
+      // (a) rasio spike vs rata-rata (cara lama) â€” bagus buat nangkep saham
       //     yang tiba-tiba ramai padahal biasanya sepi.
-      // (b) nilai transaksi ABSOLUT hari ini (cara ihsgscreener.com) — bagus
+      // (b) nilai transaksi ABSOLUT hari ini (cara ihsgscreener.com) â€” bagus
       //     buat saham yang MEMANG likuid tiap hari (jadi "Vol Sangat Tinggi"
       //     meski rasio spike-nya kecil, mis. TCPI: Rp14M/hari tapi cuma 1.2x
-      //     rata-rata — sebelumnya nyaris nol padahal jelas likuid tinggi).
+      //     rata-rata â€” sebelumnya nyaris nol padahal jelas likuid tinggi).
       // Skala absolut: mulai dari syarat wajib match (Rp1 miliar = baseline
       // 0) sampai Rp20 miliar (skor penuh 25).
       const volumeScoreRatio = volRatioEffective != null ? 25 * clamp01((Math.min(volRatioEffective,6) - 1) / 5) : 12;
       const volumeScoreAbsolute = 25 * clamp01((liq - 1e9) / 19e9);
       const volumeScore = Math.max(volumeScoreRatio, volumeScoreAbsolute);
       // Toleransi jarak ke Support dilonggarkan dari 5% -> 10% dari harga
-      // support — 5% ternyata terlalu ketat untuk saham yang sudah mulai
+      // support â€” 5% ternyata terlalu ketat untuk saham yang sudah mulai
       // bounce tapi belum sangat dekat support (mis. TCPI: 8.4% dari support,
       // sebelumnya skor pullback = 0 padahal secara zona masih wajar disebut
       // "dekat support").
@@ -3973,21 +3973,21 @@ const SMART_PICK_DEFS = [
     }
   },
   {
-    id: "throwback", icon: "🔁", tone: "teal",
+    id: "throwback", icon: "ðŸ”", tone: "teal",
     title: "Throwback / Retest Breakout",
-    shortDesc: "Sudah breakout lalu pullback ke support — bounce dari retest.",
+    shortDesc: "Sudah breakout lalu pullback ke support â€” bounce dari retest.",
     definisi: "Saham yang sudah breakout dari uptrend menengah, lalu turun kembali (pullback) menguji area breakout sebagai support baru, dan mulai memantul lagi.",
-    filter: "Posisi 45–90% range 52W (zona atas). Perubahan hari ini ≥ 0% (hold/hijau). Uptrend & pullback ke area breakout sebagai support baru = BONUS skor (bukan syarat wajib).",
-    scoring: "Kekuatan uptrend (MA21&gt;MA50&gt;MA100) + kualitas retest (jarak ke support) + posisi bounce 60–80% dari skor total.",
-    sinyalKuat: "Uptrend kuat + retest sehat + posisi bounce ≥60% + kenaikan hari ini &gt;2% = retest berkualitas.",
+    filter: "Posisi 45â€“90% range 52W (zona atas). Perubahan hari ini â‰¥ 0% (hold/hijau). Uptrend & pullback ke area breakout sebagai support baru = BONUS skor (bukan syarat wajib).",
+    scoring: "Kekuatan uptrend (MA21&gt;MA50&gt;MA100) + kualitas retest (jarak ke support) + posisi bounce 60â€“80% dari skor total.",
+    sinyalKuat: "Uptrend kuat + retest sehat + posisi bounce â‰¥60% + kenaikan hari ini &gt;2% = retest berkualitas.",
     detect(s){
       const pos = spPos52w(s);
       const changePct = s.changePct || 0;
-      // Sebelumnya ada gate tambahan `cClose > MA50` di sini — dihapus karena
+      // Sebelumnya ada gate tambahan `cClose > MA50` di sini â€” dihapus karena
       // di spesifikasi acuan, uptrend/pullback (MA21>MA50>MA100, chg13W/26W/4W)
       // itu BONUS SKOR (lihat uptrendScore di bawah), bukan syarat lolos/gugur.
       // Saham retest sehat yang closing-nya pas sedikit di bawah MA50 dulu
-      // otomatis gugur duluan — sekarang tetap lolos dengan skor lebih rendah.
+      // otomatis gugur duluan â€” sekarang tetap lolos dengan skor lebih rendah.
       const match = pos != null && pos >= 45 && pos <= 90 && changePct >= 0;
       if(!match) return { match:false, score:0, strong:false };
       const uptrendScore = (s.ma21 > s.ma50 && s.ma50 > s.ma100) ? 40 : (s.cClose > s.ma50 ? 22 : 8);
@@ -4000,13 +4000,13 @@ const SMART_PICK_DEFS = [
     }
   },
   {
-    id: "liquidity_sweep", icon: "💧", tone: "muted",
+    id: "liquidity_sweep", icon: "ðŸ’§", tone: "muted",
     title: "Liquidity Sweep",
-    shortDesc: "Sapu bawah support lalu reversal tajam — stop hunt bandar.",
+    shortDesc: "Sapu bawah support lalu reversal tajam â€” stop hunt bandar.",
     definisi: "Harga menyapu ke bawah zona low 52 minggu (stop hunt / grab liquidity), lalu berbalik naik tajam dari harga yang sama dengan volume tinggi.",
-    filter: "Posisi &lt; 30% range 52W (zona bawah). Perubahan hari ini &gt; +1% (reversal). Volume transaksi ≥ Rp100 jt/hari. Drop lebih dalam dari MA + volume spike = bonus skor.",
+    filter: "Posisi &lt; 30% range 52W (zona bawah). Perubahan hari ini &gt; +1% (reversal). Volume transaksi â‰¥ Rp100 jt/hari. Drop lebih dalam dari MA + volume spike = bonus skor.",
     scoring: "Kedalaman sweep (drop vs low sebelumnya) + ketajaman reversal hari ini + kekuatan volume vs median.",
-    sinyalKuat: "Drop &gt;15% lalu reversal &gt;5% dengan volume &gt;5× median = sweep + reversal kuat.",
+    sinyalKuat: "Drop &gt;15% lalu reversal &gt;5% dengan volume &gt;5Ã— median = sweep + reversal kuat.",
     detect(s){
       const pos = spPos52w(s);
       const liq = spLiquidity(s);
@@ -4016,7 +4016,7 @@ const SMART_PICK_DEFS = [
       const deeper = (s.prevLow && s.cLow != null && s.cLow < s.prevLow) ? ((s.prevLow - s.cLow) / s.prevLow) * 100 : 0;
       const depthScore = 35 * clamp01(deeper / 10);
       const reversalScore = 35 * clamp01((changePct - 1) / 6);
-      // Sama seperti Area Demand — pakai rasio Value Stockbit kalau tersedia,
+      // Sama seperti Area Demand â€” pakai rasio Value Stockbit kalau tersedia,
       // ambil yang lebih tinggi dibanding volRatio biasa (lihat catatan di
       // spStockbitValueRatio()).
       const stockbitRatio = spStockbitValueRatio(s);
@@ -4028,13 +4028,13 @@ const SMART_PICK_DEFS = [
     }
   },
   {
-    id: "bull_divergence", icon: "📉", tone: "up",
+    id: "bull_divergence", icon: "ðŸ“‰", tone: "up",
     title: "Bull Divergence",
-    shortDesc: "Harga turun tapi momentum berbalik naik — sinyal reversal.",
-    definisi: "Harga masih di zona bawah 52 minggu (oversold/downtrend) tapi hari ini naik dengan volume tinggi — sinyal akumulasi & reversal dini.",
-    filter: "Posisi harga &lt; 55% range 52W. Perubahan hari ini positif (hijau). Volume transaksi ≥ Rp100 jt/hari.",
+    shortDesc: "Harga turun tapi momentum berbalik naik â€” sinyal reversal.",
+    definisi: "Harga masih di zona bawah 52 minggu (oversold/downtrend) tapi hari ini naik dengan volume tinggi â€” sinyal akumulasi & reversal dini.",
+    filter: "Posisi harga &lt; 55% range 52W. Perubahan hari ini positif (hijau). Volume transaksi â‰¥ Rp100 jt/hari.",
     scoring: "Makin dekat ke low 52W = makin tinggi skor. Ditambah volume spike vs median pasar + kenaikan hari ini (%).",
-    sinyalKuat: "Harga &lt;20% dari low 52W + naik &gt;3% + volume &gt;5× median = divergence sangat kuat.",
+    sinyalKuat: "Harga &lt;20% dari low 52W + naik &gt;3% + volume &gt;5Ã— median = divergence sangat kuat.",
     detect(s){
       const pos = spPos52w(s);
       const liq = spLiquidity(s);
@@ -4050,13 +4050,13 @@ const SMART_PICK_DEFS = [
     }
   },
   {
-    id: "early_breakout", icon: "🚀", tone: "up",
+    id: "early_breakout", icon: "ðŸš€", tone: "up",
     title: "Early Breakout",
-    shortDesc: "Volume meledak + harga dekat resistance — sinyal breakout awal.",
-    definisi: "Harga mendekati/menembus resistance dengan volume tinggi — konfirmasi breakout nyata, bukan fake breakout.",
-    filter: "Posisi harga &gt; 50% range 52W. Perubahan hari ini positif (hijau). Volume transaksi ≥ Rp100 jt/hari.",
+    shortDesc: "Volume meledak + harga dekat resistance â€” sinyal breakout awal.",
+    definisi: "Harga mendekati/menembus resistance dengan volume tinggi â€” konfirmasi breakout nyata, bukan fake breakout.",
+    filter: "Posisi harga &gt; 50% range 52W. Perubahan hari ini positif (hijau). Volume transaksi â‰¥ Rp100 jt/hari.",
     scoring: "Makin dekat ke high 52W = makin tinggi skor. Ditambah volume breakout vs median pasar + kenaikan hari ini (%).",
-    sinyalKuat: "Posisi &gt;85% dari range 52W + naik &gt;4% + volume &gt;5× median = breakout dikonfirmasi, bukan fake.",
+    sinyalKuat: "Posisi &gt;85% dari range 52W + naik &gt;4% + volume &gt;5Ã— median = breakout dikonfirmasi, bukan fake.",
     detect(s){
       const pos = spPos52w(s);
       const liq = spLiquidity(s);
@@ -4086,7 +4086,7 @@ function getSmartPickMatches(defId){
     .sort((a,b) => b.score - a.score);
 }
 
-// Versi lengkap untuk modal "Daftar Saham" — beda dari getSmartPickMatches
+// Versi lengkap untuk modal "Daftar Saham" â€” beda dari getSmartPickMatches
 // (yang cuma dipakai chip ringkas di kartu), ini bawa data harga/posisi/vol
 // sekalian supaya bisa ditampilkan sebagai tabel data saham per fitur.
 function getSmartPickMatchesFull(defId){
@@ -4108,7 +4108,7 @@ function getSmartPickMatchesFull(defId){
 }
 
 // Gabungkan riwayat sinyal yang sudah difinalisasi (state.spHistory) dengan
-// harga live saat ini (state.stocks) untuk menghitung Now / Δ% / Hari di
+// harga live saat ini (state.stocks) untuk menghitung Now / Î”% / Hari di
 // tabel Rekap & Share Signal.
 function smartPickRowsWithLive(){
   const priceByTicker = {};
@@ -4140,9 +4140,9 @@ function computeSmartPickStats(rows){
 // tiap sinyal, lalu kunci (ticker, signal_type, tanggal, harga entry) ke
 // tabel smart_pick_signals. Pakai Prefer: resolution=merge-duplicates
 // supaya klik ulang di HARI YANG SAMA cuma mem-update baris yang sama
-// (butuh unique constraint (stock_code,signal_type,muncul_date) di DB —
+// (butuh unique constraint (stock_code,signal_type,muncul_date) di DB â€”
 // lihat sql/07_smart_pick.sql), bukan bikin duplikat. Begitu tanggalnya
-// sudah lewat, baris lama TIDAK pernah ditimpa lagi — itulah "dikunci ke
+// sudah lewat, baris lama TIDAK pernah ditimpa lagi â€” itulah "dikunci ke
 // tanggal data" yang dimaksud di UI.
 async function finalizeSmartPickSignals(){
   if(!SUPABASE_URL || !SUPABASE_KEY){ openSettings(); return; }
@@ -4168,7 +4168,7 @@ async function finalizeSmartPickSignals(){
       });
     });
     if(!rows.length){
-      state.spMsg = "Tidak ada saham yang lolos kriteria Smart Pick hari ini — belum ada yang difinalisasi.";
+      state.spMsg = "Tidak ada saham yang lolos kriteria Smart Pick hari ini â€” belum ada yang difinalisasi.";
       state.spMsgError = true;
     } else {
       const res = await fetch(`${SUPABASE_URL}/smart_pick_signals`, {
@@ -4180,12 +4180,12 @@ async function finalizeSmartPickSignals(){
         const t = await res.text();
         throw new Error(t || `HTTP ${res.status}`);
       }
-      state.spMsg = `✅ Finalisasi berhasil: ${rows.length} sinyal dikunci untuk tanggal ${fmtDateID(today)}.`;
+      state.spMsg = `âœ… Finalisasi berhasil: ${rows.length} sinyal dikunci untuk tanggal ${fmtDateID(today)}.`;
       state.spMsgError = false;
       await loadSmartPickHistory();
     }
   }catch(e){
-    state.spMsg = "Gagal finalisasi: " + e.message + " — pastikan tabel smart_pick_signals & unique constraint-nya sudah dibuat (lihat sql/07_smart_pick.sql).";
+    state.spMsg = "Gagal finalisasi: " + e.message + " â€” pastikan tabel smart_pick_signals & unique constraint-nya sudah dibuat (lihat sql/07_smart_pick.sql).";
     state.spMsgError = true;
   }
   state.spFinalizing = false;
@@ -4205,7 +4205,7 @@ async function loadSmartPickHistory(){
     if(!Array.isArray(json)) throw new Error((json && json.message) || `HTTP ${res.status}`);
     state.spHistory = json;
   }catch(e){
-    showError("Gagal memuat riwayat Smart Pick: " + e.message + " — pastikan tabel smart_pick_signals sudah dibuat (lihat sql/07_smart_pick.sql).");
+    showError("Gagal memuat riwayat Smart Pick: " + e.message + " â€” pastikan tabel smart_pick_signals sudah dibuat (lihat sql/07_smart_pick.sql).");
   }
   state.spHistoryLoading = false;
   render();
@@ -4244,7 +4244,7 @@ function render(){
 
   document.getElementById("detailModalOverlay").classList.toggle("open", !!state.detailTicker);
   if(state.detailTicker){
-    document.getElementById("detailModalTitle").textContent = `Detail Emiten · ${state.detailTicker}`;
+    document.getElementById("detailModalTitle").textContent = `Detail Emiten Â· ${state.detailTicker}`;
     document.getElementById("detailModalContent").innerHTML = renderDetailModalContent();
     document.querySelectorAll("[data-detail-tab]").forEach(btn=>{
       btn.onclick = () => setDetailTab(btn.dataset.detailTab);
@@ -4279,7 +4279,7 @@ function render(){
 
   document.getElementById("spListModalOverlay").classList.toggle("open", !!state.spListOpenDefId);
   if(state.spListOpenDefId){
-    document.getElementById("spListModalTitle").textContent = `📋 Daftar Saham · ${spTitleFor(state.spListOpenDefId)}`;
+    document.getElementById("spListModalTitle").textContent = `ðŸ“‹ Daftar Saham Â· ${spTitleFor(state.spListOpenDefId)}`;
     document.getElementById("spListModalContent").innerHTML = renderSmartPickListModalContent();
     document.querySelectorAll("[data-sp-list-detail]").forEach(b=>{
       b.onclick = () => { closeSmartPickList(); openDetail(b.dataset.spListDetail); };
@@ -4320,7 +4320,7 @@ function renderMultiSelect(key, label, options) {
       <div class="multi-select">
         <button type="button" class="select-btn" onclick="state.openDropdown = state.openDropdown === '${key}' ? null : '${key}'; render(); event.stopPropagation();">
           <span style="overflow:hidden; text-overflow:ellipsis; white-space:nowrap; max-width:100px;">${btnText}</span>
-          <span style="font-size:9px;color:var(--muted)">▼</span>
+          <span style="font-size:9px;color:var(--muted)">â–¼</span>
         </button>
         <div class="select-dropdown ${isOpen ? 'open' : ''}" onclick="event.stopPropagation()">
           ${itemsHtml}
@@ -4350,7 +4350,7 @@ const FILTER_LABELS = {
   statusRsi:"Status RSI", band:"Bandarmologi", uangGedeMasuk:"Uang Gede", isBBSqueeze:"BB Squeeze", valuasi:"Valuasi",
   bbWidth:"BB Width", atr14:"ATR 14", clv:"CLV", rsi7:"RSI 7", rsi21:"RSI 21", frequency:"Frekuensi"
 };
-const PRESET_LABELS = { bagger:"Skor Bagger ≥75", eri:"Eri Ginanjar", rsicross:"RSI & Harga Cross", golden:"Golden Cross DSI", uptrend:"Super Uptrend", breakout:"Volatility Breakout", pullback:"Pullback Uptrend", custom_bandar:"BPJS", asing_akumulasi:"Akumulasi Asing (IDX)", freq_spike:"Lonjakan Frekuensi" };
+const PRESET_LABELS = { bagger:"Skor Bagger â‰¥75", eri:"Eri Ginanjar", rsicross:"RSI & Harga Cross", golden:"Golden Cross DSI", uptrend:"Super Uptrend", breakout:"Volatility Breakout", pullback:"Pullback Uptrend", custom_bandar:"BPJS", asing_akumulasi:"Akumulasi Asing (IDX)", freq_spike:"Lonjakan Frekuensi" };
 function clearChip(kind, key, value){
   if(kind==="search") state.search="";
   else if(kind==="preset") state.activePreset=null;
@@ -4363,21 +4363,21 @@ function clearChip(kind, key, value){
 
 function renderActiveFilterChips(){
   const chips = [];
-  if(state.search) chips.push(`<span class="filter-chip">Cari: "${state.search}" <button onclick="clearChip('search')" title="Hapus">✕</button></span>`);
-  if(state.activePreset) chips.push(`<span class="filter-chip">Preset: ${PRESET_LABELS[state.activePreset]||state.activePreset} <button onclick="clearChip('preset')" title="Hapus">✕</button></span>`);
+  if(state.search) chips.push(`<span class="filter-chip">Cari: "${state.search}" <button onclick="clearChip('search')" title="Hapus">âœ•</button></span>`);
+  if(state.activePreset) chips.push(`<span class="filter-chip">Preset: ${PRESET_LABELS[state.activePreset]||state.activePreset} <button onclick="clearChip('preset')" title="Hapus">âœ•</button></span>`);
   Object.keys(state.filters).forEach(key=>{
     state.filters[key].forEach(val=>{
-      chips.push(`<span class="filter-chip">${FILTER_LABELS[key]||key}: ${val} <button onclick="clearChip('multi','${key}','${String(val).replace(/'/g,"\\'")}')" title="Hapus">✕</button></span>`);
+      chips.push(`<span class="filter-chip">${FILTER_LABELS[key]||key}: ${val} <button onclick="clearChip('multi','${key}','${String(val).replace(/'/g,"\\'")}')" title="Hapus">âœ•</button></span>`);
     });
   });
   Object.keys(state.rangeFilters).forEach(key=>{
     const r = state.rangeFilters[key];
     if(r.min !== "" || r.max !== ""){
-      chips.push(`<span class="filter-chip">${FILTER_LABELS[key]||key}: ${r.min||'…'} - ${r.max||'…'} <button onclick="clearChip('range','${key}')" title="Hapus">✕</button></span>`);
+      chips.push(`<span class="filter-chip">${FILTER_LABELS[key]||key}: ${r.min||'â€¦'} - ${r.max||'â€¦'} <button onclick="clearChip('range','${key}')" title="Hapus">âœ•</button></span>`);
     }
   });
   if(state.customRules && state.customRules.length){
-    chips.push(`<span class="filter-chip">Rules Kustom: ${state.customRules.length} aktif <button onclick="clearChip('rules')" title="Hapus semua rule">✕</button></span>`);
+    chips.push(`<span class="filter-chip">Rules Kustom: ${state.customRules.length} aktif <button onclick="clearChip('rules')" title="Hapus semua rule">âœ•</button></span>`);
   }
   if(chips.length===0) return "";
   return `<div class="active-filters-bar">${chips.join("")}</div>`;
@@ -4393,11 +4393,11 @@ function hasActiveFilters(){
 }
 
 // Setiap kolom punya "group" supaya bisa dikelompokkan di panel pemilih
-// kolom (Harga, Fundamental, Teknikal, Bandarmologi, Analisa) — dengan
+// kolom (Harga, Fundamental, Teknikal, Bandarmologi, Analisa) â€” dengan
 // ~50 kolom, tanpa pengelompokan panel pemilihnya sendiri akan berantakan.
 const SCREENER_COLUMNS = [
   { key:"sektor", label:"Sektor", group:"Umum", cell:s=>`<td>${s.sektor||"-"}</td>` },
-  { key:"syariah", label:"Syariah", group:"Umum", cell:s=>`<td>${s.syariah===true||s.syariah==="true"||s.syariah==="Ya"?"✅":(s.syariah===false||s.syariah==="false"||s.syariah==="Tidak"?"-":(s.syariah??"-"))}</td>` },
+  { key:"syariah", label:"Syariah", group:"Umum", cell:s=>`<td>${s.syariah===true||s.syariah==="true"||s.syariah==="Ya"?"âœ…":(s.syariah===false||s.syariah==="false"||s.syariah==="Tidak"?"-":(s.syariah??"-"))}</td>` },
   { key:"cOpen", label:"Open", group:"Harga", cell:s=>`<td class="mono">${fmtNum(s.cOpen)}</td>` },
   { key:"cHigh", label:"High", group:"Harga", cell:s=>`<td class="mono">${fmtNum(s.cHigh)}</td>` },
   { key:"cLow", label:"Low", group:"Harga", cell:s=>`<td class="mono">${fmtNum(s.cLow)}</td>` },
@@ -4463,12 +4463,12 @@ const SCREENER_COLUMNS = [
   { key:"bbWidth", label:"BB Width", group:"Teknikal", cell:s=>`<td class="mono">${s.bbWidth??"-"}</td>` },
   { key:"atr14", label:"ATR 14", group:"Teknikal", cell:s=>`<td class="mono">${s.atr14??"-"}</td>` },
   { key:"clv", label:"CLV", group:"Teknikal", cell:s=>`<td class="mono">${s.clv??"-"}</td>` },
-  { key:"baggerScoreTotal", label:"🎯 Skor Bagger", group:"Analisa", cell:s=>`<td><div style="display:flex;align-items:center;gap:7px;flex-wrap:wrap;"><span class="mono" style="font-weight:800;font-size:13.5px;color:var(--${s.baggerTone});">${s.baggerScoreTotal}<span style="font-size:10px;font-weight:500;color:var(--muted);">/100</span></span>${pillHtml(s.baggerTier, s.baggerTone)}</div></td>` },
-  { key:"stockbitLive", label:"🔴 Live Stockbit", group:"Analisa", sortable:false, cell:s=>{
+  { key:"baggerScoreTotal", label:"ðŸŽ¯ Skor Bagger", group:"Analisa", cell:s=>`<td><div style="display:flex;align-items:center;gap:7px;flex-wrap:wrap;"><span class="mono" style="font-weight:800;font-size:13.5px;color:var(--${s.baggerTone});">${s.baggerScoreTotal}<span style="font-size:10px;font-weight:500;color:var(--muted);">/100</span></span>${pillHtml(s.baggerTier, s.baggerTone)}</div></td>` },
+  { key:"stockbitLive", label:"ðŸ”´ Live Stockbit", group:"Analisa", sortable:false, cell:s=>{
       const live = state.stockbitLive[s.ticker];
       if(!live) return `<td><button type="button" class="btn btn-outline" data-stockbit-live="${s.ticker}" style="font-size:11px;padding:4px 8px;color:#f87171;border-color:rgba(239,68,68,0.35);">Tarik</button></td>`;
       if(live.loading) return `<td><span class="mono" style="font-size:11px;color:var(--muted);">Menarik...</span></td>`;
-      if(live.error) return `<td><span style="font-size:10.5px;color:var(--down);" title="${escapeHtml(live.error)}">⚠️ Error</span> <button type="button" class="btn btn-outline" data-stockbit-live="${s.ticker}" style="font-size:10px;padding:2px 6px;margin-left:4px;">↻</button></td>`;
+      if(live.error) return `<td><span style="font-size:10.5px;color:var(--down);" title="${escapeHtml(live.error)}">âš ï¸ Error</span> <button type="button" class="btn btn-outline" data-stockbit-live="${s.ticker}" style="font-size:10px;padding:2px 6px;margin-left:4px;">â†»</button></td>`;
       const m = live.mapped || {};
       const secAgo = Math.max(0, Math.round((Date.now()-live.fetchedAt)/1000));
       return `<td><div class="mono" style="font-size:11.5px;line-height:1.5;">
@@ -4476,7 +4476,7 @@ const SCREENER_COLUMNS = [
         ${(m.open!=null||m.high!=null||m.low!=null) ? `<br>O/H/L: ${fmtNum(m.open)}/${fmtNum(m.high)}/${fmtNum(m.low)}` : ""}
         ${m.bid!=null||m.offer!=null ? `<br>Bid/Offer: ${fmtNum(m.bid)}/${fmtNum(m.offer)}` : ""}
         <br><span style="color:var(--muted);font-size:10px;">${secAgo}s lalu</span>
-        <button type="button" class="btn btn-outline" data-stockbit-live="${s.ticker}" style="font-size:10px;padding:1px 5px;margin-left:4px;">↻</button>
+        <button type="button" class="btn btn-outline" data-stockbit-live="${s.ticker}" style="font-size:10px;padding:1px 5px;margin-left:4px;">â†»</button>
       </div></td>`;
     } },
   { key:"keyakinanNaik", label:"Keyakinan Naik", group:"Analisa", cell:s=>`<td>${pillHtml(s.keyakinanNaik, s.keyakinanTone)}</td>` },
@@ -4487,8 +4487,8 @@ const SCREENER_COLUMNS = [
 // RULE BUILDER KUSTOM (mirip "Edit Screener" Stockbit)
 //
 // Bentuk rule yang didukung, sesuai contoh di Stockbit:
-//   1) Metric  <op>  Angka tetap                  → "1 Day Price Returns (%) > -15"
-//   2) Metric  <op>  Pengali * Metric lain          → "Frequency > 5 * Frequency Analyzer"
+//   1) Metric  <op>  Angka tetap                  â†’ "1 Day Price Returns (%) > -15"
+//   2) Metric  <op>  Pengali * Metric lain          â†’ "Frequency > 5 * Frequency Analyzer"
 // Rule disimpan sebagai {id, aKey, op, mult, bType:'metric'|'const', bKey, bConst}
 // dan diterapkan sebagai filter AND tambahan di getFiltered().
 // ==========================================
@@ -4580,7 +4580,7 @@ const RULE_METRICS = [
   { key:"avgTicket", label:"Avg Ticket Size Asing" }, { key:"crossingPct", label:"Crossing (%)" },
   { key:"flowDays", label:"Jumlah Hari Data Flow" },
 
-  // --- Field KATEGORI (teks, bukan angka) — dibandingkan pakai "=" / "≠"
+  // --- Field KATEGORI (teks, bukan angka) â€” dibandingkan pakai "=" / "â‰ "
   // terhadap salah satu pilihan tetap, bukan angka bebas. Daftar pilihan
   // diambil dari nilai-nilai yang benar-benar muncul di kolom stocks_screener.
   { key:"cekHarga", label:"Sinyal Harga", type:"category", options:[
@@ -4623,7 +4623,7 @@ const RULE_METRICS = [
   ]},
 
   // --- Field BROKER (daftar kode broker top 3, bukan angka/kategori
-  // tetap) — dibandingkan pakai "contains" / "!contains" terhadap kode
+  // tetap) â€” dibandingkan pakai "contains" / "!contains" terhadap kode
   // broker yang diketik bebas (mis. "AK"), diambil dari top 3 baris
   // broker_summary hari trading terakhir. Dipakai untuk cari saham yang
   // sedang didominasi broker tertentu di sisi beli atau jual.
@@ -4634,7 +4634,7 @@ const RULE_METRICS_BY_KEY = Object.fromEntries(RULE_METRICS.map(m=>[m.key, m]));
 function isCategoryMetric(key){ return RULE_METRICS_BY_KEY[key]?.type === "category"; }
 function isBrokerMetric(key){ return RULE_METRICS_BY_KEY[key]?.type === "broker"; }
 const RULE_OPS = {
-  ">": (a,b)=>a>b, "<": (a,b)=>a<b, ">=": (a,b)=>a>=b, "<=": (a,b)=>a<=b, "=": (a,b)=>a===b, "≠": (a,b)=>a!==b,
+  ">": (a,b)=>a>b, "<": (a,b)=>a<b, ">=": (a,b)=>a>=b, "<=": (a,b)=>a<=b, "=": (a,b)=>a===b, "â‰ ": (a,b)=>a!==b,
   // "a" di sini adalah ARRAY kode broker (top 3 beli/jual), "b" adalah
   // kode broker yang diketik user (sudah di-uppercase di ruleRawValue).
   "contains": (a,b)=> Array.isArray(a) && a.includes(b),
@@ -4646,10 +4646,10 @@ function ruleMetricValue(s, key){
   if(v===undefined || v===null || v==="" || isNaN(v)) return null;
   return Number(v);
 }
-// Sama seperti ruleMetricValue, tapi untuk field KATEGORI (teks) — tidak
+// Sama seperti ruleMetricValue, tapi untuk field KATEGORI (teks) â€” tidak
 // dipaksa jadi angka, cukup dikembalikan apa adanya (atau null kalau kosong).
 // Juga menangani field BROKER (top3BuyBrokers/top3SellBrokers), yang bukan
-// properti langsung di objek saham `s` — datanya diambil dari
+// properti langsung di objek saham `s` â€” datanya diambil dari
 // state.top3BrokerData (hasil loadTop3BrokerData(), keyed by ticker).
 function ruleRawValue(s, key){
   if(key === "top3BuyBrokers" || key === "top3SellBrokers"){
@@ -4663,7 +4663,7 @@ function ruleRawValue(s, key){
 }
 // Deskripsi 1 baris rule kustom dalam bahasa manusia, mis. "Price > 1"
 // atau "1 Day Price Returns (%) > -15" atau (bandingkan 2 metrik dengan
-// pengali) "Frequency > 5 × Frequency Analyzer".
+// pengali) "Frequency > 5 Ã— Frequency Analyzer".
 function ruleDescription(rule){
   const aLabel = ruleMetricLabel(rule.aKey);
   if(rule.op === "between"){
@@ -4674,11 +4674,11 @@ function ruleDescription(rule){
   }
   const bLabel = ruleMetricLabel(rule.bKey);
   const mult = Number(rule.mult);
-  const multPart = (mult && mult !== 1) ? `${rule.mult} × ` : "";
+  const multPart = (mult && mult !== 1) ? `${rule.mult} Ã— ` : "";
   return `${aLabel} ${rule.op} ${multPart}${bLabel}`;
 }
 // Ringkasan screener/preset yang SEDANG AKTIF saat user klik "Simpan ke
-// Backtest" — dipakai supaya kolom Sumber & Kriteria di tab Backtest
+// Backtest" â€” dipakai supaya kolom Sumber & Kriteria di tab Backtest
 // menunjukkan preset/rule apa yang menghasilkan tiap entry, bukan cuma
 // label generik "Screener" seperti sebelumnya.
 function getActiveScreenerContext(){
@@ -4708,7 +4708,7 @@ function getActiveScreenerContext(){
   };
 }
 function evalCustomRule(s, rule){
-  // Field broker (top 3 broker beli/jual) — dibandingkan pakai
+  // Field broker (top 3 broker beli/jual) â€” dibandingkan pakai
   // "contains" / "!contains" terhadap kode broker bebas yang diketik user
   // (rule.bConst), bukan angka atau pilihan tetap.
   if(isBrokerMetric(rule.aKey)){
@@ -4720,20 +4720,20 @@ function evalCustomRule(s, rule){
     if(!needle) return false;
     return cmp(aVal, needle);
   }
-  // Field kategori (teks) — hanya boleh dibandingkan "=" / "≠" terhadap
+  // Field kategori (teks) â€” hanya boleh dibandingkan "=" / "â‰ " terhadap
   // salah satu pilihan tetap (rule.bConst), tidak bisa dikali/dibandingkan
   // ke metrik lain karena tidak ada artinya untuk teks.
   if(isCategoryMetric(rule.aKey)){
     const aVal = ruleRawValue(s, rule.aKey);
     if(aVal===null) return false;
     const cmp = RULE_OPS[rule.op];
-    if(!cmp || (rule.op !== "=" && rule.op !== "≠")) return false;
+    if(!cmp || (rule.op !== "=" && rule.op !== "â‰ ")) return false;
     return cmp(String(aVal), String(rule.bConst));
   }
   const aVal = ruleMetricValue(s, rule.aKey);
   if(aVal===null) return false;
   // "between" (mis. RSI21 antara 50-70, meniru filter "Between" di
-  // screener Stockbit) — selalu 2 angka tetap, tidak bisa dibandingkan ke
+  // screener Stockbit) â€” selalu 2 angka tetap, tidak bisa dibandingkan ke
   // metrik lain, jadi ditangani terpisah dari cmp(a,b) generik di bawah.
   if(rule.op === "between"){
     const lo = parseFloat(rule.bConstMin);
@@ -4759,7 +4759,7 @@ function saveCustomRules(){ localStorage.setItem(LS_CUSTOM_RULES, JSON.stringify
 // ==========================================
 // PRESET SCREENER KUSTOM (tabel custom_presets di Supabase)
 //
-// Beda dengan "Screener DSI" (state.activePreset, hardcoded di kode) —
+// Beda dengan "Screener DSI" (state.activePreset, hardcoded di kode) â€”
 // ini preset Rules Kustom buatan user sendiri, disimpan ke Supabase
 // supaya bisa dipanggil lagi kapan saja / dari device lain, mirip
 // fitur "Preset" di Edit Screener Stockbit.
@@ -4791,11 +4791,11 @@ async function saveCurrentAsPreset(){
   if(name === null) return;
   const trimmed = name.trim();
   if(!trimmed){ alert("Nama preset tidak boleh kosong."); return; }
-  // Nama harus unik antar preset — kalau sudah dipakai preset lain, tolak
+  // Nama harus unik antar preset â€” kalau sudah dipakai preset lain, tolak
   // di sisi client dulu (lebih cepat & pesannya lebih jelas) sebelum
   // sempat kirim ke Supabase.
   if(isPresetNameTaken(trimmed)){
-    alert(`Nama preset "${trimmed}" sudah dipakai. Pilih nama lain, atau kalau maksudnya mengubah preset yang sudah ada, pilih presetnya di dropdown "Preset Tersimpan" lalu klik "🔄 Update Preset".`);
+    alert(`Nama preset "${trimmed}" sudah dipakai. Pilih nama lain, atau kalau maksudnya mengubah preset yang sudah ada, pilih presetnya di dropdown "Preset Tersimpan" lalu klik "ðŸ”„ Update Preset".`);
     return;
   }
 
@@ -4820,13 +4820,13 @@ async function saveCurrentAsPreset(){
 // Simpan ULANG rule kustom yang sedang aktif ke preset yang SEDANG DIPILIH
 // di dropdown "Preset Tersimpan" (bukan bikin preset baru). Ini yang
 // dipakai kalau user memuat preset lama, menambah/mengubah kriteria, lalu
-// mau menimpa preset yang sama — tanpa harus "Simpan sebagai Preset..."
+// mau menimpa preset yang sama â€” tanpa harus "Simpan sebagai Preset..."
 // dengan nama baru setiap kali.
 async function updateSelectedPreset(){
   if(!SUPABASE_URL || !SUPABASE_KEY){ openSettings(); return; }
   const preset = state.customPresets.find(p => String(p.id) === String(state.selectedPresetId));
   if(!preset){ alert("Pilih dulu preset yang mau diupdate dari dropdown \"Preset Tersimpan\"."); return; }
-  if(!state.customRules.length){ alert("Rules Kustom kosong — tidak ada yang bisa disimpan ke preset."); return; }
+  if(!state.customRules.length){ alert("Rules Kustom kosong â€” tidak ada yang bisa disimpan ke preset."); return; }
 
   const name = prompt("Nama preset (boleh diganti, atau biarkan sama):", preset.name || "");
   if(name === null) return;
@@ -4860,7 +4860,7 @@ function loadSelectedPreset(){
   state.customRules = rules.map(r => ({ ...r, id: "r" + Date.now() + "_" + (ruleIdCounter++) }));
   saveCustomRules();
   state.page = 1;
-  // Otomatis collapse panel Rules Kustom setelah preset dimuat — biar tidak
+  // Otomatis collapse panel Rules Kustom setelah preset dimuat â€” biar tidak
   // langsung kelihatan 10+ baris rule tiap kali cuma mau pakai preset yang
   // sudah jadi. Tinggal klik header panel buat expand lagi kalau mau edit.
   state.ruleBuilderOpen = false;
@@ -4904,11 +4904,11 @@ function updateCustomRule(id, field, value){
   }
   // Kalau field kategori dipilih sebagai aKey, paksa bentuk rule tetap valid:
   // tidak bisa dibandingkan ke metrik lain (bType harus "const"), operator
-  // cuma "="/"≠", dan bConst harus salah satu pilihan kategori itu sendiri
+  // cuma "="/"â‰ ", dan bConst harus salah satu pilihan kategori itu sendiri
   // (bukan sisa angka/teks dari rule sebelumnya).
   if(field === "aKey" && isCategoryMetric(rule.aKey)){
     rule.bType = "const";
-    if(rule.op !== "=" && rule.op !== "≠") rule.op = "=";
+    if(rule.op !== "=" && rule.op !== "â‰ ") rule.op = "=";
     const opts = RULE_METRICS_BY_KEY[rule.aKey].options;
     if(!opts.includes(rule.bConst)) rule.bConst = opts[0];
   }
@@ -4922,15 +4922,15 @@ function updateCustomRule(id, field, value){
     if(typeof rule.bConst !== "string") rule.bConst = "";
   }
   // Kalau aKey diganti KE field numerik biasa dari kategori/broker
-  // sebelumnya, operator "="/"≠"/"contains"/"!contains" sisa boleh tetap
-  // dipakai untuk "="/"≠" (valid juga untuk angka), tapi "contains"/
+  // sebelumnya, operator "="/"â‰ "/"contains"/"!contains" sisa boleh tetap
+  // dipakai untuk "="/"â‰ " (valid juga untuk angka), tapi "contains"/
   // "!contains" harus direset karena tidak berlaku untuk angka.
   else if(field === "aKey" && !isCategoryMetric(rule.aKey) && !isBrokerMetric(rule.aKey)){
     if(rule.op === "contains" || rule.op === "!contains") rule.op = ">";
   }
   // Kalau operator diganti JADI "between": paksa bType="const" (antara 2
   // angka tetap, tidak masuk akal dibandingkan ke metrik lain) dan siapkan
-  // bConstMin/bConstMax — pakai bConst lama sebagai titik awal biar user
+  // bConstMin/bConstMax â€” pakai bConst lama sebagai titik awal biar user
   // tidak mulai dari kosong kalau sebelumnya sudah isi satu angka.
   if(field === "op" && rule.op === "between"){
     rule.bType = "const";
@@ -4951,7 +4951,7 @@ function renderRuleBuilder(){
   const numericMetrics = RULE_METRICS.filter(m => m.type !== "category" && m.type !== "broker");
   const categoryMetrics = RULE_METRICS.filter(m => m.type === "category");
   const brokerMetrics = RULE_METRICS.filter(m => m.type === "broker");
-  // Dipakai untuk dropdown "aKey" (semua field, dikelompokkan) — dan juga
+  // Dipakai untuk dropdown "aKey" (semua field, dikelompokkan) â€” dan juga
   // untuk dropdown "bKey" (cuma field ANGKA, karena membandingkan field
   // kategori/broker ke field lain tidak ada artinya).
   const metricOptions = (selected, includeExtra) => {
@@ -4961,7 +4961,7 @@ function renderRuleBuilder(){
   };
   const opLabels = { "contains":"contains", "!contains":"tidak mengandung", "between":"antara (between)" };
   const opOptions = (selected, categoryOnly, brokerOnly) => {
-    const ops = brokerOnly ? ["contains","!contains"] : categoryOnly ? ["=","≠"] : [...Object.keys(RULE_OPS).filter(op=>op!=="contains"&&op!=="!contains"), "between"];
+    const ops = brokerOnly ? ["contains","!contains"] : categoryOnly ? ["=","â‰ "] : [...Object.keys(RULE_OPS).filter(op=>op!=="contains"&&op!=="!contains"), "between"];
     return ops.map(op=>`<option value="${op}" ${selected===op?'selected':''}>${opLabels[op]||op}</option>`).join("");
   };
 
@@ -4988,8 +4988,8 @@ function renderRuleBuilder(){
                  <select class="rule-select" data-rule-field="bKey" data-rule-id="${r.id}">${metricOptions(r.bKey, false)}</select>`
             )
       }
-      ${(isCat || isBroker || r.op === "between") ? "" : `<button type="button" class="rule-btype-toggle" data-rule-field="toggleBType" data-rule-id="${r.id}" title="${r.bType==='const' ? 'Ganti jadi: bandingkan dengan metrik lain' : 'Ganti jadi: bandingkan dengan angka tetap'}">${r.bType==='const' ? '🔢' : '📊'}</button>`}
-      <button type="button" class="rule-del" data-rule-del="${r.id}" title="Hapus rule">✕</button>
+      ${(isCat || isBroker || r.op === "between") ? "" : `<button type="button" class="rule-btype-toggle" data-rule-field="toggleBType" data-rule-id="${r.id}" title="${r.bType==='const' ? 'Ganti jadi: bandingkan dengan metrik lain' : 'Ganti jadi: bandingkan dengan angka tetap'}">${r.bType==='const' ? 'ðŸ”¢' : 'ðŸ“Š'}</button>`}
+      <button type="button" class="rule-del" data-rule-del="${r.id}" title="Hapus rule">âœ•</button>
     </div>
   `;
   }).join("");
@@ -5002,36 +5002,36 @@ function renderRuleBuilder(){
     <div class="panel" style="margin-bottom:16px;">
       <div class="filter-section-title" id="ruleBuilderToggle" style="cursor:pointer;display:flex;align-items:center;justify-content:space-between;gap:10px;user-select:none;">
         <span style="display:flex;align-items:center;gap:8px;">
-          <span style="display:inline-block;transition:transform .15s;transform:rotate(${state.ruleBuilderOpen?90:0}deg);">▶</span>
+          <span style="display:inline-block;transition:transform .15s;transform:rotate(${state.ruleBuilderOpen?90:0}deg);">â–¶</span>
           Rules Kustom (mirip Edit Screener Stockbit)
         </span>
         <span class="line" style="flex:1;"></span>
         ${state.customRules.length ? `<span style="font-size:11.5px;color:var(--muted);font-weight:400;text-transform:none;letter-spacing:0;white-space:nowrap;">${state.customRules.length} rule aktif</span>` : ""}
       </div>
       ${state.ruleBuilderOpen ? `
-      <div class="rule-list">${rows || '<div style="color:var(--muted);font-size:13px;padding:6px 0 2px;">Belum ada rule kustom. Klik "+ Tambah Rule" untuk mulai — mis. "Frequency &gt; 5 &times; Frequency Analyzer".</div>'}</div>
+      <div class="rule-list">${rows || '<div style="color:var(--muted);font-size:13px;padding:6px 0 2px;">Belum ada rule kustom. Klik "+ Tambah Rule" untuk mulai â€” mis. "Frequency &gt; 5 &times; Frequency Analyzer".</div>'}</div>
       <div style="display:flex;align-items:center;gap:12px;margin-top:12px;flex-wrap:wrap;">
         <button type="button" class="btn btn-outline" id="addRuleBtn">+ Tambah Rule</button>
-        <button type="button" class="btn btn-outline" id="savePresetBtn" ${state.presetsLoading?'disabled':''}>💾 Simpan sebagai Preset...</button>
-        ${state.customRules.length ? `<span style="font-size:12px;color:var(--muted);">${state.customRules.length} rule aktif — otomatis diterapkan ke tabel di bawah (AND, semua harus terpenuhi).</span>` : ""}
+        <button type="button" class="btn btn-outline" id="savePresetBtn" ${state.presetsLoading?'disabled':''}>ðŸ’¾ Simpan sebagai Preset...</button>
+        ${state.customRules.length ? `<span style="font-size:12px;color:var(--muted);">${state.customRules.length} rule aktif â€” otomatis diterapkan ke tabel di bawah (AND, semua harus terpenuhi).</span>` : ""}
       </div>` : ""}
       <div style="display:flex;align-items:center;gap:10px;margin-top:14px;flex-wrap:wrap;padding-top:12px;border-top:1px solid var(--border);">
         <label style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;">Preset Tersimpan</label>
         <select id="presetSelect" style="background:rgba(0,0,0,0.2);border:1px solid var(--border);color:var(--text);font-size:12.5px;border-radius:7px;padding:8px 9px;min-width:220px;flex:1;max-width:320px;">
-          <option value="">${state.customPresets.length ? '— pilih preset —' : 'Belum ada preset tersimpan'}</option>
+          <option value="">${state.customPresets.length ? 'â€” pilih preset â€”' : 'Belum ada preset tersimpan'}</option>
           ${presetOptions}
         </select>
-        <button type="button" class="btn btn-outline" id="loadPresetBtn" ${!state.selectedPresetId || state.presetsLoading ? 'disabled' : ''} title="Muat rule dari preset ini (menimpa rule kustom yang aktif)">📥 Muat</button>
-        <button type="button" class="btn btn-outline" id="updatePresetBtn" ${!state.selectedPresetId || !state.customRules.length || state.presetsLoading ? 'disabled' : ''} title="Timpa preset ini dengan Rules Kustom yang sedang aktif — tidak perlu simpan dengan nama baru" style="color:#34d399;border-color:rgba(16,185,129,0.35);">🔄 Update Preset</button>
-        <button type="button" class="btn btn-outline" id="deletePresetBtn" ${!state.selectedPresetId || state.presetsLoading ? 'disabled' : ''} title="Hapus preset ini" style="color:#f87171;border-color:rgba(239,68,68,0.3);">🗑️ Hapus</button>
+        <button type="button" class="btn btn-outline" id="loadPresetBtn" ${!state.selectedPresetId || state.presetsLoading ? 'disabled' : ''} title="Muat rule dari preset ini (menimpa rule kustom yang aktif)">ðŸ“¥ Muat</button>
+        <button type="button" class="btn btn-outline" id="updatePresetBtn" ${!state.selectedPresetId || !state.customRules.length || state.presetsLoading ? 'disabled' : ''} title="Timpa preset ini dengan Rules Kustom yang sedang aktif â€” tidak perlu simpan dengan nama baru" style="color:#34d399;border-color:rgba(16,185,129,0.35);">ðŸ”„ Update Preset</button>
+        <button type="button" class="btn btn-outline" id="deletePresetBtn" ${!state.selectedPresetId || state.presetsLoading ? 'disabled' : ''} title="Hapus preset ini" style="color:#f87171;border-color:rgba(239,68,68,0.3);">ðŸ—‘ï¸ Hapus</button>
       </div>
     </div>
   `;
 }
 
-// Kolom yang tampil DEFAULT — cukup untuk overview cepat tanpa scroll
+// Kolom yang tampil DEFAULT â€” cukup untuk overview cepat tanpa scroll
 // horizontal panjang. Sisanya disembunyikan sampai dipilih lewat panel
-// "🧩 Kolom", supaya tabel nyaman dilihat begitu halaman dibuka.
+// "ðŸ§© Kolom", supaya tabel nyaman dilihat begitu halaman dibuka.
 const DEFAULT_VISIBLE_COLS = [
   "sektor", "baggerScoreTotal", "stockbitLive", "cClose", "changePct", "cVol", "frequency",
   "per", "pbv", "roe", "divYield", "valuasi",
@@ -5047,7 +5047,7 @@ function renderScreener(){
   const filtered = getFiltered();
   const sorted = getSorted(filtered);
 
-  // Default Periode Dari–Sampai untuk tombol "Tarik Data Stockbit" di toolbar
+  // Default Periode Dariâ€“Sampai untuk tombol "Tarik Data Stockbit" di toolbar
   // Screener (state sama dengan yang dipakai tab Broker Summary, jadi kalau
   // diubah di sini otomatis kepakai juga di sana, dan sebaliknya).
   if(!state.bsAutoBulkFrom || !state.bsAutoBulkTo){
@@ -5084,7 +5084,7 @@ function renderScreener(){
     if(sortable === false) return `<th class="${freezeClass}" style="${freezeStyle}">${label}</th>`;
     let icon = `<span class="sort-icon"></span>`;
     if (state.sort.col === col) {
-      icon = `<span class="sort-icon">${state.sort.asc ? '▲' : '▼'}</span>`;
+      icon = `<span class="sort-icon">${state.sort.asc ? 'â–²' : 'â–¼'}</span>`;
     }
     return `<th class="sortable ${freezeClass}" data-sort="${col}" style="${freezeStyle}">${label} ${icon}</th>`;
   };
@@ -5111,7 +5111,7 @@ function renderScreener(){
       <td class="col-freeze" style="width:${FREEZE_W.chk}px;left:${FREEZE_LEFT.chk}px;"><input type="checkbox" class="custom-checkbox chk-row" data-check="${s.ticker}" ${state.selectedForBacktest.has(s.ticker)?'checked':''}></td>   <td class="col-freeze" style="width:${FREEZE_W.star}px;left:${FREEZE_LEFT.star}px;"><button class="star-btn" data-fav="${s.ticker}">
         <svg width="16" height="16" viewBox="0 0 24 24" fill="${state.watchlist.has(s.ticker)?'var(--gold)':'none'}" stroke="${state.watchlist.has(s.ticker)?'var(--gold)':'var(--muted)'}" stroke-width="2.5" style="filter: ${state.watchlist.has(s.ticker)?'drop-shadow(0 0 3px rgba(245,158,11,0.5))':'none'};"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>
       </button></td>
-      <td class="ticker-cell col-freeze col-freeze-shadow" style="width:${FREEZE_W.ticker}px;left:${FREEZE_LEFT.ticker}px;"><button class="ticker-link" data-detail="${s.ticker}" title="Lihat detail ${s.ticker}">${s.ticker}</button>${s.uangGedeMasuk==="Ya" ? ' <span title="Indikasi uang gede masuk">💰</span>' : ''}</td>
+      <td class="ticker-cell col-freeze col-freeze-shadow" style="width:${FREEZE_W.ticker}px;left:${FREEZE_LEFT.ticker}px;"><button class="ticker-link" data-detail="${s.ticker}" title="Lihat detail ${s.ticker}">${s.ticker}</button>${s.uangGedeMasuk==="Ya" ? ' <span title="Indikasi uang gede masuk">ðŸ’°</span>' : ''}</td>
       ${bodyCells}
       <td>
         <div style="display:flex; gap: 8px;">
@@ -5131,16 +5131,16 @@ function renderScreener(){
         <div class="field" style="flex:1 1 100%;min-width:0;">
           <label>Screener DSI (Preset Siap Pakai)</label>
           <div style="display:flex; gap:10px; flex-wrap:wrap; width:100%;">
-            <button class="pill ${state.activePreset === 'bagger' ? 'pill-up' : 'pill-muted'}" onclick="state.activePreset = state.activePreset === 'bagger' ? null : 'bagger'; state.page=1; render();" title="Skor komposit dari formula_screening_saham_bagger.md: Fundamental 40% + Momentum Teknikal 35% + Volume/Smart Money 25%, total ≥75" style="font-weight:700;box-shadow:0 0 10px rgba(16,185,129,0.15);">🎯 Skor Bagger ≥75</button>
+            <button class="pill ${state.activePreset === 'bagger' ? 'pill-up' : 'pill-muted'}" onclick="state.activePreset = state.activePreset === 'bagger' ? null : 'bagger'; state.page=1; render();" title="Skor komposit dari formula_screening_saham_bagger.md: Fundamental 40% + Momentum Teknikal 35% + Volume/Smart Money 25%, total â‰¥75" style="font-weight:700;box-shadow:0 0 10px rgba(16,185,129,0.15);">ðŸŽ¯ Skor Bagger â‰¥75</button>
             <button class="pill ${state.activePreset === 'eri' ? 'pill-gold' : 'pill-muted'}" onclick="state.activePreset = state.activePreset === 'eri' ? null : 'eri'; state.page=1; render();">Eri Ginanjar</button>
             <button class="pill ${state.activePreset === 'rsicross' ? 'pill-gold' : 'pill-muted'}" onclick="state.activePreset = state.activePreset === 'rsicross' ? null : 'rsicross'; state.page=1; render();">RSI & Harga Cross</button>
             <button class="pill ${state.activePreset === 'golden' ? 'pill-gold' : 'pill-muted'}" onclick="state.activePreset = state.activePreset === 'golden' ? null : 'golden'; state.page=1; render();">Golden Cross DSI</button>
             <button class="pill ${state.activePreset === 'uptrend' ? 'pill-gold' : 'pill-muted'}" onclick="state.activePreset = state.activePreset === 'uptrend' ? null : 'uptrend'; state.page=1; render();">Super Uptrend</button>
-            <button class="pill ${state.activePreset === 'breakout' ? 'pill-up' : 'pill-muted'}" onclick="state.activePreset = state.activePreset === 'breakout' ? null : 'breakout'; state.page=1; render();">🚀 Volatility Breakout</button>
-            <button class="pill ${state.activePreset === 'pullback' ? 'pill-teal' : 'pill-muted'}" onclick="state.activePreset = state.activePreset === 'pullback' ? null : 'pullback'; state.page=1; render();">🧲 Pullback Uptrend</button>
-          <button class="pill ${state.activePreset === 'custom_bandar' ? 'pill-up' : 'pill-muted'}" onclick="state.activePreset = state.activePreset === 'custom_bandar' ? null : 'custom_bandar'; state.page=1; render();" title="Proxy dari lonjakan volume — bukan data asing resmi">🔥 BPJS (proxy volume)</button>
-          <button class="pill ${state.activePreset === 'asing_akumulasi' ? 'pill-up' : 'pill-muted'}" onclick="state.activePreset = state.activePreset === 'asing_akumulasi' ? null : 'asing_akumulasi'; state.page=1; render();" title="Net beli asing 20 hari &ge; 50M, konsisten &ge;12/20 hari, likuid &ge;5M/hari — dari data resmi IDX">🐋 Akumulasi Asing (IDX)</button>
-          <button class="pill ${state.activePreset === 'freq_spike' ? 'pill-teal' : 'pill-muted'}" onclick="state.activePreset = state.activePreset === 'freq_spike' ? null : 'freq_spike'; state.page=1; render();" title="Rasio Frekuensi &ge; 1.5x rata-rata — butuh kolom frequency/freq_ma20 di DB, kalau belum ada preset ini tidak akan menampilkan hasil">🔊 Lonjakan Frekuensi</button>
+            <button class="pill ${state.activePreset === 'breakout' ? 'pill-up' : 'pill-muted'}" onclick="state.activePreset = state.activePreset === 'breakout' ? null : 'breakout'; state.page=1; render();">ðŸš€ Volatility Breakout</button>
+            <button class="pill ${state.activePreset === 'pullback' ? 'pill-teal' : 'pill-muted'}" onclick="state.activePreset = state.activePreset === 'pullback' ? null : 'pullback'; state.page=1; render();">ðŸ§² Pullback Uptrend</button>
+          <button class="pill ${state.activePreset === 'custom_bandar' ? 'pill-up' : 'pill-muted'}" onclick="state.activePreset = state.activePreset === 'custom_bandar' ? null : 'custom_bandar'; state.page=1; render();" title="Proxy dari lonjakan volume â€” bukan data asing resmi">ðŸ”¥ BPJS (proxy volume)</button>
+          <button class="pill ${state.activePreset === 'asing_akumulasi' ? 'pill-up' : 'pill-muted'}" onclick="state.activePreset = state.activePreset === 'asing_akumulasi' ? null : 'asing_akumulasi'; state.page=1; render();" title="Net beli asing 20 hari &ge; 50M, konsisten &ge;12/20 hari, likuid &ge;5M/hari â€” dari data resmi IDX">ðŸ‹ Akumulasi Asing (IDX)</button>
+          <button class="pill ${state.activePreset === 'freq_spike' ? 'pill-teal' : 'pill-muted'}" onclick="state.activePreset = state.activePreset === 'freq_spike' ? null : 'freq_spike'; state.page=1; render();" title="Rasio Frekuensi &ge; 1.5x rata-rata â€” butuh kolom frequency/freq_ma20 di DB, kalau belum ada preset ini tidak akan menampilkan hasil">ðŸ”Š Lonjakan Frekuensi</button>
             </div>
         </div>
         <div class="field">
@@ -5159,14 +5159,14 @@ function renderScreener(){
         </div>
         <div class="field" style="flex:0 0 auto;">
           <label>&nbsp;</label>
-          <button type="button" class="btn btn-outline" id="exportScreenerBtn" style="color:#22d3ee;border-color:rgba(6,182,212,0.4);white-space:nowrap;" title="Ekspor hasil screener yang sedang difilter/diurutkan ke file Excel (.xlsx)">📊 Ekspor Excel (${sorted.length})</button>
+          <button type="button" class="btn btn-outline" id="exportScreenerBtn" style="color:#22d3ee;border-color:rgba(6,182,212,0.4);white-space:nowrap;" title="Ekspor hasil screener yang sedang difilter/diurutkan ke file Excel (.xlsx)">ðŸ“Š Ekspor Excel (${sorted.length})</button>
         </div>
         <div class="field" style="flex:0 0 auto;">
           <label>&nbsp;</label>
-          <button type="button" class="btn btn-outline" id="stockbitBulkBtn" ${state.stockbitBulkLoading ? "disabled" : ""} style="color:#f87171;border-color:rgba(239,68,68,0.4);white-space:nowrap;" title="${state.selectedForBacktest.size>0 ? 'Tarik harga/orderbook live dari Stockbit HANYA untuk saham yang dicentang' : 'Tarik harga/orderbook live dari Stockbit untuk semua saham yang lolos filter saat ini (centang baris tertentu untuk membatasi hanya itu saja)'} — butuh Token diisi di Pengaturan">
+          <button type="button" class="btn btn-outline" id="stockbitBulkBtn" ${state.stockbitBulkLoading ? "disabled" : ""} style="color:#f87171;border-color:rgba(239,68,68,0.4);white-space:nowrap;" title="${state.selectedForBacktest.size>0 ? 'Tarik harga/orderbook live dari Stockbit HANYA untuk saham yang dicentang' : 'Tarik harga/orderbook live dari Stockbit untuk semua saham yang lolos filter saat ini (centang baris tertentu untuk membatasi hanya itu saja)'} â€” butuh Token diisi di Pengaturan">
             ${state.stockbitBulkLoading
-              ? `🔴 Menarik ${state.stockbitBulkProgress?.done||0}/${state.stockbitBulkProgress?.total||0}...`
-              : (state.selectedForBacktest.size>0 ? `🔴 Live Stockbit (${state.selectedForBacktest.size} dicentang)` : `🔴 Live Stockbit (${sorted.length} lolos)`)}
+              ? `ðŸ”´ Menarik ${state.stockbitBulkProgress?.done||0}/${state.stockbitBulkProgress?.total||0}...`
+              : (state.selectedForBacktest.size>0 ? `ðŸ”´ Live Stockbit (${state.selectedForBacktest.size} dicentang)` : `ðŸ”´ Live Stockbit (${sorted.length} lolos)`)}
           </button>
         </div>
         <div class="field" style="flex:0 0 auto;">
@@ -5174,7 +5174,7 @@ function renderScreener(){
           <div style="display:flex; align-items:center; gap:8px; background:rgba(239,68,68,0.06); border:1px solid rgba(239,68,68,0.25); border-radius:8px; padding:6px 10px;">
             <label style="display:flex;align-items:center;gap:6px;font-size:12px;cursor:pointer;white-space:nowrap;margin:0;">
               <input type="checkbox" id="stockbitAutoRefreshChk" class="custom-checkbox" style="margin:0;" ${state.stockbitAutoRefresh ? "checked" : ""}>
-              🔄 Auto-refresh
+              ðŸ”„ Auto-refresh
             </label>
             <select id="stockbitAutoRefreshSec" style="background:rgba(0,0,0,0.2);border:1px solid var(--border);color:var(--text);font-size:11.5px;border-radius:6px;padding:4px 6px;">
               ${[30,60,120,300].map(s=>`<option value="${s}" ${String(state.stockbitAutoRefreshIntervalSec)===String(s)?'selected':''}>${s<60?s+'d':(s/60)+'m'}</option>`).join("")}
@@ -5182,10 +5182,10 @@ function renderScreener(){
           </div>
         </div>
         ${state.stockbitAutoRefresh && (state.selectedForBacktest.size>0 ? state.selectedForBacktest.size : sorted.length) > STOCKBIT_AUTOREFRESH_MAX_TICKERS
-          ? `<div class="field" style="flex:0 0 auto;"><label>&nbsp;</label><span style="font-size:11px;color:var(--down);white-space:nowrap;">⚠️ &gt;${STOCKBIT_AUTOREFRESH_MAX_TICKERS} saham lolos filter — auto-refresh dijeda, centang saham tertentu dulu</span></div>`
+          ? `<div class="field" style="flex:0 0 auto;"><label>&nbsp;</label><span style="font-size:11px;color:var(--down);white-space:nowrap;">âš ï¸ &gt;${STOCKBIT_AUTOREFRESH_MAX_TICKERS} saham lolos filter â€” auto-refresh dijeda, centang saham tertentu dulu</span></div>`
           : ""}
         ${(state.stockbitQuoteEndpoint||"") === STOCKBIT_DEFAULT_QUOTE_EP
-          ? `<div class="field" style="flex:0 0 auto;"><label>&nbsp;</label><span style="font-size:11px;color:var(--gold);white-space:nowrap;" title="Endpoint default diketahui SALAH (API stream/komentar, bukan API harga) — lihat catatan di Pengaturan">⚠️ Endpoint Quote masih default (belum terbukti benar)</span></div>`
+          ? `<div class="field" style="flex:0 0 auto;"><label>&nbsp;</label><span style="font-size:11px;color:var(--gold);white-space:nowrap;" title="Endpoint default diketahui SALAH (API stream/komentar, bukan API harga) â€” lihat catatan di Pengaturan">âš ï¸ Endpoint Quote masih default (belum terbukti benar)</span></div>`
           : ""}
         <div class="field" style="flex:0 0 auto;">
           <label>&nbsp;</label>
@@ -5227,7 +5227,7 @@ function renderScreener(){
               title="Tarik Historical Data (Daily) Stockbit untuk saham yang dicentang (atau semua hasil filter kalau tidak ada yang dicentang), disaring ke periode tanggal di samping">
               ${state.stockbitHistoricalBulkLoading
                 ? `Menarik ${state.stockbitHistoricalBulkProgress?.done||0}/${state.stockbitHistoricalBulkProgress?.total||0}...`
-                : (state.selectedForBacktest.size>0 ? `📅 Historical (${state.selectedForBacktest.size} dicentang)` : `📅 Historical (${sorted.length} lolos)`)}
+                : (state.selectedForBacktest.size>0 ? `ðŸ“… Historical (${state.selectedForBacktest.size} dicentang)` : `ðŸ“… Historical (${sorted.length} lolos)`)}
             </button>
           </div>
         </div>
@@ -5236,13 +5236,13 @@ function renderScreener(){
         <div style="margin:-6px 0 14px;">
           <details class="bs-bulk-results-panel" id="hdBulkResultsPanel" ${state.hdBulkResultsOpen?"open":""}>
             <summary style="cursor:pointer; font-size:11.5px; color:var(--muted); list-style:none; display:flex; align-items:center; gap:6px; user-select:none;">
-              <span class="bs-bulk-results-arrow" style="display:inline-block; transition:transform .15s; transform:rotate(${state.hdBulkResultsOpen?90:0}deg);">▶</span>
+              <span class="bs-bulk-results-arrow" style="display:inline-block; transition:transform .15s; transform:rotate(${state.hdBulkResultsOpen?90:0}deg);">â–¶</span>
               Hasil Tarik Historical Data (${state.stockbitHistoricalBulkResults.length} saham)
             </summary>
             <div class="mono" style="margin-top:8px; max-height:220px; overflow-y:auto; font-size:11.5px;">
               ${state.stockbitHistoricalBulkResults.map(r => `
                 <div style="padding:4px 0; border-bottom:1px solid var(--border); color:${r.ok ? 'var(--up)' : 'var(--down)'};">
-                  ${r.ok ? '✅' : '❌'} ${escapeHtml(r.ticker)} &middot; ${escapeHtml(r.date)} — ${escapeHtml(r.msg||"")}
+                  ${r.ok ? 'âœ…' : 'âŒ'} ${escapeHtml(r.ticker)} &middot; ${escapeHtml(r.date)} â€” ${escapeHtml(r.msg||"")}
                 </div>`).join("")}
             </div>
           </details>
@@ -5280,7 +5280,7 @@ function renderScreener(){
       </div>
 
       <button type="button" class="adv-toggle ${state.showAdvancedFilters ? 'open' : ''}" id="advToggleBtn">
-        <span class="chev">▶</span> Filter Lanjutan (Valuasi, BB Squeeze, ATR, CLV, Rentang RSI)
+        <span class="chev">â–¶</span> Filter Lanjutan (Valuasi, BB Squeeze, ATR, CLV, Rentang RSI)
       </button>
       <div class="adv-body ${state.showAdvancedFilters ? 'open' : ''}">
         <div class="filter-section">
@@ -5304,7 +5304,7 @@ function renderScreener(){
           <span class="count-badge" style="margin:0;">${filtered.length} emiten sesuai filter &middot; ${state.selectedForBacktest.size} dipilih</span>
           <label style="display:flex;align-items:center;gap:6px;font-size:12px;cursor:pointer; background:rgba(34,211,238,0.06); border:1px solid rgba(34,211,238,0.3); padding:4px 10px; border-radius:6px; color:var(--teal); font-weight:bold;">
             <input type="checkbox" id="hideGocapChk" class="custom-checkbox" onchange="render()" ${document.getElementById("hideGocapChk")?.checked ? "checked" : ""}>
-            🛡️ Sembunyikan Gocap & Suspend
+            ðŸ›¡ï¸ Sembunyikan Gocap & Suspend
           </label>
         </div>
         <div style="display:flex; gap:12px;">
@@ -5315,7 +5315,7 @@ function renderScreener(){
     </div>
 
     <div class="col-picker-wrap">
-      <button class="btn btn-outline" id="colPickerBtn">🧩 Kolom (${visibleColumns.length}/${SCREENER_COLUMNS.length})</button>
+      <button class="btn btn-outline" id="colPickerBtn">ðŸ§© Kolom (${visibleColumns.length}/${SCREENER_COLUMNS.length})</button>
       <div class="col-picker-panel ${state.colPickerOpen ? 'open' : ''}">
         <div class="col-picker-head">
           <span>Pilih kolom yang ditampilkan</span>
@@ -5323,14 +5323,14 @@ function renderScreener(){
             <button class="link-btn" data-col-preset="ringkas">Ringkas</button>
             <button class="link-btn" data-col-preset="semua">Semua</button>
             <button class="link-btn" data-col-preset="kosong">Kosongkan</button>
-            <button class="link-btn" data-col-preset="fundamental" title="Preset Fundamental">💰Fund</button>
-            <button class="link-btn" data-col-preset="teknikal" title="Preset Teknikal">📊Teknik</button>
-            <button class="link-btn" data-col-preset="bandarmologi" title="Preset Bandarmologi">🐋Bandar</button>
-            <button class="link-btn" data-col-preset="sahamSyariah" title="Preset Saham Syariah">☪️Syariah</button>
-            <button class="link-btn" data-col-preset="fundamental">💰Fund</button>
-            <button class="link-btn" data-col-preset="teknikal">📊Teknik</button>
-            <button class="link-btn" data-col-preset="bandarmologi">🐋Bandar</button>
-            <button class="link-btn" data-col-preset="sahamSyariah">☪️Syariah</button>
+            <button class="link-btn" data-col-preset="fundamental" title="Preset Fundamental">ðŸ’°Fund</button>
+            <button class="link-btn" data-col-preset="teknikal" title="Preset Teknikal">ðŸ“ŠTeknik</button>
+            <button class="link-btn" data-col-preset="bandarmologi" title="Preset Bandarmologi">ðŸ‹Bandar</button>
+            <button class="link-btn" data-col-preset="sahamSyariah" title="Preset Saham Syariah">â˜ªï¸Syariah</button>
+            <button class="link-btn" data-col-preset="fundamental">ðŸ’°Fund</button>
+            <button class="link-btn" data-col-preset="teknikal">ðŸ“ŠTeknik</button>
+            <button class="link-btn" data-col-preset="bandarmologi">ðŸ‹Bandar</button>
+            <button class="link-btn" data-col-preset="sahamSyariah">â˜ªï¸Syariah</button>
           </div>
         </div>
         ${["Umum","Harga","Fundamental","Teknikal","Bandarmologi","Analisa"].map(group => {
@@ -5350,7 +5350,7 @@ function renderScreener(){
       <table class="mono">
         <thead><tr>
           <th class="col-freeze" style="width:${FREEZE_W.chk}px;left:${FREEZE_LEFT.chk}px;"><input type="checkbox" id="chkSelectAll" class="custom-checkbox" title="Pilih Semua Hasil Filter" ${allFilteredChecked ? 'checked' : ''}></th>
-          <th class="col-freeze" style="width:${FREEZE_W.star}px;left:${FREEZE_LEFT.star}px;">★</th>
+          <th class="col-freeze" style="width:${FREEZE_W.star}px;left:${FREEZE_LEFT.star}px;">â˜…</th>
           ${th('Ticker', 'ticker', true, 'ticker')}
           ${visibleColumns.map(c => th(c.label, c.key, c.sortable)).join("")}
           <th>Aksi</th>
@@ -5380,7 +5380,7 @@ function renderBacktest(){
       </button>
     </div>
     <div class="panel" style="flex-direction:column;align-items:stretch;">
-      <h3 style="margin:0 0 16px;font-size:14px; font-weight:700;">➕ Tambah Manual ke Backtest</h3>
+      <h3 style="margin:0 0 16px;font-size:14px; font-weight:700;">âž• Tambah Manual ke Backtest</h3>
       <div class="porto-form" style="grid-template-columns:repeat(auto-fill,minmax(180px,1fr));align-items:end;">
         <div class="field"><label>Simpan ke Sesi</label><select id="btManualSession">${sessionOptions}</select></div>
         <div class="field"><label>Ticker</label><input id="btManualTicker" list="btTickerList" placeholder="BBCA" style="text-transform:uppercase;"><datalist id="btTickerList">${tickerOptions}</datalist></div>
@@ -5417,7 +5417,7 @@ function renderBacktest(){
       const kriteriaStr = item.kriteria || "-";
       const sumberPill = pillHtml(item.sumber || "Screener", item.sumber === "Manual" ? "gold" : "muted");
       // Tanggal & harga entry di bawah ini SELALU dari item yang sudah
-      // tersimpan (terkunci saat pertama kali disimpan — lihat
+      // tersimpan (terkunci saat pertama kali disimpan â€” lihat
       // saveToBacktest/addManualBacktest), tidak pernah dihitung ulang
       // dari data live. Hanya "Harga Live" & P/L yang ikut data live.
       const tglEntryStr = fmtDateID(item.entryDate);
@@ -5502,13 +5502,13 @@ function renderBacktest(){
   
 
 // ==========================================
-// TAB SEKTORAL — breakdown per sektor (jumlah naik/turun, rata-rata
+// TAB SEKTORAL â€” breakdown per sektor (jumlah naik/turun, rata-rata
 // %perubahan, breadth) + daftar saham per sektor yang bisa di-expand,
 // masing-masing menampilkan %gain/loss dan bisa diklik untuk membuka
 // detail emiten (Teknikal/Fundamental/Bandarmologi/Analisa).
 // ==========================================
 // ==========================================
-// TOP MOVERS — 10 Besar Top Gainer / Loser / Value / Volume / Frekuensi
+// TOP MOVERS â€” 10 Besar Top Gainer / Loser / Value / Volume / Frekuensi
 //
 // Ditampilkan di bagian atas tab Sektoral supaya kelihatan saham mana yang
 // paling aktif/paling bergerak hari ini di seluruh pasar (lintas sektor),
@@ -5517,11 +5517,11 @@ function renderBacktest(){
 // selalu sinkron dengan hasil "Refresh Data" terakhir.
 // ==========================================
 const MOVER_TABS = [
-  { key: "gainer",    label: "🚀 Top Gainer",    metricLabel: "%Perubahan" },
-  { key: "loser",     label: "🔻 Top Loser",     metricLabel: "%Perubahan" },
-  { key: "value",     label: "💰 Top Value",     metricLabel: "Value (Rp)" },
-  { key: "volume",    label: "📦 Top Volume",    metricLabel: "Volume (lbr)" },
-  { key: "frequency", label: "🔊 Top Frekuensi", metricLabel: "Frekuensi (x)" },
+  { key: "gainer",    label: "ðŸš€ Top Gainer",    metricLabel: "%Perubahan" },
+  { key: "loser",     label: "ðŸ”» Top Loser",     metricLabel: "%Perubahan" },
+  { key: "value",     label: "ðŸ’° Top Value",     metricLabel: "Value (Rp)" },
+  { key: "volume",    label: "ðŸ“¦ Top Volume",    metricLabel: "Volume (lbr)" },
+  { key: "frequency", label: "ðŸ”Š Top Frekuensi", metricLabel: "Frekuensi (x)" },
 ];
 
 function computeTopMovers(){
@@ -5531,7 +5531,7 @@ function computeTopMovers(){
   const byChangeDesc = withPrice.filter(s => s.changePct != null).sort((a,b)=> b.changePct - a.changePct);
   const byChangeAsc  = withPrice.filter(s => s.changePct != null).sort((a,b)=> a.changePct - b.changePct);
   // "Value" = nilai transaksi Rupiah (value_traded kalau ada, fallback ke
-  // turnover — dua-duanya representasi nilai transaksi harian di skema DB).
+  // turnover â€” dua-duanya representasi nilai transaksi harian di skema DB).
   const byValue = withPrice.filter(s => (s.valueTraded ?? s.turnover ?? 0) > 0)
     .sort((a,b)=> (b.valueTraded ?? b.turnover ?? 0) - (a.valueTraded ?? a.turnover ?? 0));
   const byVolume = withPrice.filter(s => (s.cVol||0) > 0).sort((a,b)=> (b.cVol||0) - (a.cVol||0));
@@ -5593,7 +5593,7 @@ function renderTopMovers(){
 
   return `
     <div class="panel" style="flex-direction:column;align-items:stretch;">
-      <div class="filter-section-title"><span>🔥 TOP MOVERS — 10 BESAR HARI INI</span><span class="line"></span></div>
+      <div class="filter-section-title"><span>ðŸ”¥ TOP MOVERS â€” 10 BESAR HARI INI</span><span class="line"></span></div>
       <div class="mover-tabs">${tabsHtml}</div>
       ${list.length ? `
       <div class="mover-list">
@@ -5652,7 +5652,7 @@ function sektorGroups(){
 function renderSektoral(){
   const data = enriched();
   if(!data.length){
-    return `<div class="empty-box">Belum ada data saham. Klik "Refresh Data" atau atur koneksi Supabase lewat "⚙️ Pengaturan".</div>`;
+    return `<div class="empty-box">Belum ada data saham. Klik "Refresh Data" atau atur koneksi Supabase lewat "âš™ï¸ Pengaturan".</div>`;
   }
   const groups = sektorGroups();
 
@@ -5666,15 +5666,15 @@ function renderSektoral(){
 
   return `
     <div class="panel">
-      <div class="filter-section-title"><span>📊 RINGKASAN PASAR PER SEKTOR</span><span class="line"></span></div>
+      <div class="filter-section-title"><span>ðŸ“Š RINGKASAN PASAR PER SEKTOR</span><span class="line"></span></div>
       <div class="summary-grid">
         <div class="summary-card tone-up">
           <div class="summary-lbl">Saham Naik</div>
-          <div class="summary-val" style="color:var(--up)">▲ ${overallGainers}</div>
+          <div class="summary-val" style="color:var(--up)">â–² ${overallGainers}</div>
         </div>
         <div class="summary-card tone-down">
           <div class="summary-lbl">Saham Turun</div>
-          <div class="summary-val" style="color:var(--down)">▼ ${overallLosers}</div>
+          <div class="summary-val" style="color:var(--down)">â–¼ ${overallLosers}</div>
         </div>
         <div class="summary-card">
           <div class="summary-lbl">Stagnan</div>
@@ -5731,18 +5731,18 @@ function renderSektorCard(g){
       <div class="sektor-card-head" data-sektor-toggle="${escapeHtml(g.sektor)}">
         <div class="sektor-card-title">
           <div class="sektor-name">${escapeHtml(g.sektor)}</div>
-          <div class="sektor-meta">${g.total} emiten · Turnover Rp ${fmtCap(g.totalTurnover)} · Cap Rp ${fmtCap(g.totalMarketCap)}</div>
+          <div class="sektor-meta">${g.total} emiten Â· Turnover Rp ${fmtCap(g.totalTurnover)} Â· Cap Rp ${fmtCap(g.totalMarketCap)}</div>
         </div>
         <div class="sektor-card-mid">
           <div class="sektor-avg-change mono" style="color:var(--${avgTone})">${g.avgChange!=null?dNum(g.avgChange,{plusSign:true,decimals:2,suffix:'%'}):'-'}</div>
           <div class="sektor-breadth-bar"><div class="sektor-breadth-fill" style="width:${breadthPct}%"></div></div>
-          <div class="sektor-breadth-lbl"><span style="color:var(--up)">▲${g.gainers}</span> <span style="color:var(--down)">▼${g.losers}</span> <span style="color:var(--muted)">•${g.flat}</span></div>
+          <div class="sektor-breadth-lbl"><span style="color:var(--up)">â–²${g.gainers}</span> <span style="color:var(--down)">â–¼${g.losers}</span> <span style="color:var(--muted)">â€¢${g.flat}</span></div>
         </div>
         <div class="sektor-card-extremes">
-          ${g.topGainer ? `<div title="Top Gainer">🏆 ${escapeHtml(g.topGainer.ticker)} <span style="color:var(--up)">${g.topGainer.changePct!=null?dNum(g.topGainer.changePct,{plusSign:true,decimals:2,suffix:'%'}):'-'}</span></div>` : ""}
-          ${g.topLoser ? `<div title="Top Loser">🔻 ${escapeHtml(g.topLoser.ticker)} <span style="color:var(--down)">${g.topLoser.changePct!=null?dNum(g.topLoser.changePct,{plusSign:true,decimals:2,suffix:'%'}):'-'}</span></div>` : ""}
+          ${g.topGainer ? `<div title="Top Gainer">ðŸ† ${escapeHtml(g.topGainer.ticker)} <span style="color:var(--up)">${g.topGainer.changePct!=null?dNum(g.topGainer.changePct,{plusSign:true,decimals:2,suffix:'%'}):'-'}</span></div>` : ""}
+          ${g.topLoser ? `<div title="Top Loser">ðŸ”» ${escapeHtml(g.topLoser.ticker)} <span style="color:var(--down)">${g.topLoser.changePct!=null?dNum(g.topLoser.changePct,{plusSign:true,decimals:2,suffix:'%'}):'-'}</span></div>` : ""}
         </div>
-        <button class="sektor-expand-btn" type="button" title="${isOpen?'Tutup':'Lihat semua saham'}">${isOpen?'▲':'▼'}</button>
+        <button class="sektor-expand-btn" type="button" title="${isOpen?'Tutup':'Lihat semua saham'}">${isOpen?'â–²':'â–¼'}</button>
       </div>
       ${isOpen ? `
       <div class="sektor-card-body">
@@ -5783,7 +5783,7 @@ function renderSektorStockRow(s){
 
 function renderWatchlist(){
   const rows = enriched().filter(s=>state.watchlist.has(s.ticker));
-  if(rows.length===0) return `<div class="empty-box">Belum ada saham di watchlist. Klik ikon ★ di tab Screener untuk menambahkan.</div>`;
+  if(rows.length===0) return `<div class="empty-box">Belum ada saham di watchlist. Klik ikon â˜… di tab Screener untuk menambahkan.</div>`;
   return `<div class="wl-grid">${rows.map(s=>`
     <div class="wl-card">
       <div class="wl-card-top">
@@ -5805,7 +5805,7 @@ function renderWatchlist(){
         <span>Fib 50%: <span style="color:var(--text); font-weight:600;">${fmtNum(s.fib?.f50)}</span></span>
         <span>Fib 61.8%: <span style="color:var(--text); font-weight:600;">${fmtNum(s.fib?.f618)}</span></span>
       </div>
-      <button class="btn btn-outline" style="width: 100%; justify-content:center; color: var(--teal); border-color: rgba(6,182,212,0.3);" data-chart="${s.ticker}">Lihat grafik →</button>
+      <button class="btn btn-outline" style="width: 100%; justify-content:center; color: var(--teal); border-color: rgba(6,182,212,0.3);" data-chart="${s.ticker}">Lihat grafik â†’</button>
     </div>
   `).join("")}</div>`;
 }
@@ -5816,7 +5816,7 @@ function renderPortoFormFields(){
   const f = editing || {
     ticker: prefill?.ticker || "", tglBeli: prefill?.tglBeli || "", hargaBeli: prefill?.hargaBeli || "", lotBeli: "", feeBeliPct: 0.15,
     support:"", resistance:"", fib618:"", targetTP:"", cutLoss:"",
-    tglJual:"", hargaJual:"", lotJual:"", feeJualPct:0.25, catatan: prefill ? `Dari Backtest — harga entry terkunci ${fmtNum(prefill.hargaBeli)} @ ${fmtDateID(prefill.tglBeli)}` : ""
+    tglJual:"", hargaJual:"", lotJual:"", feeJualPct:0.25, catatan: prefill ? `Dari Backtest â€” harga entry terkunci ${fmtNum(prefill.hargaBeli)} @ ${fmtDateID(prefill.tglBeli)}` : ""
   };
   const c = editing ? hitungPorto({
     hargaBeli:+f.hargaBeli||0, lotBeli:+f.lotBeli||0, feeBeliPct:+f.feeBeliPct||0,
@@ -5826,12 +5826,12 @@ function renderPortoFormFields(){
 
   const tickerOptions = [...new Set(state.stocks.map(s=>s.ticker))].map(t=>`<option value="${t}">`).join("");
 
-  document.getElementById("portoModalTitle") && (document.getElementById("portoModalTitle").textContent = editing ? "✏️ Edit Transaksi Portofolio" : "➕ Tambah Transaksi Portofolio");
+  document.getElementById("portoModalTitle") && (document.getElementById("portoModalTitle").textContent = editing ? "âœï¸ Edit Transaksi Portofolio" : "âž• Tambah Transaksi Portofolio");
 
   // Kalkulator Averaging (Hanya muncul saat Mode Edit Portofolio)
   const avgCalcHtml = editing ? `
     <div style="grid-column: 1/-1; background: rgba(34,211,238,0.05); border: 1px dashed rgba(34,211,238,0.4); border-radius: 10px; padding: 16px; margin-top: 12px;">
-      <div style="font-size: 13px; font-weight: 700; color: var(--teal); margin-bottom: 8px;">⚖️ Kalkulator Averaging (Simulasi)</div>
+      <div style="font-size: 13px; font-weight: 700; color: var(--teal); margin-bottom: 8px;">âš–ï¸ Kalkulator Averaging (Simulasi)</div>
       <div style="font-size: 11px; color: var(--muted); margin-bottom: 12px;">Masukkan skenario pembelian baru untuk melihat perubahan harga rata-rata Anda.</div>
       <div style="display:flex; gap:12px; flex-wrap:wrap;">
           <div class="field" style="flex:1;"><label>Harga Beli Baru</label><input type="number" id="avgNewPrice" placeholder="Misal: 1200" oninput="calcAveraging(${f.hargaBeli}, ${f.lotBeli})"></div>
@@ -5895,7 +5895,7 @@ function renderPortfolioStrategyStats() {
     }).join("");
     return `
     <div class="porto-stat" style="grid-column: 1 / -1; margin-top: 10px;">
-        <div class="lbl">📊 Win Rate Berdasarkan Strategi / Tipe Entry</div>
+        <div class="lbl">ðŸ“Š Win Rate Berdasarkan Strategi / Tipe Entry</div>
         <div style="margin-top:8px;">${rows}</div>
     </div>`;
 }
@@ -5910,7 +5910,7 @@ function renderPortfolio(){
   const topBar = `
     <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:12px;margin-bottom:20px;">
       <button class="btn btn-primary" id="pfOpenAddBtn">+ Tambah Transaksi Portofolio</button>
-      ${state.selectedPorto.size > 0 ? `<button class="btn btn-outline" style="color:#f87171;border-color:rgba(239,68,68,0.4);" id="pfBulkDeleteBtn">🗑 Hapus ${state.selectedPorto.size} Terpilih</button>` : ""}
+      ${state.selectedPorto.size > 0 ? `<button class="btn btn-outline" style="color:#f87171;border-color:rgba(239,68,68,0.4);" id="pfBulkDeleteBtn">ðŸ—‘ Hapus ${state.selectedPorto.size} Terpilih</button>` : ""}
     </div>`;
 
   const summary = `
@@ -5987,7 +5987,7 @@ function renderTickerPicker(){
       : `<div class="hint-text" style="color:var(--teal); font-size:12px;">Menampilkan ${candidates.length} hasil pencarian untuk "${state.chartSearch}".</div>`;
   } else if(state.watchlist.size>0){
     candidates = list.filter(s=>state.watchlist.has(s.ticker));
-    hint = `<div class="hint-text" style="color:var(--gold); font-size:12px;">Menampilkan ticker dari Watchlist ⭐. Ketik di kotak pencarian untuk mencari emiten lain.</div>`;
+    hint = `<div class="hint-text" style="color:var(--gold); font-size:12px;">Menampilkan ticker dari Watchlist â­. Ketik di kotak pencarian untuk mencari emiten lain.</div>`;
   } else {
     candidates = [];
     hint = `<div class="hint-text" style="color:var(--muted); font-size:12px;">Ketik kode ticker (mis. BBCA) di kotak pencarian di atas untuk menampilkan chart.</div>`;
@@ -6040,7 +6040,7 @@ function renderChart(){
   const chartBoxInner = state.chartLoading
     ? `<div class="empty-box" style="height:100%;display:flex;align-items:center;justify-content:center;">Memuat histori harga...</div>`
     : (!state.chartData.length
-        ? `<div class="empty-box" style="height:100%;display:flex;align-items:center;justify-content:center;">Belum ada histori harga untuk ${t} di tabel <code>flows</code> — jalankan <code>sync-flow.mjs</code> dulu.</div>`
+        ? `<div class="empty-box" style="height:100%;display:flex;align-items:center;justify-content:center;">Belum ada histori harga untuk ${t} di tabel <code>flows</code> â€” jalankan <code>sync-flow.mjs</code> dulu.</div>`
         : `<svg id="chartSvg" width="100%" height="100%" viewBox="0 0 800 300" preserveAspectRatio="none"></svg>`);
 
   return `${picker}
@@ -6112,18 +6112,18 @@ function renderSmartPickListModalContent(){
   }
   return `
     <div style="font-size:12px;color:var(--muted);margin-bottom:12px;">
-      ${escapeHtml(def.shortDesc)} — <b class="mono">${list.length}</b> saham lolos, diurutkan dari skor tertinggi.
+      ${escapeHtml(def.shortDesc)} â€” <b class="mono">${list.length}</b> saham lolos, diurutkan dari skor tertinggi.
     </div>
     <div class="table-wrap" style="max-height:60vh;">
       <table class="mono">
         <thead>
-          <tr><th>#</th><th>Kode</th><th>Sektor</th><th>Harga</th><th>Δ%</th><th>Posisi 52W</th><th>Vol Ratio</th><th>Skor</th><th></th></tr>
+          <tr><th>#</th><th>Kode</th><th>Sektor</th><th>Harga</th><th>Î”%</th><th>Posisi 52W</th><th>Vol Ratio</th><th>Skor</th><th></th></tr>
         </thead>
         <tbody>
           ${list.map((s,i)=>`
             <tr>
               <td>${i+1}</td>
-              <td class="ticker-cell">${escapeHtml(s.ticker)}${s.strong?' <span title="Sinyal Kuat">🔥</span>':''}${s.stockbitVerified?' <span title="Volume spike tervalidasi Value (Rp) riil dari Stockbit, bukan cuma rasio volume lembar">💠</span>':''}</td>
+              <td class="ticker-cell">${escapeHtml(s.ticker)}${s.strong?' <span title="Sinyal Kuat">ðŸ”¥</span>':''}${s.stockbitVerified?' <span title="Volume spike tervalidasi Value (Rp) riil dari Stockbit, bukan cuma rasio volume lembar">ðŸ’ </span>':''}</td>
               <td style="white-space:normal;max-width:160px;font-family:'Sora',sans-serif;">${escapeHtml(s.sektor||"-")}</td>
               <td>Rp${fmtNum(Math.round(s.price||0))}</td>
               <td style="font-weight:700;color:${(s.changePct||0)>=0?'var(--up)':'var(--down)'};">${(s.changePct||0)>=0?"+":""}${(s.changePct||0).toFixed(1)}%</td>
@@ -6145,7 +6145,7 @@ function renderSmartPickCard(def){
     <div class="sp-card">
       <div class="sp-card-head">
         <div class="sp-card-title">${def.icon} ${escapeHtml(def.title)}</div>
-        <button type="button" class="sp-crit-toggle ${open?'open':''}" data-sp-toggle="${def.id}">Kriteria <span class="chev">▾</span></button>
+        <button type="button" class="sp-crit-toggle ${open?'open':''}" data-sp-toggle="${def.id}">Kriteria <span class="chev">â–¾</span></button>
       </div>
       <div class="sp-card-desc">${escapeHtml(def.shortDesc)}</div>
       <div class="sp-card-count">
@@ -6153,10 +6153,10 @@ function renderSmartPickCard(def){
       </div>
       ${matches.length ? `
       <div class="sp-card-tickers">
-        ${matches.slice(0,6).map(m=>`<button type="button" class="sp-ticker-chip ${m.strong?'strong':''}" data-sp-ticker="${m.ticker}" title="Skor ${m.score.toFixed(0)}${m.strong?' · Sinyal Kuat 🔥':''}${m.stockbitVerified?' · Value Stockbit terverifikasi 💠':''}">${escapeHtml(m.ticker)}${m.strong?' 🔥':''}${m.stockbitVerified?' 💠':''}</button>`).join("")}
+        ${matches.slice(0,6).map(m=>`<button type="button" class="sp-ticker-chip ${m.strong?'strong':''}" data-sp-ticker="${m.ticker}" title="Skor ${m.score.toFixed(0)}${m.strong?' Â· Sinyal Kuat ðŸ”¥':''}${m.stockbitVerified?' Â· Value Stockbit terverifikasi ðŸ’ ':''}">${escapeHtml(m.ticker)}${m.strong?' ðŸ”¥':''}${m.stockbitVerified?' ðŸ’ ':''}</button>`).join("")}
         ${matches.length>6?`<span class="sp-ticker-more">+${matches.length-6} lagi</span>`:""}
       </div>
-      <button type="button" class="btn btn-outline sp-viewall-btn" data-sp-viewall="${def.id}">📋 Lihat Daftar Lengkap (${matches.length})</button>` : ""}
+      <button type="button" class="btn btn-outline sp-viewall-btn" data-sp-viewall="${def.id}">ðŸ“‹ Lihat Daftar Lengkap (${matches.length})</button>` : ""}
       <div class="sp-crit-panel ${open?'open':''}">
         <div class="sp-crit-grid">
           ${spCriteriaBox("Definisi", def.definisi)}
@@ -6189,7 +6189,7 @@ function renderSmartPick(){
 
   return `
     <div class="panel" style="margin-bottom:16px;">
-      <div class="filter-section-title">✨ Smart Pick <span class="pill pill-teal" style="margin-left:8px;">AI SCREENER</span><span class="line"></span></div>
+      <div class="filter-section-title">âœ¨ Smart Pick <span class="pill pill-teal" style="margin-left:8px;">AI SCREENER</span><span class="line"></span></div>
       <div style="font-size:12px;color:var(--muted);margin-bottom:14px;">
         5 sinyal siap pakai, dihitung otomatis dari data live saat ini (rule-based, bukan model AI beneran). Klik "Kriteria" di tiap kartu untuk lihat definisi & cara skornya.
       </div>
@@ -6199,18 +6199,18 @@ function renderSmartPick(){
     <div class="panel">
       <button type="button" class="sp-recap-header" id="spRecapHeader">
         <div>
-          <div class="filter-section-title" style="margin-bottom:2px;">📌 Rekap &amp; Share Signal</div>
+          <div class="filter-section-title" style="margin-bottom:2px;">ðŸ“Œ Rekap &amp; Share Signal</div>
           <div style="font-size:11.5px;color:var(--muted);font-weight:400;">Performa tiap signal sejak finalisasi + lacak win rate</div>
         </div>
-        <span class="chev sp-recap-chev ${state.spRecapCollapsed?'':'open'}">▾</span>
+        <span class="chev sp-recap-chev ${state.spRecapCollapsed?'':'open'}">â–¾</span>
       </button>
       <div class="sp-recap-body ${state.spRecapCollapsed?'':'open'}">
         <div class="sp-finalize-bar">
           <div>
             <div style="font-weight:700;font-size:13px;">FINALISASI HARI INI</div>
-            <div style="font-size:11px;color:var(--muted);">Klik setelah market close — dikunci ke tanggal data${alreadyToday?" (sudah difinalisasi hari ini)":""}</div>
+            <div style="font-size:11px;color:var(--muted);">Klik setelah market close â€” dikunci ke tanggal data${alreadyToday?" (sudah difinalisasi hari ini)":""}</div>
           </div>
-          <button type="button" class="btn btn-primary" id="spFinalizeBtn" ${state.spFinalizing?"disabled":""}>${state.spFinalizing?"Memproses...":"✓ Finalisasi Signal (EOD)"}</button>
+          <button type="button" class="btn btn-primary" id="spFinalizeBtn" ${state.spFinalizing?"disabled":""}>${state.spFinalizing?"Memproses...":"âœ“ Finalisasi Signal (EOD)"}</button>
         </div>
         ${state.spMsg?`<div class="bs-msg ${state.spMsgError?'bs-msg-error':'bs-msg-ok'}" style="margin-top:8px;">${escapeHtml(state.spMsg)}</div>`:""}
 
@@ -6223,7 +6223,7 @@ function renderSmartPick(){
           <input type="date" id="spFromInput" class="bs-input" value="${state.spFrom||""}">
           <span style="font-size:11px;color:var(--muted);">s/d</span>
           <input type="date" id="spToInput" class="bs-input" value="${state.spTo||""}">
-          <button type="button" class="btn btn-outline" id="spRefreshBtn" title="Muat ulang riwayat">🔄</button>
+          <button type="button" class="btn btn-outline" id="spRefreshBtn" title="Muat ulang riwayat">ðŸ”„</button>
         </div>
 
         <div class="summary-grid" style="margin-top:14px;">
@@ -6245,60 +6245,60 @@ function renderSmartPick(){
           rows.length ? `
           <div class="table-wrap" style="margin-top:14px;">
             <table class="mono">
-              <thead><tr><th>Kode</th><th>Signal</th><th>Muncul</th><th>Entry</th><th>Now</th><th>Δ%</th><th>Hari</th></tr></thead>
+              <thead><tr><th>Kode</th><th>Signal</th><th>Muncul</th><th>Entry</th><th>Now</th><th>Î”%</th><th>Hari</th></tr></thead>
               <tbody>${tableRows}</tbody>
             </table>
-          </div>` : `<div class="empty-box" style="margin-top:14px;">Belum ada riwayat sinyal${!SUPABASE_URL?" (Supabase belum dikonfigurasi)":""}. Klik "✓ Finalisasi Signal (EOD)" di atas — idealnya setelah market close — untuk mulai melacak performa.</div>`}
+          </div>` : `<div class="empty-box" style="margin-top:14px;">Belum ada riwayat sinyal${!SUPABASE_URL?" (Supabase belum dikonfigurasi)":""}. Klik "âœ“ Finalisasi Signal (EOD)" di atas â€” idealnya setelah market close â€” untuk mulai melacak performa.</div>`}
       </div>
     </div>
   `;
 }
 
 // ==========================================
-// Panduan tab "ℹ️ Info" — SATU sumber kebenaran untuk daftar fitur yang
+// Panduan tab "â„¹ï¸ Info" â€” SATU sumber kebenaran untuk daftar fitur yang
 // ditampilkan ke user. Kalau nambah tab baru atau ubah cakupan fitur
 // besar, update array ini juga supaya halaman Info tidak kembali basi
 // (versi lama cuma menyebut 6 hal dari puluhan fitur yang sudah ada).
 // ==========================================
 const ABOUT_TAB_GUIDE = [
-  { icon:"📋", title:"Screener", tone:"teal",
-    desc:"Tabel utama semua saham IHSG dengan filter teknikal &amp; fundamental siap pakai, preset DSI (Eri Ginanjar, RSI Cross, Golden Cross, Super Uptrend, Volatility Breakout, Pullback Uptrend), plus Rule Builder kustom untuk menyusun kombinasi filter sendiri (mirip \"Edit Screener\" Stockbit) — bisa disimpan sebagai preset pribadi.",
+  { icon:"ðŸ“‹", title:"Screener", tone:"teal",
+    desc:"Tabel utama semua saham IHSG dengan filter teknikal &amp; fundamental siap pakai, preset DSI (Eri Ginanjar, RSI Cross, Golden Cross, Super Uptrend, Volatility Breakout, Pullback Uptrend), plus Rule Builder kustom untuk menyusun kombinasi filter sendiri (mirip \"Edit Screener\" Stockbit) â€” bisa disimpan sebagai preset pribadi.",
     catatan:"Rule Builder saat ini menggabungkan semua rule dengan AND (seluruh syarat harus terpenuhi bersamaan, belum ada OR/grouping)." },
-  { icon:"✨", title:"Smart Pick", tone:"gold",
-    desc:"5 sinyal siap pakai — Area Demand, Throwback/Retest Breakout, Liquidity Sweep, Bull Divergence, Early Breakout — dihitung dari data live yang sama dengan Screener. Tombol \"Finalisasi Signal (EOD)\" mengunci snapshot harian ke database supaya win-rate &amp; rata-rata return tiap sinyal bisa dilacak dari waktu ke waktu.",
-    catatan:"Ini scoring rule-based dari data yang sudah ada, bukan model AI/machine learning — hasil bisa berubah tiap refresh sebelum difinalisasi." },
-  { icon:"🏢", title:"Sektoral", tone:"teal",
+  { icon:"âœ¨", title:"Smart Pick", tone:"gold",
+    desc:"5 sinyal siap pakai â€” Area Demand, Throwback/Retest Breakout, Liquidity Sweep, Bull Divergence, Early Breakout â€” dihitung dari data live yang sama dengan Screener. Tombol \"Finalisasi Signal (EOD)\" mengunci snapshot harian ke database supaya win-rate &amp; rata-rata return tiap sinyal bisa dilacak dari waktu ke waktu.",
+    catatan:"Ini scoring rule-based dari data yang sudah ada, bukan model AI/machine learning â€” hasil bisa berubah tiap refresh sebelum difinalisasi." },
+  { icon:"ðŸ¢", title:"Sektoral", tone:"teal",
     desc:"Saham dikelompokkan per sektor, lengkap dengan panel Top Movers (Gainer / Loser / Value / Volume / Frequency) 10 besar hari ini." },
-  { icon:"⭐", title:"Watchlist", tone:"muted",
+  { icon:"â­", title:"Watchlist", tone:"muted",
     desc:"Kumpulan saham yang ditandai bintang dari tab manapun. Tersimpan otomatis di penyimpanan browser (localStorage) perangkat ini, dan disinkronkan ke Supabase kalau koneksi aktif." },
-  { icon:"🔬", title:"Backtest", tone:"teal",
+  { icon:"ðŸ”¬", title:"Backtest", tone:"teal",
     desc:"Catat sesi backtest manual (harga entry, tanggal, keterangan) per saham lalu bandingkan hasilnya dari waktu ke waktu. Bisa diekspor ke Excel per sesi atau digabung semua sekaligus." },
-  { icon:"💼", title:"Portofolio", tone:"up",
+  { icon:"ðŸ’¼", title:"Portofolio", tone:"up",
     desc:"Pencatatan transaksi beli/jual saham nyata beserta kalkulasi P&amp;L. Bisa diisi otomatis dari saham yang lolos Screener atau dari item Backtest." },
-  { icon:"📈", title:"Grafik", tone:"teal",
+  { icon:"ðŸ“ˆ", title:"Grafik", tone:"teal",
     desc:"Chart harga per saham (digambar langsung di aplikasi ini, tanpa library chart eksternal), plus tautan cepat ke TradingView dan Stockbit untuk analisis lebih lanjut." },
-  { icon:"📊", title:"Broker Summary", tone:"gold",
-    desc:"Top 5 broker beli/jual per saham per hari — diketik manual atau ditempel dari CSV berdasarkan data akun Stockbit Anda sendiri, lalu disimpan supaya bisa dipakai fitur lain (Target Bandar, Entry Price Scanner).",
-    catatan:"BUKAN hasil scraping otomatis dari Stockbit — datanya sepenuhnya bergantung pada apa yang Anda masukkan sendiri, jadi seakurat dan serutin Anda mengisinya." },
-  { icon:"🎯", title:"Target Bandar", tone:"up",
-    desc:"Dibangun di atas data Broker Summary: agregasi top bandar per emiten, kalkulator target harga (rata-rata harga bandar + ATR14 → level target R1/Max), dan ringkasan hit-rate dari kalkulasi sebelumnya dibanding harga aktual." },
-  { icon:"🕵️", title:"Entry Price Scanner", tone:"gold",
+  { icon:"ðŸ“Š", title:"Broker Summary", tone:"gold",
+    desc:"Top 5 broker beli/jual per saham per hari â€” diketik manual atau ditempel dari CSV berdasarkan data akun Stockbit Anda sendiri, lalu disimpan supaya bisa dipakai fitur lain (Target Bandar, Entry Price Scanner).",
+    catatan:"BUKAN hasil scraping otomatis dari Stockbit â€” datanya sepenuhnya bergantung pada apa yang Anda masukkan sendiri, jadi seakurat dan serutin Anda mengisinya." },
+  { icon:"ðŸŽ¯", title:"Target Bandar", tone:"up",
+    desc:"Dibangun di atas data Broker Summary: agregasi top bandar per emiten, kalkulator target harga (rata-rata harga bandar + ATR14 â†’ level target R1/Max), dan ringkasan hit-rate dari kalkulasi sebelumnya dibanding harga aktual." },
+  { icon:"ðŸ•µï¸", title:"Entry Price Scanner", tone:"gold",
     desc:"Menganalisis konvergensi VWAP broker (menyatu / diam / menjauh), tren akumulasi 10 hari (\"tanjakan\"), dan skor \"mutu\" untuk membantu mencari area entry yang dekat dengan harga rata-rata broker besar." },
-  { icon:"⬢", title:"Kraken Flow (ORCA)", tone:"gold",
-    desc:"Screener order-flow ala fitur \"ORCA System\" — mendeteksi pola antrian bid/offer, ukuran transaksi rata-rata (ATS), transaksi non-reguler, dan aliran dana asing, langsung dari data live tanpa perlu tombol \"Scan\" terpisah — cukup ubah filter, hasil update otomatis." },
+  { icon:"â¬¢", title:"Kraken Flow (ORCA)", tone:"gold",
+    desc:"Screener order-flow ala fitur \"ORCA System\" â€” mendeteksi pola antrian bid/offer, ukuran transaksi rata-rata (ATS), transaksi non-reguler, dan aliran dana asing, langsung dari data live tanpa perlu tombol \"Scan\" terpisah â€” cukup ubah filter, hasil update otomatis." },
 ];
 
 const ABOUT_INTEGRATION_GUIDE = [
   { title:"Data Teknikal &amp; Fundamental", tone:"teal",
     desc:"Diambil dari Yahoo Finance (data publik) lewat Google Apps Script milik Anda sendiri. Indikator: EMA21 High/Low, RSI7 vs RSI21, MACD histogram, Volume MA20, PER, PBV, ROE, Dividend Yield." },
   { title:"Bandarmologi (kolom Screener)", tone:"down",
-    desc:"PENTING: kolom \"Bandarmologi\" di tabel Screener BUKAN data transaksi broker asli — itu PROXY heuristik dari rasio volume hari ini terhadap rata-rata 20 hari, dikombinasikan arah harga. Data bandarmologi yang lebih mendekati transaksi asli (bid/offer, net asing, ATS) ada di tab Kraken Flow (ORCA) dan Target Bandar, yang bersumber dari data resmi IDX / input manual Broker Summary." },
+    desc:"PENTING: kolom \"Bandarmologi\" di tabel Screener BUKAN data transaksi broker asli â€” itu PROXY heuristik dari rasio volume hari ini terhadap rata-rata 20 hari, dikombinasikan arah harga. Data bandarmologi yang lebih mendekati transaksi asli (bid/offer, net asing, ATS) ada di tab Kraken Flow (ORCA) dan Target Bandar, yang bersumber dari data resmi IDX / input manual Broker Summary." },
   { title:"Live Data Stockbit", tone:"down",
-    desc:"Opsional, pakai token dari extension Chrome Stockbit milik Anda sendiri. Ini API TIDAK RESMI (hasil pengamatan traffic, bukan dokumentasi resmi Stockbit) — endpoint bisa berubah atau berhenti berfungsi kapan saja tanpa pemberitahuan. Token hanya disimpan di Local Storage browser ini." },
+    desc:"Opsional, pakai token dari extension Chrome Stockbit milik Anda sendiri. Ini API TIDAK RESMI (hasil pengamatan traffic, bukan dokumentasi resmi Stockbit) â€” endpoint bisa berubah atau berhenti berfungsi kapan saja tanpa pemberitahuan. Token hanya disimpan di Local Storage browser ini." },
   { title:"Notifikasi Telegram", tone:"teal",
-    desc:"Opsional — mengirim notifikasi otomatis lewat Cron server (Supabase Edge Function) kalau ada saham baru lolos preset Rules Kustom pilihan Anda, tetap terkirim walau aplikasi ini tidak sedang dibuka. Butuh setup 1x lewat menu ⚙️ Pengaturan." },
+    desc:"Opsional â€” mengirim notifikasi otomatis lewat Cron server (Supabase Edge Function) kalau ada saham baru lolos preset Rules Kustom pilihan Anda, tetap terkirim walau aplikasi ini tidak sedang dibuka. Butuh setup 1x lewat menu âš™ï¸ Pengaturan." },
   { title:"Penyimpanan Kredensial", tone:"up",
-    desc:"Supabase URL/Key, token Stockbit, dan pengaturan Telegram disimpan di Local Storage browser perangkat ini — tidak tertanam di HTML, jadi tetap aman kalau aplikasi ini di-hosting publik. Selalu pakai anon key Supabase, jangan pernah service_role key." },
+    desc:"Supabase URL/Key, token Stockbit, dan pengaturan Telegram disimpan di Local Storage browser perangkat ini â€” tidak tertanam di HTML, jadi tetap aman kalau aplikasi ini di-hosting publik. Selalu pakai anon key Supabase, jangan pernah service_role key." },
 ];
 
 function renderAbout(){
@@ -6307,30 +6307,30 @@ function renderAbout(){
     <details class="about-row" style="display:block;padding:10px 0;">
       <summary style="cursor:pointer;list-style:none;display:flex;align-items:center;gap:10px;">
         <span style="font-size:15px;">${t.icon}</span>${pillHtml(t.title,t.tone)}
-        <span style="font-size:11.5px;color:var(--muted);font-weight:400;">▾ detail</span>
+        <span style="font-size:11.5px;color:var(--muted);font-weight:400;">â–¾ detail</span>
       </summary>
       <div style="margin-top:8px;padding-left:24px;">
         <p style="margin:0 0 6px;">${t.desc}</p>
-        ${t.catatan ? `<p style="margin:0;font-size:11.5px;color:var(--gold);">⚠️ ${t.catatan}</p>` : ""}
+        ${t.catatan ? `<p style="margin:0;font-size:11.5px;color:var(--gold);">âš ï¸ ${t.catatan}</p>` : ""}
       </div>
     </details>`;
   return `
     <div class="panel" style="flex-direction:column;align-items:stretch;margin-bottom:16px;">
       <p style="margin:0;font-size:13px;color:var(--text);line-height:1.6;">
-        IHSG Screener Pro adalah alat bantu screening &amp; analisis saham IHSG pribadi —
+        IHSG Screener Pro adalah alat bantu screening &amp; analisis saham IHSG pribadi â€”
         menggabungkan data teknikal/fundamental, sinyal siap pakai (Smart Pick), pelacakan
         bandarmologi (Broker Summary, Target Bandar, Kraken Flow), backtest, dan portofolio
-        dalam satu aplikasi. Ini <b>bukan nasihat/rekomendasi investasi</b> — semua sinyal
+        dalam satu aplikasi. Ini <b>bukan nasihat/rekomendasi investasi</b> â€” semua sinyal
         &amp; skor di sini adalah alat bantu keputusan, keputusan akhir tetap di tangan Anda.
       </p>
     </div>
 
-    <div class="filter-section-title">📚 Peta Fitur (klik tiap baris untuk detail)<span class="line"></span></div>
+    <div class="filter-section-title">ðŸ“š Peta Fitur (klik tiap baris untuk detail)<span class="line"></span></div>
     <div class="panel" style="flex-direction:column;align-items:stretch;margin-bottom:16px;">
       ${ABOUT_TAB_GUIDE.map(tabRow).join("")}
     </div>
 
-    <div class="filter-section-title">🔌 Sumber Data &amp; Integrasi<span class="line"></span></div>
+    <div class="filter-section-title">ðŸ”Œ Sumber Data &amp; Integrasi<span class="line"></span></div>
     <div class="panel" style="flex-direction:column;align-items:stretch;">
       ${ABOUT_INTEGRATION_GUIDE.map(g=>row(g.title,g.tone,g.desc)).join("")}
     </div>
@@ -6343,15 +6343,15 @@ function renderAbout(){
 // Menyimpan & menampilkan top 5 broker buy / top 5 broker sell per
 // saham per tanggal. Sumber data: diketik manual atau ditempel dari
 // CSV oleh pengguna, berdasarkan screenshot akun Stockbit MEREKA
-// SENDIRI — bukan hasil scraping otomatis dari Stockbit. Disimpan ke
+// SENDIRI â€” bukan hasil scraping otomatis dari Stockbit. Disimpan ke
 // tabel `broker_summary` di Supabase yang sama dengan tabel lain.
 // ==========================================
 
-// Status Normal/Akumulasi/Distribusi — dihitung dari SELISIH total
+// Status Normal/Akumulasi/Distribusi â€” dihitung dari SELISIH total
 // value top 5 broker buy vs top 5 broker sell yang tersimpan (bukan
 // dari total transaksi harian saham, karena kita hanya punya data top
 // 5). Ambang batas 15% net dari total (buy+sell) dipilih supaya
-// selisih kecil/wajar tetap dianggap "Normal" — sesuaikan angka
+// selisih kecil/wajar tetap dianggap "Normal" â€” sesuaikan angka
 // BS_STATUS_THRESHOLD_PCT di bawah kalau mau lebih sensitif/longgar.
 const BS_STATUS_THRESHOLD_PCT = 15;
 
@@ -6385,7 +6385,7 @@ function bsStatusRowHtml(rows){
 function emptyBsRow(side, rank){ return { side, rank, broker_code:"", lot:"", value_idr:"" }; }
 
 function renderBrokerSummary(){
-  // Default Periode Dari–Sampai (dipakai kalau user belum pernah mengubahnya) —
+  // Default Periode Dariâ€“Sampai (dipakai kalau user belum pernah mengubahnya) â€”
   // meniru default lama "10 hari bursa terakhir" supaya perilaku awal tetap sama.
   if(!state.bsAutoBulkFrom || !state.bsAutoBulkTo){
     const defaultDates = tradingDaysBack(state.bsAutoBulkDays || 10);
@@ -6427,13 +6427,13 @@ function renderBrokerSummary(){
       <div style="margin:14px 0; padding:12px; border:1px solid rgba(239,68,68,0.25); border-radius:10px; background:rgba(239,68,68,0.06);">
         <div style="display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:10px;">
           <div style="font-size:12px; color:var(--muted); max-width:560px; line-height:1.5;">
-            🔴 Tarik otomatis Top 5 Buy/Sell dari Stockbit untuk
-            <b>${state.selectedForBacktest.size} saham yang dicentang</b> di tab 📋 Screener,
+            ðŸ”´ Tarik otomatis Top 5 Buy/Sell dari Stockbit untuk
+            <b>${state.selectedForBacktest.size} saham yang dicentang</b> di tab ðŸ“‹ Screener,
             untuk hari bursa dari <b>${escapeHtml(fmtDateID(state.bsAutoBulkFrom))}</b> sampai
             <b>${escapeHtml(fmtDateID(state.bsAutoBulkTo))}</b> (Senin&ndash;Jumat, libur bursa nasional otomatis dilewati).
-            Hari yang datanya sudah ada di database otomatis dilewati (skip) — hanya hari yang belum ada
+            Hari yang datanya sudah ada di database otomatis dilewati (skip) â€” hanya hari yang belum ada
             dan hari bursa paling baru yang benar-benar ditarik ulang ke Stockbit.
-            Butuh "Endpoint Broker Summary" &amp; Token terisi di ⚙️ Pengaturan. Hasil otomatis disimpan
+            Butuh "Endpoint Broker Summary" &amp; Token terisi di âš™ï¸ Pengaturan. Hasil otomatis disimpan
             langsung ke database yang sama seperti input manual di bawah.
           </div>
           <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
@@ -6464,13 +6464,13 @@ function renderBrokerSummary(){
         ${state.stockbitBrokerBulkResults && state.stockbitBrokerBulkResults.length ? `
           <details class="bs-bulk-results-panel" id="bsBulkResultsPanel" ${state.bsBulkResultsOpen?"open":""} style="margin-top:10px;">
             <summary style="cursor:pointer; font-size:11.5px; color:var(--muted); list-style:none; display:flex; align-items:center; gap:6px; user-select:none;">
-              <span class="bs-bulk-results-arrow" style="display:inline-block; transition:transform .15s; transform:rotate(${state.bsBulkResultsOpen?90:0}deg);">▶</span>
+              <span class="bs-bulk-results-arrow" style="display:inline-block; transition:transform .15s; transform:rotate(${state.bsBulkResultsOpen?90:0}deg);">â–¶</span>
               Hasil (${state.stockbitBrokerBulkResults.length} saham)
             </summary>
             <div class="mono" style="margin-top:8px; max-height:220px; overflow-y:auto; font-size:11.5px;">
               ${state.stockbitBrokerBulkResults.map(r => `
                 <div style="padding:4px 0; border-bottom:1px solid var(--border); color:${r.ok ? 'var(--up)' : 'var(--down)'};">
-                  ${r.ok ? '✅' : '❌'} ${escapeHtml(r.ticker)} &middot; ${escapeHtml(r.date)} — ${escapeHtml(r.msg||"")}
+                  ${r.ok ? 'âœ…' : 'âŒ'} ${escapeHtml(r.ticker)} &middot; ${escapeHtml(r.date)} â€” ${escapeHtml(r.msg||"")}
                 </div>`).join("")}
             </div>
           </details>` : ""}
@@ -6490,7 +6490,7 @@ function renderBrokerSummary(){
       </div>
 
       <details class="bs-editor-panel" id="bsEditorPanel" ${state.bsEditorOpen?"open":""}>
-        <summary>✏️ Input / Edit Manual (dari screenshot Stockbit Anda)</summary>
+        <summary>âœï¸ Input / Edit Manual (dari screenshot Stockbit Anda)</summary>
         <div class="bs-editor-grid">
           <div>
             <div class="bs-col-title bs-buy">Top 5 Buy</div>
@@ -6616,14 +6616,14 @@ function fillBsFromCsv(){
 }
 
 // ==========================================
-// TARGET BANDAR — dibangun di atas tabel broker_summary yang sudah ada.
+// TARGET BANDAR â€” dibangun di atas tabel broker_summary yang sudah ada.
 //
 // PENTING (baca ini dulu): formula di bawah adalah HEURISTIK yang kami
 // rancang sendiri berdasarkan data yang tersedia di app ini (Avg Bandar
 // dari broker_summary + ATR14 dari stocks_screener + histori close dari
 // flows). ITU BUKAN replikasi rumus rahasia aplikasi Adimology (kami
 // tidak pernah melihat source code perhitungan mereka) dan BUKAN
-// jaminan harga akan benar-benar tercapai — anggap sebagai alat bantu,
+// jaminan harga akan benar-benar tercapai â€” anggap sebagai alat bantu,
 // bukan rekomendasi investasi. Semua konstanta (ATR_MULT_R1,
 // ATR_MULT_MAX, dst) sengaja dijadikan variabel supaya gampang
 // disesuaikan sendiri.
@@ -6636,7 +6636,7 @@ const TB_HIT_HORIZON_DAYS = 20;   // batas hari bursa untuk menilai "belum terca
 
 // Kelompokkan baris broker_summary (buy+sell, beberapa tanggal) per kode
 // broker, lalu klasifikasikan relatif terhadap broker LAIN di jendela
-// waktu & saham yang sama (bukan angka Rupiah absolut — skala transaksi
+// waktu & saham yang sama (bukan angka Rupiah absolut â€” skala transaksi
 // saham blue-chip vs saham kecil bisa beda jauh).
 function aggregateTopBandar(rows){
   const byBroker = {};
@@ -6671,13 +6671,13 @@ function aggregateTopBandar(rows){
     const freqRatio = b.daysAppeared / totalWindowDays;
     const consistentDirection = b.totalValue > 0 && (Math.abs(b.netValue)/b.totalValue) >= 0.6;
     if(b.avgPerAppearance > 0 && b.avgPerAppearance >= p80){
-      b.type = "Whale"; b.typeIcon = "🐋"; b.typeTone = "gold";
+      b.type = "Whale"; b.typeIcon = "ðŸ‹"; b.typeTone = "gold";
     } else if(freqRatio >= 0.5 && consistentDirection){
-      b.type = "Smart Money"; b.typeIcon = "🧠"; b.typeTone = "up";
+      b.type = "Smart Money"; b.typeIcon = "ðŸ§ "; b.typeTone = "up";
     } else if(b.avgPerAppearance <= p40){
-      b.type = "Ritel"; b.typeIcon = "🐣"; b.typeTone = "muted";
+      b.type = "Ritel"; b.typeIcon = "ðŸ£"; b.typeTone = "muted";
     } else {
-      b.type = "Mix"; b.typeIcon = "➖"; b.typeTone = "teal";
+      b.type = "Mix"; b.typeIcon = "âž–"; b.typeTone = "teal";
     }
   });
 
@@ -6750,11 +6750,11 @@ async function loadTargetWindow(){
 
       state.targetMsg = avgRes
         ? `Ditemukan ${rows.length} baris dalam ${agg.totalWindowDays} hari bursa dengan data.`
-        : `Ditemukan ${rows.length} baris, tapi tidak ada baris Top Buy tanggal terbaru dengan kolom "Lot" terisi — Avg Bandar tidak bisa dihitung. Lengkapi Lot di tab Broker Summary.`;
+        : `Ditemukan ${rows.length} baris, tapi tidak ada baris Top Buy tanggal terbaru dengan kolom "Lot" terisi â€” Avg Bandar tidak bisa dihitung. Lengkapi Lot di tab Broker Summary.`;
       state.targetMsgError = !avgRes;
     } else {
       state.targetTopBandar = []; state.targetAvgBandar = null; state.targetLevels = null;
-      state.targetMsg = "Belum ada data broker_summary untuk saham/periode ini. Isi dulu di tab 📊 Broker Summary.";
+      state.targetMsg = "Belum ada data broker_summary untuk saham/periode ini. Isi dulu di tab ðŸ“Š Broker Summary.";
       state.targetMsgError = true;
     }
   } catch(e){
@@ -6886,10 +6886,10 @@ function renderTargetBandar(){
     </div>
     <div style="font-size:11.5px;color:var(--muted);margin-bottom:16px;">
       Avg Bandar dihitung tertimbang dari Top Buy tanggal <b class="mono">${avgB.latestDate}</b> (${avgB.buyRowsCount} baris broker).
-      ATR14 dipakai: <span class="mono">${fmtNum(lv.atrUsed.toFixed(2))}</span>${lv.atrIsFallback?' <span style="color:var(--gold);">(fallback 3% — ATR14 kosong di stocks_screener)</span>':""}.
-      Formula: R1 = Avg Bandar + ${TB_ATR_MULT_R1}×ATR14, Max = Avg Bandar + ${TB_ATR_MULT_MAX}×ATR14 — silakan disesuaikan (konstanta TB_ATR_MULT_* di app.js) sesuai gaya trading Anda.
+      ATR14 dipakai: <span class="mono">${fmtNum(lv.atrUsed.toFixed(2))}</span>${lv.atrIsFallback?' <span style="color:var(--gold);">(fallback 3% â€” ATR14 kosong di stocks_screener)</span>':""}.
+      Formula: R1 = Avg Bandar + ${TB_ATR_MULT_R1}Ã—ATR14, Max = Avg Bandar + ${TB_ATR_MULT_MAX}Ã—ATR14 â€” silakan disesuaikan (konstanta TB_ATR_MULT_* di app.js) sesuai gaya trading Anda.
     </div>
-    <button class="btn btn-primary" id="tbSaveCalcBtn">💾 Simpan Perhitungan Hari Ini ke Riwayat</button>
+    <button class="btn btn-primary" id="tbSaveCalcBtn">ðŸ’¾ Simpan Perhitungan Hari Ini ke Riwayat</button>
   ` : `<div class="empty-box" style="padding:16px;font-size:12px;">Muat data dulu di atas untuk melihat Avg Bandar & Target.</div>`;
 
   const maxNet = Math.max(1, ...top5.map(b=>Math.abs(b.netValue)));
@@ -6917,10 +6917,10 @@ function renderTargetBandar(){
       <div class="porto-stat"><div class="lbl">Total Kalkulasi</div><div class="val mono">${stats.total}</div></div>
       <div class="porto-stat tone-up" style="border-top-color:var(--up);"><div class="lbl">Hit Rate R1</div><div class="val mono">${stats.hitRateR1!=null?stats.hitRateR1.toFixed(0)+"%":"-"}</div></div>
       <div class="porto-stat tone-gold" style="border-top-color:var(--gold);"><div class="lbl">Hit Rate Max</div><div class="val mono">${stats.hitRateMax!=null?stats.hitRateMax.toFixed(0)+"%":"-"}</div></div>
-      <div class="porto-stat"><div class="lbl">Rata² Hari ke R1</div><div class="val mono">${stats.avgDaysR1!=null?stats.avgDaysR1.toFixed(1):"-"}</div></div>
+      <div class="porto-stat"><div class="lbl">RataÂ² Hari ke R1</div><div class="val mono">${stats.avgDaysR1!=null?stats.avgDaysR1.toFixed(1):"-"}</div></div>
     </div>
     <div style="font-size:11px;color:var(--muted);margin-bottom:16px;">
-      Hit Rate hanya dihitung dari kalkulasi yang sudah lewat ${TB_HIT_HORIZON_DAYS} hari bursa sejak tanggal kalkulasi (atau sudah kena target lebih cepat) — kalkulasi yang masih baru berstatus "Berjalan" dan belum masuk hitungan.
+      Hit Rate hanya dihitung dari kalkulasi yang sudah lewat ${TB_HIT_HORIZON_DAYS} hari bursa sejak tanggal kalkulasi (atau sudah kena target lebih cepat) â€” kalkulasi yang masih baru berstatus "Berjalan" dan belum masuk hitungan.
     </div>`;
 
   const historyRowsHtml = history.length ? `
@@ -6944,9 +6944,9 @@ function renderTargetBandar(){
 
   return `
     <div class="panel">
-      <div class="filter-section-title">🎯 Target Bandar<span class="line"></span></div>
+      <div class="filter-section-title">ðŸŽ¯ Target Bandar<span class="line"></span></div>
       <div style="font-size:12px;color:var(--muted);margin-bottom:14px;">
-        Dibangun dari data 📊 Broker Summary yang sudah Anda isi. Bukan data resmi otomatis dari Stockbit — dan Target R1/Max adalah heuristik, bukan jaminan.
+        Dibangun dari data ðŸ“Š Broker Summary yang sudah Anda isi. Bukan data resmi otomatis dari Stockbit â€” dan Target R1/Max adalah heuristik, bukan jaminan.
       </div>
       <div class="bs-toolbar">
         <input id="tbStockCode" class="bs-input" placeholder="Kode saham (mis. BBCA)" maxlength="6" style="text-transform:uppercase" value="${escapeHtml(state.targetStockCode||"")}">
@@ -6957,23 +6957,23 @@ function renderTargetBandar(){
     </div>
 
     <div class="panel">
-      <div class="filter-section-title">🐋 Top 5 Bandar (${state.targetWindowActualDays || state.targetWindowDays} hari terakhir)<span class="line"></span></div>
+      <div class="filter-section-title">ðŸ‹ Top 5 Bandar (${state.targetWindowActualDays || state.targetWindowDays} hari terakhir)<span class="line"></span></div>
       ${top5Html}
     </div>
 
     <div class="panel">
-      <div class="filter-section-title">🧮 Kalkulator Target Harga<span class="line"></span></div>
+      <div class="filter-section-title">ðŸ§® Kalkulator Target Harga<span class="line"></span></div>
       ${calcSection}
     </div>
 
     <div class="panel">
-      <div class="filter-section-title">📈 Summary & Performance<span class="line"></span></div>
+      <div class="filter-section-title">ðŸ“ˆ Summary & Performance<span class="line"></span></div>
       <div class="bs-toolbar" style="margin-bottom:14px;">
         <select id="tbScopeSelect" style="background:rgba(0,0,0,0.2);border:1px solid var(--border);color:var(--text);font-size:13px;border-radius:8px;padding:9.5px 12px;">
           <option value="ticker" ${state.targetSummaryScope==="ticker"?"selected":""}>Emiten ini (${escapeHtml(state.targetStockCode||"-")})</option>
           <option value="all" ${state.targetSummaryScope==="all"?"selected":""}>Semua Emiten</option>
         </select>
-        <button class="btn btn-outline" id="tbHistoryBtn" ${state.targetHistoryLoading?"disabled":""}>${state.targetHistoryLoading?"Memuat...":"🔄 Muat Riwayat & Hit Rate"}</button>
+        <button class="btn btn-outline" id="tbHistoryBtn" ${state.targetHistoryLoading?"disabled":""}>${state.targetHistoryLoading?"Memuat...":"ðŸ”„ Muat Riwayat & Hit Rate"}</button>
       </div>
       ${summaryStatsHtml}
       ${historyRowsHtml}
@@ -6982,46 +6982,46 @@ function renderTargetBandar(){
 }
 
 // ==========================================================================
-// ENTRY PRICE SCANNER — "broker trap" scanner lintas SEMUA saham sekaligus.
+// ENTRY PRICE SCANNER â€” "broker trap" scanner lintas SEMUA saham sekaligus.
 //
 // Konsep (mengikuti pola ihsgscreener.com): setiap broker punya harga
-// rata-rata beli (VWAP Buy) = total nilai beli ÷ total volume beli, dalam
+// rata-rata beli (VWAP Buy) = total nilai beli Ã· total volume beli, dalam
 // suatu jendela waktu. Kalau harga sekarang di BAWAH VWAP Buy itu, broker
-// tsb sedang rugi ("NYANGKUT") — orang yang rugi cenderung menahan/menambah,
+// tsb sedang rugi ("NYANGKUT") â€” orang yang rugi cenderung menahan/menambah,
 // bukan jual murah, jadi level itu jadi support psikologis. Kalau harga
 // sudah jauh DI ATAS VWAP mereka, mereka sudah untung dan rawan ambil
 // untung, jadi level itu dilewati sebagai area entry.
 //
-// SUMBER DATA: tabel `broker_summary` yang SAMA dengan tab 📊 Broker
-// Summary / 🎯 Target Bandar (top 5 broker beli & jual per hari, per
-// saham) — BUKAN endpoint baru. Konsekuensinya: hasil scan ini HANYA
+// SUMBER DATA: tabel `broker_summary` yang SAMA dengan tab ðŸ“Š Broker
+// Summary / ðŸŽ¯ Target Bandar (top 5 broker beli & jual per hari, per
+// saham) â€” BUKAN endpoint baru. Konsekuensinya: hasil scan ini HANYA
 // SEBAGUS data broker_summary yang sudah terisi. Kalau broker_summary
 // kosong/jarang diisi untuk banyak saham, "Hasil Scan" akan kosong/sedikit
-// juga — ini bukan bug, tapi keterbatasan data sumber (top-5 broker/hari,
+// juga â€” ini bukan bug, tapi keterbatasan data sumber (top-5 broker/hari,
 // bukan seluruh transaksi pasar).
 //
 // KLASIFIKASI ASING/LOKAL: TIDAK ADA API publik resmi untuk ini, jadi
 // dipakai daftar statis best-effort EPS_FOREIGN_BROKER_CODES di bawah
-// (sama semangatnya dengan SYARIAH_TICKERS di atas file ini — silakan
+// (sama semangatnya dengan SYARIAH_TICKERS di atas file ini â€” silakan
 // diperbaiki sendiri kalau ada kode yang salah/kurang). Kode yang TIDAK
 // ada di daftar itu default dianggap "Lokal".
 //
 // SEMUA formula (Gap%, Konvergensi, Tanjakan 10H, Mutu, Score) di bawah
-// adalah HEURISTIK YANG KAMI RANCANG SENDIRI dari data yang tersedia —
+// adalah HEURISTIK YANG KAMI RANCANG SENDIRI dari data yang tersedia â€”
 // BUKAN replikasi rumus rahasia ihsgscreener.com (kami tidak pernah
 // melihat source code mereka) dan BUKAN jaminan/rekomendasi investasi.
 // Semua konstanta sengaja dijadikan variabel (EPS_* di bawah) supaya
 // gampang disesuaikan.
 // ==========================================================================
 
-const EPS_AREA_PCT = 3;        // ±X% dari VWAP = dianggap "DI AREA"
+const EPS_AREA_PCT = 3;        // Â±X% dari VWAP = dianggap "DI AREA"
 const EPS_TANJAKAN_WINDOW = 10; // jumlah hari bursa untuk "Tanjakan 10H"
 const EPS_MIN_PRICE = 80;       // saham di bawah harga ini diblokir (saham gorengan receh)
 const EPS_EXCLUDED_SECTOR_KEYWORDS = ["propert", "real estate"]; // dicocokkan case-insensitive, substring
 
 // Daftar kode broker yang UMUM dianggap sekuritas asing/JV asing oleh
 // komunitas bandarmologi (BELUM diverifikasi resmi ke daftar anggota
-// bursa IDX terbaru — cek ulang sebelum dipakai serius). Kode lain di
+// bursa IDX terbaru â€” cek ulang sebelum dipakai serius). Kode lain di
 // luar daftar ini dianggap "Lokal" secara default.
 const EPS_FOREIGN_BROKER_CODES = new Set([
   "AK","BK","CS","DB","KZ","MS","RX","BW","GW","AG","XA","ZP","YU","RS","OD","IF"
@@ -7035,7 +7035,7 @@ function epsIsExcludedSector(sektor){
   return EPS_EXCLUDED_SECTOR_KEYWORDS.some(kw => s.includes(kw));
 }
 
-// Ambil ISO date N hari bursa (Senin-Jumat) ke belakang dari hari ini —
+// Ambil ISO date N hari bursa (Senin-Jumat) ke belakang dari hari ini â€”
 // dipakai sebagai cutoff query supaya jendela 1 bulan (20 hari bursa)
 // tidak perlu narik seluruh histori broker_summary yang mungkin sudah
 // bertahun-tahun.
@@ -7047,11 +7047,11 @@ function epsCutoffDate(tradingDaysBackN){
 }
 
 // ==========================================================================
-// LANGKAH 1 — tarik SEMUA baris broker_summary (semua saham) dalam jendela
+// LANGKAH 1 â€” tarik SEMUA baris broker_summary (semua saham) dalam jendela
 // ~1 bulan bursa, lalu susun jadi struktur harian per saham per tipe
 // broker (asing/lokal). Ini query BERAT (bisa ratusan ribu baris kalau
-// broker_summary sudah terisi rutin untuk banyak saham) — makanya scan
-// ini TIDAK jalan otomatis, harus ditekan manual lewat tombol "🔄 Scan
+// broker_summary sudah terisi rutin untuk banyak saham) â€” makanya scan
+// ini TIDAK jalan otomatis, harus ditekan manual lewat tombol "ðŸ”„ Scan
 // Sekarang", dan hasilnya di-cache (localStorage + tabel Supabase
 // eps_scan_cache kalau migrasinya sudah dijalankan) supaya sesi
 // berikutnya tidak perlu scan ulang.
@@ -7074,7 +7074,7 @@ async function runEntryPriceScan(){
 
     if(!rows.length){
       state.epsRaw = null;
-      state.epsMsg = "Belum ada data broker_summary sama sekali. Isi dulu di tab 📊 Broker Summary untuk minimal beberapa saham.";
+      state.epsMsg = "Belum ada data broker_summary sama sekali. Isi dulu di tab ðŸ“Š Broker Summary untuk minimal beberapa saham.";
       state.epsMsgError = true;
       state.epsScanning = false; render(); return;
     }
@@ -7118,11 +7118,11 @@ async function runEntryPriceScan(){
       byStock
     };
     saveEpsCache();
-    state.epsMsg = `Scan selesai — ${Object.keys(byStock).length} saham, ${allDatesSet.size} hari bursa dengan data.`;
+    state.epsMsg = `Scan selesai â€” ${Object.keys(byStock).length} saham, ${allDatesSet.size} hari bursa dengan data.`;
     state.epsMsgError = false;
 
     // Simpan salinan ringkas ke Supabase supaya user LAIN (kalau app ini
-    // dipakai bersama) tidak perlu scan ulang — opsional, gagal diam-diam
+    // dipakai bersama) tidak perlu scan ulang â€” opsional, gagal diam-diam
     // kalau tabel `eps_scan_cache` belum dimigrasikan (lihat catatan di
     // saveEpsCache/loadEpsCacheFromServer).
     await syncEpsCacheToSupabase();
@@ -7136,7 +7136,7 @@ async function runEntryPriceScan(){
 }
 
 function saveEpsCache(){
-  try{ localStorage.setItem("ihsg_eps_scan", JSON.stringify(state.epsRaw)); }catch(e){ /* localStorage penuh — abaikan, cache Supabase tetap dicoba */ }
+  try{ localStorage.setItem("ihsg_eps_scan", JSON.stringify(state.epsRaw)); }catch(e){ /* localStorage penuh â€” abaikan, cache Supabase tetap dicoba */ }
 }
 
 function loadEpsCacheFromLocal(){
@@ -7146,7 +7146,7 @@ function loadEpsCacheFromLocal(){
   }catch(e){ state.epsRaw = null; }
 }
 
-// Tabel `eps_scan_cache` BELUM tentu ada di Supabase Anda — ini fitur
+// Tabel `eps_scan_cache` BELUM tentu ada di Supabase Anda â€” ini fitur
 // opsional (biar hasil scan bisa dipakai bareng lintas device/user tanpa
 // tiap orang scan ulang). Kalau mau aktifkan, jalankan migrasi:
 //   CREATE TABLE eps_scan_cache (
@@ -7155,7 +7155,7 @@ function loadEpsCacheFromLocal(){
 //     payload jsonb NOT NULL
 //   );
 // Tanpa tabel ini, scan tetap jalan & tersimpan di localStorage browser
-// ini saja — cuma tidak otomatis kebagi ke device/user lain.
+// ini saja â€” cuma tidak otomatis kebagi ke device/user lain.
 async function syncEpsCacheToSupabase(){
   if(!state.epsRaw) return;
   try{
@@ -7178,7 +7178,7 @@ async function loadEpsCacheFromServer(){
     if(!Array.isArray(rows) || !rows.length) return false;
     const server = rows[0].payload;
     // Pakai hasil server HANYA kalau lebih baru dari cache lokal (atau
-    // belum ada cache lokal sama sekali) — supaya scan lokal yang baru
+    // belum ada cache lokal sama sekali) â€” supaya scan lokal yang baru
     // saja dijalankan tidak ketimpa data server yang lebih basi.
     if(!state.epsRaw || new Date(server.scannedAt) > new Date(state.epsRaw.scannedAt)){
       state.epsRaw = server;
@@ -7193,7 +7193,7 @@ async function ensureEpsDataLoaded(){
   loadEpsCacheFromLocal();
   const gotServer = await loadEpsCacheFromServer();
   if(!state.epsRaw && !gotServer){
-    state.epsMsg = "Belum ada hasil scan tersimpan. Klik \"🔄 Scan Sekarang\" untuk mulai (sekali scan berlaku untuk semua kombinasi filter).";
+    state.epsMsg = "Belum ada hasil scan tersimpan. Klik \"ðŸ”„ Scan Sekarang\" untuk mulai (sekali scan berlaku untuk semua kombinasi filter).";
     state.epsMsgError = false;
   }
   recomputeEpsResults();
@@ -7213,10 +7213,10 @@ function clearEpsCache(){
 const EPS_PERIODE_DAYS = { "1w": 5, "2w": 10, "1m": 20 };
 
 // ==========================================================================
-// LANGKAH 2 — dari epsRaw (mentah, mencakup jendela terpanjang), hitung
+// LANGKAH 2 â€” dari epsRaw (mentah, mencakup jendela terpanjang), hitung
 // SATU baris hasil per saham sesuai filter yang sedang aktif. Semua
 // filter (periode, broker, konvergensi, dst) beroperasi di sini, di
-// memori, TANPA fetch ulang — makanya instan.
+// memori, TANPA fetch ulang â€” makanya instan.
 // ==========================================================================
 function computeEpsRowForStock(ticker, stockRaw, filters, stockMap){
   const dates = Object.keys(stockRaw.days).sort(); // ascending
@@ -7254,7 +7254,7 @@ function computeEpsRowForStock(ticker, stockRaw, filters, stockMap){
 
   // --- Konvergensi: bandingkan |gap%| VWAP kumulatif hari demi hari,
   // dalam periode terpilih. "Menyatu" = mengecil, "Menjauh" = membesar,
-  // "Diam" = relatif flat (dalam ±0.5 poin persentase). Butuh min. 2 titik.
+  // "Diam" = relatif flat (dalam Â±0.5 poin persentase). Butuh min. 2 titik.
   let konvergensi = "diam", konvergensiVal = 0;
   if(periodeDates.length >= 2){
     let runBuyVal = 0, runBuyLot = 0;
@@ -7274,10 +7274,10 @@ function computeEpsRowForStock(ticker, stockRaw, filters, stockMap){
       else konvergensi = "diam";
     }
   }
-  const konvergensiIcon = konvergensi === "menyatu" ? "⇄" : konvergensi === "menjauh" ? "↔" : "▶";
+  const konvergensiIcon = konvergensi === "menyatu" ? "â‡„" : konvergensi === "menjauh" ? "â†”" : "â–¶";
 
   // --- Tanjakan 10H: tren net-buy kumulatif selama EPS_TANJAKAN_WINDOW
-  // hari bursa TERAKHIR (independen dari filter Periode di atas — selalu
+  // hari bursa TERAKHIR (independen dari filter Periode di atas â€” selalu
   // 10 hari, sesuai nama fiturnya), dibagi 2 paruh, dibandingkan.
   const tj10Dates = dates.slice(-EPS_TANJAKAN_WINDOW);
   let tanjakan = "diam", tanjakanSlope = 0, tanjakanScore = 0, tanjakanTopBroker = "-";
@@ -7303,7 +7303,7 @@ function computeEpsRowForStock(ticker, stockRaw, filters, stockMap){
     const tjTop = Object.entries(tjBrokerNet).sort((a,b)=>b[1]-a[1])[0];
     tanjakanTopBroker = tjTop ? tjTop[0] : "-";
   }
-  const tanjakanIcon = tanjakan === "menanjak" ? "▲" : "▶";
+  const tanjakanIcon = tanjakan === "menanjak" ? "â–²" : "â–¶";
 
   // --- Top Broker & Tipe (dari total net value periode terpilih) ---
   const topBrokerEntry = Object.entries(brokerNetTotal).sort((a,b)=>b[1]-a[1])[0];
@@ -7313,7 +7313,7 @@ function computeEpsRowForStock(ticker, stockRaw, filters, stockMap){
 
   // --- Mutu (0-100): kombinasi konsistensi arah (net buy positif berapa
   // hari dari total hari yang ada data) + konsentrasi broker dominan.
-  // Heuristik sendiri, BUKAN dari sumber luar — lihat catatan di atas.
+  // Heuristik sendiri, BUKAN dari sumber luar â€” lihat catatan di atas.
   const daysWithBuy = periodeDates.filter(d=> typesToInclude.some(t=>stockRaw.days[d][t].buyVal>0)).length;
   const consistencyScore = periodeDates.length ? (daysWithBuy/periodeDates.length)*100 : 0;
   const concentrationScore = Math.min(100, topBrokerShare*100);
@@ -7337,10 +7337,10 @@ function computeEpsRowForStock(ticker, stockRaw, filters, stockMap){
 function recomputeEpsResults(){
   if(!state.epsRaw){ state.epsResults = []; return; }
   const filters = state.epsFilters;
-  // enriched() dibangun SEKALI di sini (bukan per-saham di dalam loop) —
+  // enriched() dibangun SEKALI di sini (bukan per-saham di dalam loop) â€”
   // dia lumayan berat (dihitung dari seluruh state.stocks), jadi kalau
   // dipanggil ulang per-ticker di dalam computeEpsRowForStock() bisa jadi
-  // O(n²) dan bikin filter yang harusnya instan malah lag untuk ratusan saham.
+  // O(nÂ²) dan bikin filter yang harusnya instan malah lag untuk ratusan saham.
   const stockMap = new Map(enriched().map(x=>[x.ticker, x]));
   const rows = [];
   Object.entries(state.epsRaw.byStock).forEach(([ticker, stockRaw])=>{
@@ -7423,40 +7423,40 @@ function renderEntryPriceScanner(){
   const infoPanel = `
     <details class="panel" id="epsInfoPanel" style="flex-direction:column;align-items:stretch;" ${state.epsInfoOpen?"open":""}>
       <summary style="cursor:pointer;font-weight:700;font-size:14px;list-style:none;display:flex;justify-content:space-between;align-items:center;">
-        <span>📖 Logika &amp; Cara Pakai Entry Price Scanner</span><span style="color:var(--muted);font-size:11px;">${state.epsInfoOpen?"▲ Tutup":"▼ Buka"}</span>
+        <span>ðŸ“– Logika &amp; Cara Pakai Entry Price Scanner</span><span style="color:var(--muted);font-size:11px;">${state.epsInfoOpen?"â–² Tutup":"â–¼ Buka"}</span>
       </summary>
       <div style="margin-top:16px;display:flex;flex-direction:column;gap:16px;font-size:12.5px;line-height:1.7;color:var(--text);">
         <div>
           <div style="font-weight:700;margin-bottom:6px;">Logika di baliknya</div>
           <div style="color:var(--muted);">
-            Setiap broker punya <b>harga rata-rata beli</b> (VWAP Buy) = total nilai beli ÷ total volume beli.
+            Setiap broker punya <b>harga rata-rata beli</b> (VWAP Buy) = total nilai beli Ã· total volume beli.
             Kalau harga sekarang <b>di bawah</b> rata-rata broker itu, broker tersebut sedang rugi. Orang yang rugi cenderung <i>menahan</i> atau <i>menambah</i>, bukan menjual murah.
-            Sebaliknya, kalau harga sudah jauh <b>di atas</b> rata-rata mereka, mereka sudah untung dan rawan ambil untung — saham seperti itu dilewati.
+            Sebaliknya, kalau harga sudah jauh <b>di atas</b> rata-rata mereka, mereka sudah untung dan rawan ambil untung â€” saham seperti itu dilewati.
           </div>
-          <div style="margin-top:8px;"><span style="color:var(--teal);font-weight:700;">NYANGKUT</span> — Harga di bawah VWAP broker. Ada dorongan mempertahankan harga.</div>
-          <div><span style="color:var(--teal);font-weight:700;">DI AREA</span> — Harga masih dalam ±${EPS_AREA_PCT}% dari VWAP. Level ini biasanya dijaga.</div>
+          <div style="margin-top:8px;"><span style="color:var(--teal);font-weight:700;">NYANGKUT</span> â€” Harga di bawah VWAP broker. Ada dorongan mempertahankan harga.</div>
+          <div><span style="color:var(--teal);font-weight:700;">DI AREA</span> â€” Harga masih dalam Â±${EPS_AREA_PCT}% dari VWAP. Level ini biasanya dijaga.</div>
         </div>
         <div>
           <div style="font-weight:700;margin-bottom:6px;">Cara pakai</div>
           <div style="color:var(--muted);">
-            1. Buka tab ini — kalau sudah pernah di-scan, hasil terakhir otomatis tampil.<br>
+            1. Buka tab ini â€” kalau sudah pernah di-scan, hasil terakhir otomatis tampil.<br>
             2. Atur filter sesuai kebutuhan (periode, broker, konvergensi, tanjakan, min akumulasi, dst).<br>
-            3. Semua filter berjalan <b>instan</b> — bebas diutak-atik tanpa scan ulang.
+            3. Semua filter berjalan <b>instan</b> â€” bebas diutak-atik tanpa scan ulang.
           </div>
           <div style="margin-top:8px;background:rgba(6,182,212,0.08);border:1px solid rgba(6,182,212,0.25);border-radius:8px;padding:10px 12px;">
-            Tombol <b>🔄 Scan Sekarang</b> menarik ulang seluruh data broker_summary (bisa berat kalau datanya besar) — sekali jalan sudah mencakup semua kombinasi filter (3 periode × asing/lokal/keduanya). Tidak perlu diklik tiap ganti filter.
+            Tombol <b>ðŸ”„ Scan Sekarang</b> menarik ulang seluruh data broker_summary (bisa berat kalau datanya besar) â€” sekali jalan sudah mencakup semua kombinasi filter (3 periode Ã— asing/lokal/keduanya). Tidak perlu diklik tiap ganti filter.
           </div>
         </div>
         <div>
           <div style="font-weight:700;margin-bottom:6px;">Arti tiap filter</div>
           <div style="color:var(--muted);">
-            <div><b style="color:var(--text);">Periode</b> — Rentang data broker: 1 minggu / 2 minggu / 1 bulan (hari bursa).</div>
-            <div><b style="color:var(--text);">Broker</b> — Asing, Lokal, atau Keduanya (klasifikasi best-effort, lihat EPS_FOREIGN_BROKER_CODES di app.js).</div>
-            <div><b style="color:var(--text);">Konvergensi</b> — Menyatu = harga mendekati VWAP (bagus). Menjauh = harga menjauh.</div>
-            <div><b style="color:var(--text);">Tanjakan 10H</b> — ▲ Menanjak = akumulasi broker 10 hari terakhir naik terus.</div>
-            <div><b style="color:var(--text);">Min Akum</b> — Nilai akumulasi (net buy) minimal dalam periode terpilih.</div>
-            <div><b style="color:var(--text);">Min Gap</b> — "Terdekat VWAP" = |gap| ≤ ${EPS_AREA_PCT}%. "Nyangkut" = harga di bawah VWAP.</div>
-            <div><b style="color:var(--text);">Urut</b> — Bisa digabung beberapa sekaligus, diterapkan berurutan.</div>
+            <div><b style="color:var(--text);">Periode</b> â€” Rentang data broker: 1 minggu / 2 minggu / 1 bulan (hari bursa).</div>
+            <div><b style="color:var(--text);">Broker</b> â€” Asing, Lokal, atau Keduanya (klasifikasi best-effort, lihat EPS_FOREIGN_BROKER_CODES di app.js).</div>
+            <div><b style="color:var(--text);">Konvergensi</b> â€” Menyatu = harga mendekati VWAP (bagus). Menjauh = harga menjauh.</div>
+            <div><b style="color:var(--text);">Tanjakan 10H</b> â€” â–² Menanjak = akumulasi broker 10 hari terakhir naik terus.</div>
+            <div><b style="color:var(--text);">Min Akum</b> â€” Nilai akumulasi (net buy) minimal dalam periode terpilih.</div>
+            <div><b style="color:var(--text);">Min Gap</b> â€” "Terdekat VWAP" = |gap| â‰¤ ${EPS_AREA_PCT}%. "Nyangkut" = harga di bawah VWAP.</div>
+            <div><b style="color:var(--text);">Urut</b> â€” Bisa digabung beberapa sekaligus, diterapkan berurutan.</div>
           </div>
           <div style="margin-top:8px;background:rgba(234,179,8,0.08);border:1px solid rgba(234,179,8,0.2);border-radius:8px;padding:10px 12px;color:var(--gold);">
             Saham berharga di bawah Rp${EPS_MIN_PRICE} dan sektor Properties &amp; Real Estate diblokir otomatis untuk mengurangi jebakan.
@@ -7468,9 +7468,9 @@ function renderEntryPriceScanner(){
   const filterPanel = `
     <div class="panel" style="flex-direction:column;align-items:stretch;">
       <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;margin-bottom:14px;">
-        <div class="filter-section-title" style="margin:0;">🎯 Entry Price Scanner <span class="pill pill-teal">BROKER TRAP</span><span class="line"></span></div>
+        <div class="filter-section-title" style="margin:0;">ðŸŽ¯ Entry Price Scanner <span class="pill pill-teal">BROKER TRAP</span><span class="line"></span></div>
         <div style="font-size:11px;color:var(--muted);">
-          ${raw ? `Server: ${raw.stockCount} saham · ${escapeHtml(f.periode)} · ${escapeHtml(f.broker)} · ${new Date(raw.scannedAt).toLocaleString('id-ID')}` : "Belum ada data"}
+          ${raw ? `Server: ${raw.stockCount} saham Â· ${escapeHtml(f.periode)} Â· ${escapeHtml(f.broker)} Â· ${new Date(raw.scannedAt).toLocaleString('id-ID')}` : "Belum ada data"}
         </div>
       </div>
       <div style="display:flex;flex-wrap:wrap;gap:18px;margin-bottom:12px;">
@@ -7494,16 +7494,16 @@ function renderEntryPriceScanner(){
           <div style="font-size:10px;color:var(--muted);text-transform:uppercase;font-weight:700;margin-bottom:6px;">Konvergensi</div>
           <div style="display:flex;gap:6px;">
             ${epsSegBtn("konvergensi","all","Semua",f.konvergensi==="all")}
-            ${epsSegBtn("konvergensi","menyatu","⇄ Menyatu",f.konvergensi==="menyatu")}
-            ${epsSegBtn("konvergensi","diam","▶ Diam",f.konvergensi==="diam")}
-            ${epsSegBtn("konvergensi","menjauh","↔ Menjauh",f.konvergensi==="menjauh")}
+            ${epsSegBtn("konvergensi","menyatu","â‡„ Menyatu",f.konvergensi==="menyatu")}
+            ${epsSegBtn("konvergensi","diam","â–¶ Diam",f.konvergensi==="diam")}
+            ${epsSegBtn("konvergensi","menjauh","â†” Menjauh",f.konvergensi==="menjauh")}
           </div>
         </div>
         <div>
           <div style="font-size:10px;color:var(--muted);text-transform:uppercase;font-weight:700;margin-bottom:6px;">Tanjakan 10H</div>
           <div style="display:flex;gap:6px;">
             ${epsSegBtn("tanjakan","all","Semua",f.tanjakan==="all")}
-            ${epsSegBtn("tanjakan","menanjak","▲ Menanjak",f.tanjakan==="menanjak")}
+            ${epsSegBtn("tanjakan","menanjak","â–² Menanjak",f.tanjakan==="menanjak")}
           </div>
         </div>
       </div>
@@ -7521,32 +7521,32 @@ function renderEntryPriceScanner(){
           <label style="font-size:10px;">Min Mutu</label>
           <select id="epsMinMutu" style="background:rgba(0,0,0,0.2);border:1px solid var(--border);color:var(--text);font-size:12.5px;border-radius:8px;padding:8px 10px;">
             <option value="0" ${f.minMutu===0?"selected":""}>Semua</option>
-            <option value="50" ${f.minMutu===50?"selected":""}>≥ 50</option>
-            <option value="70" ${f.minMutu===70?"selected":""}>≥ 70</option>
-            <option value="85" ${f.minMutu===85?"selected":""}>≥ 85</option>
+            <option value="50" ${f.minMutu===50?"selected":""}>â‰¥ 50</option>
+            <option value="70" ${f.minMutu===70?"selected":""}>â‰¥ 70</option>
+            <option value="85" ${f.minMutu===85?"selected":""}>â‰¥ 85</option>
           </select>
         </div>
         <div class="field" style="max-width:150px;">
           <label style="font-size:10px;">Min Akumulasi</label>
           <select id="epsMinAkum" style="background:rgba(0,0,0,0.2);border:1px solid var(--border);color:var(--text);font-size:12.5px;border-radius:8px;padding:8px 10px;">
             <option value="0" ${f.minAkum===0?"selected":""}>Semua</option>
-            <option value="100000000" ${f.minAkum===100000000?"selected":""}>≥ 100 Jt</option>
-            <option value="1000000000" ${f.minAkum===1000000000?"selected":""}>≥ 1 M</option>
-            <option value="10000000000" ${f.minAkum===10000000000?"selected":""}>≥ 10 M</option>
+            <option value="100000000" ${f.minAkum===100000000?"selected":""}>â‰¥ 100 Jt</option>
+            <option value="1000000000" ${f.minAkum===1000000000?"selected":""}>â‰¥ 1 M</option>
+            <option value="10000000000" ${f.minAkum===10000000000?"selected":""}>â‰¥ 10 M</option>
           </select>
         </div>
         <div class="field" style="max-width:150px;">
           <label style="font-size:10px;">Min Gap</label>
           <select id="epsMinGap" style="background:rgba(0,0,0,0.2);border:1px solid var(--border);color:var(--text);font-size:12.5px;border-radius:8px;padding:8px 10px;">
             <option value="all" ${f.minGap==="all"?"selected":""}>Semua</option>
-            <option value="dekat" ${f.minGap==="dekat"?"selected":""}>Terdekat VWAP (≤${EPS_AREA_PCT}%)</option>
+            <option value="dekat" ${f.minGap==="dekat"?"selected":""}>Terdekat VWAP (â‰¤${EPS_AREA_PCT}%)</option>
             <option value="nyangkut" ${f.minGap==="nyangkut"?"selected":""}>Nyangkut (di bawah VWAP)</option>
           </select>
         </div>
         <div style="display:flex;gap:8px;margin-left:auto;">
           <button class="btn btn-outline" id="epsCsvBtn" style="color:#22d3ee;border-color:rgba(6,182,212,0.4);">CSV</button>
           <button class="btn btn-outline" id="epsClearCacheBtn" style="color:#f87171;border-color:rgba(239,68,68,0.4);">Clear Cache</button>
-          <button class="btn btn-primary" id="epsScanBtn" ${state.epsScanning?"disabled":""}>${state.epsScanning?"⏳ Scanning...":"🔄 Scan Sekarang"}</button>
+          <button class="btn btn-primary" id="epsScanBtn" ${state.epsScanning?"disabled":""}>${state.epsScanning?"â³ Scanning...":"ðŸ”„ Scan Sekarang"}</button>
         </div>
       </div>
       ${state.epsMsg ? `<div class="bs-msg ${state.epsMsgError?"bs-msg-error":"bs-msg-ok"}" style="margin-top:12px;">${escapeHtml(state.epsMsg)}</div>` : ""}
@@ -7555,7 +7555,7 @@ function renderEntryPriceScanner(){
   const resultsPanel = `
     <div class="panel" style="flex-direction:column;align-items:stretch;">
       <div class="filter-section-title">Hasil Scan <span class="count-badge">${rows.length} saham</span><span class="line"></span></div>
-      ${!rows.length ? `<div class="empty-box">${raw ? "Tidak ada saham yang lolos kombinasi filter ini — coba longgarkan Min Mutu/Akumulasi/Gap." : "Belum ada hasil. Klik \"🔄 Scan Sekarang\" di atas untuk mulai."}</div>` : `
+      ${!rows.length ? `<div class="empty-box">${raw ? "Tidak ada saham yang lolos kombinasi filter ini â€” coba longgarkan Min Mutu/Akumulasi/Gap." : "Belum ada hasil. Klik \"ðŸ”„ Scan Sekarang\" di atas untuk mulai."}</div>` : `
       <div class="table-wrap">
         <table class="mono">
           <thead>
@@ -7592,7 +7592,7 @@ function renderEntryPriceScanner(){
 }
 
 // ==========================================================================
-// KRAKEN FLOW (ORCA) — lihat blok komentar besar di state.orca* di atas
+// KRAKEN FLOW (ORCA) â€” lihat blok komentar besar di state.orca* di atas
 // untuk penjelasan lengkap arsitektur & keterbatasan datanya.
 // ==========================================================================
 const ORCA_TOP_N = 25;
@@ -7602,24 +7602,24 @@ const ORCA_NONREGULAR_PCT_MIN = 30;    // crossingPct >= 30%
 const ORCA_OFFER_SLENDER_RATIO_MAX = 0.15; // offerVolume <= 15% bidVolume (tapi offer masih >0, beda dari No Sell)
 
 const ORCA_FILTER_DEFS = [
-  { key:"bidOffer",    label:"High Bid/Offer",   desc:"Antrian beli jauh lebih tebal dari antrian jual — ada yang menampung." },
+  { key:"bidOffer",    label:"High Bid/Offer",   desc:"Antrian beli jauh lebih tebal dari antrian jual â€” ada yang menampung." },
   { key:"ats",         label:"High ATS",         desc:"Average Trade Size besar = transaksi per eksekusi besar = pemain besar, bukan ritel." },
   { key:"noSell",      label:"No Sell",          desc:"Nyaris tidak ada tekanan jual pada periode itu (antrian jual kosong)." },
-  { key:"closeHigh",   label:"Close High",       desc:"Ditutup di harga tertinggi hari itu — tanda kekuatan." },
+  { key:"closeHigh",   label:"Close High",       desc:"Ditutup di harga tertinggi hari itu â€” tanda kekuatan." },
   { key:"nonRegular",  label:"High Non-Regular", desc:"Banyak transaksi crossing/negosiasi di luar pasar reguler." },
   { key:"topVolume",   label:"Top Volume",       desc:`Top ${ORCA_TOP_N} saham paling ramai secara volume transaksi.` },
   { key:"frequency",   label:"Frequency",        desc:`Top ${ORCA_TOP_N} saham paling ramai secara frekuensi transaksi.` },
   { key:"foreignPlus", label:"Foreign +",        desc:"Asing net beli pada jendela waktu terpilih." },
-  { key:"offerSlender",label:"Offer's Slender",  desc:"Antrian jual menipis drastis — sedikit yang mau melepas barang." },
+  { key:"offerSlender",label:"Offer's Slender",  desc:"Antrian jual menipis drastis â€” sedikit yang mau melepas barang." },
 ];
 
 const ORCA_MARKETCAP_OPTIONS = [
   { key:"all",    label:"Semua", max:null },
-  { key:"1t",     label:"≤1T",   max:1e12 },
-  { key:"5t",     label:"≤5T",   max:5e12 },
-  { key:"10t",    label:"≤10T",  max:10e12 },
-  { key:"50t",    label:"≤50T",  max:50e12 },
-  { key:"100t",   label:"≤100T", max:100e12 },
+  { key:"1t",     label:"â‰¤1T",   max:1e12 },
+  { key:"5t",     label:"â‰¤5T",   max:5e12 },
+  { key:"10t",    label:"â‰¤10T",  max:10e12 },
+  { key:"50t",    label:"â‰¤50T",  max:50e12 },
+  { key:"100t",   label:"â‰¤100T", max:100e12 },
   { key:"custom", label:"Custom T", max:null },
 ];
 
@@ -7816,7 +7816,7 @@ function computeOrcaResults(){
     rows = rows.filter(s => s.ticker.includes(q) || (s.name||"").toUpperCase().includes(q));
   }
 
-  // Skor komposit heuristik v1 — HANYA dipakai untuk urutan tampil, bukan
+  // Skor komposit heuristik v1 â€” HANYA dipakai untuk urutan tampil, bukan
   // untuk lolos/tidaknya filter (itu murni AND di atas). Bukan dari sumber
   // luar mana pun, dan boleh disetel ulang kalau ada masukan lebih baik.
   rows = rows.map(s=>{
@@ -7860,7 +7860,7 @@ function resetOrcaFilters(){
 
 function orcaFilterChip(def){
   const active = state.orcaFilters.has(def.key);
-  return `<button type="button" class="btn ${active?'btn-primary':'btn-outline'}" data-orca-filter="${def.key}" title="${escapeHtml(def.desc)}" style="padding:9px 14px;font-size:12px;">${active?'✓ ':''}${def.label}</button>`;
+  return `<button type="button" class="btn ${active?'btn-primary':'btn-outline'}" data-orca-filter="${def.key}" title="${escapeHtml(def.desc)}" style="padding:9px 14px;font-size:12px;">${active?'âœ“ ':''}${def.label}</button>`;
 }
 
 function orcaSegBtn(group, key, label, active){
@@ -7874,7 +7874,7 @@ function renderKrakenFlow(){
   const infoPanel = `
     <details class="panel" id="orcaInfoPanel" style="flex-direction:column;align-items:stretch;" ${state.orcaInfoOpen?"open":""}>
       <summary style="cursor:pointer;font-weight:700;font-size:14px;list-style:none;display:flex;justify-content:space-between;align-items:center;">
-        <span>⬢ Cara Pakai &amp; Arti Parameter — Kraken Flow (ORCA)</span><span style="color:var(--muted);font-size:11px;">${state.orcaInfoOpen?"▲ Tutup":"▼ Buka"}</span>
+        <span>â¬¢ Cara Pakai &amp; Arti Parameter â€” Kraken Flow (ORCA)</span><span style="color:var(--muted);font-size:11px;">${state.orcaInfoOpen?"â–² Tutup":"â–¼ Buka"}</span>
       </summary>
       <div style="margin-top:16px;display:flex;flex-direction:column;gap:14px;font-size:12.5px;line-height:1.7;color:var(--text);">
         <div>
@@ -7882,23 +7882,23 @@ function renderKrakenFlow(){
           <div style="color:var(--muted);">
             1. Pilih <b>minimal satu filter</b> dari daftar parameter (bisa dikombinasikan).<br>
             2. Atur Durasi (1-7 hari) dan batas Kapitalisasi Pasar bila perlu.<br>
-            3. Hasil langsung tampil — Top ${ORCA_TOP_N}, tanpa perlu tombol scan.
+            3. Hasil langsung tampil â€” Top ${ORCA_TOP_N}, tanpa perlu tombol scan.
           </div>
           <div style="margin-top:8px;background:rgba(234,179,8,0.08);border:1px solid rgba(234,179,8,0.2);border-radius:8px;padding:10px 12px;color:var(--gold);">
-            Makin banyak filter digabung, makin sedikit dan makin selektif hasilnya (logika AND — harus lolos SEMUA filter aktif). Kalau hasilnya kosong, kurangi filternya.
+            Makin banyak filter digabung, makin sedikit dan makin selektif hasilnya (logika AND â€” harus lolos SEMUA filter aktif). Kalau hasilnya kosong, kurangi filternya.
           </div>
         </div>
         <div>
           <div style="font-weight:700;margin-bottom:6px;">Arti tiap parameter</div>
           <div style="color:var(--muted);display:flex;flex-direction:column;gap:4px;">
-            ${ORCA_FILTER_DEFS.map(d=>`<div><b style="color:var(--text);">${d.label}</b> — ${d.desc}</div>`).join("")}
+            ${ORCA_FILTER_DEFS.map(d=>`<div><b style="color:var(--text);">${d.label}</b> â€” ${d.desc}</div>`).join("")}
           </div>
         </div>
         <div style="background:rgba(6,182,212,0.08);border:1px solid rgba(6,182,212,0.25);border-radius:8px;padding:10px 12px;">
-          <b style="color:var(--teal);">Catatan data:</b> Bid/Offer, ATS, Non-Regular%, Frequency & Volume sekarang mengikuti <b>Durasi (1-7 hari bursa) yang dipilih</b>, dihitung dari histori harian asli di tabel <code>flows</code> (bukan cuma snapshot hari terakhir lagi) — ATS & Non-Regular% dijumlah dulu lalu dibagi (rata-rata tertimbang), Bid/Offer diambil dari hari bursa paling baru dalam jendela (antrian order book tidak dijumlah lintas hari). Foreign+ tetap memakai agregat 1/5/20 hari yang memang sudah ada. Kalau sebuah saham belum punya baris histori sama sekali (mis. baru pertama kali disinkronkan setelah fitur ini aktif), filternya otomatis jatuh balik ke snapshot hari terakhir supaya tidak hilang dari hasil.
-          ${state.orcaHistoryLoading ? `<div style="margin-top:6px;color:var(--gold);">⏳ Menarik histori 7 hari bursa terakhir dari <code>flows</code>...</div>` : ""}
+          <b style="color:var(--teal);">Catatan data:</b> Bid/Offer, ATS, Non-Regular%, Frequency & Volume sekarang mengikuti <b>Durasi (1-7 hari bursa) yang dipilih</b>, dihitung dari histori harian asli di tabel <code>flows</code> (bukan cuma snapshot hari terakhir lagi) â€” ATS & Non-Regular% dijumlah dulu lalu dibagi (rata-rata tertimbang), Bid/Offer diambil dari hari bursa paling baru dalam jendela (antrian order book tidak dijumlah lintas hari). Foreign+ tetap memakai agregat 1/5/20 hari yang memang sudah ada. Kalau sebuah saham belum punya baris histori sama sekali (mis. baru pertama kali disinkronkan setelah fitur ini aktif), filternya otomatis jatuh balik ke snapshot hari terakhir supaya tidak hilang dari hasil.
+          ${state.orcaHistoryLoading ? `<div style="margin-top:6px;color:var(--gold);">â³ Menarik histori 7 hari bursa terakhir dari <code>flows</code>...</div>` : ""}
           ${state.orcaHistoryError ? `<div style="margin-top:6px;color:#f87171;">${escapeHtml(state.orcaHistoryError)}</div>` : ""}
-          ${(!state.orcaHistoryLoading && state.orcaHistoryByTicker) ? `<div style="margin-top:6px;color:var(--muted);">Histori dimuat (${Object.keys(state.orcaHistoryByTicker).length} emiten punya baris <code>flows</code> dalam jendela ini)${state.orcaHistoryLoadedAt ? " — " + new Date(state.orcaHistoryLoadedAt).toLocaleTimeString("id-ID") : ""}. <button type="button" id="orcaHistoryRefreshBtn" style="background:none;border:none;color:var(--teal);text-decoration:underline;cursor:pointer;font-size:11.5px;padding:0;">Muat ulang</button></div>` : ""}
+          ${(!state.orcaHistoryLoading && state.orcaHistoryByTicker) ? `<div style="margin-top:6px;color:var(--muted);">Histori dimuat (${Object.keys(state.orcaHistoryByTicker).length} emiten punya baris <code>flows</code> dalam jendela ini)${state.orcaHistoryLoadedAt ? " â€” " + new Date(state.orcaHistoryLoadedAt).toLocaleTimeString("id-ID") : ""}. <button type="button" id="orcaHistoryRefreshBtn" style="background:none;border:none;color:var(--teal);text-decoration:underline;cursor:pointer;font-size:11.5px;padding:0;">Muat ulang</button></div>` : ""}
         </div>
       </div>
     </details>`;
@@ -7907,26 +7907,26 @@ function renderKrakenFlow(){
 
   const strongPanel = `
     <div style="margin-top:14px;padding-top:14px;border-top:1px dashed var(--border);">
-      <div style="font-size:10px;color:var(--muted);text-transform:uppercase;font-weight:700;margin-bottom:8px;">Filter Kuat · khusus Offer's Slender</div>
+      <div style="font-size:10px;color:var(--muted);text-transform:uppercase;font-weight:700;margin-bottom:8px;">Filter Kuat Â· khusus Offer's Slender</div>
       <div style="display:flex;flex-wrap:wrap;gap:18px;">
         <div>
           <div style="font-size:10px;color:var(--muted);margin-bottom:6px;">Min ATS</div>
           <div style="display:flex;gap:6px;">
             ${orcaSegBtn("minAts","0","Semua",state.orcaMinAts===0)}
-            ${orcaSegBtn("minAts","2000000000","≥2M",state.orcaMinAts===2000000000)}
-            ${orcaSegBtn("minAts","5000000000","≥5M",state.orcaMinAts===5000000000)}
+            ${orcaSegBtn("minAts","2000000000","â‰¥2M",state.orcaMinAts===2000000000)}
+            ${orcaSegBtn("minAts","5000000000","â‰¥5M",state.orcaMinAts===5000000000)}
           </div>
         </div>
         <div>
           <div style="font-size:10px;color:var(--muted);margin-bottom:6px;">Min Freq</div>
           <div style="display:flex;gap:6px;">
             ${orcaSegBtn("minFreq","0","Semua",state.orcaMinFreq===0)}
-            ${orcaSegBtn("minFreq","2000","≥2k",state.orcaMinFreq===2000)}
-            ${orcaSegBtn("minFreq","5000","≥5k",state.orcaMinFreq===5000)}
+            ${orcaSegBtn("minFreq","2000","â‰¥2k",state.orcaMinFreq===2000)}
+            ${orcaSegBtn("minFreq","5000","â‰¥5k",state.orcaMinFreq===5000)}
           </div>
         </div>
       </div>
-      <div style="font-size:11px;color:var(--muted);margin-top:6px;">Nilai mengikuti angka di kartu (ATS dalam Miliar Rp — "M" = Miliar, Freq = jumlah transaksi hari itu). Semua = tak dibatasi. Hanya aktif kalau filter <b>Offer's Slender</b> dinyalakan.</div>
+      <div style="font-size:11px;color:var(--muted);margin-top:6px;">Nilai mengikuti angka di kartu (ATS dalam Miliar Rp â€” "M" = Miliar, Freq = jumlah transaksi hari itu). Semua = tak dibatasi. Hanya aktif kalau filter <b>Offer's Slender</b> dinyalakan.</div>
     </div>`;
 
   const durationBtns = [1,2,3,4,5,6,7].map(d=>orcaSegBtn("duration",String(d),`${d}H`,state.orcaDuration===d)).join("");
@@ -7936,26 +7936,26 @@ function renderKrakenFlow(){
   const filterPanel = `
     <div class="panel" style="flex-direction:column;align-items:stretch;">
       <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;margin-bottom:14px;">
-        <div class="filter-section-title" style="margin:0;">⬢ Filter Order Flow — Bandarmology<span class="line"></span></div>
+        <div class="filter-section-title" style="margin:0;">â¬¢ Filter Order Flow â€” Bandarmology<span class="line"></span></div>
         <input id="orcaSearchInput" type="text" placeholder="Cari emiten (mis. IATA)" value="${escapeHtml(state.orcaSearch)}" style="background:rgba(0,0,0,0.2);border:1px solid var(--border);color:var(--text);font-size:12.5px;border-radius:8px;padding:8px 12px;width:180px;">
       </div>
-      <div style="font-size:10px;color:var(--muted);text-transform:uppercase;font-weight:700;margin-bottom:8px;">Parameter · bisa dikombinasikan · Top ${ORCA_TOP_N} hasil</div>
+      <div style="font-size:10px;color:var(--muted);text-transform:uppercase;font-weight:700;margin-bottom:8px;">Parameter Â· bisa dikombinasikan Â· Top ${ORCA_TOP_N} hasil</div>
       <div style="display:flex;flex-wrap:wrap;gap:8px;">${filterChips}</div>
       ${strongPanel}
       <div style="display:flex;flex-wrap:wrap;gap:24px;margin-top:16px;padding-top:14px;border-top:1px dashed var(--border);">
         <div>
-          <div style="font-size:10px;color:var(--muted);text-transform:uppercase;font-weight:700;margin-bottom:8px;">Durasi · max 7 hari</div>
+          <div style="font-size:10px;color:var(--muted);text-transform:uppercase;font-weight:700;margin-bottom:8px;">Durasi Â· max 7 hari</div>
           <div style="display:flex;gap:6px;flex-wrap:wrap;">${durationBtns}</div>
         </div>
         <div>
-          <div style="font-size:10px;color:var(--muted);text-transform:uppercase;font-weight:700;margin-bottom:8px;">Market Cap · maksimal ${escapeHtml(capLabel)}</div>
+          <div style="font-size:10px;color:var(--muted);text-transform:uppercase;font-weight:700;margin-bottom:8px;">Market Cap Â· maksimal ${escapeHtml(capLabel)}</div>
           <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;">
             ${capBtns}
             ${state.orcaMarketCap==="custom" ? `<input id="orcaCustomCapInput" type="number" min="0" step="0.1" placeholder="mis. 25" value="${escapeHtml(state.orcaCustomCapT)}" style="background:rgba(0,0,0,0.2);border:1px solid var(--border);color:var(--text);font-size:12px;border-radius:8px;padding:7px 10px;width:90px;"> <span style="font-size:11px;color:var(--muted);">Triliun Rp</span>` : ""}
           </div>
         </div>
         <div style="margin-left:auto;display:flex;align-items:flex-end;">
-          <button class="btn btn-outline" id="orcaResetBtn" style="color:#f87171;border-color:rgba(239,68,68,0.4);">↺ Reset ORCA</button>
+          <button class="btn btn-outline" id="orcaResetBtn" style="color:#f87171;border-color:rgba(239,68,68,0.4);">â†º Reset ORCA</button>
         </div>
       </div>
     </div>`;
@@ -7963,13 +7963,13 @@ function renderKrakenFlow(){
   const resultsPanel = `
     <div class="panel" style="flex-direction:column;align-items:stretch;">
       <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;margin-bottom:14px;">
-        <div class="filter-section-title" style="margin:0;">⊙ Hasil ORCA <span class="count-badge">${result.ranked ? rows.length : 0} saham</span><span class="line"></span></div>
+        <div class="filter-section-title" style="margin:0;">âŠ™ Hasil ORCA <span class="count-badge">${result.ranked ? rows.length : 0} saham</span><span class="line"></span></div>
         ${rows.length ? `<button class="btn btn-outline" id="orcaCsvBtn" style="color:#22d3ee;border-color:rgba(6,182,212,0.4);">CSV</button>` : ""}
       </div>
       ${!result.ranked
-        ? `<div class="empty-box">⬢ Pilih minimal satu filter di atas — hasil akan langsung tampil di sini tanpa perlu scan.<br>${result.usingHistory ? `Data diagregasi dari histori ${ORCA_HISTORY_TRADING_DAYS} hari bursa terakhir (${state.stocks.length} emiten diikuti).` : `Data diambil dari snapshot Bandarmology terakhir (${state.stocks.length} emiten)${state.orcaHistoryLoading ? " — histori sedang dimuat..." : ""}.`}</div>`
+        ? `<div class="empty-box">â¬¢ Pilih minimal satu filter di atas â€” hasil akan langsung tampil di sini tanpa perlu scan.<br>${result.usingHistory ? `Data diagregasi dari histori ${ORCA_HISTORY_TRADING_DAYS} hari bursa terakhir (${state.stocks.length} emiten diikuti).` : `Data diambil dari snapshot Bandarmology terakhir (${state.stocks.length} emiten)${state.orcaHistoryLoading ? " â€” histori sedang dimuat..." : ""}.`}</div>`
         : !rows.length
-          ? `<div class="empty-box">Tidak ada saham yang lolos kombinasi filter ini (dari ${result.universeSize} emiten setelah filter Market Cap) — coba kurangi filter atau longgarkan Market Cap.</div>`
+          ? `<div class="empty-box">Tidak ada saham yang lolos kombinasi filter ini (dari ${result.universeSize} emiten setelah filter Market Cap) â€” coba kurangi filter atau longgarkan Market Cap.</div>`
           : `<div class="table-wrap">
         <table class="mono">
           <thead>
@@ -7987,7 +7987,7 @@ function renderKrakenFlow(){
                 <td style="color:${(r.changePct||0)>=0?'var(--up)':'var(--down)'};">${r.changePct!=null?((r.changePct>=0?'+':'')+r.changePct.toFixed(1)+'%'):'-'}</td>
                 <td>${fmtNum(r.bidVolume)}</td>
                 <td>${fmtNum(r.offerVolume)}</td>
-                <td>${r.orcaBidOfferRatio!=null ? (r.orcaBidOfferRatio>=999?'∞':r.orcaBidOfferRatio.toFixed(1)+'x') : '-'}</td>
+                <td>${r.orcaBidOfferRatio!=null ? (r.orcaBidOfferRatio>=999?'âˆž':r.orcaBidOfferRatio.toFixed(1)+'x') : '-'}</td>
                 <td>${r.avgTicket!=null?fmtCap(r.avgTicket):'-'}</td>
                 <td>${fmtNum(r.frequency)}</td>
                 <td>${r.crossingPct!=null?r.crossingPct.toFixed(1)+'%':'-'}</td>
@@ -8026,16 +8026,16 @@ function exportOrcaToCsv(){
 }
 
 // ==========================================
-// bindSearchInputPreservingCursor — pengganti pola oninput manual lama
+// bindSearchInputPreservingCursor â€” pengganti pola oninput manual lama
 // (state.x = e.target.value; render(); ...selectionStart = value.length).
 //
 // KENAPA INI PERLU: render() mengganti innerHTML tab yang aktif secara
 // PENUH tiap kali state berubah, jadi elemen <input> lama "dibuang" dan
-// diganti elemen baru — fokus & posisi kursor otomatis hilang. Kode lama
+// diganti elemen baru â€” fokus & posisi kursor otomatis hilang. Kode lama
 // menutupi ini dengan memaksa fokus balik + kursor SELALU ke UJUNG teks
 // (selectionStart = value.length). Akibatnya: begitu user mencoba
 // mengedit di TENGAH teks (bukan di ujung), kursor selalu melompat balik
-// ke akhir setiap kali mengetik satu huruf — mustahil menyisipkan atau
+// ke akhir setiap kali mengetik satu huruf â€” mustahil menyisipkan atau
 // menghapus karakter di tengah kata tanpa kursor "kabur".
 //
 // Fungsi ini menyimpan posisi kursor ASLI (selectionStart/selectionEnd)
@@ -8114,7 +8114,7 @@ function attachContentEvents(){
   if(state.colPickerOpen){
     const panel = document.querySelector(".col-picker-panel");
     if(panel) panel.onclick = (e) => e.stopPropagation();
-    // Klik di luar panel menutupnya — dipasang sekali lewat setTimeout supaya
+    // Klik di luar panel menutupnya â€” dipasang sekali lewat setTimeout supaya
     // tidak langsung menutup panel yang baru saja dibuka oleh klik yang sama.
     setTimeout(() => {
       document.addEventListener("click", function closeColPicker(){
@@ -8560,10 +8560,10 @@ document.getElementById("tabs").addEventListener("click", (e)=>{
 });
 document.getElementById("refreshBtn").onclick = ()=> loadLive();
 
-// Sidebar collapsible (desktop) — status disimpan di localStorage supaya
+// Sidebar collapsible (desktop) â€” status disimpan di localStorage supaya
 // tetap keciut/lebar sama seperti terakhir dipilih user kalau halaman
 // di-reload. + Sidebar sebagai MENU DRAWER di layar sempit (<=640px,
-// lihat styles.css) — dibuka/ditutup lewat #hamburgerBtn di header,
+// lihat styles.css) â€” dibuka/ditutup lewat #hamburgerBtn di header,
 // #sidebarDrawerClose, tap #sidebarBackdrop, tombol Esc, atau otomatis
 // setelah memilih satu menu (lihat listener klik #tabs di atas).
 (function initSidebarToggle(){
@@ -8619,19 +8619,19 @@ setInterval(pollExtensionStockbitToken, 3000); // lihat catatan di pollExtension
 loadLive();
 
 // ==========================================
-// AUTO-REFRESH HARGA LIVE — sebelumnya loadLive() cuma dipanggil sekali saat
+// AUTO-REFRESH HARGA LIVE â€” sebelumnya loadLive() cuma dipanggil sekali saat
 // page load, jadi tab yang dibiarkan terbuka lama menampilkan harga basi.
 // Sekarang dijadwalkan ulang tiap LIVE_REFRESH_INTERVAL_MS, dengan 2 pengaman:
-// 1. Diskip kalau tab sedang di background (document.hidden) — hemat request,
+// 1. Diskip kalau tab sedang di background (document.hidden) â€” hemat request,
 //    dan begitu tab dibuka lagi langsung refresh sekali (visibilitychange)
 //    supaya tidak perlu nunggu interval penuh.
 // 2. Diskip kalau user sedang fokus mengetik di input/textarea/select manapun
-//    (search box, form manual Broker Summary, dsb.) — render() replace
+//    (search box, form manual Broker Summary, dsb.) â€” render() replace
 //    innerHTML, jadi kalau dipaksa refresh di tengah ketikan akan reset fokus
 //    & nilai yang belum ke-commit ke state. Kalau sedang diskip, otomatis
 //    dicoba lagi di siklus interval berikutnya (tidak hilang, cuma ditunda).
 // ==========================================
-const LIVE_REFRESH_INTERVAL_MS = 45000; // 45 detik — cukup sering tanpa membebani Supabase/Stockbit
+const LIVE_REFRESH_INTERVAL_MS = 45000; // 45 detik â€” cukup sering tanpa membebani Supabase/Stockbit
 let liveRefreshInFlight = false;
 
 function shouldSkipAutoRefreshLive(){
@@ -8649,21 +8649,21 @@ setInterval(autoRefreshLiveTick, LIVE_REFRESH_INTERVAL_MS);
 document.addEventListener("visibilitychange", () => { if(!document.hidden) autoRefreshLiveTick(); });
 
 // ==========================================
-// AUTO-REFRESH LIVE STOCKBIT (Screener) — beda dari AUTO-REFRESH HARGA LIVE
-// di atas (yang narik dari Supabase). Ini khusus buat kolom "🔴 Live
+// AUTO-REFRESH LIVE STOCKBIT (Screener) â€” beda dari AUTO-REFRESH HARGA LIVE
+// di atas (yang narik dari Supabase). Ini khusus buat kolom "ðŸ”´ Live
 // Stockbit" di tabel Screener, dan SENGAJA jauh lebih hati-hati karena:
 //
-// 1. Pakai token pribadi user ke API tidak resmi — tiap siklus bisa memicu
+// 1. Pakai token pribadi user ke API tidak resmi â€” tiap siklus bisa memicu
 //    N request berurutan (N = jumlah saham dicentang / lolos filter).
 // 2. Makanya ada 3 pengaman TAMBAHAN di luar yang sudah dipakai
 //    autoRefreshLiveTick() (skip kalau tab background / user sedang ngetik):
-//      a. Cuma jalan kalau tab "screener" yang sedang dibuka (state.tab) —
+//      a. Cuma jalan kalau tab "screener" yang sedang dibuka (state.tab) â€”
 //         tidak berguna narik data ini kalau user sedang di tab lain.
 //      b. Interval MINIMAL 30 detik (STOCKBIT_AUTOREFRESH_MIN_SEC), tidak
 //         bisa diset lebih cepat dari itu lewat dropdown.
 //      c. Kalau jumlah ticker (dicentang, atau semua yang lolos filter
 //         kalau tak ada yang dicentang) melebihi STOCKBIT_AUTOREFRESH_MAX_TICKERS,
-//         auto-refresh DIJEDA OTOMATIS (bukan dimatikan — toggle tetap ON,
+//         auto-refresh DIJEDA OTOMATIS (bukan dimatikan â€” toggle tetap ON,
 //         tinggal skip siklus itu) sampai user mempersempit filter atau
 //         mencentang saham tertentu. Badge peringatan sudah muncul di UI
 //         Screener kalau kondisi ini aktif.
@@ -8719,21 +8719,21 @@ function getMarketStatus() {
   const hour = wib.getUTCHours();
   const minute = wib.getUTCMinutes();
   const t = hour * 100 + minute;
-  if (day === 0 || day === 6) return { label: "Minggu", color: "var(--muted)", icon: "🔴", desc: "Bursa tutup (weekend)" };
-  if (t < 830)  return { label: "Pre-Market", color: "var(--gold)", icon: "🟡", desc: "Sesi pra-pembukaan" };
-  if (t < 900)  return { label: "Opening", color: "var(--up)", icon: "🟢", desc: "Sesi pembukaan (auction)" };
-  if (t < 1200) return { label: "Buka", color: "var(--up)", icon: "🟢", desc: "Sesi perdagangan 1" };
-  if (t < 1300) return { label: "Istirahat", color: "var(--gold)", icon: "🟡", desc: "Jeda istirahat makan siang" };
-  if (t < 1500) return { label: "Buka", color: "var(--up)", icon: "🟢", desc: "Sesi perdagangan 2" };
-  if (t < 1600) return { label: "Closing", color: "var(--gold)", icon: "🟡", desc: "Sesi penutupan (closing auction)" };
-  return { label: "Tutup", color: "var(--muted)", icon: "🔴", desc: "Bursa sudah tutup" };
+  if (day === 0 || day === 6) return { label: "Minggu", color: "var(--muted)", icon: "ðŸ”´", desc: "Bursa tutup (weekend)" };
+  if (t < 830)  return { label: "Pre-Market", color: "var(--gold)", icon: "ðŸŸ¡", desc: "Sesi pra-pembukaan" };
+  if (t < 900)  return { label: "Opening", color: "var(--up)", icon: "ðŸŸ¢", desc: "Sesi pembukaan (auction)" };
+  if (t < 1200) return { label: "Buka", color: "var(--up)", icon: "ðŸŸ¢", desc: "Sesi perdagangan 1" };
+  if (t < 1300) return { label: "Istirahat", color: "var(--gold)", icon: "ðŸŸ¡", desc: "Jeda istirahat makan siang" };
+  if (t < 1500) return { label: "Buka", color: "var(--up)", icon: "ðŸŸ¢", desc: "Sesi perdagangan 2" };
+  if (t < 1600) return { label: "Closing", color: "var(--gold)", icon: "ðŸŸ¡", desc: "Sesi penutupan (closing auction)" };
+  return { label: "Tutup", color: "var(--muted)", icon: "ðŸ”´", desc: "Bursa sudah tutup" };
 }
 
 function updateMarketStatusUI() {
   const el = document.getElementById("marketStatus");
   if (!el) return;
   const s = getMarketStatus();
-  el.innerHTML = `<span class="pill pill-muted" style="border-color:${s.color};color:${s.color};font-size:11px;">${s.icon} ${s.label} · WIB</span>`;
+  el.innerHTML = `<span class="pill pill-muted" style="border-color:${s.color};color:${s.color};font-size:11px;">${s.icon} ${s.label} Â· WIB</span>`;
   el.title = s.desc;
 }
 
@@ -8805,14 +8805,14 @@ function confirmBulkFetch(actionLabel, tickerCount, daysInfo) {
   const msg = daysInfo
     ? `Akan ${actionLabel} untuk ${tickerCount} saham dalam ${daysInfo}. Bisa memakan waktu & banyak request. Lanjutkan?`
     : `Akan ${actionLabel} untuk ${tickerCount} saham. Lanjutkan?`;
-  if (tickerCount <= 10) return true; // sedikit — tidak perlu konfirmasi
+  if (tickerCount <= 10) return true; // sedikit â€” tidak perlu konfirmasi
   return confirm(msg);
 }
 
 
 // ==========================================
 // FITUR: MARKET STATUS INDICATOR (WIB)
-// Element #marketStatus dibuat otomatis di header kalau belum ada —
+// Element #marketStatus dibuat otomatis di header kalau belum ada â€”
 // tidak perlu edit index.html.
 // ==========================================
 function getMarketStatus() {
@@ -8821,14 +8821,14 @@ function getMarketStatus() {
   const wib = new Date(wibMs);
   const day = wib.getUTCDay();
   const t = wib.getUTCHours() * 100 + wib.getUTCMinutes();
-  if (day === 0 || day === 6) return { label: "Tutup", color: "var(--muted)", icon: "🔴", desc: "Bursa tutup (weekend)" };
-  if (t < 830)  return { label: "Pre-Market", color: "var(--gold)", icon: "🟡", desc: "Sesi pra-pembukaan" };
-  if (t < 900)  return { label: "Opening", color: "var(--up)", icon: "🟢", desc: "Sesi pembukaan (auction)" };
-  if (t < 1200) return { label: "Buka", color: "var(--up)", icon: "🟢", desc: "Sesi perdagangan 1" };
-  if (t < 1300) return { label: "Istirahat", color: "var(--gold)", icon: "🟡", desc: "Jeda istirahat" };
-  if (t < 1500) return { label: "Buka", color: "var(--up)", icon: "🟢", desc: "Sesi perdagangan 2" };
-  if (t < 1600) return { label: "Closing", color: "var(--gold)", icon: "🟡", desc: "Sesi penutupan" };
-  return { label: "Tutup", color: "var(--muted)", icon: "🔴", desc: "Bursa sudah tutup" };
+  if (day === 0 || day === 6) return { label: "Tutup", color: "var(--muted)", icon: "ðŸ”´", desc: "Bursa tutup (weekend)" };
+  if (t < 830)  return { label: "Pre-Market", color: "var(--gold)", icon: "ðŸŸ¡", desc: "Sesi pra-pembukaan" };
+  if (t < 900)  return { label: "Opening", color: "var(--up)", icon: "ðŸŸ¢", desc: "Sesi pembukaan (auction)" };
+  if (t < 1200) return { label: "Buka", color: "var(--up)", icon: "ðŸŸ¢", desc: "Sesi perdagangan 1" };
+  if (t < 1300) return { label: "Istirahat", color: "var(--gold)", icon: "ðŸŸ¡", desc: "Jeda istirahat" };
+  if (t < 1500) return { label: "Buka", color: "var(--up)", icon: "ðŸŸ¢", desc: "Sesi perdagangan 2" };
+  if (t < 1600) return { label: "Closing", color: "var(--gold)", icon: "ðŸŸ¡", desc: "Sesi penutupan" };
+  return { label: "Tutup", color: "var(--muted)", icon: "ðŸ”´", desc: "Bursa sudah tutup" };
 }
 
 function updateMarketStatusUI() {
@@ -8841,7 +8841,7 @@ function updateMarketStatusUI() {
     headerRow.appendChild(el);
   }
   const s = getMarketStatus();
-  el.innerHTML = `<span class="pill pill-muted" style="border-color:${s.color};color:${s.color};font-size:11px;">${s.icon} ${s.label} · WIB</span>`;
+  el.innerHTML = `<span class="pill pill-muted" style="border-color:${s.color};color:${s.color};font-size:11px;">${s.icon} ${s.label} Â· WIB</span>`;
   el.title = s.desc;
 }
 setInterval(() => { if(typeof updateMarketStatusUI === 'function') updateMarketStatusUI(); }, 60000);
@@ -8849,7 +8849,7 @@ setInterval(() => { if(typeof updateMarketStatusUI === 'function') updateMarketS
 
 // ==========================================
 // FITUR: KEYBOARD SHORTCUTS
-// Ctrl+K = cari · 1-9 = pindah tab · Esc = tutup modal · R = refresh
+// Ctrl+K = cari Â· 1-9 = pindah tab Â· Esc = tutup modal Â· R = refresh
 // ==========================================
 document.addEventListener("keydown", (e) => {
   const tag = e.target.tagName;
@@ -8882,13 +8882,13 @@ document.addEventListener("keydown", (e) => {
 // Chrome; iOS Safari tidak butuh service worker tapi tetap aman didaftarkan).
 // Dibungkus try/catch + cek 'serviceWorker' in navigator karena:
 //  - Kalau halaman ini masih dibuka lewat file:// (bukan http/https),
-//    registrasi service worker akan gagal/ditolak browser — itu WAJAR,
+//    registrasi service worker akan gagal/ditolak browser â€” itu WAJAR,
 //    bukan bug. Fitur install penuh baru aktif kalau di-hosting via HTTPS
 //    (lihat catatan PWA_HOSTING.md).
 // ==========================================
 if("serviceWorker" in navigator && (location.protocol === "https:" || location.hostname === "localhost")){
   window.addEventListener("load", () => {
-    navigator.serviceWorker.register("sw.js").catch(() => { /* diamkan — bukan fatal */ });
+    navigator.serviceWorker.register("sw.js").catch(() => { /* diamkan â€” bukan fatal */ });
   });
 }
 
@@ -8963,7 +8963,7 @@ function showToast(message, tone = "up") {
 
 
 // ==========================================
-// 🥷 WEBSOCKET INTERCEPTOR (DAY TRADE MODE)
+// ðŸ¥· WEBSOCKET INTERCEPTOR (DAY TRADE MODE)
 // ==========================================
 
 // 1. Fungsi Parser Mentah
@@ -8991,7 +8991,7 @@ function parseStockbitWsMessage(rawString) {
 // 2. Fungsi Update Data & Logika Day Trade
 function handleLiveTick(parsedData) {
     /* 
-       ⚠️ CATATAN UNTUK BESOK: 
+       âš ï¸ CATATAN UNTUK BESOK: 
        Kita belum tahu pasti nama field yang dipakai Stockbit di WebSocket mereka.
        Asumsi sementara, strukturnya memuat: { symbol: "BBCA", price: 10000, volume: 50000 }
        Besok kita sesuaikan bagian ini setelah melihat data aslinya di Console!
@@ -9023,7 +9023,7 @@ function handleLiveTick(parsedData) {
     };
     state.stockbitLive[ticker].fetchedAt = Date.now();
 
-    // 🔥 LOGIKA DETEKSI VOLUME SPIKE (DAY TRADE)
+    // ðŸ”¥ LOGIKA DETEKSI VOLUME SPIKE (DAY TRADE)
     const dbData = state.stocks.find(s => s.ticker === ticker);
     if (dbData && dbData.cVol && currentVol) {
          // Jika volume lompat 20% dari EOD sebelumnya dengan sangat cepat
@@ -9065,7 +9065,7 @@ window.addEventListener('message', function(event) {
       
       // LOG INI SANGAT PENTING UNTUK BESOK PAGI! 
       // Kita akan cek struktur aslinya dari sini.
-      console.log("📥 WS RAW:", event.data.data); 
+      console.log("ðŸ“¥ WS RAW:", event.data.data); 
       
       const parsed = parseStockbitWsMessage(event.data.data);
       if (parsed) {
