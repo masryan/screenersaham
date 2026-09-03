@@ -288,31 +288,43 @@ async function stockbitFetchMarketDetector(ticker, fromDate, toDate, days){
 // kalau Stockbit ganti skema respons di masa depan, sesuaikan lagi di sini.
 function parseStockbitMarketDetector(raw, fetchDate){
   if(!raw || typeof raw !== "object") return null;
-  const bs = raw.data || null;
+  // Path asli: data.broker_summary.{brokers_buy,brokers_sell} — bukan data.buy/data.sell.
+  const bs = raw?.data?.broker_summary || null;
   if(!bs) return null;
-  
-  // Endpoint distribution biasanya memisahkan 'buy' dan 'sell'
-  const buyRows = Array.isArray(bs.buy) ? bs.buy : [];
-  const sellRows = Array.isArray(bs.sell) ? bs.sell : [];
+
+  const buyRows = Array.isArray(bs.brokers_buy) ? bs.brokers_buy : [];
+  const sellRows = Array.isArray(bs.brokers_sell) ? bs.brokers_sell : [];
   if(!buyRows.length && !sellRows.length) return null;
 
   const byDate = {}; 
   const ensure = (date) => (byDate[date] ||= { buy: [], sell: [] });
-  const dateStr = fetchDate; // Menggunakan tanggal dari parameter request
+  // netbs_date per baris (format YYYYMMDD) dipakai kalau ada — response ini
+  // bisa berisi campuran banyak tanggal sekaligus. Fallback ke fetchDate
+  // kalau baris tidak punya tanggal sendiri (aman karena request sekarang
+  // per 1 hari, lihat STOCKBIT_BROKER_CHUNK_DAYS).
+  const rowDate = (r) => {
+    const nd = r.netbs_date ?? r.date;
+    if(nd != null){
+      const s = String(nd);
+      if(/^\d{8}$/.test(s)) return `${s.slice(0,4)}-${s.slice(4,6)}-${s.slice(6,8)}`;
+      if(/^\d{4}-\d{2}-\d{2}/.test(s)) return s.slice(0,10);
+    }
+    return fetchDate;
+  };
 
   buyRows.forEach(r => {
-    ensure(dateStr).buy.push({
-      broker_code: String(r.broker || r.broker_code || "").toUpperCase(),
-      lot: Number(r.lot) || null,
-      value_idr: Number(r.value || r.value_idr) || 0,
+    ensure(rowDate(r)).buy.push({
+      broker_code: String(r.broker || r.broker_code || r.netbs_code || "").toUpperCase(),
+      lot: Number(r.blot ?? r.lot) || null,
+      value_idr: Number(r.bval ?? r.value ?? r.value_idr) || 0,
     });
   });
   
   sellRows.forEach(r => {
-    ensure(dateStr).sell.push({
-      broker_code: String(r.broker || r.broker_code || "").toUpperCase(),
-      lot: Number(r.lot) || null,
-      value_idr: Number(r.value || r.value_idr) || 0,
+    ensure(rowDate(r)).sell.push({
+      broker_code: String(r.broker || r.broker_code || r.netbs_code || "").toUpperCase(),
+      lot: Number(r.slot ?? r.lot) || null,
+      value_idr: Number(r.sval ?? r.value ?? r.value_idr) || 0,
     });
   });
 
