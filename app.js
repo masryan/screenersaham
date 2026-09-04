@@ -7948,6 +7948,13 @@ function orcaWindowAggregate(ticker, duration){
     frequency: hasFreq ? sumFreq : null,
     cVol: sumVolume,
     tradingDaysInWindow: rows.length,
+    // Sumber baris PALING BARU dalam jendela ("idx" dari `flows` atau
+    // "stockbit" dari tambalan price_history_stockbit, lihat loadOrcaHistory()).
+    // Dipakai untuk badge "Sumber" per-baris di tabel Hasil ORCA -- sebelumnya
+    // cuma ada ringkasan agregat (idxCount/stockbitCount) di atas tabel, tidak
+    // ada indikator per-saham, jadi user tidak tahu MANA yang datanya dari
+    // tambalan Stockbit (bid/offer/nonreg_value pasti null untuk baris itu).
+    src: latest._src || null,
   };
 }
 
@@ -7970,7 +7977,7 @@ function computeOrcaResults(){
   let universe = enriched()
     .map(s=>{
       const w = usingHistory ? orcaWindowAggregate(s.ticker, state.orcaDuration) : null;
-      if(!w) return { ...s, orcaWindowDays: null };
+      if(!w) return { ...s, orcaWindowDays: null, orcaSrc: null };
       return {
         ...s,
         bid: w.bid ?? s.bid, bidVolume: w.bidVolume ?? s.bidVolume,
@@ -7979,6 +7986,9 @@ function computeOrcaResults(){
         frequency: w.frequency ?? s.frequency, cVol: w.cVol || s.cVol,
         cClose: w.cClose ?? s.cClose, cHigh: w.cHigh ?? s.cHigh,
         orcaWindowDays: w.tradingDaysInWindow,
+        // "idx" | "stockbit" | null (null = belum ada histori flows/stockbit
+        // sama sekali untuk ticker ini, masih pakai snapshot `stocks`).
+        orcaSrc: w.src,
       };
     })
     .filter(s=>{
@@ -8080,6 +8090,18 @@ function orcaFilterChip(def){
 
 function orcaSegBtn(group, key, label, active){
   return `<button type="button" class="btn ${active?'btn-primary':'btn-outline'}" data-orca-seg="${group}" data-orca-value="${key}" style="padding:7px 12px;font-size:11.5px;">${label}</button>`;
+}
+
+// Badge kecil "Sumber" per baris di tabel Hasil ORCA -- item #3 dari
+// perbaikan fallback Stockbit: sebelumnya cuma ada ringkasan agregat
+// (idxCount/stockbit di atas tabel), tidak ada indikator PER SAHAM mana
+// yang bid/offer/nonreg_value-nya null karena masih tambalan Stockbit.
+// Sama persis pola & warna badge di panel "Bandingkan dengan IDX"
+// (renderDetailHistorical) supaya konsisten di seluruh app.
+function orcaSrcBadge(src){
+  if(src === "idx") return `<span style="color:var(--teal);font-size:11px;">IDX</span>`;
+  if(src === "stockbit") return `<span style="color:var(--gold);font-size:11px;" title="Baris histori terbaru untuk saham ini dari tambalan price_history_stockbit (Stockbit), bukan flows (IDX) -- Bid/Offer & Non-Regular% kosong karena endpoint histori Stockbit tidak punya data itu.">Stockbit</span>`;
+  return `<span style="color:var(--muted);font-size:11px;" title="Belum ada baris histori (flows/price_history_stockbit) untuk saham ini -- masih pakai snapshot terakhir dari tabel stocks.">-</span>`;
 }
 
 function renderKrakenFlow(){
@@ -8189,7 +8211,7 @@ function renderKrakenFlow(){
         <table class="mono">
           <thead>
             <tr>
-              <th>#</th><th>Kode</th><th>Nama</th><th>Harga</th><th>1D%</th><th>Bid</th><th>Offer</th><th>B/O</th><th>ATS${result.usingHistory?` (${state.orcaDuration}H)`:""}</th><th>Freq${result.usingHistory?` (${state.orcaDuration}H)`:""}</th><th>Non-Reg%${result.usingHistory?` (${state.orcaDuration}H)`:""}</th><th>Foreign (${escapeHtml(result.foreignWinLabel||"")})</th><th>Volume</th><th>Mkt Cap</th>
+              <th>#</th><th>Kode</th><th title="Sumber baris histori paling baru: IDX (flows) atau tambalan Stockbit (bid/offer/non-reg kosong)">Sumber</th><th>Nama</th><th>Harga</th><th>1D%</th><th>Bid</th><th>Offer</th><th>B/O</th><th>ATS${result.usingHistory?` (${state.orcaDuration}H)`:""}</th><th>Freq${result.usingHistory?` (${state.orcaDuration}H)`:""}</th><th>Non-Reg%${result.usingHistory?` (${state.orcaDuration}H)`:""}</th><th>Foreign (${escapeHtml(result.foreignWinLabel||"")})</th><th>Volume</th><th>Mkt Cap</th>
             </tr>
           </thead>
           <tbody>
@@ -8197,6 +8219,7 @@ function renderKrakenFlow(){
               <tr>
                 <td>${i+1}</td>
                 <td class="ticker-cell"><button class="ticker-link" data-detail="${r.ticker}" title="Lihat detail ${r.ticker}">${r.ticker}</button></td>
+                <td>${orcaSrcBadge(r.orcaSrc)}</td>
                 <td style="white-space:normal;max-width:160px;font-family:'Sora',sans-serif;font-size:12px;">${escapeHtml(r.name)}</td>
                 <td>${fmtNum(r.cClose)}</td>
                 <td style="color:${(r.changePct||0)>=0?'var(--up)':'var(--down)'};">${r.changePct!=null?((r.changePct>=0?'+':'')+r.changePct.toFixed(1)+'%'):'-'}</td>
@@ -8222,11 +8245,11 @@ function exportOrcaToCsv(){
   const result = computeOrcaResults();
   const rows = result.rows;
   if(!rows.length) return alert("Belum ada hasil ORCA untuk diekspor.");
-  const header = ["Kode","Nama","Harga","1D%","Bid","Offer","B/O Ratio","ATS","Frekuensi","Non-Reg %","Foreign","Volume","Market Cap"];
+  const header = ["Kode","Sumber","Nama","Harga","1D%","Bid","Offer","B/O Ratio","ATS","Frekuensi","Non-Reg %","Foreign","Volume","Market Cap"];
   const lines = [header.join(",")];
   rows.forEach(r=>{
     lines.push([
-      r.ticker, `"${(r.name||"").replace(/"/g,'""')}"`, Math.round(r.cClose||0), (r.changePct||0).toFixed(2),
+      r.ticker, r.orcaSrc || "-", `"${(r.name||"").replace(/"/g,'""')}"`, Math.round(r.cClose||0), (r.changePct||0).toFixed(2),
       Math.round(r.bidVolume||0), Math.round(r.offerVolume||0), r.orcaBidOfferRatio!=null?r.orcaBidOfferRatio.toFixed(2):"",
       Math.round(r.avgTicket||0), Math.round(r.frequency||0), r.crossingPct!=null?r.crossingPct.toFixed(2):"",
       Math.round(r.orcaForeignVal||0), Math.round(r.cVol||0), Math.round(r.marketCap||0)
