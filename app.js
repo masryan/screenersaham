@@ -1318,7 +1318,8 @@ let state = {
   stockbitToken: "", stockbitQuoteEndpoint: STOCKBIT_DEFAULT_QUOTE_EP,
   stockbitBrokerEndpoint: STOCKBIT_DEFAULT_BROKER_EP, stockbitProxyUrl: "",
   stockbitHistoricalEndpoint: STOCKBIT_DEFAULT_HISTORICAL_EP,
-  detailHistoricalPeriod: "daily", detailHistoricalRows: [],
+  detailHistoricalPeriod: "daily", 
+  detailHistoricalFrom: null, detailHistoricalTo: null,detailHistoricalRows: [],
   detailHistoricalLoading: false, detailHistoricalMsg: "", detailHistoricalMsgError: false,
   // Panel "Bandingkan dengan IDX (flows)" di tab Historical Data â€” lihat
   // loadDetailCompare(). Cuma dihitung on-demand (klik tombol), tidak
@@ -2773,6 +2774,16 @@ function renderDetailHistorical(s){
   const rows = state.detailHistoricalRows || [];
   const periodBtn = (key, label) => `<button type="button" class="btn ${state.detailHistoricalPeriod===key?'btn-primary':'btn-outline'}" data-hist-period="${key}" ${state.detailHistoricalLoading?"disabled":""}>${label}</button>`;
 
+  // Default date range: 1 tahun terakhir
+  if(!state.detailHistoricalFrom) {
+    const d = new Date();
+    d.setFullYear(d.getFullYear() - 1);
+    state.detailHistoricalFrom = toLocalISODate(d);
+  }
+  if(!state.detailHistoricalTo) {
+    state.detailHistoricalTo = todayLocalISO();
+  }
+
   const tableRows = rows.map(r => `
     <tr>
       <td class="mono">${escapeHtml(r.date)}</td>
@@ -2780,7 +2791,7 @@ function renderDetailHistorical(s){
       <td class="mono" style="text-align:right;color:${(r.change??0)>=0?'var(--up)':'var(--down)'}">${r.change!=null?dNum(r.change,{plusSign:true}):"-"}${r.changePct!=null?` (${dNum(r.changePct,{plusSign:true,decimals:2,suffix:'%'})})`:""}</td>
       <td class="mono" style="text-align:right;">${r.value!=null?fmtNum(r.value):"-"}</td>
       <td class="mono" style="text-align:right;">${r.volume!=null?fmtNum(r.volume):"-"}</td>
-      <td class="mono" style="text-align:right;color:${r.netForeign==null?'inherit':(r.netForeign>=0?'var(--up)':'var(--down)')}" title="Foreign Buy: ${r.foreignBuy!=null?fmtNum(r.foreignBuy):'-'} Â· Foreign Sell: ${r.foreignSell!=null?fmtNum(r.foreignSell):'-'}">${r.netForeign!=null?dNum(r.netForeign,{plusSign:true}):"-"}</td>
+      <td class="mono" style="text-align:right;color:${r.netForeign==null?'inherit':(r.netForeign>=0?'var(--up)':'var(--down)')}" title="Foreign Buy: ${r.foreignBuy!=null?fmtNum(r.foreignBuy):'-'} · Foreign Sell: ${r.foreignSell!=null?fmtNum(r.foreignSell):'-'}">${r.netForeign!=null?dNum(r.netForeign,{plusSign:true}):"-"}</td>
     </tr>`).join("");
 
   return `
@@ -2790,15 +2801,35 @@ function renderDetailHistorical(s){
         ${periodBtn("daily","Daily")}
         ${periodBtn("weekly","Weekly")}
         ${periodBtn("monthly","Monthly")}
-        <button class="btn btn-outline" id="dhistLoadBtn" ${state.detailHistoricalLoading?"disabled":""}>${state.detailHistoricalLoading?"Menarik data...":"â¬‡ï¸ Tarik Data dari Stockbit"}</button>
-        ${rows.length ? `<button class="btn btn-outline" id="dhistSaveBtn">ðŸ’¾ Simpan ke Database</button>` : ""}
-        ${rows.length ? `<button class="btn btn-outline" id="dhistCompareBtn" ${state.detailCompareLoading?"disabled":""} style="color:#a78bfa;border-color:rgba(167,139,250,0.4);">${state.detailCompareLoading?"Membandingkan...":"ðŸ” Bandingkan dengan IDX"}</button>` : ""}
+      </div>
+
+      <div style="display:flex;flex-wrap:wrap;gap:8px;align-items:end;margin:10px 0;">
+        <div class="field">
+          <label style="font-size:11px;">Dari</label>
+          <input type="date" id="dhistFrom" value="${state.detailHistoricalFrom||""}" style="padding:8px;border:1px solid var(--border);border-radius:6px;background:rgba(0,0,0,0.2);color:var(--text);font-size:12px;">
+        </div>
+        <div class="field">
+          <label style="font-size:11px;">Sampai</label>
+          <input type="date" id="dhistTo" value="${state.detailHistoricalTo||""}" style="padding:8px;border:1px solid var(--border);border-radius:6px;background:rgba(0,0,0,0.2);color:var(--text);font-size:12px;">
+        </div>
+        <button class="btn btn-primary" id="dhistDbLoadBtn" ${state.detailHistoricalLoading?"disabled":""}>
+          ${state.detailHistoricalLoading?"Memuat...":"📖 Muat dari Database"}
+        </button>
+        <button class="btn btn-outline" id="dhistLoadBtn" ${state.detailHistoricalLoading?"disabled":""} style="color:#f87171;border-color:rgba(239,68,68,0.4);">
+          ${state.detailHistoricalLoading?"Menarik...":"⬇️ Tarik dari Stockbit"}
+        </button>
+        ${rows.length ? `<button class="btn btn-outline" id="dhistSaveBtn">💾 Simpan ke Database</button>` : ""}
+        ${rows.length ? `<button class="btn btn-outline" id="dhistCompareBtn" ${state.detailCompareLoading?"disabled":""} style="color:#a78bfa;border-color:rgba(167,139,250,0.4);">${state.detailCompareLoading?"Membandingkan...":"🔍 Bandingkan dengan IDX"}</button>` : ""}
       </div>
 
       ${state.detailHistoricalMsg ? `<div class="bs-msg ${state.detailHistoricalMsgError?"bs-msg-error":"bs-msg-ok"}">${escapeHtml(state.detailHistoricalMsg)}</div>` : ""}
 
-      ${!rows.length ? `<div class="empty-box" style="margin-top:12px;">Belum ada data. Klik "Tarik Data dari Stockbit" di atas (butuh Token Stockbit &amp; Endpoint Historical Data terisi di âš™ï¸ Pengaturan).</div>` : `
-      <div class="table-wrap" style="margin-top:12px;max-height:60vh;">
+      <div style="font-size:11px;color:var(--muted);margin-bottom:8px;">
+        Menampilkan ${rows.length} baris dari database · Periode: ${state.detailHistoricalPeriod} · ${state.detailHistoricalFrom||'..'} s/d ${state.detailHistoricalTo||'..'}
+      </div>
+
+      ${!rows.length ? `<div class="empty-box" style="margin-top:12px;">Belum ada data untuk periode ini. Klik "📖 Muat dari Database" atau "⬇️ Tarik dari Stockbit" di atas.</div>` : `
+      <div class="table-wrap" style="max-height:60vh;">
         <table style="width:100%;border-collapse:collapse;font-size:12.5px;">
           <thead>
             <tr style="color:var(--muted);text-align:right;">
@@ -2807,7 +2838,7 @@ function renderDetailHistorical(s){
               <th style="padding:6px 8px;">Change</th>
               <th style="padding:6px 8px;">Value</th>
               <th style="padding:6px 8px;">Volume</th>
-              <th style="padding:6px 8px;" title="Net Foreign (Buy - Sell asing), hover baris untuk lihat rincian Buy/Sell">Net Foreign</th>
+              <th style="padding:6px 8px;" title="Net Foreign (Buy - Sell asing)">Net Foreign</th>
             </tr>
           </thead>
           <tbody>${tableRows}</tbody>
@@ -2818,7 +2849,7 @@ function renderDetailHistorical(s){
       <div style="margin-top:16px;">
         <details id="dhistComparePanel" ${state.detailCompareOpen?"open":""}>
           <summary style="cursor:pointer; font-size:12px; color:var(--muted); user-select:none;">
-            ðŸ” Bandingkan dengan IDX (flows) ${state.detailCompareMsg ? `â€” ${escapeHtml(state.detailCompareMsg)}` : ""}
+            🔍 Bandingkan dengan IDX (flows) ${state.detailCompareMsg ? `— ${escapeHtml(state.detailCompareMsg)}` : ""}
           </summary>
           ${state.detailCompareRows && state.detailCompareRows.length ? `
           <div class="table-wrap" style="margin-top:10px;max-height:60vh;">
@@ -2837,7 +2868,7 @@ function renderDetailHistorical(s){
                   const pctDiff = (a,b) => (a==null||b==null||b===0) ? null : Math.abs((a-b)/b);
                   const cellPair = (a,b,fmt=fmtNum) => {
                     const diff = pctDiff(a,b);
-                    const warn = diff != null && diff > 0.01; // beda >1% -> tandai kuning
+                    const warn = diff != null && diff > 0.01;
                     const color = a==null||b==null ? 'var(--muted)' : (warn ? 'var(--gold)' : 'inherit');
                     return `<td class="mono" style="text-align:right;color:${color};">${a!=null?fmt(a):"-"}</td><td class="mono" style="text-align:right;color:var(--muted);">${b!=null?fmt(b):"-"}</td>`;
                   };
@@ -2851,21 +2882,22 @@ function renderDetailHistorical(s){
                 }).join("")}
               </tbody>
             </table>
-            <div style="font-size:10.5px;color:var(--muted);margin-top:6px;">
-              Kolom kiri tiap pasangan = Stockbit, kanan = IDX (<code>flows</code>). Angka <span style="color:var(--gold);">kuning</span> = beda &gt;1% antar sumber (bukan error â€” dua penyedia data independen, wajar sedikit beda metodologi/timing).
-            </div>
           </div>` : ""}
         </details>
       </div>` : ""}
     </div>`;
 }
 
-async function loadDetailHistorical(period){
+
+// Load dari Stockbit (tarik data baru, lalu simpan otomatis ke DB)
+async function loadDetailHistoricalFromStockbit(){
   const ticker = state.detailTicker;
-  if(period) state.detailHistoricalPeriod = period;
   if(!ticker) return;
   state.detailHistoricalLoading = true; state.detailHistoricalMsg = ""; render();
-  const res = await stockbitFetchHistorical(ticker, state.detailHistoricalPeriod);
+  const res = await stockbitFetchHistorical(ticker, state.detailHistoricalPeriod, {
+    startDate: state.detailHistoricalFrom || undefined,
+    endDate: state.detailHistoricalTo || undefined,
+  });
   if(res.error){
     state.detailHistoricalMsg = res.error;
     state.detailHistoricalMsgError = true;
@@ -2873,16 +2905,79 @@ async function loadDetailHistorical(period){
   } else {
     const parsed = parseStockbitHistorical(res.raw);
     if(!parsed){
-      state.detailHistoricalMsg = "Response diterima tapi formatnya tidak dikenali. Cek console (F12) untuk lihat JSON mentahnya, lalu sesuaikan parseStockbitHistorical() di app.js.";
+      state.detailHistoricalMsg = "Response diterima tapi formatnya tidak dikenali. Cek console (F12) untuk lihat JSON mentahnya.";
       state.detailHistoricalMsgError = true;
       state.detailHistoricalRows = [];
       console.log("Stockbit historical raw response:", res.raw);
     } else {
       state.detailHistoricalRows = parsed;
-      state.detailHistoricalMsg = `Berhasil menarik ${parsed.length} baris (${state.detailHistoricalPeriod}).`;
+      state.detailHistoricalMsg = `✅ ${parsed.length} baris dari Stockbit (${state.detailHistoricalPeriod}). Klik "💾 Simpan ke Database" untuk menyimpan.`;
       state.detailHistoricalMsgError = false;
     }
   }
+  state.detailHistoricalLoading = false;
+  render();
+}
+
+async function loadDetailHistoricalFromDb(){
+  const ticker = state.detailTicker;
+  if(!ticker) return;
+  if(!SUPABASE_URL || !SUPABASE_KEY){ state.detailHistoricalMsg = "Supabase belum dikonfigurasi."; state.detailHistoricalMsgError = true; render(); return; }
+
+  state.detailHistoricalLoading = true; state.detailHistoricalMsg = ""; render();
+
+  try {
+    const from = state.detailHistoricalFrom || "";
+    const to = state.detailHistoricalTo || "";
+    const period = state.detailHistoricalPeriod;
+
+    const params = new URLSearchParams({
+      stock_code: `eq.${ticker}`,
+      period: `eq.${period}`,
+      order: "trade_date.desc",
+    });
+
+    if(from) params.append("trade_date", `gte.${from}`);
+    if(to) params.append("trade_date", `lte.${to}`);
+
+    const res = await fetch(`${SUPABASE_URL}/price_history_stockbit?${params}`, {
+      headers: getSupaHeaders(), cache: "no-store"
+    });
+
+    if(!res.ok) throw new Error(`HTTP ${res.status}`);
+
+    const rows = await res.json();
+
+    if(!Array.isArray(rows) || !rows.length) {
+      state.detailHistoricalRows = [];
+      state.detailHistoricalMsg = `Tidak ada data ${period} di database untuk ${ticker} pada periode ${from || '..'} s/d ${to || '..'}. Klik "⬇️ Tarik dari Stockbit" untuk mengambil data.`;
+      state.detailHistoricalMsgError = true;
+    } else {
+      // Map dari format DB ke format UI
+      state.detailHistoricalRows = rows.map(r => ({
+        date: r.trade_date,
+        close: r.close,
+        change: r.change,
+        changePct: r.change_pct,
+        value: r.value_idr,
+        volume: r.volume,
+        open: r.open,
+        high: r.high,
+        low: r.low,
+        frequency: r.frequency,
+        foreignBuy: r.foreign_buy,
+        foreignSell: r.foreign_sell,
+        netForeign: r.net_foreign,
+      }));
+      state.detailHistoricalMsg = `✅ ${rows.length} baris ${period} dimuat dari database (${from || '..'} s/d ${to || '..'}).`;
+      state.detailHistoricalMsgError = false;
+    }
+  } catch(e) {
+    state.detailHistoricalRows = [];
+    state.detailHistoricalMsg = "Gagal memuat dari database: " + e.message;
+    state.detailHistoricalMsgError = true;
+  }
+
   state.detailHistoricalLoading = false;
   render();
 }
@@ -2958,7 +3053,7 @@ async function loadDetailCompare(){
     const matchedCount = combined.filter(r => r.closeIdx != null).length;
     state.detailCompareMsg = matchedCount
       ? `${matchedCount}/${combined.length} hari ditemukan juga di \`flows\` (IDX).`
-      : `Tidak ada tanggal yang cocok di \`flows\` untuk ${ticker} â€” kemungkinan sync-idx-full.mjs belum pernah menjangkau ticker/periode ini.`;
+      : `Tidak ada tanggal yang cocok di \`flows\` untuk ${ticker} — sync-idx-full.mjs belum pernah menjangkau ticker/periode ini. Data harga/volume untuk ticker ini tetap tersedia di price_history_stockbit (dipakai otomatis oleh chart & tab Historical Data).`;
     state.detailCompareOpen = true;
   }catch(e){
     state.detailCompareMsg = "Gagal membandingkan: " + e.message;
@@ -3123,21 +3218,55 @@ async function loadChart(ticker){
   } : null;
 
   // Histori harga close ASLI dari tabel `flows` (diisi sync-flow.mjs dari
-  // IDX), bukan lagi deret acak (genDemoSeries lama). `flows` disimpan
-  // sampai ~200 hari terakhir per ticker â€” lihat MAX_DAYS di sync-flow.mjs.
+  // IDX). FALLBACK: kalau ticker ini belum pernah disinkronkan ke `flows`
+  // (chart kosong), coba baca dari price_history_stockbit period "daily"
+  // — hasil Tarik Data Stockbit yang sudah tersimpan lewat tab Historical
+  // Data atau Tarik Otomatis (bulk). Sumber pertama tetap `flows` karena
+  // itu data resmi IDX.
   state.chartData = [];
   state.chartLoading = true;
+  state.chartDataSource = null;
   render();
-  try{
-    const rows = await fetch(
-      `${SUPABASE_URL}/flows?ticker=eq.${encodeURIComponent(ticker)}&select=date,close&order=date.asc`,
-      { headers: getSupaHeaders() }
-    ).then(r=>r.json());
 
-    if (Array.isArray(rows) && rows.length){
+  const fetchRows = async (url) => {
+    try{
+      const res = await fetch(url, { headers: getSupaHeaders() });
+      if(!res.ok) return [];
+      const json = await res.json();
+      return Array.isArray(json) ? json : [];
+    }catch(e){
+      return [];
+    }
+  };
+
+  try{
+    // 1) Sumber utama: flows (sync-idx-full.mjs)
+    let rows = await fetchRows(
+      `${SUPABASE_URL}/flows?ticker=eq.${encodeURIComponent(ticker)}&select=date,close&order=date.asc`
+    );
+
+    if (rows.length){
       state.chartData = rows
         .filter(r => r.close != null)
         .map(r => ({ date: r.date, close: Math.round(r.close) }));
+      state.chartDataSource = "flows";
+    }
+
+    // 2) Fallback: price_history_stockbit (Stockbit, period daily) —
+    //    dipakai kalau flows belum punya data untuk ticker ini sama sekali.
+    //    Urut DESC lalu di-reverse supaya ambil N baris TERBARU (mis. 250)
+    //    tanpa harus menarik seluruh tabel.
+    if (!state.chartData.length){
+      rows = await fetchRows(
+        `${SUPABASE_URL}/price_history_stockbit?stock_code=eq.${encodeURIComponent(ticker)}&period=eq.daily&select=trade_date,close&order=trade_date.desc&limit=250`
+      );
+      if (rows.length){
+        state.chartData = rows
+          .filter(r => r.close != null)
+          .map(r => ({ date: r.trade_date, close: Math.round(r.close) }))
+          .reverse(); // urut lama -> baru, sama seperti flows
+        state.chartDataSource = "price_history_stockbit";
+      }
     }
   } catch(e){
     state.chartData = [];
@@ -4265,10 +4394,16 @@ function render(){
 
     // --- Historical Data (Daily/Weekly/Monthly) di dalam modal Detail Emiten ---
     document.querySelectorAll("[data-hist-period]").forEach(btn=>{
-      btn.onclick = () => loadDetailHistorical(btn.dataset.histPeriod);
-    });
-    const dhistLoadBtn = document.getElementById("dhistLoadBtn");
-    if(dhistLoadBtn) dhistLoadBtn.onclick = () => loadDetailHistorical();
+  btn.onclick = () => { state.detailHistoricalPeriod = btn.dataset.histPeriod; loadDetailHistoricalFromDb(); };
+});
+const dhistDbLoadBtn = document.getElementById("dhistDbLoadBtn");
+if(dhistDbLoadBtn) dhistDbLoadBtn.onclick = loadDetailHistoricalFromDb;
+const dhistLoadBtn = document.getElementById("dhistLoadBtn");
+if(dhistLoadBtn) dhistLoadBtn.onclick = loadDetailHistoricalFromStockbit;
+const dhistFromInput = document.getElementById("dhistFrom");
+if(dhistFromInput) dhistFromInput.onchange = (e) => { state.detailHistoricalFrom = e.target.value; };
+const dhistToInput = document.getElementById("dhistTo");
+if(dhistToInput) dhistToInput.onchange = (e) => { state.detailHistoricalTo = e.target.value; }
     const dhistSaveBtn = document.getElementById("dhistSaveBtn");
     if(dhistSaveBtn) dhistSaveBtn.onclick = saveDetailHistoricalRows;
     const dhistCompareBtn = document.getElementById("dhistCompareBtn");
@@ -6046,7 +6181,7 @@ function renderChart(){
   return `${picker}
     ${chartToolbar}
     ${tvBox}
-    <div class="chart-section-title">Level Teknikal Internal (harga close asli dari tabel flows)</div>
+    <div class="chart-section-title">Level Teknikal Internal (harga close — sumber: ${state.chartDataSource === "price_history_stockbit" ? "price_history_stockbit (Stockbit, flows belum tersedia)" : "flows (IDX)"})</div>
     ${legend}
     <div class="chart-box">${chartBoxInner}</div>`;
 }
