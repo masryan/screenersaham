@@ -2858,6 +2858,7 @@ function renderDetailHistorical(s){
               <thead>
                 <tr style="color:var(--muted);text-align:right;">
                   <th style="text-align:left;padding:6px 8px;">Date</th>
+                  <th style="text-align:left;padding:6px 8px;">Sumber</th>
                   <th style="padding:6px 8px;" colspan="2">Close (SB / IDX)</th>
                   <th style="padding:6px 8px;" colspan="2">Value (SB / IDX)</th>
                   <th style="padding:6px 8px;" colspan="2">Volume (SB / IDX)</th>
@@ -2873,8 +2874,16 @@ function renderDetailHistorical(s){
                     const color = a==null||b==null ? 'var(--muted)' : (warn ? 'var(--gold)' : 'inherit');
                     return `<td class="mono" style="text-align:right;color:${color};">${a!=null?fmt(a):"-"}</td><td class="mono" style="text-align:right;color:var(--muted);">${b!=null?fmt(b):"-"}</td>`;
                   };
+                  // Badge sumber per baris -- "IDX" kalau ada di `flows`, "Stockbit"
+                  // kalau cuma dari price_history_stockbit (tetap valid, sudah
+                  // dipakai sebagai tambalan di Kraken Flow ORCA, lihat catatan
+                  // di loadDetailCompare()).
+                  const srcBadge = r.source === "idx"
+                    ? `<span style="color:var(--teal);">IDX</span>`
+                    : `<span style="color:var(--gold);" title="Tidak ada di flows (IDX), tapi baris ini sudah dipakai otomatis sebagai tambalan di tab Kraken Flow (ORCA) saat flows belum sempat sync.">Stockbit</span>`;
                   return `<tr>
                     <td class="mono">${escapeHtml(r.date)}</td>
+                    <td class="mono">${srcBadge}</td>
                     ${cellPair(r.closeSb, r.closeIdx)}
                     ${cellPair(r.valueSb, r.valueIdx)}
                     ${cellPair(r.volumeSb, r.volumeIdx)}
@@ -3043,6 +3052,13 @@ async function loadDetailCompare(){
       const idx = idxByDate[r.date];
       return {
         date: r.date,
+        // "idx" = hari ini ADA di `flows` (data resmi IDX). "stockbit" = TIDAK
+        // ada di `flows`, tapi baris ini tetap valid -- price_history_stockbit
+        // adalah sumber yang sama yang dipakai loadOrcaHistory() sebagai
+        // tambalan di tab Kraken Flow (ORCA) saat flows belum sempat sync
+        // (lihat _src: "stockbit" di sana). Jadi "tidak cocok" di sini BUKAN
+        // berarti datanya tidak ada di mana pun.
+        source: idx ? "idx" : "stockbit",
         closeSb: r.close, closeIdx: idx?.close ?? null,
         valueSb: r.value, valueIdx: idx?.value ?? null,
         volumeSb: r.volume, volumeIdx: idx?.volume ?? null,
@@ -3052,9 +3068,10 @@ async function loadDetailCompare(){
     });
     state.detailCompareRows = combined;
     const matchedCount = combined.filter(r => r.closeIdx != null).length;
+    const stockbitOnlyCount = combined.length - matchedCount;
     state.detailCompareMsg = matchedCount
-      ? `${matchedCount}/${combined.length} hari ditemukan juga di \`flows\` (IDX).`
-      : `Tidak ada tanggal yang cocok di \`flows\` untuk ${ticker} — sync-idx-full.mjs belum pernah menjangkau ticker/periode ini. Data harga/volume untuk ticker ini tetap tersedia di price_history_stockbit (dipakai otomatis oleh chart & tab Historical Data).`;
+      ? `${matchedCount}/${combined.length} hari cocok dengan \`flows\` (IDX resmi).${stockbitOnlyCount ? ` ${stockbitOnlyCount} hari sisanya HANYA ada di price_history_stockbit — bukan berarti data itu hilang: tab Kraken Flow (ORCA) otomatis memakai baris ini sebagai tambalan saat \`flows\` belum sempat sync (lihat kolom "Sumber" di bawah).` : ""}`
+      : `Tidak ada tanggal yang cocok di \`flows\` (IDX) untuk ${ticker} — sync-idx-full.mjs belum pernah menjangkau ticker/periode ini. Ini normal kalau saham baru ditambahkan atau laptop rumah lama tidak sempat sync: data harga/volume tetap tersedia dan tetap dipakai otomatis oleh chart, tab Historical Data, dan Kraken Flow (ORCA) sebagai tambalan, dari price_history_stockbit.`;
     state.detailCompareOpen = true;
   }catch(e){
     state.detailCompareMsg = "Gagal membandingkan: " + e.message;
