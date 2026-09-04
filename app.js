@@ -1309,6 +1309,7 @@ let state = {
   orcaHistoryLoading: false,
   orcaHistoryError: null,
   orcaHistoryLoadedAt: null,
+  orcaHistorySourceCounts: null, // { idx, stockbit } -- lihat loadOrcaHistory()
   // ==========================================
   // Live Data Stockbit (opsional, via token extension Chrome milik user).
   // stockbitLive: map ticker -> {loading, error, raw, mapped, fetchedAt}
@@ -7787,6 +7788,32 @@ function orcaMarketCapMax(){
 // ==========================================================================
 const ORCA_HISTORY_TRADING_DAYS = 7;
 
+// FALLBACK STOCKBIT â€” `flows` (IDX resmi) hanya terisi kalau sync-idx-full.mjs
+// sempat jalan (laptop menyala & tidak diblokir IDX). Kalau hari bursa
+// TERBARU (biasanya "kemarin" dari sudut pandang user buka app pagi ini)
+// belum sempat ke-sync ke `flows`, kita isi tanggal itu dari
+// `price_history_stockbit` (hasil tarik histori Stockbit yang sudah
+// didownload/disimpan lewat tab Historical Data / Tarik Otomatis Bulk).
+// Bid/Offer & Non-Regular% TETAP kosong untuk baris asal Stockbit karena
+// endpoint histori Stockbit tidak menyediakan data antrian order book /
+// crossing (itu hanya ada di data resmi IDX) -- filter yang butuh field
+// itu (Antrian Bid/Offer, No Sell, Offer Menipis) otomatis tidak match
+// untuk baris tsb, tapi ATS, Frequency, Top Volume/Frequency tetap jalan
+// karena value & frequency tersedia di Stockbit.
+async function fetchStockbitHistoryForOrca(cutoff){
+  const qs = new URLSearchParams({
+    period: "eq.daily",
+    trade_date: `gte.${cutoff}`,
+    select: "stock_code,trade_date,close,high,volume,value_idr,frequency",
+    order: "trade_date.desc"
+  });
+  const res = await fetch(`${SUPABASE_URL}/price_history_stockbit?${qs}`, { headers: getSupaHeaders(), cache: "no-store" });
+  if(!res.ok) throw new Error(`HTTP ${res.status} ${res.statusText} (price_history_stockbit)`);
+  const rows = await res.json();
+  if(rows.message) throw new Error(rows.message);
+  return rows;
+}
+
 async function loadOrcaHistory(){
   if(!SUPABASE_URL || !SUPABASE_KEY) return;
   state.orcaHistoryLoading = true; state.orcaHistoryError = null; render();
@@ -7799,8 +7826,34 @@ async function loadOrcaHistory(){
     });
     const res = await fetch(`${SUPABASE_URL}/flows?${qs}`, { headers: getSupaHeaders(), cache: "no-store" });
     if(!res.ok) throw new Error(`HTTP ${res.status} ${res.statusText}`);
-    const rows = await res.json();
-    if(rows.message) throw new Error(rows.message);
+    const idxRows = await res.json();
+    if(idxRows.message) throw new Error(idxRows.message);
+
+    // Tandai baris IDX per ticker+tanggal supaya bisa dicek tanggal mana
+    // saja yang SUDAH ada dari `flows` sebelum menambal dari Stockbit.
+    const idxKeySet = new Set(idxRows.map(r => `${String(r.ticker||"").toUpperCase()}|${r.date}`));
+    idxRows.forEach(r => { r._src = "idx"; });
+
+    // Tambal tanggal yang belum ada di `flows` (mis. hari bursa terakhir
+    // belum sempat disync dari laptop) pakai price_history_stockbit.
+    // Gagal ambil Stockbit TIDAK menggagalkan seluruh load -- data IDX yang
+    // sudah ada tetap dipakai, cuma histori jadi kurang lengkap.
+    let stockbitRows = [];
+    try{
+      stockbitRows = await fetchStockbitHistoryForOrca(cutoff);
+    }catch(e){
+      state.orcaHistoryError = "Histori IDX (`flows`) berhasil dimuat, tapi tambalan dari Stockbit gagal: " + e.message;
+    }
+    const stockbitAsFlowRows = stockbitRows
+      .filter(r => r.stock_code && r.trade_date && !idxKeySet.has(`${String(r.stock_code).toUpperCase()}|${r.trade_date}`))
+      .map(r => ({
+        ticker: r.stock_code, date: r.trade_date,
+        bid: null, bid_volume: null, offer: null, offer_volume: null, nonreg_value: null,
+        value: r.value_idr, frequency: r.frequency, volume: r.volume, close: r.close, high: r.high,
+        _src: "stockbit",
+      }));
+
+    const rows = idxRows.concat(stockbitAsFlowRows);
 
     // Susun per ticker, simpan hanya ORCA_HISTORY_TRADING_DAYS tanggal
     // TERBARU yang benar-benar ada datanya untuk ticker itu (tidak semua
@@ -7816,6 +7869,16 @@ async function loadOrcaHistory(){
       byTicker[t].sort((a,b)=> a.date < b.date ? 1 : -1); // terbaru dulu
       byTicker[t] = byTicker[t].slice(0, ORCA_HISTORY_TRADING_DAYS);
     });
+
+    // Ringkasan jumlah baris per sumber (dihitung dari byTicker SETELAH
+    // di-slice ke ORCA_HISTORY_TRADING_DAYS, bukan dari rows mentah) --
+    // ditampilkan di UI supaya user tahu berapa banyak yang masih pakai
+    // data resmi IDX vs. tambalan Stockbit.
+    let idxCount = 0, stockbitCount = 0;
+    Object.values(byTicker).forEach(list => list.forEach(r => {
+      if(r._src === "stockbit") stockbitCount++; else idxCount++;
+    }));
+    state.orcaHistorySourceCounts = { idx: idxCount, stockbit: stockbitCount };
 
     state.orcaHistoryByTicker = byTicker;
     state.orcaHistoryLoadedAt = new Date().toISOString();
@@ -8031,9 +8094,9 @@ function renderKrakenFlow(){
         </div>
         <div style="background:rgba(6,182,212,0.08);border:1px solid rgba(6,182,212,0.25);border-radius:8px;padding:10px 12px;">
           <b style="color:var(--teal);">Catatan data:</b> Bid/Offer, ATS, Non-Regular%, Frequency & Volume sekarang mengikuti <b>Durasi (1-7 hari bursa) yang dipilih</b>, dihitung dari histori harian asli di tabel <code>flows</code> (bukan cuma snapshot hari terakhir lagi) â€” ATS & Non-Regular% dijumlah dulu lalu dibagi (rata-rata tertimbang), Bid/Offer diambil dari hari bursa paling baru dalam jendela (antrian order book tidak dijumlah lintas hari). Foreign+ tetap memakai agregat 1/5/20 hari yang memang sudah ada. Kalau sebuah saham belum punya baris histori sama sekali (mis. baru pertama kali disinkronkan setelah fitur ini aktif), filternya otomatis jatuh balik ke snapshot hari terakhir supaya tidak hilang dari hasil.
-          ${state.orcaHistoryLoading ? `<div style="margin-top:6px;color:var(--gold);">â³ Menarik histori 7 hari bursa terakhir dari <code>flows</code>...</div>` : ""}
+          ${state.orcaHistoryLoading ? `<div style="margin-top:6px;color:var(--gold);">⏳ Menarik histori 7 hari bursa terakhir dari <code>flows</code> (IDX) + tambalan <code>price_history_stockbit</code> (Stockbit)...</div>` : ""}
           ${state.orcaHistoryError ? `<div style="margin-top:6px;color:#f87171;">${escapeHtml(state.orcaHistoryError)}</div>` : ""}
-          ${(!state.orcaHistoryLoading && state.orcaHistoryByTicker) ? `<div style="margin-top:6px;color:var(--muted);">Histori dimuat (${Object.keys(state.orcaHistoryByTicker).length} emiten punya baris <code>flows</code> dalam jendela ini)${state.orcaHistoryLoadedAt ? " â€” " + new Date(state.orcaHistoryLoadedAt).toLocaleTimeString("id-ID") : ""}. <button type="button" id="orcaHistoryRefreshBtn" style="background:none;border:none;color:var(--teal);text-decoration:underline;cursor:pointer;font-size:11.5px;padding:0;">Muat ulang</button></div>` : ""}
+          ${(!state.orcaHistoryLoading && state.orcaHistoryByTicker) ? `<div style="margin-top:6px;color:var(--muted);">Histori dimuat (${Object.keys(state.orcaHistoryByTicker).length} emiten punya baris dalam jendela ini${state.orcaHistorySourceCounts ? ` — ${state.orcaHistorySourceCounts.idx} baris dari <code>flows</code> (IDX), ${state.orcaHistorySourceCounts.stockbit} baris tambalan dari <code>price_history_stockbit</code> (Stockbit)` : ""})${state.orcaHistoryLoadedAt ? " — " + new Date(state.orcaHistoryLoadedAt).toLocaleTimeString("id-ID") : ""}. ${state.orcaHistorySourceCounts && state.orcaHistorySourceCounts.stockbit > 0 ? `<span style="color:var(--gold);">Bid/Offer &amp; Non-Regular% baris Stockbit kosong (endpoint histori Stockbit tidak punya data itu).</span> ` : ""}<button type="button" id="orcaHistoryRefreshBtn" style="background:none;border:none;color:var(--teal);text-decoration:underline;cursor:pointer;font-size:11.5px;padding:0;">Muat ulang</button></div>` : ""}
         </div>
       </div>
     </details>`;
