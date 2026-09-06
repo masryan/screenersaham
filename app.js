@@ -3937,6 +3937,17 @@ function getFiltered(){
       if (s.foreignNet20D == null || s.foreignNet20D < 50e9) return false;
       if (s.foreignUpDays == null || s.foreignUpDays < 12) return false;
       if (s.turnover == null || s.turnover < 5e9) return false;
+    } else if (state.activePreset === 'breakout21') {
+      // Breakout 21 (harga menembus box resistance + konfirmasi MA21 + RSI7 x RSI21 cross up).
+      // Sama seperti 'eri'/'rsicross' di atas: DB cuma simpan rsi7/rsi21 HARI INI,
+      // tidak ada versi "kemarin" untuk cek cross eksplisit (rsi7[t-1]<=rsi21[t-1]).
+      // Jadi "baru saja cross up" didekati lewat rentang band sempit tempat rsi7
+      // baru sedikit di atas rsi21 â€” bukan perbandingan hari-ke-hari yang pasti.
+      if (!(s.resistance != null && s.cClose > s.resistance
+            && (s.prevHigh == null || s.prevHigh <= s.resistance))) return false; // breakout box resistance (fresh, bukan sudah lama di atasnya)
+      if (!(s.ma21 != null && s.cClose > s.ma21)) return false; // filter MA21: harga breakout harus di atas MA21
+      if (!(s.rsi7 >= 50 && s.rsi7 <= 75 && s.rsi21 >= 45 && s.rsi21 <= 68 && s.rsi7 > s.rsi21)) return false; // RSI7 x RSI21 crossup (proxy band)
+      if (s.volRatio != null && s.volRatio < 1.3) return false; // opsional: minim konfirmasi volume di atas rata-rata
     } else if (state.activePreset === 'freq_spike') {
       // Lonjakan jumlah transaksi vs rata-rata. Prioritas: freqRatio kalau
       // ada (dari frequency & freq_ma20/avg_frequency_3m). Kalau tabel
@@ -4503,7 +4514,7 @@ const FILTER_LABELS = {
   statusRsi:"Status RSI", band:"Bandarmologi", uangGedeMasuk:"Uang Gede", isBBSqueeze:"BB Squeeze", valuasi:"Valuasi",
   bbWidth:"BB Width", atr14:"ATR 14", clv:"CLV", rsi7:"RSI 7", rsi21:"RSI 21", frequency:"Frekuensi"
 };
-const PRESET_LABELS = { bagger:"Skor Bagger â‰¥75", eri:"Eri Ginanjar", rsicross:"RSI & Harga Cross", golden:"Golden Cross DSI", uptrend:"Super Uptrend", breakout:"Volatility Breakout", pullback:"Pullback Uptrend", custom_bandar:"BPJS", asing_akumulasi:"Akumulasi Asing (IDX)", freq_spike:"Lonjakan Frekuensi" };
+const PRESET_LABELS = { bagger:"Skor Bagger â‰¥75", eri:"Eri Ginanjar", rsicross:"RSI & Harga Cross", golden:"Golden Cross DSI", uptrend:"Super Uptrend", breakout:"Volatility Breakout", breakout21:"Breakout 21 (RSI7 x RSI21)", pullback:"Pullback Uptrend", custom_bandar:"BPJS", asing_akumulasi:"Akumulasi Asing (IDX)", freq_spike:"Lonjakan Frekuensi" };
 function clearChip(kind, key, value){
   if(kind==="search") state.search="";
   else if(kind==="preset") state.activePreset=null;
@@ -4737,7 +4748,7 @@ const RULE_METRICS = [
   // terhadap salah satu pilihan tetap, bukan angka bebas. Daftar pilihan
   // diambil dari nilai-nilai yang benar-benar muncul di kolom stocks_screener.
   { key:"cekHarga", label:"Sinyal Harga", type:"category", options:[
-    "harga crossup ema 21 H dan L", "harga diatas ema 21 L dibawah ema 21 H", "harga belum cross up"
+    "harga crossup ema 21 H dan L", "harga diatas ema 21 H dan L", "harga diatas ema 21 L dibawah ema 21 H", "harga belum cross up"
   ]},
   { key:"cekRsi", label:"Sinyal RSI", type:"category", options:[
     "rsi 7 cross up rsi 21", "rsi 7 belum cross up"
@@ -4749,18 +4760,24 @@ const RULE_METRICS = [
     "Bullish Menguat", "Wait & See / Bearish", "Momentum Buy (Early)", "Buy (Golden Cross)", "Sell (Dead Cross)"
   ]},
   { key:"keyakinanNaik", label:"Keyakinan Naik (kategori)", type:"category", options:[
-    "Sedang (Candle Bullish, Volume Belum Konfirmasi)", "Tinggi (Ada Konfirmasi Volume)",
-    "Sedang (Belum Ada Konfirmasi Volume)", "Rendah", "Sangat Tinggi (MACD + Volume + RSI/Stoch Konfirmasi)",
-    "Sangat Waspada (Distribusi Masif / Guyuran Bandar)", "Waspada (Trend Bearish + Candle Bearish)"
+    "Sangat Tinggi++ (Perfect Setup: MACD + Trend + Uang Gede)", "Sangat Tinggi (Breakout BB Squeeze & Momentum Kuat)",
+    "Sangat Tinggi+ (MACD + Volume + Trend + Candle Bullish, Konfirmasi Penuh)", "Sangat Tinggi (MACD + Volume + RSI/Stoch Konfirmasi)",
+    "Tinggi (Trend Bullish + Volume + Candle Bullish + Kuat Intraday)", "Tinggi (Ada Konfirmasi Volume)",
+    "Sedang (Candle Bullish, Volume Belum Konfirmasi)", "Sedang (Belum Ada Konfirmasi Volume)", "Rendah",
+    "Sangat Waspada (Distribusi Masif / Guyuran Bandar)", "Waspada (Volume Tinggi tapi Harga Turun)",
+    "Waspada (Trend Bearish + Candle Bearish)"
   ]},
   { key:"trendHarga", label:"Trend Harga (MA)", type:"category", options:[
-    "Bullish (diatas MA21/50/100/200)", "Sideways/Mixed", "Bearish (dibawah MA21/50/100/200)", "Bearish (dibawah MA yang tersedia)"
+    "Bullish (diatas MA21/50/100/200)", "Bullish (diatas MA yang tersedia)", "Sideways/Mixed",
+    "Bearish (dibawah MA21/50/100/200)", "Bearish (dibawah MA yang tersedia)", "Data MA Belum Cukup"
   ]},
   { key:"polaCandle", label:"Pola Candle", type:"category", options:[
-    "Bullish Engulfing (potensi reversal naik)", "Tidak ada pola signifikan", "Doji (keraguan pasar / potensi pembalikan)",
-    "Bearish Engulfing (potensi reversal turun)", "Bearish Harami (tekanan beli mulai melemah)",
+    "Bullish Engulfing (potensi reversal naik)", "Bearish Engulfing (potensi reversal turun)",
+    "Bullish Harami (tekanan jual mulai melemah)", "Bearish Harami (tekanan beli mulai melemah)",
+    "Doji (keraguan pasar / potensi pembalikan)", "Hammer (potensi reversal naik setelah downtrend)",
     "Hanging Man (waspada reversal turun setelah uptrend)", "Shooting Star (waspada reversal turun)",
-    "Bullish Harami (tekanan jual mulai melemah)"
+    "Inverted Hammer (potensi reversal naik, perlu konfirmasi)", "Tidak ada pola signifikan",
+    "Data candle kemarin tidak lengkap"
   ]},
   { key:"uangGedeMasuk", label:"Uang Gede Masuk", type:"category", options:[
     "Normal", "Akumulasi Kuat (RVOL>2 & CLV>0.7)", "Guyuran (RVOL>2 & CLV Negatif)"
@@ -5290,6 +5307,7 @@ function renderScreener(){
             <button class="pill ${state.activePreset === 'golden' ? 'pill-gold' : 'pill-muted'}" onclick="state.activePreset = state.activePreset === 'golden' ? null : 'golden'; state.page=1; render();">Golden Cross DSI</button>
             <button class="pill ${state.activePreset === 'uptrend' ? 'pill-gold' : 'pill-muted'}" onclick="state.activePreset = state.activePreset === 'uptrend' ? null : 'uptrend'; state.page=1; render();">Super Uptrend</button>
             <button class="pill ${state.activePreset === 'breakout' ? 'pill-up' : 'pill-muted'}" onclick="state.activePreset = state.activePreset === 'breakout' ? null : 'breakout'; state.page=1; render();">ðŸš€ Volatility Breakout</button>
+            <button class="pill ${state.activePreset === 'breakout21' ? 'pill-up' : 'pill-muted'}" onclick="state.activePreset = state.activePreset === 'breakout21' ? null : 'breakout21'; state.page=1; render();" title="Breakout box resistance + harga di atas MA21 + RSI7 cross up RSI21 (proxy band, bukan cek hari-ke-hari)">ðŸ“¦ Breakout 21 (RSI7 x RSI21)</button>
             <button class="pill ${state.activePreset === 'pullback' ? 'pill-teal' : 'pill-muted'}" onclick="state.activePreset = state.activePreset === 'pullback' ? null : 'pullback'; state.page=1; render();">ðŸ§² Pullback Uptrend</button>
           <button class="pill ${state.activePreset === 'custom_bandar' ? 'pill-up' : 'pill-muted'}" onclick="state.activePreset = state.activePreset === 'custom_bandar' ? null : 'custom_bandar'; state.page=1; render();" title="Proxy dari lonjakan volume â€” bukan data asing resmi">ðŸ”¥ BPJS (proxy volume)</button>
           <button class="pill ${state.activePreset === 'asing_akumulasi' ? 'pill-up' : 'pill-muted'}" onclick="state.activePreset = state.activePreset === 'asing_akumulasi' ? null : 'asing_akumulasi'; state.page=1; render();" title="Net beli asing 20 hari &ge; 50M, konsisten &ge;12/20 hari, likuid &ge;5M/hari â€” dari data resmi IDX">ðŸ‹ Akumulasi Asing (IDX)</button>
