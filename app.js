@@ -1195,6 +1195,19 @@ let state = {
   sort: { col: null, asc: true },
   page: 1, limit: 10,
   expanded: new Set(),
+  // ==========================================
+  // Panel collapsible & paging GENERIK â€” dipakai lintas tab (Portfolio,
+  // Smart Pick, Broker Summary, Target Bandar, Entry Price Scanner,
+  // Kraken Flow, dst) supaya tiap tab tidak perlu bikin state sendiri2.
+  // closedPanels menyimpan KEY panel yang sedang DITUTUP (bukan yang
+  // terbuka) â€” jadi default semua panel baru otomatis TERBUKA tanpa perlu
+  // didaftarkan satu2 di state. Lihat isPanelOpen()/togglePanel().
+  // pageByTab / limitByTab: key bebas (mis. "porto-tx", "eps-results")
+  // -> nomor halaman aktif / jumlah baris per halaman utk tabel tsb.
+  // ==========================================
+  closedPanels: new Set(),
+  pageByTab: {},
+  limitByTab: {},
   selectedTicker: null, chartData: [], chartLoading: false, selectedLevels: null, loading:false, chartSearch: "",
   detailTicker: null, detailTab: "teknikal",
   // Tab Sektoral: sektor mana yang sedang di-expand untuk melihat daftar
@@ -6099,7 +6112,9 @@ function renderPortfolio(){
 
   const allChecked = state.portfolio.length > 0 && state.portfolio.every(p => state.selectedPorto.has(String(p.id)));
 
-  const rows = state.portfolio.map(p => {
+  const { pageItems, page, totalPages, total } = paginateArray(state.portfolio, "porto-tx", { defaultLimit: 10 });
+
+  const rows = pageItems.map(p => {
     const statusClass = p.status==="Win" ? "status-win" : p.status==="Loss" ? "status-loss" : "status-open";
     const plStr = p.persenPL!=="" && p.persenPL!=null ? (p.persenPL>0?'+':'')+p.persenPL+'%' : "-";
     return `<tr>
@@ -6133,9 +6148,12 @@ function renderPortfolio(){
         </tr></thead>
         <tbody>${rows}</tbody>
       </table>
-    </div>`;
+    </div>
+    ${renderPaginationControls("porto-tx", page, totalPages, total)}`;
 
-  return topBar + summary + table;
+  const tablePanel = panelWrap("porto-panel", `ðŸ“‹ Daftar Transaksi Portofolio`, table, { badge: `${state.portfolio.length} transaksi` });
+
+  return topBar + summary + tablePanel;
 }
 
 function tvSymbol(ticker){ return `IDX:${ticker}`; }
@@ -6347,7 +6365,9 @@ function renderSmartPick(){
   const todayStr = todayLocalISO();
   const alreadyToday = state.spHistory.some(h => h.muncul_date === todayStr);
 
-  const tableRows = rows.map(r => `
+  const { pageItems: spPageItems, page: spPage, totalPages: spTotalPages, total: spTotal } = paginateArray(rows, "sp-history", { defaultLimit: 10 });
+
+  const tableRows = spPageItems.map(r => `
     <tr>
       <td class="ticker-cell">${escapeHtml(r.stock_code)}</td>
       <td>${pillHtml(escapeHtml(spTitleFor(r.signal_type)), spToneFor(r.signal_type))}</td>
@@ -6419,7 +6439,8 @@ function renderSmartPick(){
               <thead><tr><th>Kode</th><th>Signal</th><th>Muncul</th><th>Entry</th><th>Now</th><th>Î”%</th><th>Hari</th></tr></thead>
               <tbody>${tableRows}</tbody>
             </table>
-          </div>` : `<div class="empty-box" style="margin-top:14px;">Belum ada riwayat sinyal${!SUPABASE_URL?" (Supabase belum dikonfigurasi)":""}. Klik "âœ“ Finalisasi Signal (EOD)" di atas â€” idealnya setelah market close â€” untuk mulai melacak performa.</div>`}
+          </div>
+          ${renderPaginationControls("sp-history", spPage, spTotalPages, spTotal)}` : `<div class="empty-box" style="margin-top:14px;">Belum ada riwayat sinyal${!SUPABASE_URL?" (Supabase belum dikonfigurasi)":""}. Klik "âœ“ Finalisasi Signal (EOD)" di atas â€” idealnya setelah market close â€” untuk mulai melacak performa.</div>`}
       </div>
     </div>
   `;
@@ -6595,16 +6616,16 @@ function renderBrokerSummary(){
 
       ${state.bsMsg ? `<div class="bs-msg ${state.bsMsgError?"bs-msg-error":"bs-msg-ok"}">${escapeHtml(state.bsMsg)}</div>` : ""}
 
-      <div style="margin:14px 0; padding:12px; border:1px solid rgba(239,68,68,0.25); border-radius:10px; background:rgba(239,68,68,0.06);">
+      ${panelWrap("bs-autobulk", "🔴 Tarik Otomatis dari Stockbit", `
         <div style="display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:10px;">
           <div style="font-size:12px; color:var(--muted); max-width:560px; line-height:1.5;">
-            ðŸ”´ Tarik otomatis Top 5 Buy/Sell dari Stockbit untuk
-            <b>${state.selectedForBacktest.size} saham yang dicentang</b> di tab ðŸ“‹ Screener,
+            Tarik otomatis Top 5 Buy/Sell dari Stockbit untuk
+            <b>${state.selectedForBacktest.size} saham yang dicentang</b> di tab 📋 Screener,
             untuk hari bursa dari <b>${escapeHtml(fmtDateID(state.bsAutoBulkFrom))}</b> sampai
             <b>${escapeHtml(fmtDateID(state.bsAutoBulkTo))}</b> (Senin&ndash;Jumat, libur bursa nasional otomatis dilewati).
-            Hari yang datanya sudah ada di database otomatis dilewati (skip) â€” hanya hari yang belum ada
+            Hari yang datanya sudah ada di database otomatis dilewati (skip) — hanya hari yang belum ada
             dan hari bursa paling baru yang benar-benar ditarik ulang ke Stockbit.
-            Butuh "Endpoint Broker Summary" &amp; Token terisi di âš™ï¸ Pengaturan. Hasil otomatis disimpan
+            Butuh "Endpoint Broker Summary" &amp; Token terisi di ⚙️ Pengaturan. Hasil otomatis disimpan
             langsung ke database yang sama seperti input manual di bawah.
           </div>
           <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
@@ -6635,30 +6656,32 @@ function renderBrokerSummary(){
         ${state.stockbitBrokerBulkResults && state.stockbitBrokerBulkResults.length ? `
           <details class="bs-bulk-results-panel" id="bsBulkResultsPanel" ${state.bsBulkResultsOpen?"open":""} style="margin-top:10px;">
             <summary style="cursor:pointer; font-size:11.5px; color:var(--muted); list-style:none; display:flex; align-items:center; gap:6px; user-select:none;">
-              <span class="bs-bulk-results-arrow" style="display:inline-block; transition:transform .15s; transform:rotate(${state.bsBulkResultsOpen?90:0}deg);">â–¶</span>
+              <span class="bs-bulk-results-arrow" style="display:inline-block; transition:transform .15s; transform:rotate(${state.bsBulkResultsOpen?90:0}deg);">▶</span>
               Hasil (${state.stockbitBrokerBulkResults.length} saham)
             </summary>
             <div class="mono" style="margin-top:8px; max-height:220px; overflow-y:auto; font-size:11.5px;">
               ${state.stockbitBrokerBulkResults.map(r => `
                 <div style="padding:4px 0; border-bottom:1px solid var(--border); color:${r.ok ? 'var(--up)' : 'var(--down)'};">
-                  ${r.ok ? 'âœ…' : 'âŒ'} ${escapeHtml(r.ticker)} &middot; ${escapeHtml(r.date)} â€” ${escapeHtml(r.msg||"")}
+                  ${r.ok ? '✅' : '❌'} ${escapeHtml(r.ticker)} &middot; ${escapeHtml(r.date)} — ${escapeHtml(r.msg||"")}
                 </div>`).join("")}
             </div>
           </details>` : ""}
-      </div>
+      `, { defaultOpen: false })}
 
       ${bsStatusRowHtml(dRows)}
 
-      <div class="bs-display-grid">
-        <div>
-          <div class="bs-col-title bs-buy">Top 5 Buy</div>
-          ${dBuy.length ? dBuy.map(r=>barHtml(r,"bs-fill-buy")).join("") : `<div class="empty-box" style="padding:16px;font-size:12px;">Belum ada data untuk saham/tanggal ini.</div>`}
+      ${panelWrap("bs-display", "📊 Top 5 Buy / Sell", `
+        <div class="bs-display-grid">
+          <div>
+            <div class="bs-col-title bs-buy">Top 5 Buy</div>
+            ${dBuy.length ? dBuy.map(r=>barHtml(r,"bs-fill-buy")).join("") : `<div class="empty-box" style="padding:16px;font-size:12px;">Belum ada data untuk saham/tanggal ini.</div>`}
+          </div>
+          <div>
+            <div class="bs-col-title bs-sell">Top 5 Sell</div>
+            ${dSell.length ? dSell.map(r=>barHtml(r,"bs-fill-sell")).join("") : `<div class="empty-box" style="padding:16px;font-size:12px;">Belum ada data untuk saham/tanggal ini.</div>`}
+          </div>
         </div>
-        <div>
-          <div class="bs-col-title bs-sell">Top 5 Sell</div>
-          ${dSell.length ? dSell.map(r=>barHtml(r,"bs-fill-sell")).join("") : `<div class="empty-box" style="padding:16px;font-size:12px;">Belum ada data untuk saham/tanggal ini.</div>`}
-        </div>
-      </div>
+      `)}
 
       <details class="bs-editor-panel" id="bsEditorPanel" ${state.bsEditorOpen?"open":""}>
         <summary>âœï¸ Input / Edit Manual (dari screenshot Stockbit Anda)</summary>
@@ -7127,28 +7150,21 @@ function renderTargetBandar(){
       ${state.targetMsg ? `<div class="bs-msg ${state.targetMsgError?"bs-msg-error":"bs-msg-ok"}">${escapeHtml(state.targetMsg)}</div>` : ""}
     </div>
 
-    <div class="panel">
-      <div class="filter-section-title">ðŸ‹ Top 5 Bandar (${state.targetWindowActualDays || state.targetWindowDays} hari terakhir)<span class="line"></span></div>
-      ${top5Html}
-    </div>
+    ${panelWrap("tb-top5-panel", `ðŸ‹ Top 5 Bandar (${state.targetWindowActualDays || state.targetWindowDays} hari terakhir)`, top5Html)}
 
-    <div class="panel">
-      <div class="filter-section-title">ðŸ§® Kalkulator Target Harga<span class="line"></span></div>
-      ${calcSection}
-    </div>
+${panelWrap("tb-calc-panel", "ðŸ§® Kalkulator Target Harga", calcSection)}
 
-    <div class="panel">
-      <div class="filter-section-title">ðŸ“ˆ Summary & Performance<span class="line"></span></div>
+${panelWrap("tb-summary-panel", "ðŸ“ˆ Summary & Performance", `
       <div class="bs-toolbar" style="margin-bottom:14px;">
         <select id="tbScopeSelect" style="background:rgba(0,0,0,0.2);border:1px solid var(--border);color:var(--text);font-size:13px;border-radius:8px;padding:9.5px 12px;">
           <option value="ticker" ${state.targetSummaryScope==="ticker"?"selected":""}>Emiten ini (${escapeHtml(state.targetStockCode||"-")})</option>
           <option value="all" ${state.targetSummaryScope==="all"?"selected":""}>Semua Emiten</option>
         </select>
-        <button class="btn btn-outline" id="tbHistoryBtn" ${state.targetHistoryLoading?"disabled":""}>${state.targetHistoryLoading?"Memuat...":"ðŸ”„ Muat Riwayat & Hit Rate"}</button>
+        <button class="btn btn-outline" id="tbHistoryBtn" ${state.targetHistoryLoading?"disabled":""}>${state.targetHistoryLoading?"Memuat...":"🔄 Muat Riwayat & Hit Rate"}</button>
       </div>
       ${summaryStatsHtml}
       ${historyRowsHtml}
-    </div>
+    `)}
   `;
 }
 
@@ -7637,11 +7653,10 @@ function renderEntryPriceScanner(){
     </details>`;
 
   const filterPanel = `
-    <div class="panel" style="flex-direction:column;align-items:stretch;">
-      <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;margin-bottom:14px;">
-        <div class="filter-section-title" style="margin:0;">ðŸŽ¯ Entry Price Scanner <span class="pill pill-teal">BROKER TRAP</span><span class="line"></span></div>
+    ${panelWrap("eps-filter", `\u{1F3AF} Entry Price Scanner <span class="pill pill-teal">BROKER TRAP</span>`, `
+      <div style="display:flex;justify-content:flex-end;margin-bottom:10px;">
         <div style="font-size:11px;color:var(--muted);">
-          ${raw ? `Server: ${raw.stockCount} saham Â· ${escapeHtml(f.periode)} Â· ${escapeHtml(f.broker)} Â· ${new Date(raw.scannedAt).toLocaleString('id-ID')}` : "Belum ada data"}
+          ${raw ? `Server: ${raw.stockCount} saham \u00B7 ${escapeHtml(f.periode)} \u00B7 ${escapeHtml(f.broker)} \u00B7 ${new Date(raw.scannedAt).toLocaleString('id-ID')}` : "Belum ada data"}
         </div>
       </div>
       <div style="display:flex;flex-wrap:wrap;gap:18px;margin-bottom:12px;">
@@ -7665,16 +7680,16 @@ function renderEntryPriceScanner(){
           <div style="font-size:10px;color:var(--muted);text-transform:uppercase;font-weight:700;margin-bottom:6px;">Konvergensi</div>
           <div style="display:flex;gap:6px;">
             ${epsSegBtn("konvergensi","all","Semua",f.konvergensi==="all")}
-            ${epsSegBtn("konvergensi","menyatu","â‡„ Menyatu",f.konvergensi==="menyatu")}
-            ${epsSegBtn("konvergensi","diam","â–¶ Diam",f.konvergensi==="diam")}
-            ${epsSegBtn("konvergensi","menjauh","â†” Menjauh",f.konvergensi==="menjauh")}
+            ${epsSegBtn("konvergensi","menyatu","\u21C4 Menyatu",f.konvergensi==="menyatu")}
+            ${epsSegBtn("konvergensi","diam","\u25B6 Diam",f.konvergensi==="diam")}
+            ${epsSegBtn("konvergensi","menjauh","\u2194 Menjauh",f.konvergensi==="menjauh")}
           </div>
         </div>
         <div>
           <div style="font-size:10px;color:var(--muted);text-transform:uppercase;font-weight:700;margin-bottom:6px;">Tanjakan 10H</div>
           <div style="display:flex;gap:6px;">
             ${epsSegBtn("tanjakan","all","Semua",f.tanjakan==="all")}
-            ${epsSegBtn("tanjakan","menanjak","â–² Menanjak",f.tanjakan==="menanjak")}
+            ${epsSegBtn("tanjakan","menanjak","\u25B2 Menanjak",f.tanjakan==="menanjak")}
           </div>
         </div>
       </div>
@@ -7692,37 +7707,39 @@ function renderEntryPriceScanner(){
           <label style="font-size:10px;">Min Mutu</label>
           <select id="epsMinMutu" style="background:rgba(0,0,0,0.2);border:1px solid var(--border);color:var(--text);font-size:12.5px;border-radius:8px;padding:8px 10px;">
             <option value="0" ${f.minMutu===0?"selected":""}>Semua</option>
-            <option value="50" ${f.minMutu===50?"selected":""}>â‰¥ 50</option>
-            <option value="70" ${f.minMutu===70?"selected":""}>â‰¥ 70</option>
-            <option value="85" ${f.minMutu===85?"selected":""}>â‰¥ 85</option>
+            <option value="50" ${f.minMutu===50?"selected":""}>\u2265 50</option>
+            <option value="70" ${f.minMutu===70?"selected":""}>\u2265 70</option>
+            <option value="85" ${f.minMutu===85?"selected":""}>\u2265 85</option>
           </select>
         </div>
         <div class="field" style="max-width:150px;">
           <label style="font-size:10px;">Min Akumulasi</label>
           <select id="epsMinAkum" style="background:rgba(0,0,0,0.2);border:1px solid var(--border);color:var(--text);font-size:12.5px;border-radius:8px;padding:8px 10px;">
             <option value="0" ${f.minAkum===0?"selected":""}>Semua</option>
-            <option value="100000000" ${f.minAkum===100000000?"selected":""}>â‰¥ 100 Jt</option>
-            <option value="1000000000" ${f.minAkum===1000000000?"selected":""}>â‰¥ 1 M</option>
-            <option value="10000000000" ${f.minAkum===10000000000?"selected":""}>â‰¥ 10 M</option>
+            <option value="100000000" ${f.minAkum===100000000?"selected":""}>\u2265 100 Jt</option>
+            <option value="1000000000" ${f.minAkum===1000000000?"selected":""}>\u2265 1 M</option>
+            <option value="10000000000" ${f.minAkum===10000000000?"selected":""}>\u2265 10 M</option>
           </select>
         </div>
         <div class="field" style="max-width:150px;">
           <label style="font-size:10px;">Min Gap</label>
           <select id="epsMinGap" style="background:rgba(0,0,0,0.2);border:1px solid var(--border);color:var(--text);font-size:12.5px;border-radius:8px;padding:8px 10px;">
             <option value="all" ${f.minGap==="all"?"selected":""}>Semua</option>
-            <option value="dekat" ${f.minGap==="dekat"?"selected":""}>Terdekat VWAP (â‰¤${EPS_AREA_PCT}%)</option>
+            <option value="dekat" ${f.minGap==="dekat"?"selected":""}>Terdekat VWAP (\u2264${EPS_AREA_PCT}%)</option>
             <option value="nyangkut" ${f.minGap==="nyangkut"?"selected":""}>Nyangkut (di bawah VWAP)</option>
           </select>
         </div>
         <div style="display:flex;gap:8px;margin-left:auto;">
           <button class="btn btn-outline" id="epsCsvBtn" style="color:#22d3ee;border-color:rgba(6,182,212,0.4);">CSV</button>
           <button class="btn btn-outline" id="epsClearCacheBtn" style="color:#f87171;border-color:rgba(239,68,68,0.4);">Clear Cache</button>
-          <button class="btn btn-primary" id="epsScanBtn" ${state.epsScanning?"disabled":""}>${state.epsScanning?"â³ Scanning...":"ðŸ”„ Scan Sekarang"}</button>
+          <button class="btn btn-primary" id="epsScanBtn" ${state.epsScanning?"disabled":""}>${state.epsScanning?"\u23F3 Scanning...":"\u{1F504} Scan Sekarang"}</button>
         </div>
       </div>
       ${state.epsMsg ? `<div class="bs-msg ${state.epsMsgError?"bs-msg-error":"bs-msg-ok"}" style="margin-top:12px;">${escapeHtml(state.epsMsg)}</div>` : ""}
-    </div>`;
+    `)}`;
 
+  const epsPaged = paginateArray(rows, "eps-results", { defaultLimit: 25 });
+  const epsPageOffset = (epsPaged.page - 1) * epsPaged.limit;
   const resultsPanel = `
     <div class="panel" style="flex-direction:column;align-items:stretch;">
       <div class="filter-section-title">Hasil Scan <span class="count-badge">${rows.length} saham</span><span class="line"></span></div>
@@ -7735,9 +7752,9 @@ function renderEntryPriceScanner(){
             </tr>
           </thead>
           <tbody>
-            ${rows.map((r,i)=>`
+            ${epsPaged.pageItems.map((r,i)=>`
               <tr>
-                <td>${i+1}</td>
+                <td>${epsPageOffset+i+1}</td>
                 <td class="ticker-cell"><button class="ticker-link" data-detail="${r.ticker}" title="Lihat detail ${r.ticker}">${r.ticker}</button></td>
                 <td style="white-space:normal;max-width:180px;font-family:'Sora',sans-serif;font-size:12px;">${escapeHtml(r.nama)}</td>
                 <td>${fmtNum(Math.round(r.harga))}</td>
@@ -7756,7 +7773,8 @@ function renderEntryPriceScanner(){
               </tr>`).join("")}
           </tbody>
         </table>
-      </div>`}
+      </div>
+      ${renderPaginationControls("eps-results", epsPaged.page, epsPaged.totalPages, epsPaged.total, { defaultLimit: 25 })}`}
     </div>`;
 
   return infoPanel + filterPanel + resultsPanel;
@@ -8189,9 +8207,8 @@ function renderKrakenFlow(){
   const capLabel = ORCA_MARKETCAP_OPTIONS.find(o=>o.key===state.orcaMarketCap)?.label || "Semua";
 
   const filterPanel = `
-    <div class="panel" style="flex-direction:column;align-items:stretch;">
-      <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;margin-bottom:14px;">
-        <div class="filter-section-title" style="margin:0;">â¬¢ Filter Order Flow â€” Bandarmology<span class="line"></span></div>
+    ${panelWrap("orca-filter", `\u2b22 Filter Order Flow \u2014 Bandarmology`, `
+      <div style="display:flex;justify-content:flex-end;margin-bottom:10px;">
         <input id="orcaSearchInput" type="text" placeholder="Cari emiten (mis. IATA)" value="${escapeHtml(state.orcaSearch)}" style="background:rgba(0,0,0,0.2);border:1px solid var(--border);color:var(--text);font-size:12.5px;border-radius:8px;padding:8px 12px;width:180px;">
       </div>
       <div style="font-size:10px;color:var(--muted);text-transform:uppercase;font-weight:700;margin-bottom:8px;">Parameter Â· bisa dikombinasikan Â· Top ${ORCA_TOP_N} hasil</div>
@@ -8213,8 +8230,10 @@ function renderKrakenFlow(){
           <button class="btn btn-outline" id="orcaResetBtn" style="color:#f87171;border-color:rgba(239,68,68,0.4);">â†º Reset ORCA</button>
         </div>
       </div>
-    </div>`;
+    `)}`;
 
+  const orcaPaged = paginateArray(rows, "orca-results", { defaultLimit: 25 });
+  const orcaPageOffset = (orcaPaged.page - 1) * orcaPaged.limit;
   const resultsPanel = `
     <div class="panel" style="flex-direction:column;align-items:stretch;">
       <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;margin-bottom:14px;">
@@ -8233,9 +8252,9 @@ function renderKrakenFlow(){
             </tr>
           </thead>
           <tbody>
-            ${rows.map((r,i)=>`
+            ${orcaPaged.pageItems.map((r,i)=>`
               <tr>
-                <td>${i+1}</td>
+                <td>${orcaPageOffset+i+1}</td>
                 <td class="ticker-cell"><button class="ticker-link" data-detail="${r.ticker}" title="Lihat detail ${r.ticker}">${r.ticker}</button></td>
                 <td>${orcaSrcBadge(r.orcaSrc)}</td>
                 <td style="white-space:normal;max-width:160px;font-family:'Sora',sans-serif;font-size:12px;">${escapeHtml(r.name)}</td>
@@ -8253,7 +8272,8 @@ function renderKrakenFlow(){
               </tr>`).join("")}
           </tbody>
         </table>
-      </div>`}
+      </div>
+      ${renderPaginationControls("orca-results", orcaPaged.page, orcaPaged.totalPages, orcaPaged.total, { defaultLimit: 25 })}`}
     </div>`;
 
   return infoPanel + filterPanel + resultsPanel;
@@ -8317,7 +8337,138 @@ function bindSearchInputPreservingCursor(id, onValueChange){
   };
 }
 
+// ==========================================
+// PANEL COLLAPSIBLE GENERIK (panelWrap) + PAGING GENERIK (paginateArray /
+// renderPaginationControls) â€” dipakai di semua tab (Screener, Backtest,
+// Sektoral, Watchlist, Portfolio, Smart Pick, Broker Summary, Target
+// Bandar, Entry Price Scanner, Kraken Flow) supaya polanya seragam dan
+// tidak menulis ulang <details> / logika slice() di tiap tempat.
+//
+// panelWrap(key, title, innerHtml, opts):
+//   Membungkus innerHtml jadi <details> collapsible. Status buka/tutup
+//   disimpan di state.closedPanels (lihat komentar di deklarasi state).
+//   Dirender ulang via render() penuh saat toggle (bukan cuma update DOM)
+//   supaya konsisten dengan pola lain di file ini (render() murah karena
+//   cuma innerHTML sinkron, tidak ada async di jalur ini).
+//   opts.badge: teks kecil opsional di sebelah judul (mis. jumlah baris).
+//   opts.defaultOpen: kalau false, panel dianggap TERTUTUP saat key belum
+//   pernah disentuh sama sekali (dipakai utk panel yang sebaiknya ringkas
+//   di awal, mis. panel dengan tabel sangat panjang).
+//
+// paginateArray(arr, key, opts): mengembalikan {pageItems, page, totalPages,
+//   total, limit} â€” slice() dari arr sesuai state.pageByTab[key] &
+//   state.limitByTab[key] (opts.defaultLimit kalau belum diset, default 10).
+//   Otomatis clamp halaman kalau data berkurang (mis. habis filter ulang).
+//
+// renderPaginationControls(key, page, totalPages, total): HTML kontrol
+//   "<< < Halaman x/y (n baris) > >>" + dropdown jumlah baris/halaman.
+//   Event klik/​change-nya di-wire generik lewat data-page-* di
+//   attachContentEvents() bawah, cukup panggil render() setelahnya.
+// ==========================================
+function isPanelOpen(key, defaultOpen = true){
+  if(defaultOpen) return !state.closedPanels.has(key);
+  return state.closedPanels.has("__open__" + key);
+}
+function togglePanel(key, defaultOpen = true){
+  if(defaultOpen){
+    if(state.closedPanels.has(key)) state.closedPanels.delete(key);
+    else state.closedPanels.add(key);
+  } else {
+    const openKey = "__open__" + key;
+    if(state.closedPanels.has(openKey)) state.closedPanels.delete(openKey);
+    else state.closedPanels.add(openKey);
+  }
+}
+function panelWrap(key, title, innerHtml, opts = {}){
+  const open = isPanelOpen(key, opts.defaultOpen !== false);
+  const badge = opts.badge ? `<span class="panel-badge" style="font-size:11px;font-weight:normal;color:var(--muted);margin-left:8px;">${opts.badge}</span>` : "";
+  return `
+    <details class="panel-collapsible" data-panel-key="${key}" ${open ? "open" : ""} style="margin-bottom:14px;">
+      <summary data-panel-toggle="${key}" data-panel-default-open="${opts.defaultOpen !== false}" style="cursor:pointer;font-weight:600;padding:10px 12px;list-style:none;display:flex;align-items:center;gap:6px;user-select:none;">
+        <span class="panel-caret" style="display:inline-block;transition:transform .15s;">â–¶</span>
+        <span>${title}</span>
+        ${badge}
+      </summary>
+      <div class="panel-body" style="padding:8px 2px 4px;">
+        ${innerHtml}
+      </div>
+    </details>
+    <style>
+      details.panel-collapsible[open] > summary .panel-caret{ transform: rotate(90deg); }
+      details.panel-collapsible > summary::-webkit-details-marker{ display:none; }
+    </style>`;
+}
+
+function paginateArray(arr, key, opts = {}){
+  const total = arr.length;
+  const defaultLimit = opts.defaultLimit || 10;
+  let limit = state.limitByTab[key] || defaultLimit;
+  if(limit === "all") limit = total || 1;
+  const totalPages = Math.max(1, Math.ceil(total / limit));
+  let page = state.pageByTab[key] || 1;
+  if(page > totalPages) page = totalPages;
+  if(page < 1) page = 1;
+  state.pageByTab[key] = page;
+  const start = (page - 1) * limit;
+  const pageItems = arr.slice(start, start + limit);
+  return { pageItems, page, totalPages, total, limit };
+}
+
+function renderPaginationControls(key, page, totalPages, total, opts = {}){
+  if(total === 0) return "";
+  const limitOptions = opts.limitOptions || [10, 25, 50, 100];
+  const curLimit = state.limitByTab[key] || opts.defaultLimit || 10;
+  const limitSelect = `
+    <select data-page-limit-key="${key}" style="font-size:12px;padding:3px 6px;border-radius:6px;">
+      ${limitOptions.map(n => `<option value="${n}" ${String(curLimit)===String(n)?"selected":""}>${n} / halaman</option>`).join("")}
+      <option value="all" ${curLimit==="all"?"selected":""}>Semua</option>
+    </select>`;
+  return `
+    <div class="pagination-controls" style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:8px 2px;font-size:12px;color:var(--muted);">
+      <button data-page-nav-key="${key}" data-page-dir="first" ${page<=1?"disabled":""} style="padding:3px 8px;border-radius:6px;">Â«</button>
+      <button data-page-nav-key="${key}" data-page-dir="prev" ${page<=1?"disabled":""} style="padding:3px 8px;border-radius:6px;">â€¹</button>
+      <span>Halaman ${page}/${totalPages} (${total} baris)</span>
+      <button data-page-nav-key="${key}" data-page-dir="next" ${page>=totalPages?"disabled":""} style="padding:3px 8px;border-radius:6px;">â€º</button>
+      <button data-page-nav-key="${key}" data-page-dir="last" ${page>=totalPages?"disabled":""} style="padding:3px 8px;border-radius:6px;">Â»</button>
+      ${limitSelect}
+    </div>`;
+}
+
 function attachContentEvents(){
+  // Wiring GENERIK panel collapsible & paging â€” dipasang di awal supaya
+  // berlaku utk semua tab tanpa perlu ditambahkan satu2 per tab.
+  document.querySelectorAll("[data-panel-toggle]").forEach(el => {
+    el.addEventListener("click", (e) => {
+      e.preventDefault();
+      const key = el.dataset.panelToggle;
+      const defaultOpen = el.dataset.panelDefaultOpen !== "false";
+      togglePanel(key, defaultOpen);
+      render();
+    });
+  });
+  document.querySelectorAll("[data-page-nav-key]").forEach(btn => {
+    btn.onclick = () => {
+      const key = btn.dataset.pageNavKey;
+      const dir = btn.dataset.pageDir;
+      const cur = state.pageByTab[key] || 1;
+      if(dir === "first") state.pageByTab[key] = 1;
+      else if(dir === "prev") state.pageByTab[key] = Math.max(1, cur - 1);
+      else if(dir === "next") state.pageByTab[key] = cur + 1;
+      else if(dir === "last") state.pageByTab[key] = 999999; // di-clamp di paginateArray()
+      render();
+    };
+  });
+  document.querySelectorAll("[data-page-limit-key]").forEach(sel => {
+    sel.onchange = (e) => {
+      const key = sel.dataset.pageLimitKey;
+      const val = e.target.value;
+      state.limitByTab[key] = (val === "all") ? "all" : parseInt(val, 10);
+      state.pageByTab[key] = 1;
+      render();
+    };
+  });
+
+
   const advToggleBtn = document.getElementById("advToggleBtn");
   if(advToggleBtn) advToggleBtn.onclick = () => { state.showAdvancedFilters = !state.showAdvancedFilters; render(); };
 
