@@ -4783,7 +4783,7 @@ const RULE_METRICS = [
     "Normal", "Akumulasi Kuat (RVOL>2 & CLV>0.7)", "Guyuran (RVOL>2 & CLV Negatif)"
   ]},
   { key:"valuasi", label:"Valuasi", type:"category", options:[
-    "Kemahalan (Overvalued)", "Murah (Undervalued)", "Wajar (Fair)"
+    "Kemahalan (Overvalued)", "Murah (Undervalued)", "Wajar (Fair)", "Data Tidak Lengkap"
   ]},
   { key:"capCategory", label:"Kategori Cap", type:"category", options:[
     "Mid Cap", "Small Cap", "Big Cap"
