@@ -1,35 +1,56 @@
-  :root {
-    /* Modern Dark Theme Palette */
-    --bg-main: #0f1b20; /* Slate 900 */
-    --bg-grad: linear-gradient(135deg, #0f172a 0%, #1e1b4b 100%);
-    --surface: rgba(30, 41, 59, 0.65); /* Glassmorphism Slate 800 */
-    --surface2: rgba(51, 65, 85, 0.7); /* Slate 700 */
-    --surface-hover: rgba(71, 85, 105, 0.8);
-    --border: rgba(255, 255, 255, 0.16);
-    --border-light: rgba(255, 255, 255, 0.28);
-    
-    --text: #f8fafc;
-    --muted: #b0bdd1;
-    
-    /* Vibrant Gradients for accents */
-    --gold: #fbbf24;
-    --goldDim: #d97706;
-    --gold-grad: linear-gradient(135deg, #fbbf24 0%, #d97706 100%);
-    
-    --up: #34d399;
-    --up-grad: linear-gradient(135deg, #34d399 0%, #059669 100%);
-    
-    --down: #f87171;
-    --down-grad: linear-gradient(135deg, #f87171 0%, #dc2626 100%);
-    
-    --teal: #22d3ee;
-    --teal-grad: linear-gradient(135deg, #22d3ee 0%, #0891b2 100%);
+:root {
+  /* Modern Dark Theme Palette */
+  --bg-main: #0f1b20;
+  --bg-grad: linear-gradient(135deg, #0f172a 0%, #1e1b4b 100%);
+  --surface: rgba(30, 41, 59, 0.65);
+  --surface2: rgba(51, 65, 85, 0.7);
+  --surface-hover: rgba(71, 85, 105, 0.8);
+  --border: rgba(255, 255, 255, 0.16);
+  --border-light: rgba(255, 255, 255, 0.28);
+  --text: #f8fafc;
+  --muted: #b0bdd1;
+  --gold: #fbbf24;
+  --goldDim: #d97706;
+  --gold-grad: linear-gradient(135deg, #fbbf24 0%, #d97706 100%);
+  --up: #34d399;
+  --up-grad: linear-gradient(135deg, #34d399 0%, #059669 100%);
+  --down: #f87171;
+  --down-grad: linear-gradient(135deg, #f87171 0%, #dc2626 100%);
+  --teal: #22d3ee;
+  --teal-grad: linear-gradient(135deg, #22d3ee 0%, #0891b2 100%);
+  --glass-blur: blur(12px);
+  --shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.2), 0 2px 4px -1px rgba(0, 0, 0, 0.1);
+  --shadow-glow: 0 0 15px rgba(245, 158, 11, 0.15);
+}
 
-    --glass-blur: blur(12px);
-    --shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.2), 0 2px 4px -1px rgba(0, 0, 0, 0.1);
-    --shadow-glow: 0 0 15px rgba(245, 158, 11, 0.15);
-  }
-  
+/* ==== Fitur baru: Dashboard, Broker Stalker, Watchlist P&L, vs Sektor ==== */
+.dashboard-page{display:grid;gap:16px;}
+.dashboard-hero{display:flex;justify-content:space-between;align-items:center;gap:24px;}
+.dashboard-title{margin:4px 0 2px;font-size:24px;letter-spacing:-.03em;}
+.dashboard-subtitle{font-size:12px;color:var(--muted);}
+.dashboard-breadth{min-width:240px;max-width:320px;width:35%;}
+.dashboard-breadth-label,.dashboard-breadth-foot{display:flex;justify-content:space-between;font-size:11px;color:var(--muted);gap:10px;}
+.dashboard-breadth-label strong{color:var(--teal);font-family:'JetBrains Mono',monospace;}
+.breadth-track{height:8px;background:rgba(248,113,113,.35);border-radius:8px;overflow:hidden;margin:8px 0 5px;}
+.breadth-track div{height:100%;background:var(--up-grad);border-radius:inherit;}
+.summary-note{font-size:10px;color:var(--muted);margin-top:3px;}
+.dashboard-summary{grid-template-columns:repeat(auto-fit,minmax(145px,1fr));}
+.dashboard-columns{display:grid;grid-template-columns:minmax(0,1.5fr) minmax(280px,1fr);gap:16px;}
+.panel-heading{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:12px;}
+.panel-heading h3{margin:0;font-size:14px;}
+.panel-heading-note{font-size:10px;color:var(--muted);}
+.market-sparkline{height:150px;border-top:1px solid rgba(255,255,255,.06);border-bottom:1px solid rgba(255,255,255,.06);background:repeating-linear-gradient(to bottom,transparent 0,transparent 49px,rgba(255,255,255,.05) 50px);}
+.market-sparkline svg{width:100%;height:100%;display:block;}
+.dashboard-chart-foot{display:flex;justify-content:space-between;font-size:11px;color:var(--muted);padding-top:10px;}
+.mini-leader{display:grid;grid-template-columns:28px 52px 1fr auto;align-items:center;gap:8px;padding:8px 0;border-bottom:1px solid rgba(255,255,255,.07);font-size:12px;}
+.mini-leader:last-child{border-bottom:0;}.mini-rank{color:var(--muted);font-family:'JetBrains Mono',monospace;font-size:11px;}.mini-name{color:var(--muted);font-size:10px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.dashboard-leaderboard th{white-space:nowrap;}.dashboard-leaderboard td{vertical-align:middle;}
+.broker-stalker-page{min-height:320px;}.stalker-toggle{display:flex;gap:8px;margin:18px 0 12px;}.stalker-search{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:18px;}.stalker-search input{width:240px;background:rgba(0,0,0,.22);border:1px solid var(--border);color:var(--text);border-radius:8px;padding:10px 12px;font:12px 'JetBrains Mono',monospace;text-transform:uppercase;}.filter-chip.active{border-color:var(--teal);color:var(--teal);background:rgba(34,211,238,.12);}
+.wl-portfolio-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;}.wl-pl{display:flex;justify-content:space-between;align-items:center;gap:8px;border:1px solid var(--border);border-radius:7px;padding:7px 9px;margin:-5px 0 12px;font-size:11px;}.wl-pl strong{font-size:14px;} .wl-card-top{grid-template-columns:auto 1fr auto!important;}
+.sector-compare-list{display:grid;gap:14px;}.sector-compare-row{display:grid;grid-template-columns:145px 1fr;gap:14px;align-items:center;padding:10px 0;border-bottom:1px solid rgba(255,255,255,.07)}.sector-compare-label{display:flex;flex-direction:column;gap:3px;font-size:12px}.sector-compare-label span{font-size:10px;color:var(--muted)}.sector-bar-track{height:10px;background:rgba(255,255,255,.1);border-radius:8px;overflow:hidden}.sector-bar-stock{height:100%;background:var(--gold-grad);border-radius:inherit}.sector-bar-stock.good{background:var(--up-grad)}.sector-bar-stock.bad{background:var(--down-grad)}.sector-bar-values{display:flex;justify-content:space-between;gap:12px;margin-top:5px;color:var(--muted);font-size:10px}.sector-bar-values b{color:var(--text);font-family:'JetBrains Mono',monospace;font-weight:500}
+@media(max-width:600px){.sector-compare-row{grid-template-columns:1fr}.sector-bar-values{font-size:9px}}
+@media(max-width:800px){.dashboard-hero{display:block}.dashboard-breadth{width:100%;max-width:none;margin-top:18px}.dashboard-columns{grid-template-columns:1fr}.panel-heading-note{display:none}}
+
   * { box-sizing: border-box; }
   html, body {
     /* Safety net: kalau ada elemen anak (pill, tombol, dll) yang sedikit
@@ -164,14 +185,6 @@
   .sidebar.collapsed .tab-label { display:none; }
   .sidebar.collapsed .tab-btn { justify-content:center; padding:10px 0; }
 
-  /* HAMBURGER + DRAWER — elemen ini hanya dipakai di mode drawer mobile
-     (lihat @media max-width:640px di bawah). Disembunyikan di desktop
-     supaya tidak mengganggu layout sidebar tetap yang sudah ada. */
-  .hamburger-btn{ display:none; align-items:center; justify-content:center; width:36px; height:36px; border-radius:8px; border:1px solid var(--border); background:rgba(255,255,255,0.05); color:var(--text); flex-shrink:0; transition:all .2s; }
-  .hamburger-btn:hover{ background:rgba(255,255,255,0.1); border-color:var(--border-light); }
-  .sidebar-drawer-head{ display:none; }
-  .sidebar-backdrop{ display:none; }
-
   .content{padding:24px; flex:1 1 auto; min-width:0;}
   
   /* GLASS PANELS */
@@ -226,11 +239,7 @@
 
   /* MODERN TABLE */
   table{width:100%;border-collapse:separate; border-spacing: 0; font-size:12.5px;}
-  .table-wrap{background: var(--surface); backdrop-filter: var(--glass-blur); border:1px solid var(--border); border-radius:12px; overflow:auto; -webkit-overflow-scrolling:touch; max-height:70vh; box-shadow: var(--shadow-md);}
-  /* Safety-net: tabel manapun yang dibungkus div inline overflow-x:auto
-     (bukan .table-wrap) tetap dapat scroll horizontal yang mulus di touch,
-     mis. tabel Historical Data & Bandingkan IDX di Detail Emiten. */
-  [style*="overflow-x:auto"]{-webkit-overflow-scrolling:touch;}
+  .table-wrap{background: var(--surface); backdrop-filter: var(--glass-blur); border:1px solid var(--border); border-radius:12px; overflow:auto; max-height:70vh; box-shadow: var(--shadow-md);}
   
   thead th {
     position:sticky; top:0; z-index:3;
@@ -247,34 +256,12 @@
   .col-freeze{position:sticky;z-index:2;background: var(--bg-main);}
   thead th.col-freeze{z-index:4; background: rgba(15, 23, 42, 0.95) !important;}
   .col-freeze-shadow{box-shadow: 4px 0 8px rgba(0,0,0,0.3); border-right: 1px solid var(--border);}
-
-  /* FREEZE KOLOM PERTAMA OTOMATIS untuk semua tabel di dalam .table-wrap —
-     supaya pas discroll ke samping (terutama di HP), kolom identitas paling
-     kiri (Ticker/Tanggal/Broker, dst) tetap kelihatan tanpa perlu setup
-     manual per tabel. Tabel Screener utama sudah punya freeze multi-kolom
-     manual (checkbox + star + ticker) lewat .col-freeze + FREEZE_LEFT di
-     app.js — aturan generik ini tidak bentrok, karena cuma menyentuh kolom
-     PERTAMA (checkbox), yang posisinya (left:0) memang sama persis.
-     Kasih class="no-freeze-first" di <table> untuk tabel yang tidak perlu
-     kolom beku (mis. tabel ringkas yang sudah muat penuh tanpa scroll). */
-  .table-wrap table:not(.no-freeze-first) > tbody > tr > td:first-child {
-    position: sticky; left: 0; z-index: 2;
-    background: var(--bg-main);
-    box-shadow: 4px 0 8px rgba(0,0,0,0.3);
-    border-right: 1px solid var(--border);
-  }
-  .table-wrap table:not(.no-freeze-first) > thead > tr > th:first-child {
-    position: sticky; left: 0; z-index: 4;
-    background: rgba(15, 23, 42, 0.95) !important;
-    border-right: 1px solid var(--border);
-  }
   
   td{padding:10px 16px; white-space:nowrap; border-bottom: 1px solid rgba(255,255,255,0.08);}
   tbody tr { transition: background 0.15s; }
   tbody tr:nth-child(even) { background: rgba(255,255,255,0.035); }
   tbody tr:hover { background: rgba(255,255,255,0.09); }
-  tbody tr:hover td.col-freeze,
-  .table-wrap table:not(.no-freeze-first) tbody tr:hover > td:first-child { background: #1e293b; } /* Match hover color */
+  tbody tr:hover td.col-freeze { background: #1e293b; } /* Match hover color */
 
   /* PEMILIH KOLOM — supaya tabel tidak menampilkan puluhan kolom sekaligus */
   .col-picker-wrap{ position:relative; display:inline-block; margin-bottom:12px; }
@@ -419,6 +406,23 @@
   .chip.active{background: var(--gold-grad); border-color: transparent; color: #fff; box-shadow: 0 4px 10px rgba(245,158,11,0.3);}
   
   .chart-box{background: rgba(0,0,0,0.2); border:1px solid var(--border);border-radius:12px;padding:20px;height:260px; box-shadow: inset 0 2px 10px rgba(0,0,0,0.2);}
+  .chart-box-expanded{height:480px;padding:14px 10px 6px 14px;}
+  .chart-svg-wrap{position:relative;width:100%;height:100%;overflow:hidden;}
+  .chart-svg-wrap svg{width:100%;height:100%;min-height:100%;}
+  .chart-tooltip{position:absolute;pointer-events:none;background:rgba(15,23,42,0.95);border:1px solid var(--border-light);border-radius:8px;padding:6px 10px;font-size:11.5px;color:var(--text);opacity:0;transition:opacity .12s ease;white-space:nowrap;z-index:5;box-shadow:0 8px 20px rgba(0,0,0,0.4);transform:translate(-50%,-115%);}
+  .chart-tooltip.show{opacity:1;}
+  .chart-controls{display:flex;align-items:center;gap:18px;flex-wrap:wrap;margin-bottom:12px;}
+  .chart-control-group{display:flex;align-items:center;gap:6px;flex-wrap:wrap;}
+  .chart-control-label{font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);margin-right:2px;}
+  .chart-range-btn{font-size:12px;font-weight:600;padding:5px 12px;border-radius:8px;border:1px solid var(--border);background:rgba(255,255,255,0.04);color:var(--muted);cursor:pointer;transition:0.15s;}
+  .chart-range-btn:hover{color:var(--text);background:rgba(255,255,255,0.08);}
+  .chart-range-btn.active{background:var(--gold-grad);border-color:transparent;color:#fff;box-shadow:0 3px 10px rgba(245,158,11,0.3);}
+  .chart-toggle{display:inline-flex;align-items:center;gap:6px;font-size:12px;font-weight:600;color:var(--muted);cursor:pointer;padding:5px 10px;border-radius:8px;border:1px solid transparent;transition:0.15s;user-select:none;}
+  .chart-toggle:hover{background:rgba(255,255,255,0.06);color:var(--text);}
+  .chart-toggle input{display:none;}
+  .chart-toggle:has(input:checked){color:var(--text);border-color:var(--border);background:rgba(255,255,255,0.04);}
+  .chart-swatch{display:inline-block;width:12px;height:3px;border-radius:2px;box-shadow:0 0 0 1px rgba(255,255,255,0.15) inset;}
+  .chart-toggle:has(input:not(:checked)) .chart-swatch{opacity:0.25;}
   .tv-chart-box{background:var(--bg-main); border:1px solid var(--border);border-radius:12px;overflow:hidden;height:520px; box-shadow: var(--shadow-md);}
   .tv-chart-box iframe{width:100%;height:100%;border:0;display:block;}
   
@@ -534,45 +538,22 @@
     .header-actions{width:100%;gap:8px;}
     .header-actions .btn{flex:1;justify-content:center;padding:9px 10px;font-size:12px;}
 
-    /* SIDEBAR -> MENU DRAWER di layar sempit. Sembunyi di luar layar
-       lewat translateX(-100%) secara default, digeser masuk begitu kelas
-       .drawer-open ditambahkan (lihat initSidebarToggle() di app.js).
-       Dibuka lewat tombol hamburger di header (#hamburgerBtn), ditutup
-       lewat tombol ✕ di kepala drawer, tap area gelap di luar drawer
-       (#sidebarBackdrop), tombol Esc, atau otomatis begitu satu menu
-       dipilih (supaya tidak perlu tap 2x: pilih menu -> drawer nutup
-       sendiri -> langsung lihat kontennya). */
+    /* SIDEBAR — di layar sempit dikembalikan jadi bar horizontal yang bisa
+       discroll (seperti tabs lama), bukan sidebar vertikal — lebih pas
+       untuk layar sempit/satu tangan. Tombol ciutkan disembunyikan karena
+       tidak relevan lagi dalam mode ini. */
     .app-body{ flex-direction:column; }
-    .hamburger-btn{ display:flex; }
     .sidebar{
-      position:fixed; top:0; left:0; width:82vw; max-width:300px; flex-basis:auto;
-      height:100vh; height:100dvh; z-index:210;
-      flex-direction:column; align-items:stretch; gap:0; overflow-y:auto; overflow-x:hidden;
-      padding:14px 12px calc(14px + env(safe-area-inset-bottom));
-      border-right:1px solid var(--border); border-bottom:none;
-      background: rgba(15, 23, 42, 0.97);
-      transform: translateX(-100%);
-      transition: transform .22s ease;
-      box-shadow: 8px 0 30px rgba(0,0,0,0.4);
+      position:sticky; top:58px; width:100%; flex-basis:auto; height:auto;
+      flex-direction:row; align-items:center; gap:6px; overflow-x:auto; overflow-y:hidden;
+      padding:8px 10px; border-right:none; border-bottom:1px solid var(--border);
     }
-    .sidebar.drawer-open{ transform: translateX(0); }
-    /* Status "collapsed" dari toggle desktop diabaikan sepenuhnya di mode
-       drawer — drawer selalu tampil lebar penuh (82vw) begitu dibuka. */
-    .sidebar.collapsed{ width:82vw; max-width:300px; padding:14px 12px calc(14px + env(safe-area-inset-bottom)); }
+    .sidebar.collapsed{ width:100%; padding:8px 10px; }
+    .sidebar-toggle{ display:none; }
+    .sidebar-tabs{ flex-direction:row; gap:6px; }
+    .sidebar .tab-btn{ flex-shrink:0; padding:7px 12px; font-size:12px; border-radius:20px; }
     .sidebar.collapsed .tab-label{ display:inline; }
-    .sidebar.collapsed .tab-btn{ justify-content:flex-start; padding:11px 12px; }
-    .sidebar-toggle{ display:none; } /* tombol ciutkan desktop tidak relevan di mode drawer */
-
-    .sidebar-drawer-head{ display:flex; align-items:center; justify-content:space-between; padding:2px 2px 14px; border-bottom:1px solid var(--border); margin-bottom:10px; flex-shrink:0; }
-    .sidebar-drawer-head span{ font-size:12.5px; font-weight:700; color:var(--muted); text-transform:uppercase; letter-spacing:.06em; }
-    .sidebar-drawer-close{ display:flex; align-items:center; justify-content:center; width:30px; height:30px; border-radius:8px; border:1px solid var(--border); background:rgba(255,255,255,0.05); color:var(--muted); flex-shrink:0; }
-    .sidebar-drawer-close:hover{ color:var(--text); background:rgba(255,255,255,0.1); }
-
-    .sidebar-tabs{ flex-direction:column; gap:4px; }
-    .sidebar .tab-btn{ width:100%; flex-shrink:0; justify-content:flex-start; padding:11px 12px; font-size:13.5px; border-radius:10px; }
-
-    .sidebar-backdrop.show{ display:block; position:fixed; inset:0; background:rgba(0,0,0,0.55); z-index:200; animation:sidebarFadeIn .18s ease; }
-    @keyframes sidebarFadeIn{ from{opacity:0;} to{opacity:1;} }
+    .sidebar.collapsed .tab-btn{ justify-content:flex-start; padding:7px 12px; }
 
     .content{ padding:12px; }
     .panel{padding:14px;border-radius:12px;margin-bottom:16px;}
@@ -656,6 +637,9 @@
 
     /* CHART */
     .chart-box{height:200px;padding:14px;}
+    .chart-box-expanded{height:340px;padding:10px 6px 4px 10px;}
+    .chart-controls{gap:10px;}
+    .chart-toggle{padding:4px 7px;font-size:11px;}
     .tv-chart-box{height:320px;}
     .chart-toolbar{gap:8px;}
     .chart-external-links{width:100%;}
@@ -884,486 +868,3 @@
   animation: slideIn 0.3s ease forwards; 
 }
 @keyframes slideIn { from { transform: translateX(100%); opacity: 0; } to { transform: translateX(0); opacity: 1; } }
-
-/* ═══════════════════════════════════════════════════════════
-   UI ENHANCEMENTS — IHSG Screener Pro
-   Salin isi file ini ke bagian paling AKHIR styles.css kamu
-   ═══════════════════════════════════════════════════════════ */
-
-/* ── #marketStatus pill ────────────────────────────────── */
-#marketStatus {
-  display: inline-flex;
-  align-items: center;
-  margin-left: 8px;
-}
-#marketStatus .pill {
-  font-size: 11px !important;
-  padding: 4px 10px;
-  border-radius: 20px;
-  font-weight: 600;
-  letter-spacing: 0.03em;
-}
-
-/* ── Summary Cards — elevate + subtle hover ────────────── */
-.summary-card {
-  background: linear-gradient(135deg, rgba(0,0,0,0.2), rgba(0,0,0,0.3));
-  border-radius: 12px;
-  transition: all 0.3s ease;
-  box-shadow: 0 2px 8px rgba(0,0,0,0.1);
-}
-.summary-card:hover {
-  transform: translateY(-2px);
-  box-shadow: 0 4px 16px rgba(0,0,0,0.2);
-  border-color: var(--teal);
-}
-.summary-card .summary-lbl {
-  font-size: 10.5px;
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-  color: var(--muted);
-  margin-bottom: 4px;
-  font-weight: 600;
-}
-.summary-card .summary-val {
-  font-size: 22px;
-  font-weight: 700;
-  font-family: 'JetBrains Mono', monospace;
-}
-
-/* ── Table row hover + sticky header ───────────────────── */
-.mono tbody tr {
-  transition: background-color 0.15s ease;
-}
-.mono tbody tr:hover {
-  background-color: rgba(6,182,212,0.05);
-}
-.mono thead {
-  position: sticky;
-  top: 0;
-  background: var(--bg, #0b0e17);
-  z-index: 10;
-}
-.mono td, .mono th {
-  padding: 11px 14px;
-}
-.ticker-link {
-  transition: text-shadow 0.2s ease;
-}
-.ticker-link:hover {
-  text-shadow: 0 0 8px rgba(6,182,212,0.5);
-}
-
-/* ── Star button pulse on watchlist ────────────────────── */
-.star-btn svg {
-  transition: transform 0.2s ease, filter 0.2s ease;
-}
-.star-btn:hover svg {
-  transform: scale(1.15);
-}
-
-/* ── Filter toolbar — group sections visually ──────────── */
-.filter-toolbar {
-  gap: 14px;
-}
-.filter-toolbar .field label {
-  font-size: 10px;
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-  color: var(--muted);
-  font-weight: 600;
-  margin-bottom: 4px;
-  display: block;
-}
-
-/* ── Column picker — group title ───────────────────────── */
-.col-picker-group-title {
-  font-size: 11px;
-  font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-  color: var(--teal);
-  padding: 6px 0 4px;
-  border-bottom: 1px solid var(--border);
-  margin-bottom: 6px;
-}
-.col-picker-item {
-  font-size: 12px;
-  padding: 3px 0;
-  cursor: pointer;
-  color: var(--text);
-}
-.col-picker-item:hover {
-  color: var(--teal);
-}
-.col-picker-item input[type="checkbox"] {
-  margin-right: 6px;
-}
-
-/* ── Preset buttons — smaller, grouped ─────────────────── */
-.col-picker-head .link-btn {
-  font-size: 10.5px;
-  padding: 3px 8px;
-  border-radius: 4px;
-}
-.col-picker-head .link-btn:hover {
-  background: rgba(6,182,212,0.1);
-}
-
-/* ── Button group: uniform sizing ──────────────────────── */
-.btn-group {
-  display: flex;
-  gap: 6px;
-  align-items: center;
-}
-.btn-group .btn {
-  padding: 8px 14px;
-  font-size: 12px;
-  border-radius: 8px;
-  white-space: nowrap;
-}
-
-/* ── Toast notifications — professional ────────────────── */
-.toast-container {
-  position: fixed;
-  bottom: 20px;
-  right: 20px;
-  z-index: 9999;
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  pointer-events: none;
-}
-.toast {
-  background: rgba(15,23,42,0.95);
-  backdrop-filter: blur(12px);
-  border-left: 4px solid var(--up);
-  padding: 12px 18px;
-  border-radius: 10px;
-  color: #fff;
-  font-size: 12px;
-  font-family: 'Sora', sans-serif;
-  box-shadow: 0 4px 20px rgba(0,0,0,0.4);
-  animation: toastIn 0.3s ease forwards;
-  transition: opacity 0.3s ease, transform 0.3s ease;
-  pointer-events: auto;
-  max-width: 360px;
-}
-.toast:hover {
-  opacity: 0.85;
-}
-@keyframes toastIn {
-  from { transform: translateX(100%) scale(0.9); opacity: 0; }
-  to   { transform: translateX(0) scale(1); opacity: 1; }
-}
-
-/* ── Modal — backdrop blur + smooth open ───────────────── */
-.modal-overlay {
-  backdrop-filter: blur(6px);
-}
-.modal {
-  animation: modalSlideIn 0.25s ease;
-}
-@keyframes modalSlideIn {
-  from { opacity: 0; transform: translateY(-16px) scale(0.96); }
-  to   { opacity: 1; transform: translateY(0) scale(1); }
-}
-
-/* ── Filter chips — pill style ─────────────────────────── */
-.pill-active {
-  background: rgba(6,182,212,0.15) !important;
-  border-color: var(--teal) !important;
-  color: var(--teal) !important;
-  font-weight: 600;
-}
-
-/* ── Pagination — polished ─────────────────────────────── */
-.pagination {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  padding: 12px 0;
-  flex-wrap: wrap;
-  gap: 8px;
-}
-.pagination .btn {
-  min-width: 36px;
-  text-align: center;
-}
-
-/* ── Empty state — better visual ───────────────────────── */
-.empty-box {
-  background: rgba(0,0,0,0.15);
-  border: 1px dashed var(--border);
-  border-radius: 12px;
-  padding: 28px 20px;
-  text-align: center;
-  color: var(--muted);
-  font-size: 13px;
-}
-
-/* ── Sektor card — smoother expand ─────────────────────── */
-.sektor-card-body {
-  animation: expandIn 0.2s ease;
-}
-@keyframes expandIn {
-  from { opacity: 0; max-height: 0; }
-  to   { opacity: 1; max-height: 2000px; }
-}
-
-/* ── Skeleton loading shimmer ──────────────────────────── */
-@keyframes shimmer {
-  0%   { background-position: -200% 0; }
-  100% { background-position: 200% 0; }
-}
-.skeleton-cell {
-  height: 14px;
-  border-radius: 4px;
-  background: linear-gradient(90deg,
-    rgba(255,255,255,0.04) 25%,
-    rgba(255,255,255,0.08) 50%,
-    rgba(255,255,255,0.04) 75%
-  );
-  background-size: 200% 100%;
-  animation: shimmer 1.5s infinite;
-}
-
-/* ── Smart Pick card — hover glow ──────────────────────── */
-.sp-card {
-  transition: all 0.2s ease;
-}
-.sp-card:hover {
-  border-color: rgba(234,179,8,0.3);
-  box-shadow: 0 2px 12px rgba(234,179,8,0.08);
-}
-
-/* ── Chart toolbar — cleaner layout ────────────────────── */
-.chart-toolbar {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 12px;
-}
-.chart-external-links {
-  display: flex;
-  gap: 8px;
-}
-
-/* ── Broker Summary — bar chart refinement ─────────────── */
-.bs-bar-fill {
-  border-radius: 4px;
-  transition: width 0.4s ease;
-}
-.bs-bar-row:hover .bs-bar-fill {
-  filter: brightness(1.1);
-}
-
-/* ── Entry Price Scanner — score badge ─────────────────── */
-.mono td:nth-child(11) { /* Score column */
-  font-weight: 700;
-}
-
-/* ── ORCA/Kraken Flow — filter chip hover ──────────────── */
-[data-orca-filter].btn:hover,
-[data-eps-filter].btn:hover {
-  transform: translateY(-1px);
-}
-
-/* ── MOBILE RESPONSIVE ─────────────────────────────────── */
-@media (max-width: 768px) {
-  .filter-toolbar {
-    flex-direction: column;
-    gap: 10px;
-  }
-  .summary-card .summary-val {
-    font-size: 18px;
-  }
-  .table-wrap {
-    overflow-x: auto;
-    -webkit-overflow-scrolling: touch;
-  }
-  .modal {
-    width: 95%;
-    max-width: none;
-    margin: 10px;
-    max-height: 90vh;
-    overflow-y: auto;
-  }
-  .chart-toolbar {
-    flex-direction: column;
-    align-items: flex-start;
-  }
-  .pagination {
-    justify-content: center;
-  }
-  .sektor-card-mid {
-    flex-direction: column;
-    gap: 6px;
-  }
-  .toast-container {
-    left: 12px;
-    right: 12px;
-  }
-  .toast {
-    max-width: 100%;
-  }
-  .sidebar .tab-btn {
-    min-height: 38px;
-    gap: 8px;
-  }
-  .detail-modal {
-    max-width: 100%;
-    padding: 16px 12px;
-  }
-  .detail-grid {
-    grid-template-columns: 1fr 1fr;
-    gap: 6px;
-  }
-  .bs-wrap .bs-toolbar {
-    flex-direction: column;
-    gap: 8px;
-  }
-}
-
-/* ── Print-friendly ────────────────────────────────────── */
-@media print {
-  .sidebar, .header-actions, .pagination, .toast-container {
-    display: none !important;
-  }
-  .content {
-    margin: 0 !important;
-    width: 100% !important;
-  }
-  .modal-overlay {
-    display: none !important;
-  }
-}
-/* =========================================================
-   MOBILE TABLE HORIZONTAL SCROLL FIX
-   ========================================================= */
-
-@media screen and (max-width: 768px) {
-  /* Pastikan semua induk tabel boleh menyusut */
-  .content,
-  #content,
-  .panel,
-  .card,
-  .section,
-  .table-section,
-  .table-card {
-    min-width: 0 !important;
-  }
-
-  /*
-   * Jangan memotong tabel dari parent panel.
-   * Scroll horizontal dilakukan oleh pembungkus tabel.
-   */
-  .panel {
-    overflow: visible !important;
-  }
-
-  /*
-   * Semua kemungkinan nama pembungkus tabel
-   */
-  .table-wrap,
-  .table-container,
-  .table-responsive,
-  .table-scroll,
-  .responsive-table,
-  .overflow-table,
-  .data-table-wrap {
-    display: block !important;
-    width: 100% !important;
-    max-width: 100% !important;
-    min-width: 0 !important;
-    overflow-x: auto !important;
-    overflow-y: visible !important;
-    -webkit-overflow-scrolling: touch !important;
-    overscroll-behavior-x: contain;
-    touch-action: pan-x pan-y;
-    scrollbar-width: thin;
-  }
-
-  /*
-   * Tabel dibuat lebih lebar dari layar.
-   * User dapat menggeser ke kiri/kanan di dalam table-wrap.
-   */
-  .table-wrap > table,
-  .table-container > table,
-  .table-responsive > table,
-  .table-scroll > table,
-  .responsive-table > table,
-  .overflow-table > table,
-  .data-table-wrap > table {
-    width: max-content !important;
-    min-width: 760px !important;
-    max-width: none !important;
-  }
-
-  /*
-   * Untuk tabel yang dibungkus div tambahan
-   */
-  .table-wrap table,
-  .table-container table,
-  .table-responsive table,
-  .table-scroll table,
-  .responsive-table table,
-  .overflow-table table,
-  .data-table-wrap table {
-    width: max-content !important;
-    min-width: 760px !important;
-    max-width: none !important;
-  }
-
-  /*
-   * Jangan biarkan cell membungkus atau memperkecil kolom
-   */
-  .table-wrap th,
-  .table-wrap td,
-  .table-container th,
-  .table-container td,
-  .table-responsive th,
-  .table-responsive td,
-  .table-scroll th,
-  .table-scroll td {
-    white-space: nowrap !important;
-  }
-
-  /*
-   * Tabel yang muncul langsung di dalam panel.
-   * Dibungkus secara visual agar tetap dapat digeser.
-   */
-  .panel > table {
-    display: block !important;
-    width: max-content !important;
-    min-width: 760px !important;
-    max-width: none !important;
-    overflow-x: auto !important;
-  }
-
-  /*
-   * Hindari tombol/filter membuat lebar parent tabel membesar.
-   */
-  .panel,
-  .table-wrap,
-  .table-container,
-  .table-responsive {
-    box-sizing: border-box !important;
-  }
-
-  /*
-   * Penanda visual bahwa tabel bisa digeser.
-   */
-  .table-wrap::after,
-  .table-container::after,
-  .table-responsive::after {
-    content: "Geser tabel ke kiri/kanan";
-    display: block;
-    width: 100%;
-    padding: 6px 0 2px;
-    color: var(--muted);
-    font-size: 10px;
-    text-align: center;
-    opacity: 0.7;
-  }
-}
