@@ -6060,7 +6060,7 @@ function renderTickerPicker(){
       <label>Cari &amp; Pilih Ticker</label>
       <div class="search-wrap">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--muted)" stroke-width="2.5"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
-        <input id="chartSearchInput" value="${state.chartSearch||""}" placeholder="Ketik BBCA..." list="chartTickerList" style="width:240px;">
+        <input id="chartSearchInput" value="${state.chartSearch||""}" placeholder="Ketik BBCA..." list="chartTickerList" style="width:100%;max-width:240px;">
       </div>
       <datalist id="chartTickerList">${tickerOptions}</datalist>
     </div>
@@ -6155,16 +6155,35 @@ function drawChartSVG(){
   const levelVals = lv ? [lv.support,lv.resistance,lv.ema21H,lv.ema21L,lv.fib?.f382,lv.fib?.f50,lv.fib?.f618].filter(v=>v!=null) : [];
   const priceExtras = showBB ? bbUp.concat(bbLo).filter(v=>v!=null) : [];
   const allVals = closes.concat(levelVals, priceExtras), min=Math.min(...allVals), max=Math.max(...allVals), pad=(max-min)*.08||1;
-  const yMin=min-pad,yMax=max+pad,W=1000,L=62,R=86,T=18,B=38,plotW=W-L-R;
+  const yMin=min-pad,yMax=max+pad,T=18,B=38;
   const subH={rsi:80,macd:80,vol:60}, gap=14, mainH=380-T-B;
   const subKeys=[showRSI&&'rsi',showMACD&&'macd',showVol&&'vol'].filter(Boolean);
   const Htot=T+mainH+gap+subKeys.reduce((a,k)=>a+subH[k],0)+B+6;
+
+  // Tinggi kotak chart = tinggi panel harga (CSS) + tambahan sub-panel aktif
+  // (RSI/MACD/Volume) — dikirim lewat CSS var --sub-h agar respons mobile
+  // tetap dikontrol penuh dari media query styles.css. Di-set SEBELUM
+  // pengukuran di bawah supaya clientHeight yang terbaca sudah benar.
+  const box=document.querySelector('.chart-box-expanded');
+  if(box) box.style.setProperty('--sub-h', `${subKeys.reduce((a,k)=>a+subH[k]+gap,0)}px`);
+
+  // Lebar viewBox mengikuti rasio kontainer supaya skala X = skala Y —
+  // tanpa ini, di HP (kontainer sempit) teks & gari SVG jadi gepeng/miring
+  // karena preserveAspectRatio="none" merentangkan 1000 user-unit ke ~340px.
+  const wrap = svg.parentElement;
+  const cw = Math.max(200, wrap ? wrap.clientWidth : 0), ch = Math.max(200, wrap ? wrap.clientHeight : 0);
+  const vScale = ch / Htot;
+  const W = Math.round(Htot * cw / ch), plotW = W - (W<640?40:62) - (W<640?58:86);
+  const L = W<640?40:62, R = W<640?58:86;
+  // Ukuran font user-unit dikompensasi balik supaya hasil render ≈ konstan
+  const fs = u => Math.max(8.5, Math.round((u/vScale)*10)/10);
+
   const xScale=i=>L+(plotted.length<2?plotW/2:i*(plotW/(plotted.length-1||1)));
   const yScale=v=>T+mainH-((v-yMin)/(yMax-yMin))*mainH;
   const linePath=(arr,value)=>arr.map((d,i)=>`${i?'L':'M'}${xScale(i).toFixed(1)},${yScale(value(d,i)).toFixed(1)}`).join(' ');
   let html='';
-  for(let i=0;i<=5;i++){ const y=T+i*mainH/5, val=yMax-i*(yMax-yMin)/5; html+=`<line x1="${L}" y1="${y}" x2="${W-R}" y2="${y}" stroke="rgba(255,255,255,.06)" stroke-dasharray="4,4"/><text x="5" y="${y+4}" fill="var(--muted)" font-size="11" font-family="JetBrains Mono,monospace">${fmtNum(Math.round(val))}</text>`; }
-  const drawLevel=(val,color,label,dashed,visible)=>{ if(!visible||val==null||isNaN(val))return; const y=yScale(val); html+=`<line x1="${L}" y1="${y}" x2="${W-R}" y2="${y}" stroke="${color}" stroke-width="1.7" ${dashed?'stroke-dasharray="6,5"':''} opacity=".85"/><text x="${W-R+7}" y="${y+4}" fill="${color}" font-size="11" font-family="JetBrains Mono,monospace" font-weight="600">${label}</text>`; };
+  for(let i=0;i<=5;i++){ const y=T+i*mainH/5, val=yMax-i*(yMax-yMin)/5; html+=`<line x1="${L}" y1="${y}" x2="${W-R}" y2="${y}" stroke="rgba(255,255,255,.06)" stroke-dasharray="4,4"/><text x="5" y="${y+4}" fill="var(--muted)" font-size="${fs(11)}" font-family="JetBrains Mono,monospace">${fmtNum(Math.round(val))}</text>`; }
+  const drawLevel=(val,color,label,dashed,visible)=>{ if(!visible||val==null||isNaN(val))return; const y=yScale(val); html+=`<line x1="${L}" y1="${y}" x2="${W-R}" y2="${y}" stroke="${color}" stroke-width="1.7" ${dashed?'stroke-dasharray="6,5"':''} opacity=".85"/><text x="${W-R+7}" y="${(y+4).toFixed(1)}" fill="${color}" font-size="${fs(10.5)}" font-family="JetBrains Mono,monospace" font-weight="600">${label}</text>`; };
   if(lv){ drawLevel(lv.support,'var(--down)',fmtNum(Math.round(lv.support)),false,on('support')); drawLevel(lv.resistance,'var(--up)',fmtNum(Math.round(lv.resistance)),false,on('resistance')); drawLevel(lv.ema21H,'var(--teal)','E21H',true,on('ema')); drawLevel(lv.ema21L,'var(--teal)','E21L',true,on('ema')); if(lv.fib){drawLevel(lv.fib.f382,'#94a3b8','Fib38',true,on('fib'));drawLevel(lv.fib.f50,'#94a3b8','Fib50',true,on('fib'));drawLevel(lv.fib.f618,'#94a3b8','Fib61',true,on('fib'));}}
 
   // Bollinger Bands: area + garis atas/tengah/bawah (bongkar-pasang via toggle BB)
@@ -6180,9 +6199,9 @@ function drawChartSVG(){
     html+=`<path d="${seg(bbMid)}" fill="none" stroke="#c084fc" stroke-width="1" stroke-dasharray="4,3" opacity=".55"/>`;
     html+=`<path d="${seg(bbLo)}" fill="none" stroke="#c084fc" stroke-width="1.2" opacity=".85"/>`;
     const lU=[...bbUp].reverse().find(v=>v!=null), lM=[...bbMid].reverse().find(v=>v!=null), lL=[...bbLo].reverse().find(v=>v!=null);
-    if(lU!=null)html+=`<text x="${W-R+7}" y="${(yScale(lU)+4).toFixed(1)}" fill="#c084fc" font-size="10" font-family="JetBrains Mono,monospace" font-weight="600">BB-U</text>`;
-    if(lM!=null)html+=`<text x="${W-R+7}" y="${(yScale(lM)+4).toFixed(1)}" fill="#c084fc" font-size="10" font-family="JetBrains Mono,monospace" opacity=".8">BB-M</text>`;
-    if(lL!=null)html+=`<text x="${W-R+7}" y="${(yScale(lL)+4).toFixed(1)}" fill="#c084fc" font-size="10" font-family="JetBrains Mono,monospace" font-weight="600">BB-L</text>`;
+    if(lU!=null)html+=`<text x="${W-R+7}" y="${(yScale(lU)+4).toFixed(1)}" fill="#c084fc" font-size="${fs(10.5)}" font-family="JetBrains Mono,monospace" font-weight="600">BB-U</text>`;
+    if(lM!=null)html+=`<text x="${W-R+7}" y="${(yScale(lM)+4).toFixed(1)}" fill="#c084fc" font-size="${fs(10.5)}" font-family="JetBrains Mono,monospace" opacity=".8">BB-M</text>`;
+    if(lL!=null)html+=`<text x="${W-R+7}" y="${(yScale(lL)+4).toFixed(1)}" fill="#c084fc" font-size="${fs(10.5)}" font-family="JetBrains Mono,monospace" font-weight="600">BB-L</text>`;
   }
 
   const closePath=on('close') ? `<path d="${linePath(plotted,d=>d.close)}" fill="none" stroke="var(--gold)" stroke-width="2.8" stroke-linejoin="round"/>` : '';
@@ -6197,8 +6216,8 @@ function drawChartSVG(){
       const yR=v=>sTop+h-((v-0)/100)*h;
       [30,50,70].forEach(g=>{const y=yR(g);html+=`<line x1="${L}" y1="${y}" x2="${W-R}" y2="${y}" stroke="${g===50?'rgba(255,255,255,.06)':'rgba(244,114,182,.25)'}" stroke-dasharray="3,4"/>`;});
       html+=`<path d="${rsi.map((v,i)=>v==null?'':`${i?'L':'M'}${xScale(i).toFixed(1)},${yR(v).toFixed(1)}`).filter(Boolean).join(' ')}" fill="none" stroke="#f472b6" stroke-width="1.8"/>`;
-      html+=`<text x="5" y="${sTop+12}" fill="#f472b6" font-size="10" font-family="JetBrains Mono,monospace" font-weight="700">RSI 14</text>`;
-      const last=[...rsi].reverse().find(v=>v!=null); if(last!=null)html+=`<text x="${W-R+7}" y="${(yR(last)+4).toFixed(1)}" fill="#f472b6" font-size="10" font-family="JetBrains Mono,monospace">${last.toFixed(1)}</text>`;
+      html+=`<text x="5" y="${sTop+12}" fill="#f472b6" font-size="${fs(10)}" font-family="JetBrains Mono,monospace" font-weight="700">RSI 14</text>`;
+      const last=[...rsi].reverse().find(v=>v!=null); if(last!=null)html+=`<text x="${W-R+7}" y="${(yR(last)+4).toFixed(1)}" fill="#f472b6" font-size="${fs(10)}" font-family="JetBrains Mono,monospace">${last.toFixed(1)}</text>`;
     }
     if(k==='macd'){
       const vals=macd.concat(macdSig).filter(v=>v!=null&&!isNaN(v));
@@ -6209,32 +6228,29 @@ function drawChartSVG(){
       html+=`<line x1="${L}" y1="${yM(0)}" x2="${W-R}" y2="${yM(0)}" stroke="rgba(255,255,255,.12)"/>`;
       html+=`<path d="${lp(macd)}" fill="none" stroke="#60a5fa" stroke-width="1.7"/>`;
       html+=`<path d="${lp(macdSig)}" fill="none" stroke="#fbbf24" stroke-width="1.4"/>`;
-      html+=`<text x="5" y="${sTop+12}" fill="#60a5fa" font-size="10" font-family="JetBrains Mono,monospace" font-weight="700">MACD 12/26/9</text>`;
+      html+=`<text x="5" y="${sTop+12}" fill="#60a5fa" font-size="${fs(10)}" font-family="JetBrains Mono,monospace" font-weight="700">MACD 12/26/9</text>`;
       const lm=[...macd].reverse().find(v=>v!=null&&!isNaN(v)),ls=[...macdSig].reverse().find(v=>v!=null&&!isNaN(v));
-      if(lm!=null)html+=`<text x="${W-R+7}" y="${(yM(lm)+4).toFixed(1)}" fill="#60a5fa" font-size="10" font-family="JetBrains Mono,monospace">${lm.toFixed(1)}</text>`;
-      if(ls!=null)html+=`<text x="${W-R+7}" y="${(yM(ls)+4).toFixed(1)}" fill="#fbbf24" font-size="10" font-family="JetBrains Mono,monospace">${ls.toFixed(1)}</text>`;
+      if(lm!=null)html+=`<text x="${W-R+7}" y="${(yM(lm)+4).toFixed(1)}" fill="#60a5fa" font-size="${fs(10)}" font-family="JetBrains Mono,monospace">${lm.toFixed(1)}</text>`;
+      if(ls!=null)html+=`<text x="${W-R+7}" y="${(yM(ls)+4).toFixed(1)}" fill="#fbbf24" font-size="${fs(10)}" font-family="JetBrains Mono,monospace">${ls.toFixed(1)}</text>`;
     }
     if(k==='vol'){
       const vols=plotted.map(d=>d.volume==null?null:Number(d.volume));
       const vmax=Math.max(...vols.map(v=>v||0))||1;
       const bw=Math.max(1.2,plotW/plotted.length*0.6);
       vols.forEach((v,i)=>{if(v==null)return;const hgt=(v/vmax)*(h-14);const up=i===0||plotted[i].close>=plotted[i-1].close;html+=`<rect x="${(xScale(i)-bw/2).toFixed(1)}" y="${(sTop+h-hgt).toFixed(1)}" width="${bw.toFixed(1)}" height="${Math.max(1,hgt).toFixed(1)}" fill="${up?'rgba(16,185,129,.45)':'rgba(239,68,68,.45)'}"/>`;});
-      html+=`<text x="5" y="${sTop+12}" fill="var(--muted)" font-size="10" font-family="JetBrains Mono,monospace" font-weight="700">VOLUME</text>`;
-      const lv2=[...vols].reverse().find(v=>v!=null); if(lv2!=null)html+=`<text x="${W-R+7}" y="${sTop+12}" fill="var(--muted)" font-size="10" font-family="JetBrains Mono,monospace">${fmtNum(Math.round(lv2))}</text>`;
+      html+=`<text x="5" y="${sTop+12}" fill="var(--muted)" font-size="${fs(10)}" font-family="JetBrains Mono,monospace" font-weight="700">VOLUME</text>`;
+      const lv2=[...vols].reverse().find(v=>v!=null); if(lv2!=null)html+=`<text x="${W-R+7}" y="${sTop+12}" fill="var(--muted)" font-size="${fs(10)}" font-family="JetBrains Mono,monospace">${fmtNum(Math.round(lv2))}</text>`;
     }
     sTop+=h+gap;
   });
 
   // Label tanggal di bawah panel paling bawah
-  [0,Math.floor((plotted.length-1)/2),plotted.length-1].forEach(i=>{ if(plotted[i]) html+=`<text x="${xScale(i)}" y="${Htot-8}" text-anchor="middle" fill="var(--muted)" font-size="10" font-family="JetBrains Mono,monospace">${fmtDateID(plotted[i].date)}</text>`; });
+  [0,Math.floor((plotted.length-1)/2),plotted.length-1].forEach(i=>{ if(plotted[i]) html+=`<text x="${xScale(i)}" y="${Htot-8}" text-anchor="middle" fill="var(--muted)" font-size="${fs(10)}" font-family="JetBrains Mono,monospace">${fmtDateID(plotted[i].date)}</text>`; });
 
   // Crosshair + titik harga saat hover
   html += `<line id="chartCrossV" x1="0" y1="${T}" x2="0" y2="${T+mainH+(subKeys.length?gap+subKeys.reduce((a,k)=>a+subH[k],0):0)}" stroke="rgba(255,255,255,.25)" stroke-dasharray="3,3" style="display:none"/><circle id="chartCrossDot" r="4" fill="var(--gold)" stroke="#0f172a" stroke-width="1.5" style="display:none"/>`;
 
   svg.setAttribute('viewBox',`0 0 ${W} ${Htot}`);
-  // Tinggi kotak chart menyesuaikan jumlah sub-panel aktif (RSI/MACD/Volume)
-  const box=document.querySelector('.chart-box-expanded');
-  if(box) box.style.height = `${Math.round(Htot/380*480)+40}px`;
   svg.innerHTML=html;
 
   const plot=svg.querySelector('[data-chart-plot]'), tip=document.getElementById('chartTooltip');
@@ -8662,6 +8678,11 @@ document.getElementById("tabs").addEventListener("click", (e)=>{
   const btn = e.target.closest(".tab-btn");
   if(!btn) return;
   state.tab = btn.dataset.tab;
+  // Tutup panel hamburger setelah user memilih menu di mobile.
+  const mobileSidebar = document.getElementById("sidebarNav");
+  const mobileHamburger = document.getElementById("hamburgerBtn");
+  if(mobileSidebar) mobileSidebar.classList.remove("nav-open");
+  if(mobileHamburger) mobileHamburger.setAttribute("aria-expanded", "false");
   if(state.tab === "dashboard" && state.dashboardBrokerLoading) { /* broker insight dimuat on demand */ }
   if(state.tab === "smartpick" && !state.spHistory.length && !state.spHistoryLoading) loadSmartPickHistory();
   if(state.tab === "eps" && !state.epsRaw && !state.epsScanning) ensureEpsDataLoaded();
@@ -8669,6 +8690,43 @@ document.getElementById("tabs").addEventListener("click", (e)=>{
   render();
 });
 document.getElementById("refreshBtn").onclick = ()=> loadLive();
+
+// Tombol hamburger (mobile) — membuka/menutup panel menu navigasi.
+// Di desktop tombol ini display:none (CSS), jadi handler tidak berefek.
+(function initHamburger(){
+  const btn = document.getElementById("hamburgerBtn");
+  const sidebar = document.getElementById("sidebarNav");
+  if(!btn || !sidebar) return;
+  // Posisi panel mengikuti tinggi header aktual (header HP bisa tinggi karena
+  // tombol wrap ke bawah) — jauh lebih andal daripada angka 58px di CSS.
+  const positionPanel = ()=>{
+    const header = document.querySelector(".header");
+    if(header) sidebar.style.top = `${Math.round(header.getBoundingClientRect().bottom + 6)}px`;
+  };
+  btn.addEventListener("click", (e)=>{
+    e.stopPropagation();
+    const open = sidebar.classList.toggle("nav-open");
+    btn.setAttribute("aria-expanded", open ? "true" : "false");
+    if(open) positionPanel();
+  });
+  // Klik di luar panel menutup menu (hanya relevan saat panel terbuka)
+  document.addEventListener("click", (e)=>{
+    if(!sidebar.classList.contains("nav-open")) return;
+    if(e.target.closest("#sidebarNav") || e.target.closest("#hamburgerBtn")) return;
+    sidebar.classList.remove("nav-open");
+    btn.setAttribute("aria-expanded", "false");
+  });
+  // Tutup dengan Esc juga
+  document.addEventListener("keydown", (e)=>{
+    if(e.key === "Escape" && sidebar.classList.contains("nav-open")){
+      sidebar.classList.remove("nav-open");
+      btn.setAttribute("aria-expanded", "false");
+    }
+  });
+  window.addEventListener("resize", ()=>{
+    if(sidebar.classList.contains("nav-open")) positionPanel();
+  });
+})();
 
 // Sidebar collapsible — status disimpan di localStorage supaya tetap
 // keciut/lebar sama seperti terakhir dipilih user kalau halaman di-reload.
@@ -8800,6 +8858,16 @@ if("serviceWorker" in navigator && (location.protocol === "https:" || location.h
     navigator.serviceWorker.register("sw.js").catch(() => { /* diamkan — bukan fatal */ });
   });
 }
+
+// Gambar ulang chart internal saat orientasi layar berubah / jendela di-resize
+// (penting di mobile: viewBox chart dihitung dari rasio kontainer, jadi kalau
+// tidak digambar ulang, chart akan kepotong/gepeng setelah rotasi HP).
+let chartResizeTimer=null;
+window.addEventListener("resize", ()=>{
+  if(state.tab!=="chart" || !state.selectedTicker) return;
+  clearTimeout(chartResizeTimer);
+  chartResizeTimer=setTimeout(()=>drawChartSVG(),150);
+});
 
 // Fungsi Pemanis UI: Membuat baris tabel berkedip saat ada data live masuk
 window.updateLivePriceUI = function(ticker, currentPrice, prevPrice) {
