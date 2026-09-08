@@ -8833,6 +8833,11 @@ loadSettings();
 syncStockbitTokenFromSupabase();
 pollExtensionStockbitToken();
 setInterval(pollExtensionStockbitToken, 3000); // lihat catatan di pollExtensionStockbitToken() kenapa harus di-poll, bukan cukup event 'storage'
+// Token Stockbit bisa diputar kapan saja oleh Stockbit (session baru di
+// browser/HP). Karena itu, selama aplikasi terbuka token dari Supabase
+// dicek ulang tiap 60 detik — kalau extension menangkap token yang lebih
+// baru, aplikasi otomatis mengadopsinya tanpa perlu reload manual.
+setInterval(syncStockbitTokenFromSupabase, 60000);
 loadLive();
 
 // ==========================================
