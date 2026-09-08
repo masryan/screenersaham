@@ -285,42 +285,35 @@ async function stockbitFetchMarketDetector(ticker, fromDate, toDate, days){
 // depan, tambahkan alias barunya di daftar kunci di sini.
 function parseStockbitMarketDetector(raw, fetchDate){
   if(!raw || typeof raw !== "object") return null;
-  const bs = raw.data || raw.result || raw;
-  if(!bs || typeof bs !== "object") return null;
+  // Stockbit kadang membungkus payload beberapa tingkat (data.data,
+  // data.result, result.data), jadi cari objek yang benar-benar memiliki
+  // array distribution secara rekursif dangkal.
+  const candidates = [raw, raw.data, raw.result, raw.data?.data, raw.data?.result, raw.result?.data, raw.result?.result].filter(v => v && typeof v === "object");
+  const bs = candidates.find(v => ["brokers_buy","brokers_sell","buy","sell","buy_rows","sell_rows","distribution_buy","distribution_sell"].some(k => Array.isArray(v[k]))) || raw;
 
-  const buyRows = ["brokers_buy", "buy", "buy_rows", "distribution_buy"]
+  const buyRows = ["brokers_buy", "buy", "buy_rows", "distribution_buy", "buy_data", "buyer", "buyers"]
     .map(k => (Array.isArray(bs[k]) ? bs[k] : null)).find(Boolean) || [];
-  const sellRows = ["brokers_sell", "sell", "sell_rows", "distribution_sell"]
+  const sellRows = ["brokers_sell", "sell", "sell_rows", "distribution_sell", "sell_data", "seller", "sellers"]
     .map(k => (Array.isArray(bs[k]) ? bs[k] : null)).find(Boolean) || [];
   if(!buyRows.length && !sellRows.length) return null;
 
   const byDate = {};
   const ensure = (date) => (byDate[date] ||= { buy: [], sell: [] });
-  const dateStr = fetchDate || todayLocalISO(); // endpoint ini 1 tanggal/request
-
-  buyRows.forEach(r => {
-    ensure(dateStr).buy.push({
-      broker_code: String(r.broker || r.broker_code || r.brokerId || "").toUpperCase(),
-      lot: Number(r.lot ?? r.blot ?? r.slot) || null,
-      value_idr: Number(r.value ?? r.bval ?? r.sval ?? r.value_idr) || 0,
-    });
+  const dateStr = fetchDate || todayLocalISO();
+  const pick = (r, keys) => { for(const k of keys){ if(r?.[k] != null && r[k] !== "") return r[k]; } return null; };
+  const mapRows = (rows, side) => rows.forEach(r => {
+    const broker = pick(r, ["broker","broker_code","brokerCode","broker_id","brokerId","code","broker_name"]);
+    const lot = Number(pick(r, side === "buy" ? ["lot","blot","buy_lot","quantity","qty"] : ["lot","slot","sell_lot","quantity","qty"])) || null;
+    const value = Number(pick(r, side === "buy" ? ["value","bval","buy_value","value_idr","net_value"] : ["value","sval","sell_value","value_idr","net_value"])) || 0;
+    if(broker != null) ensure(dateStr)[side].push({ broker_code:String(broker).toUpperCase(), lot, value_idr:value });
   });
-
-  sellRows.forEach(r => {
-    ensure(dateStr).sell.push({
-      broker_code: String(r.broker || r.broker_code || r.brokerId || "").toUpperCase(),
-      lot: Number(r.lot ?? r.slot ?? r.blot) || null,
-      value_idr: Number(r.value ?? r.sval ?? r.bval ?? r.value_idr) || 0,
-    });
-  });
-
+  mapRows(buyRows, "buy"); mapRows(sellRows, "sell");
   Object.values(byDate).forEach(d => {
     d.buy.sort((a,b) => b.value_idr - a.value_idr);
     d.sell.sort((a,b) => b.value_idr - a.value_idr);
-    d.buy = d.buy.slice(0,5).filter(r=>r.broker_code).map((r,i) => ({ ...r, rank: i+1 }));
-    d.sell = d.sell.slice(0,5).filter(r=>r.broker_code).map((r,i) => ({ ...r, rank: i+1 }));
+    d.buy = d.buy.slice(0,5).map((r,i) => ({...r, rank:i+1}));
+    d.sell = d.sell.slice(0,5).map((r,i) => ({...r, rank:i+1}));
   });
-
   return byDate;
 }
 
@@ -506,6 +499,14 @@ async function fetchAndSaveBrokerSummaryBulk(tickers, rangeFrom, rangeTo){
         if(parsed && Object.keys(parsed).length){
           Object.assign(byDate, parsed);
           anyOk = true;
+        } else {
+          // Endpoint menjawab 200 tetapi bentuk JSON berubah/tidak sesuai
+          // parser. Simpan preview raw supaya diagnosis bisa dilakukan tanpa
+          // menebak-nebak nama field dan jangan tampilkan pesan generik saja.
+          try{
+            const rawPreview = JSON.stringify(res.raw).slice(0, 1600);
+            lastError = `Skema respons tidak dikenali. Raw JSON: ${rawPreview}`;
+          }catch(e){ lastError = "Skema respons tidak dikenali / raw JSON tidak bisa dibaca."; }
         }
       }
       if(dateChunks.length > 1) await new Promise(r => setTimeout(r, 300)); // jeda antar-potongan tanggal, jaga rate limit
