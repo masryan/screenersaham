@@ -1,0 +1,38 @@
+{
+  "manifest_version": 3,
+  "name": "Stockbit Token Syncer + WS Debug (IHSG Screener Pro)",
+  "version": "1.2",
+  "description": "Menangkap Bearer token dari stockbit.com dan sinkron otomatis ke tabel stockbit_session di Supabase, plus perekam traffic WebSocket (dupleks) untuk reverse-engineer protokol subscribe Stockbit lewat tab \"WS Debug\" di app.",
+  "permissions": [
+    "webRequest",
+    "tabs"
+  ],
+  "host_permissions": [
+    "https://*.stockbit.com/*",
+    "https://vditwqgiqlvkpdxhocuh.supabase.co/*",
+    "https://masryan.github.io/*",
+    "http://localhost/*",
+    "http://127.0.0.1/*"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "content_scripts": [
+    {
+      "matches": ["https://masryan.github.io/*", "http://localhost/*", "http://127.0.0.1/*"],
+      "js": ["content_screener.js"],
+      "run_at": "document_idle"
+    },
+    {
+      "matches": ["*://*.stockbit.com/*"],
+      "js": ["content_stockbit.js"],
+      "run_at": "document_end"
+    }
+  ],
+  "web_accessible_resources": [
+    {
+      "resources": ["inject.js"],
+      "matches": ["*://*.stockbit.com/*"]
+    }
+  ]
+}
