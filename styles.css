@@ -24,7 +24,28 @@
 }
 
 /* ==== Fitur baru: Dashboard, Broker Stalker, Watchlist P&L, vs Sektor ==== */
-.dashboard-page{display:grid;gap:16px;}
+.dash-card{
+  position:relative;
+  width:100%;
+  text-align:left;
+  font:inherit;
+  color:inherit;
+  cursor:pointer;
+  transition:transform .18s ease, border-color .18s ease, background .18s ease;
+}
+.dash-card::after{
+  content:'↗';
+  position:absolute;
+  top:10px;
+  right:12px;
+  color:var(--muted);
+  font-size:12px;
+  opacity:.7;
+}
+.dash-card:hover{transform:translateY(-2px);border-color:var(--teal);background:rgba(34,211,238,.07)}
+.dash-card:focus-visible{outline:2px solid var(--teal);outline-offset:2px}
+@media (prefers-reduced-motion:reduce){.dash-card{transition:none}.dash-card:hover{transform:none}}
+
 .dashboard-hero{display:flex;justify-content:space-between;align-items:center;gap:24px;}
 .dashboard-title{margin:4px 0 2px;font-size:24px;letter-spacing:-.03em;}
 .dashboard-subtitle{font-size:12px;color:var(--muted);}
