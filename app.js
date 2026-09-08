@@ -5161,7 +5161,7 @@ function renderScreener(){
           : ""}
         <div class="field" style="flex:0 0 auto;">
           <label>&nbsp;</label>
-          <div style="display:flex; align-items:center; gap:6px;">
+          <div class="screener-date-action-row" style="display:flex; align-items:center; gap:6px;">
             <input type="date" id="screenerBsFromInput"
               value="${state.bsAutoBulkFrom||""}"
               ${state.stockbitBrokerBulkLoading ? "disabled" : ""}
@@ -5183,7 +5183,7 @@ function renderScreener(){
         </div>
         <div class="field" style="flex:0 0 auto;">
           <label>&nbsp;</label>
-          <div style="display:flex; align-items:center; gap:6px;">
+          <div class="screener-date-action-row" style="display:flex; align-items:center; gap:6px;">
             <input type="date" id="screenerHdFromInput"
               value="${state.hdAutoBulkFrom||""}"
               ${state.stockbitHistoricalBulkLoading ? "disabled" : ""}

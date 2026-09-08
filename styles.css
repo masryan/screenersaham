@@ -586,6 +586,15 @@
     /* FILTER TOOLBAR */
     .filter-toolbar{gap:10px;}
     .filter-toolbar .search-wrap, .filter-toolbar .search-wrap input{width:100%;}
+    /* Baris "tanggal – tanggal – tombol" (Tarik Data / Historical) yang di
+       desktop sejajar; di HP dibungkus agar tombol tidak terpotong keluar
+       layar. Tombol & input tanggal boleh menyusut/membungkus teksnya. */
+    .filter-toolbar .screener-date-action-row{flex-wrap:wrap;width:100%;}
+    .filter-toolbar .screener-date-action-row input[type="date"]{flex:1 1 96px;min-width:0;width:auto;}
+    .filter-toolbar .screener-date-action-row .btn{flex:1 1 135px;min-width:0;white-space:normal !important;text-align:center;padding:9px 8px;font-size:12px;}
+    /* Semua tombol di toolbar screener tidak boleh nowrap paksa di HP */
+    .filter-toolbar .btn{min-width:0;}
+    .filter-toolbar [style*="white-space:nowrap"]{white-space:normal !important;}
     /* Field "Screener DSI (Preset Siap Pakai)" dipaksa inline flex:0 0 auto
        di app.js supaya rapi di desktop — tapi itu bikin flex-shrink:0,
        jadi baris tombol preset menolak menyempit dan malah overflow ke
@@ -595,6 +604,24 @@
     .filter-toolbar > .field{flex:1 1 100% !important;min-width:0;width:100%;}
     .filter-toolbar > .field > div{width:100%;}
     .filter-toolbar .pill{white-space:normal;text-align:center;}
+    /* Badge peringatan kecil (⚠️ Endpoint Quote...) tidak meluber */
+    .filter-toolbar span[title]{white-space:normal !important;line-height:1.45;}
+    /* Toolbar umum (Broker Summary, Smart Pick, dsb): input & tombol boleh
+       menyusut dan membungkus supaya tidak ada yang terpotong di HP */
+    .bs-toolbar{gap:8px;}
+    .bs-toolbar .bs-input{flex:1 1 120px;min-width:0;width:auto;}
+    .bs-toolbar .btn{min-width:0;white-space:normal;}
+    .stalker-search input{flex:1 1 140px;min-width:0;width:auto !important;}
+    /* Tabel apa pun yang menumpuk data panjang: jaga agar tidak mendorong
+       lebar halaman (max-width sudah ada html/body overflow-x hidden) */
+    .table-wrap table{min-width:0;}
+    /* Modal detail: grid 1 kolom pada layar sangat sempit sudah diatur di
+       bawah; pastikan isinya tidak melebihi lebar */
+    .detail-item{min-width:0;}
+    .sp-toolbar{flex-wrap:wrap;}
+    .sp-toolbar .bs-input{flex:1 1 110px;min-width:0;width:auto;}
+    /* Checkbox baris "Auto-refresh" + select interval tetap sejajar rapi */
+    .filter-toolbar label{min-width:0;}
     .multi-select{min-width:0;}
     .filter-grid{grid-template-columns:repeat(2,1fr);gap:8px 10px;}
     .toolbar-footer{flex-direction:column;align-items:stretch;gap:10px;}
@@ -703,7 +730,11 @@
   background: rgba(255,255,255,0.04);
   color: inherit;
   font-family: inherit;
+  max-width: 100%;
 }
+
+/* Input tanggal/teks di dalam modal & panel tidak boleh memaksa lebar parent */
+.modal .bs-input, .detail-modal .bs-input { max-width: 100%; }
 
 .bs-display-grid,
 .bs-editor-grid {
