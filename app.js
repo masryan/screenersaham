@@ -139,6 +139,14 @@ async function stockbitRawRequest(url, extraHeaders = {}, attempt = 0){
     if(!res.ok){
       const retryNote = (res.status === 429 && attempt >= STOCKBIT_MAX_RETRIES)
         ? ` (sudah dicoba ulang ${STOCKBIT_MAX_RETRIES}x dengan backoff, tetap kena rate limit)` : "";
+      // Token bisa diputar oleh Stockbit ketika sesi login diperbarui. Minta
+      // token terbaru dari stockbit_session lalu ulangi SATU request ini,
+      // agar bulk tidak langsung gagal 401 hanya karena state lokal terlambat.
+      if(res.status === 401 && attempt === 0){
+        maybeResyncStockbitTokenFromSupabase();
+        await new Promise(r => setTimeout(r, 250));
+        if(state.stockbitToken) return stockbitRawRequest(url, extraHeaders, 1);
+      }
       return { error: `HTTP ${res.status}${json && json.message ? " — " + json.message : ""}${retryNote}`, raw: json ?? text };
     }
     state.stockbitLastSuccessAt = Date.now();
@@ -573,27 +581,49 @@ function mapStockbitQuote(raw){
 // Kalau tabelnya belum dibuat (migration SQL belum dijalankan), fetch ini
 // gagal diam-diam — fitur live Stockbit tetap jalan dengan token manual.
 // ==========================================================
+// Throttle + util usia token untuk auto-resync (lihat syncStockbitTokenFromSupabase).
+let lastStockbitAutoResyncAt = 0;
+function tokenSyncedAtMs(){
+  const v = state.stockbitTokenSyncedAt;
+  if(v == null) return 0;
+  if(typeof v === "number") return v;
+  const parsed = Date.parse(v);
+  return isNaN(parsed) ? 0 : parsed;
+}
+// Dipanggil otomatis saat request Stockbit kena 401 (token ditolak) —
+// di-throttle 10 detik supaya bulk fetch yang gagal ratusan kali tidak
+// membanjiri Supabase dengan request sync.
+function maybeResyncStockbitTokenFromSupabase(){
+  const now = Date.now();
+  if(now - lastStockbitAutoResyncAt < 10000) return;
+  lastStockbitAutoResyncAt = now;
+  syncStockbitTokenFromSupabase();
+}
+
 async function syncStockbitTokenFromSupabase(){
   if(!SUPABASE_URL || !SUPABASE_KEY) return false;
-  // Kalau token yang aktif sekarang datang dari extension (WS Interceptor),
-  // JANGAN ditimpa oleh jalur Supabase ini — dua jalur ini independen dan
-  // Supabase bisa saja berisi baris basi dari lama. Extension menangkap
-  // token dari request nyata yang baru terjadi, jadi lebih dipercaya. Kalau
-  // dibiarkan, sync ini juga akan menulis balik ke localStorage (baris di
-  // bawah) dan bikin pollExtensionStockbitToken() salah kira tidak ada
-  // perubahan padahal token sudah ketiban token Supabase yang basi.
-  if(state.stockbitTokenSource === "extension") return false;
   try{
     const res = await fetch(`${SUPABASE_URL}/stockbit_session?id=eq.1&select=token,expires_at,updated_at`, { headers: getSupaHeaders(), cache: "no-store" });
     if(!res.ok) return false;
     const rows = await res.json();
     const row = Array.isArray(rows) ? rows[0] : null;
     if(row && row.token){
-      state.stockbitToken = sanitizeStockbitToken(row.token);
+      const newTok = sanitizeStockbitToken(row.token);
+      if(!newTok) return false;
+      // Token yang baru ditulis extension ke Supabase harus menjadi sumber
+      // kebenaran, termasuk ketika token lokal sebelumnya bertanda extension.
+      // Jangan memakai freshness gate berbasis waktu lokal: timestamp browser
+      // dan timestamp server bisa berbeda beberapa detik.
+      if(newTok === state.stockbitToken) return false;
+      state.stockbitToken = newTok;
       state.stockbitTokenExpiresAt = row.expires_at || null;
-      state.stockbitTokenSyncedAt = row.updated_at || null;
+      state.stockbitTokenSyncedAt = row.updated_at || Date.now();
       state.stockbitTokenSource = "auto";
-      localStorage.setItem(LS_STOCKBIT_TOKEN, state.stockbitToken);
+      try{
+        localStorage.setItem(LS_STOCKBIT_TOKEN, newTok);
+        localStorage.setItem(LS_STOCKBIT_TOKEN_SOURCE, "auto");
+      }catch(e){}
+      updateStockbitTokenStatusUI();
       return true;
     }
   }catch(e){ /* tabel belum ada / offline — biarkan token manual yang dipakai */ }
@@ -630,21 +660,30 @@ function pollExtensionStockbitToken(){
   try{ raw = localStorage.getItem(LS_STOCKBIT_TOKEN); }catch(e){ return; }
   const clean = sanitizeStockbitToken(raw);
   if(!clean || clean === state.stockbitToken) return;
+  applyExtensionStockbitToken(clean, null);
+}
+
+function applyExtensionStockbitToken(token, expiresAt){
+  const clean = sanitizeStockbitToken(token);
+  if(!clean) return;
   state.stockbitToken = clean;
   state.stockbitTokenSource = "extension";
   state.stockbitTokenSyncedAt = Date.now();
-  state.stockbitTokenExpiresAt = null; // milik token lama, tidak berlaku lagi untuk token ini
+  state.stockbitTokenExpiresAt = expiresAt || null;
   try{
+    localStorage.setItem(LS_STOCKBIT_TOKEN, clean);
     localStorage.setItem(LS_STOCKBIT_TOKEN_SOURCE, "extension");
     localStorage.setItem(LS_STOCKBIT_TOKEN_SYNCED_AT, String(state.stockbitTokenSyncedAt));
   }catch(e){}
-  // Kalau field token di modal Pengaturan sedang tampil TAPI tidak sedang
-  // diketik user (bukan activeElement), sinkronkan juga tampilannya —
-  // supaya kalau user buka Pengaturan, yang kelihatan bukan nilai basi.
   const stbTokenEl = document.getElementById("setStockbitToken");
   if(stbTokenEl && document.activeElement !== stbTokenEl) stbTokenEl.value = clean;
   updateStockbitTokenStatusUI();
 }
+
+window.addEventListener("message", (event) => {
+  if(event.source !== window || event.data?.type !== "STOCKBIT_TOKEN_UPDATED") return;
+  applyExtensionStockbitToken(event.data.token, event.data.expiresAt);
+});
 
 // Format selisih waktu jadi teks singkat berbahasa Indonesia, dipakai untuk
 // banner "terakhir berhasil ditarik" di bawah ini (dan bisa dipakai ulang di
@@ -876,8 +915,7 @@ async function openSettings() {
   if(synced && stbToken) stbToken.value = state.stockbitToken;
   updateStockbitTokenStatusUI();
 
-  // --- Notifikasi Telegram ---
-  const tgFnEl = document.getElementById("setTelegramFunctionUrl");
+  // --- Notifikasi Telegram ---  const tgFnEl = document.getElementById("setTelegramFunctionUrl");
   if(tgFnEl) tgFnEl.value = state.telegramFunctionUrl || ""; // isi awal dari localStorage, sambil menunggu fetch di bawah
   await Promise.all([refreshCustomPresets(), loadTelegramSettingsFromSupabase()]);
   // Timpa lagi setelah fetch selesai — kalau Supabase punya function_url tersimpan,
@@ -1616,6 +1654,29 @@ function computeBaggerScore(s){
   return { total, fundScore, momScore, volScore, fundItems, momItems, volItems, tier, tone, flags };
 }
 
+function supabaseFetchJson(path, label){
+  const url = `${SUPABASE_URL}/${path}`;
+  return fetch(url, { headers: getSupaHeaders(), cache: "no-store" })
+    .then(async r => {
+      const text = await r.text();
+      let data;
+      try { data = text ? JSON.parse(text) : null; } catch(e) { data = text; }
+      if(!r.ok){
+        const msg = data && typeof data === "object" ? (data.message || data.error || `HTTP ${r.status}`) : `HTTP ${r.status}`;
+        throw new Error(`${label}: ${msg}`);
+      }
+      return data;
+    })
+    .catch(e => {
+      // Browser menampilkan "Failed to fetch" tanpa detail untuk CORS/DNS/offline.
+      // Tambahkan endpoint yang gagal agar sumber masalah bisa langsung diketahui.
+      if(String(e.message).toLowerCase().includes("failed to fetch")){
+        throw new Error(`${label}: Failed to fetch (${url}) — cek URL Supabase, koneksi, dan CORS`);
+      }
+      throw e;
+    });
+}
+
 async function loadLive(){
   if (!SUPABASE_URL || !SUPABASE_KEY) {
     openSettings();
@@ -1628,11 +1689,11 @@ async function loadLive(){
       // Ambil dari VIEW gabungan, bukan tabel stocks mentah: stocks_screener
       // sudah menggabungkan fundamental+teknikal (tabel stocks) dengan
       // bandarmologi asli dari IDX (view flow_summary), lewat left join.
-      fetch(`${SUPABASE_URL}/stocks_screener?select=*`, { headers: getSupaHeaders(), cache: "no-store" }).then(r => r.json()),
-      fetch(`${SUPABASE_URL}/portfolios?select=*`, { headers: getSupaHeaders(), cache: "no-store" }).then(r => r.json()),
-      fetch(`${SUPABASE_URL}/backtest_sessions?select=*,backtest_items(*)`, { headers: getSupaHeaders(), cache: "no-store" }).then(r => r.json()),
-      fetch(`${SUPABASE_URL}/watchlists?select=ticker`, { headers: getSupaHeaders(), cache: "no-store" }).then(r => r.json()),
-      fetch(`${SUPABASE_URL}/custom_presets?select=*&order=created_at.desc`, { headers: getSupaHeaders(), cache: "no-store" }).then(r => r.json()),
+      supabaseFetchJson("stocks_screener?select=*", "stocks_screener"),
+      supabaseFetchJson("portfolios?select=*", "portfolios"),
+      supabaseFetchJson("backtest_sessions?select=*,backtest_items(*)", "backtest_sessions"),
+      supabaseFetchJson("watchlists?select=ticker", "watchlists"),
+      supabaseFetchJson("custom_presets?select=*&order=created_at.desc", "custom_presets"),
       // Riwayat Value (Rp) harian dari Stockbit (tabel price_history_stockbit,
       // diisi lewat tombol "📅 Historical" di Screener / tab Historical Data
       // di modal Detail Emiten) — dipakai Smart Pick (Area Demand & Liquidity
@@ -4190,20 +4251,28 @@ function render(){
   document.querySelectorAll(".tab-btn").forEach(b=> b.classList.toggle("active", b.dataset.tab===state.tab));
 
   const content = document.getElementById("content");
-  if(state.tab==="dashboard") content.innerHTML = renderDashboard();
-  else if(state.tab==="screener") content.innerHTML = renderScreener();
-  else if(state.tab==="smartpick") content.innerHTML = renderSmartPick();
-  else if(state.tab==="sektoral") content.innerHTML = renderSektoral();
-  else if(state.tab==="watchlist") content.innerHTML = renderWatchlist();
-  else if(state.tab==="backtest") content.innerHTML = renderBacktest();
-  else if(state.tab==="portfolio") content.innerHTML = renderPortfolio();
-  else if(state.tab==="chart") content.innerHTML = renderChart();
-  else if(state.tab==="brokersum") content.innerHTML = renderBrokerSummary();
-  else if(state.tab==="brokerstalker") content.innerHTML = renderBrokerStalker();
-  else if(state.tab==="target") content.innerHTML = renderTargetBandar();
-  else if(state.tab==="eps") content.innerHTML = renderEntryPriceScanner();
-  else if(state.tab==="kraken") content.innerHTML = renderKrakenFlow();
-  else if(state.tab==="about") content.innerHTML = renderAbout();
+  try{
+    if(state.tab==="dashboard") content.innerHTML = renderDashboard();
+    else if(state.tab==="screener") content.innerHTML = renderScreener();
+    else if(state.tab==="smartpick") content.innerHTML = renderSmartPick();
+    else if(state.tab==="sektoral") content.innerHTML = renderSektoral();
+    else if(state.tab==="watchlist") content.innerHTML = renderWatchlist();
+    else if(state.tab==="backtest") content.innerHTML = renderBacktest();
+    else if(state.tab==="portfolio") content.innerHTML = renderPortfolio();
+    else if(state.tab==="chart") content.innerHTML = renderChart();
+    else if(state.tab==="brokersum") content.innerHTML = renderBrokerSummary();
+    else if(state.tab==="brokerstalker") content.innerHTML = renderBrokerStalker();
+    else if(state.tab==="target") content.innerHTML = renderTargetBandar();
+    else if(state.tab==="eps") content.innerHTML = renderEntryPriceScanner();
+    else if(state.tab==="kraken") content.innerHTML = renderKrakenFlow();
+    else if(state.tab==="about") content.innerHTML = renderAbout();
+  }catch(e){
+    // Kalau ada error runtime di salah satu tab, JANGAN biarkan gagal diam-diam
+    // (dulu ini bikin tab kelihatan "tidak bisa diklik" karena konten tidak
+    // pernah terganti). Tampilkan pesannya langsung di area konten.
+    console.error("Render error di tab '" + state.tab + "':", e);
+    content.innerHTML = `<div class="empty-box">⚠️ Terjadi error saat menampilkan halaman <b>${escapeHtml(state.tab)}</b>: ${escapeHtml(e.message)}<br><span style="font-size:11.5px;color:var(--muted);">Detail lengkap ada di Console (F12). Coba klik "Refresh Data" atau muat ulang halaman.</span></div>`;
+  }
 
   attachContentEvents();
   if(state.tab==="chart" && state.selectedTicker) drawChartSVG();
@@ -8676,20 +8745,30 @@ document.addEventListener("click", (e) => {
   }
 });
 
-document.getElementById("tabs").addEventListener("click", (e)=>{
-  const btn = e.target.closest(".tab-btn");
-  if(!btn) return;
-  state.tab = btn.dataset.tab;
+function selectMainTab(tab){
+  if(!tab) return;
+  state.tab = tab;
+  state.openDropdown = null; // dropdown filter tidak boleh menggantung saat pindah tab
   // Tutup panel hamburger setelah user memilih menu di mobile.
   const mobileSidebar = document.getElementById("sidebarNav");
   const mobileHamburger = document.getElementById("hamburgerBtn");
   if(mobileSidebar) mobileSidebar.classList.remove("nav-open");
   if(mobileHamburger) mobileHamburger.setAttribute("aria-expanded", "false");
-  if(state.tab === "dashboard" && state.dashboardBrokerLoading) { /* broker insight dimuat on demand */ }
   if(state.tab === "smartpick" && !state.spHistory.length && !state.spHistoryLoading) loadSmartPickHistory();
   if(state.tab === "eps" && !state.epsRaw && !state.epsScanning) ensureEpsDataLoaded();
   if(state.tab === "kraken") ensureOrcaHistoryLoaded();
   render();
+}
+
+// Pasang handler langsung pada setiap tombol (bukan hanya delegation di parent).
+// Ini tetap bekerja jika ada elemen/overlay lain yang menghentikan bubbling click.
+document.querySelectorAll("#tabs .tab-btn").forEach(btn=>{
+  btn.type = "button";
+  btn.onclick = (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    selectMainTab(btn.dataset.tab);
+  };
 });
 document.getElementById("refreshBtn").onclick = ()=> loadLive();
 
