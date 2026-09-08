@@ -277,26 +277,55 @@ async function stockbitFetchMarketDetector(ticker, fromDate, toDate, days){
 }
 
 // Endpoint /order-trade/broker/distribution mengembalikan broker distribution
-// untuk SATU tanggal ({date} di URL) — bukan rentang. Struktur respons yang
-// diverifikasi manual dari DevTools (25 Agu 2026): data.brokers_buy /
+// untuk SATU tanggal ({date} di URL) — bukan rentang.
+//
+// SKEMA LAMA (diverifikasi manual dari DevTools 25 Agu 2026): data.brokers_buy /
 // data.brokers_sell (alias kemungkinan buy/sell), tiap barisnya berisi broker
-// + lot/value (alias blot/bval untuk buy, slot/sval untuk sell). Parser di
-// bawah menerima semua alias itu; kalau Stockbit ganti skema respons di masa
-// depan, tambahkan alias barunya di daftar kunci di sini.
+// FLAT + lot/value (alias blot/bval untuk buy, slot/sval untuk sell).
+//
+// SKEMA BARU (ketahuan berubah 08 Sep 2026 — endpoint sama, bentuk beda,
+// balikan "message":"Successfully loaded Broker Distribution data"):
+// data.by_value.top_broker_buy / data.by_value.top_broker_sell (kemungkinan
+// juga ada data.by_volume.* paralel, dipakai sebagai fallback kalau by_value
+// tidak ada). Tiap barisnya BUKAN flat lagi, tapi
+// { detail:{code,type,amount}, distribute_to:[{code,type,amount},...] } —
+// "detail" adalah broker top buy/sell itu sendiri (code+amount total),
+// "distribute_to" adalah breakdown lawan transaksinya (di luar cakupan tabel
+// Top 5 Buy/Sell yang dipakai app ini, jadi tidak diambil). Parser di bawah
+// coba skema baru dulu, baru fallback ke skema lama — kalau Stockbit ganti
+// skema lagi di masa depan, tambahkan cabang/alias baru di sini.
 function parseStockbitMarketDetector(raw, fetchDate){
   if(!raw || typeof raw !== "object") return null;
   // Stockbit kadang membungkus payload beberapa tingkat (data.data,
   // data.result, result.data), jadi cari objek yang benar-benar memiliki
   // array distribution secara rekursif dangkal.
   const candidates = [raw, raw.data, raw.result, raw.data?.data, raw.data?.result, raw.result?.data, raw.result?.result].filter(v => v && typeof v === "object");
-  const bs = candidates.find(v => ["brokers_buy","brokers_sell","buy","sell","buy_rows","sell_rows","distribution_buy","distribution_sell"].some(k => Array.isArray(v[k]))) || raw;
 
+  // --- Coba skema baru (by_value/by_volume.top_broker_buy/sell) dulu ---
+  const byValOrVol = candidates.map(v => v.by_value || v.by_volume).find(v => v && typeof v === "object" && (Array.isArray(v.top_broker_buy) || Array.isArray(v.top_broker_sell)));
+  if(byValOrVol){
+    // Tiap item { detail:{code,type,amount}, distribute_to:[...] } → ambil "detail"-nya
+    // saja sebagai baris top-broker (code+amount), abaikan distribute_to.
+    const flatten = (rows) => (rows || [])
+      .map(r => (r && typeof r === "object") ? (r.detail && typeof r.detail === "object" ? r.detail : r) : null)
+      .filter(Boolean);
+    return buildBrokerByDate(flatten(byValOrVol.top_broker_buy), flatten(byValOrVol.top_broker_sell), fetchDate);
+  }
+
+  // --- Fallback skema lama (flat brokers_buy/brokers_sell dst.) ---
+  const bs = candidates.find(v => ["brokers_buy","brokers_sell","buy","sell","buy_rows","sell_rows","distribution_buy","distribution_sell"].some(k => Array.isArray(v[k]))) || raw;
   const buyRows = ["brokers_buy", "buy", "buy_rows", "distribution_buy", "buy_data", "buyer", "buyers"]
     .map(k => (Array.isArray(bs[k]) ? bs[k] : null)).find(Boolean) || [];
   const sellRows = ["brokers_sell", "sell", "sell_rows", "distribution_sell", "sell_data", "seller", "sellers"]
     .map(k => (Array.isArray(bs[k]) ? bs[k] : null)).find(Boolean) || [];
   if(!buyRows.length && !sellRows.length) return null;
+  return buildBrokerByDate(buyRows, sellRows, fetchDate);
+}
 
+// Diambil keluar dari parseStockbitMarketDetector supaya bisa dipakai baik
+// oleh cabang skema baru (by_value.top_broker_buy/sell) maupun skema lama
+// (brokers_buy/brokers_sell) tanpa duplikasi logika pick/sort/top-5.
+function buildBrokerByDate(buyRows, sellRows, fetchDate){
   const byDate = {};
   const ensure = (date) => (byDate[date] ||= { buy: [], sell: [] });
   const dateStr = fetchDate || todayLocalISO();
@@ -304,7 +333,7 @@ function parseStockbitMarketDetector(raw, fetchDate){
   const mapRows = (rows, side) => rows.forEach(r => {
     const broker = pick(r, ["broker","broker_code","brokerCode","broker_id","brokerId","code","broker_name"]);
     const lot = Number(pick(r, side === "buy" ? ["lot","blot","buy_lot","quantity","qty"] : ["lot","slot","sell_lot","quantity","qty"])) || null;
-    const value = Number(pick(r, side === "buy" ? ["value","bval","buy_value","value_idr","net_value"] : ["value","sval","sell_value","value_idr","net_value"])) || 0;
+    const value = Number(pick(r, side === "buy" ? ["value","bval","buy_value","value_idr","net_value","amount"] : ["value","sval","sell_value","value_idr","net_value","amount"])) || 0;
     if(broker != null) ensure(dateStr)[side].push({ broker_code:String(broker).toUpperCase(), lot, value_idr:value });
   });
   mapRows(buyRows, "buy"); mapRows(sellRows, "sell");
@@ -1195,15 +1224,18 @@ let state = {
   tab: "screener", search: "", activePreset: null,
   visibleCols: new Set(), // diisi loadSettings() dari localStorage atau DEFAULT_VISIBLE_COLS
   colPickerOpen: false,
-  filters: {sektor:[], syariahLabel:[], cekHarga:[], cekRsi:[], statusRsi:[], cekMacd:[], band:[], sinyalVolume:[], sinyalFrekuensi:[], keyakinanNaik:[], trendHarga:[], polaCandle:[], uangGedeMasuk:[], isBBSqueeze:[], valuasi:[]},
+  filters: {sektor:[], syariahLabel:[], cekHarga:[], cekRsi:[], statusRsi:[], cekMacd:[], band:[], sinyalVolume:[], sinyalFrekuensi:[], keyakinanNaik:[], trendHarga:[], polaCandle:[], uangGedeMasuk:[], isBBSqueeze:[], valuasi:[], capTier:[], lq45:[]},
   showAdvancedFilters: false,
-  rangeFilters: { 
-    bbWidth:{min:"",max:""}, 
-    atr14:{min:"",max:""}, 
+  rangeFilters: {
+    bbWidth:{min:"",max:""},
+    atr14:{min:"",max:""},
     clv:{min:"",max:""},
     rsi7:{min:"",max:""},
     rsi21:{min:"",max:""},
-    frequency:{min:"",max:""}
+    frequency:{min:"",max:""},
+    marketCap:{min:"",max:""},
+    week52ChangePct:{min:"",max:""},
+    ytdPct:{min:"",max:""}
   },
   openDropdown: null, 
   sort: { col: null, asc: true },
@@ -1212,6 +1244,9 @@ let state = {
   selectedTicker: null, chartData: [], chartLoading: false, selectedLevels: null, loading:false, chartSearch: "",
   chartRange: "all", chartSeries: { close:true, support:true, resistance:true, ema:true, fib:true, bb:false, rsi:false, macd:false, volume:false },
   detailTicker: null, detailTab: "teknikal",
+  // Modal "detail metrik Dashboard": dibuka saat kartu ringkasan (Total
+  // Saham, Undervalued, dst) diklik. key = metrik, lihat DASH_METRIC_DEFS.
+  dashMetricKey: null, dashMetricSort: {key:"score", asc:false}, dashMetricSearch: "",
   // Tab Sektoral: sektor mana yang sedang di-expand untuk melihat daftar
   // sahamnya, dan urutan sortir daftar saham di dalam tiap sektor.
   sektorExpanded: new Set(), sektorSearch: "", sektorSort: "changeDesc",
@@ -1655,6 +1690,77 @@ function computeBaggerScore(s){
   return { total, fundScore, momScore, volScore, fundItems, momItems, volItems, tier, tone, flags };
 }
 
+// ==========================================
+// SKOR GABUNGAN (Fundamental 0–60 + Teknikal 0–40)
+//
+// Screener publik acuan menampilkan skor gabungan dengan struktur
+// "Fundamental X/60 · Teknikal Y/40" tetapi tidak mempublikasikan rumus
+// pastinya. Versi di bawah adalah rekonstruksi TRANSPARAN: tiap
+// sub-kriteria punya poin tetap & bisa dilihat breakdown-nya di UI.
+// Kriteria fundamental dipinjam dari preset Deep Value/Multibagger/Growth
+// yang terlihat publik; teknikal dari indikator standar yang sudah ada
+// di DB (trend MA, MACD hist, RSI, stoch, posisi 52W).
+// Null diperlakukan netral (poin tidak didapat, bukan didiskon ekstra).
+// ==========================================
+function computeFundTekScore(s){
+  const num = v => (v===null || v===undefined || v==="" || isNaN(v)) ? null : Number(v);
+  const per = num(s.per), pbv = num(s.pbv), roe = num(s.roe), der = num(s.der);
+  const npm = num(s.npm), roa = num(s.roa);
+  const revG = num(s.revenueGrowth), earnG = num(s.earningsGrowth);
+  const divY = num(s.divYield);
+
+  // --- Fundamental 60 poin ---
+  // Setiap kelompok memakai tier yang saling eksklusif. Bobot maksimum:
+  // ROE 15 + NPM 10 + DER 10 + PER 8 + PBV 5 + ROA 4 + Growth 4 + Dividen 4 = 60.
+  const fundItems = [
+    { label:"ROE ≥ 15%", pass: roe != null && roe >= 15, points:15 },
+    { label:"ROE 8–15%", pass: roe != null && roe >= 8 && roe < 15, points:8 },
+    { label:"NPM ≥ 10%", pass: npm != null && npm >= 10, points:10 },
+    { label:"NPM 5–10%", pass: npm != null && npm >= 5 && npm < 10, points:5 },
+    { label:"DER ≤ 1", pass: der != null && der <= 1, points:10 },
+    { label:"DER 1–2", pass: der != null && der > 1 && der <= 2, points:5 },
+    { label:"PER ≤ 15 & > 0", pass: per != null && per > 0 && per <= 15, points:8 },
+    { label:"PER 15–25", pass: per != null && per > 15 && per <= 25, points:4 },
+    { label:"PBV ≤ 1.5 & > 0", pass: pbv != null && pbv > 0 && pbv <= 1.5, points:5 },
+    { label:"ROA ≥ 5%", pass: roa != null && roa >= 5, points:4 },
+    { label:"Revenue Growth > 10%", pass: revG != null && revG > 10, points:2 },
+    { label:"Earnings Growth > 10%", pass: earnG != null && earnG > 10, points:2 },
+    { label:"Dividend Yield ≥ 2%", pass: divY != null && divY >= 2, points:4 },
+  ];
+
+  // --- Teknikal 40 poin ---
+  const trendBull = String(s.trendHarga||"").indexOf("Bullish") === 0;
+  const macdUp = num(s.prevMacdHist) != null && num(s.hist) != null && num(s.prevMacdHist) <= 0 && num(s.hist) > 0;
+  const macdPos = num(s.hist) != null && num(s.hist) > 0;
+  const rsiSehat = num(s.rsi7) != null && num(s.rsi7) >= 50 && num(s.rsi7) <= 75;
+  const stochCross = [s.prevStochK,s.prevStochD,s.stochK,s.stochD].every(v=>v!=null) && s.prevStochK < s.prevStochD && s.stochK > s.stochD;
+  const pos52 = num(s.pos52w) ?? spPos52w(s);
+  const priceVsMa50 = s.cClose != null && num(s.ma50) != null ? s.cClose > num(s.ma50) : null;
+
+  const techItems = [
+    { label:"Trend Bullish (MA)", pass: trendBull, points:10 },
+    { label:"MACD Histogram positif", pass: macdPos, points:5 },
+    { label:"MACD cross up (neg → pos)", pass: macdUp, points:5 },
+    { label:"RSI 7 di 50–75", pass: rsiSehat, points:5 },
+    { label:"Stoch K cross up D", pass: stochCross, points:5 },
+    { label:"Harga > MA50", pass: priceVsMa50 === true, points:5 },
+    { label:"Posisi 52W ≤ 60%", pass: pos52 != null && pos52 <= 60, points:5 },
+  ];
+
+  const sum = items => items.reduce((a,i)=> a + (i.pass ? i.points : 0), 0);
+  const fund = Math.min(60, sum(fundItems));
+  const tech = Math.min(40, sum(techItems));
+  const total = fund + tech;
+
+  let label, tone;
+  if (total >= 80) { label = "Sangat Kuat"; tone = "up"; }
+  else if (total >= 65) { label = "Kuat"; tone = "up"; }
+  else if (total >= 50) { label = "Cukup Baik"; tone = "gold"; }
+  else { label = "Lemah"; tone = "down"; }
+
+  return { total, fund, tech, fundItems, techItems, label, tone };
+}
+
 function supabaseFetchJson(path, label){
   const url = `${SUPABASE_URL}/${path}`;
   return fetch(url, { headers: getSupaHeaders(), cache: "no-store" })
@@ -1747,6 +1853,10 @@ async function loadLive(){
       beta: numOrNull(r.beta), der: numOrNull(r.der), currentRatio: numOrNull(r.current_ratio),
       support: r.support, resistance: r.resistance, high52w: r.week52_high, low52w: r.week52_low,
       week52ChangePct: numOrNull(r.week52_change_pct),
+      // Field tambahan untuk paritas screener publik: beberapa deployment
+      // memakai nama kolom berbeda, jadi normalisasi dilakukan dengan fallback.
+      ytdPct: numOrNull(r.ytd_pct ?? r.ytd_change_pct ?? r.ytd),
+      indexLq45: r.lq45 ?? r.is_lq45 ?? r.idx_lq45 ?? r.index_lq45 ?? null,
       ema21H: r.ema21h, ema21L: r.ema21l, ma21: r.ma21, ma50: r.ma50, ma100: r.ma100, ma200: r.ma200,
       rsi7: r.rsi7, rsi21: r.rsi21, hist: r.macd_hist, histPrev: 0,
       fib: r.fibonacci, 
@@ -1793,7 +1903,7 @@ async function loadLive(){
       // --- Bandarmologi ASLI dari IDX (bukan proxy volume) ---
       // Null berarti "belum ditransaksikan" (suspensi dsb), bukan nol —
       // lihat catatan flow_summary di database. Jangan format null jadi 0.
-      capCategory: r.cap_category, pos52w: numOrNull(r.pos_52w),
+      capCategory: r.cap_category ?? null, pos52w: numOrNull(r.pos_52w),
       // Market Cap: dipakai kalau kolom `market_cap` sudah ada di
       // stocks_screener. Kalau belum, coba turunkan dari
       // `shares_outstanding` x harga. Kalau dua-duanya belum ada di
@@ -2073,6 +2183,7 @@ function renderDetailTeknikal(s){
       ${dItem("52W Tinggi", dNum(s.high52w))}
       ${dItem("52W Rendah", dNum(s.low52w))}
       ${dItem("52W Change%", s.week52ChangePct!=null?dNum(s.week52ChangePct,{plusSign:true,decimals:2,suffix:'%'}):"-", true)}
+      ${dItem("YTD%", s.ytdPct!=null?dNum(s.ytdPct,{plusSign:true,decimals:2,suffix:'%'}):"-", true)}
       ${dItem("Posisi dalam 52W%", s.pos52w!=null?dNum(s.pos52w,{decimals:1,suffix:'%'}):"-", true)}
       ${dItem("Fib 23.6%", dNum(s.fib?.f236))}
       ${dItem("Fib 38.2%", dNum(s.fib?.f382))}
@@ -2207,6 +2318,7 @@ function renderDetailFundamental(s){
       ${dItem("Syariah", s.syariahLabel==="Ya"?"✅ Ya":(s.syariahLabel||"-"), true)}
       ${dItem("Valuasi", pillHtml(s.valuasi||"-", valuasiTone(s.valuasi)), true)}
       ${dItem("Kategori Cap", s.capCategory||"-", true)}
+      ${dItem("LQ45", s.indexLq45!=null ? (isLq45(s)?"✅ Ya":"Tidak") : "-", true)}
       ${dItem("Market Cap", s.marketCap!=null ? `Rp ${fmtCap(s.marketCap)}` : "-", true)}
       ${dItem("Saham Beredar (Shares Outstanding)", dNum(s.sharesOutstanding), true)}
     </div>
@@ -2417,6 +2529,12 @@ function renderDetailAnalisa(s){
   // Link Pencarian Berita Otomatis
   const newsUrl = `https://www.google.com/search?q=saham+${s.ticker}+berita+terbaru&tbm=nws`;
 
+  // --- SKOR GABUNGAN ala screener publik (Fundamental 0–60 + Teknikal 0–40) ---
+  // Formula skor situs acuan TIDAK dipublikasikan; ini rekonstruksi
+  // transparan dari skema bobot yang terlihat di UI mereka. Semua
+  // sub-kriteria ditampilkan apa adanya supaya bisa diaudit user.
+  const ft = computeFundTekScore(s);
+
   return `
     <!-- LIVE DATA STOCKBIT (opsional, tidak resmi) -->
     ${renderStockbitPanel(s)}
@@ -2451,6 +2569,30 @@ function renderDetailAnalisa(s){
       </div>` : ""}
       <div style="margin-top:10px; font-size:10.5px; color:var(--muted); line-height:1.4;">
         ≥75 kandidat kuat (worth watchlist utama) · 50–74 menarik tapi tunggu konfirmasi tambahan · &lt;50 skip, belum ada "bahan bakar" cukup. Sesuai <i>formula_screening_saham_bagger.md</i>.
+      </div>
+    </div>
+
+    <!-- SKOR GABUNGAN ala screener publik: Fundamental 0–60 + Teknikal 0–40 -->
+    <div style="background: linear-gradient(135deg, rgba(30,41,59,0.9), rgba(15,23,42,0.95)); border: 1px solid var(--${ft.tone}); border-radius: 12px; padding: 16px; margin-bottom: 16px; box-shadow: 0 4px 15px rgba(0,0,0,0.2);">
+      <div style="display:flex; align-items:center; gap: 8px; margin-bottom: 12px; border-bottom: 1px dashed var(--border); padding-bottom: 12px;">
+        <span style="font-size: 20px;">🧮</span>
+        <div>
+          <div style="font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.05em; font-weight: 600;">Skor Gabungan (Fundamental + Teknikal)</div>
+          <div style="font-size: 20px; font-weight: 800; color: var(--${ft.tone});">${ft.total}<span style="font-size:12px;color:var(--muted);font-weight:500;"> /100 · ${ft.label} — Fundamental ${ft.fund}/60 · Teknikal ${ft.tech}/40</span></div>
+        </div>
+      </div>
+      <div style="display:flex; flex-wrap:wrap; gap: 16px;">
+        <div style="flex:1; min-width:180px;">
+          <div style="font-size:10.5px; color:var(--muted); text-transform:uppercase; letter-spacing:.04em; margin-bottom:2px;">Fundamental — <b class="mono" style="color:var(--text);">${ft.fund}/60</b></div>
+          ${baggerBreakdownRows(ft.fundItems)}
+        </div>
+        <div style="flex:1; min-width:180px;">
+          <div style="font-size:10.5px; color:var(--muted); text-transform:uppercase; letter-spacing:.04em; margin-bottom:2px;">Teknikal — <b class="mono" style="color:var(--text);">${ft.tech}/40</b></div>
+          ${baggerBreakdownRows(ft.techItems)}
+        </div>
+      </div>
+      <div style="margin-top:10px; font-size:10.5px; color:var(--muted); line-height:1.4;">
+        Skema bobot mengikuti struktur yang terlihat di screener publik (Fundamental maks 60 poin, Teknikal maks 40 poin). Formula asli situs acuan tidak dipublikasikan — komposisi poin di atas adalah versi transparan milik aplikasi ini, bisa diaudit baris per baris. ≥80 sangat kuat · 65–79 kuat · 50–64 cukup · &lt;50 lemah.
       </div>
     </div>
 
@@ -3764,13 +3906,20 @@ function enriched(){
     // di atas, bukan volRatio mentah dari DB yang bisa null.
     const bagger = computeBaggerScore({ ...s, volRatio: ratio });
 
-    return { 
-      ...s, band, volRatio: ratio, sinyalVolume, volTone: vol.tone, 
+    // Skor gabungan transparan ala struktur screener publik (60/40).
+    // Disimpan di enriched object supaya tabel, export, dashboard modal, dan
+    // detail emiten memakai angka yang sama tanpa menghitung ulang berbeda.
+    const fundTech = computeFundTekScore({ ...s, volRatio: ratio });
+
+    return {
+      ...s, band, volRatio: ratio, sinyalVolume, volTone: vol.tone,
       freqRatio, sinyalFrekuensi, freqTone: freq.tone, volChangePct,
-      keyakinanNaik: keyakinan, keyakinanScore: s.keyakinanScore ?? conf.score, 
+      keyakinanNaik: keyakinan, keyakinanScore: s.keyakinanScore ?? conf.score,
       keyakinanTone: kTone, syariahLabel: boolLabel(s.syariah),
       rekomendasi, rekTone,
-      bagger, baggerScoreTotal: bagger.total, baggerTier: bagger.tier, baggerTone: bagger.tone
+      bagger, baggerScoreTotal: bagger.total, baggerTier: bagger.tier, baggerTone: bagger.tone,
+      capTier: marketCapTier(s.marketCap),
+      fundTech, fundScore60: fundTech.fund, techScore40: fundTech.tech, fundTechScore: fundTech.total
     };
   });
 }
@@ -3779,7 +3928,7 @@ function getFiltered(){
   const hideGocap = document.getElementById("hideGocapChk")?.checked;
   return enriched().filter(s=>{
     if(hideGocap && (s.cClose <= 50 || !s.cVol)) return false;
-    if(state.search && !s.ticker.toLowerCase().includes(state.search.toLowerCase())) return false;
+    if(state.search && !String(s.ticker || "").toLowerCase().includes(state.search.toLowerCase())) return false;
     
     // --- PRESET DSI ---
     if(state.activePreset === 'bagger') {
@@ -3807,10 +3956,10 @@ function getFiltered(){
       if ((s.changePct || 0) <= 0) return false;
     } else if (state.activePreset === 'pullback') {
       if (!s.trendHarga || s.trendHarga.indexOf("Bullish") !== 0) return false;
-      if (s.cClose > s.ema21L * 1.03) return false;
-      if (s.cClose < (s.support || 0) * 0.98) return false;
-      if (s.stochK != null && s.stochD != null) {
-         if (!(s.prevStochK < s.prevStochD && s.stochK > s.stochD)) return false;
+      if (s.cClose == null || s.ema21L == null || s.cClose > s.ema21L * 1.03) return false;
+      if (s.support != null && s.cClose < s.support * 0.98) return false;
+      if ([s.prevStochK,s.prevStochD,s.stochK,s.stochD].every(v=>v!=null)) {
+        if (!(s.prevStochK < s.prevStochD && s.stochK > s.stochD)) return false;
       }
     } else if (state.activePreset === 'custom_bandar') {
       if (!(s.cOpen > s.ma21 && s.cOpen > s.ma50 && s.cOpen > s.ma100 && s.cOpen > s.ma200)) return false;
@@ -3835,6 +3984,17 @@ function getFiltered(){
       const isSpikeFromDb = s.freqRatio == null && s.freqSpike != null
         && String(s.freqSpike).trim().toLowerCase() === "ya";
       if (!isSpikeFromRatio && !isSpikeFromDb) return false;
+    } else if (state.activePreset === 'deepvalue') {
+      if (s.per == null || s.per <= 0 || s.per > 15 || s.pbv == null || s.pbv <= 0 || s.pbv > 1.5 || s.roe == null || s.roe < 8 || s.der == null || s.der > 2) return false;
+    } else if (state.activePreset === 'multibagger') {
+      if (s.per == null || s.per <= 0 || s.per > 20 || s.roe == null || s.roe < 12 || s.der == null || s.der > 1.5 || s.npm == null || s.npm < 5) return false;
+    } else if (state.activePreset === 'growth') {
+      if (s.roe == null || s.roe < 15 || s.npm == null || s.npm < 10) return false;
+    } else if (state.activePreset === 'defensive') {
+      if (s.roe == null || s.roe < 8 || s.der == null || s.der > 1.5 || s.npm == null || s.npm < 5) return false;
+    } else if (state.activePreset === 'smallcap') {
+      if (s.roe == null || s.roe < 8 || s.per == null || s.per <= 0 || s.per > 25) return false;
+      if (s.marketCap == null || s.marketCap >= 1e12) return false;
     }
 
     const f=state.filters;
@@ -3853,6 +4013,20 @@ function getFiltered(){
     if(f.uangGedeMasuk.length && !f.uangGedeMasuk.includes(s.uangGedeMasuk)) return false;
     if(f.isBBSqueeze.length && !f.isBBSqueeze.includes(s.isBBSqueeze)) return false;
     if(f.valuasi.length && !f.valuasi.includes(s.valuasi)) return false;
+    // Filter tambahan ala menu "Filter & Screener" publik: kategori Market Cap,
+    // keanggotaan LQ45, dan range 52W/YTD. Data yang belum tersedia di DB
+    // diperlakukan netral (filter tidak menggugurkan), supaya fitur tidak
+    // "hilang" hanya karena kolomnya belum ada di skema. Tapi kalau user
+    // EKSPLISIT memilih "Tidak tersedia" (Cap) / "Tidak" (LQ45), baris tanpa
+    // data dihitung masuk kelompok itu — jadi tetap bisa difilter.
+    if(f.capTier.length){
+      const tier = s.marketCap != null ? marketCapTier(s.marketCap) : "Tidak tersedia";
+      if(!f.capTier.includes(tier)) return false;
+    }
+    if(f.lq45.length){
+      const lq = s.indexLq45 != null ? (isLq45(s) ? "Ya" : "Tidak") : "Tidak tersedia";
+      if(!f.lq45.includes(lq)) return false;
+    }
 
     const rf = state.rangeFilters;
     if(!inRange(s.bbWidth, rf.bbWidth)) return false;
@@ -3861,6 +4035,9 @@ function getFiltered(){
     if(!inRange(s.rsi7, rf.rsi7)) return false;
     if(!inRange(s.rsi21, rf.rsi21)) return false;
     if(!inRange(s.frequency, rf.frequency)) return false;
+    if(!inRange(s.marketCap, rf.marketCap)) return false;
+    if(!inRange(s.week52ChangePct, rf.week52ChangePct)) return false;
+    if(!inRange(s.ytdPct, rf.ytdPct)) return false;
 
     if(state.customRules && state.customRules.length){
       for(const rule of state.customRules){
@@ -3872,6 +4049,20 @@ function getFiltered(){
   });
 }
 
+function marketCapTier(value){
+  const n = Number(value);
+  if(!Number.isFinite(n) || n <= 0) return "Tidak tersedia";
+  if(n > 100e12) return "Mega";
+  if(n >= 10e12) return "Big";
+  if(n >= 1e12) return "Mid";
+  if(n >= 100e9) return "Small";
+  return "Micro";
+}
+function isLq45(s){
+  const v = s?.indexLq45;
+  const text = String(v ?? "").trim().toUpperCase();
+  return v === true || v === 1 || text === "TRUE" || text === "YA" || text === "Y" || text === "YES" || text === "1" || text === "LQ45";
+}
 function inRange(value, range){
   if(!range) return true;
   const hasMin = range.min !== "" && range.min !== null && range.min !== undefined;
@@ -4267,6 +4458,8 @@ function render(){
     else if(state.tab==="eps") content.innerHTML = renderEntryPriceScanner();
     else if(state.tab==="kraken") content.innerHTML = renderKrakenFlow();
     else if(state.tab==="about") content.innerHTML = renderAbout();
+    else if(state.tab==="quanthub"){ /* ditangani quant-hub.js (halaman #qhPage terpisah) */ }
+    else content.innerHTML = `<div class="empty-box">Tab tidak dikenal: ${escapeHtml(state.tab)}</div>`;
   }catch(e){
     // Kalau ada error runtime di salah satu tab, JANGAN biarkan gagal diam-diam
     // (dulu ini bikin tab kelihatan "tidak bisa diklik" karena konten tidak
@@ -4320,6 +4513,10 @@ function render(){
     if(dhistComparePanel) dhistComparePanel.ontoggle = (e) => { state.detailCompareOpen = e.target.open; };
   }
 
+  document.getElementById("spListModalClose").onclick = closeSmartPickList;
+  document.getElementById("spListModalOverlay").onclick = (e)=>{ if(e.target.id==="spListModalOverlay") closeSmartPickList(); };
+  document.getElementById("dashMetricModalClose").onclick = dashMetricClose;
+  document.getElementById("dashMetricModalOverlay").onclick = (e)=>{ if(e.target.id==="dashMetricModalOverlay") dashMetricClose(); };
   document.getElementById("spListModalOverlay").classList.toggle("open", !!state.spListOpenDefId);
   if(state.spListOpenDefId){
     document.getElementById("spListModalTitle").textContent = `📋 Daftar Saham · ${spTitleFor(state.spListOpenDefId)}`;
@@ -4328,6 +4525,47 @@ function render(){
       b.onclick = () => { closeSmartPickList(); openDetail(b.dataset.spListDetail); };
     });
   }
+
+  // --- Modal detail metrik Dashboard (klik kartu ringkasan) ---
+  document.getElementById("dashMetricModalOverlay").classList.toggle("open", !!state.dashMetricKey);
+  if(state.dashMetricKey){
+    document.getElementById("dashMetricModalTitle").textContent = (DASH_METRIC_META[state.dashMetricKey]||{}).title || "Detail Metrik";
+    document.getElementById("dashMetricModalContent").innerHTML = renderDashMetricModal();
+    const dms = document.getElementById("dashMetricSearch");
+    if(dms) dms.oninput = (e)=>{ state.dashMetricSearch = e.target.value;
+      // Render ulang hanya isi modal, jangan seluruh halaman, supaya fokus ketik tidak hilang
+      document.getElementById("dashMetricModalContent").innerHTML = renderDashMetricModal();
+      bindDashMetricModalEvents();
+      const again = document.getElementById("dashMetricSearch");
+      if(again){ again.focus(); const p = again.value.length; again.setSelectionRange(p,p); }
+    };
+    bindDashMetricModalEvents();
+  }
+}
+
+function bindDashMetricModalEvents(){
+  document.querySelectorAll("[data-dash-sort]").forEach(b=>{
+    b.onclick = ()=> dashMetricToggleSort(b.dataset.dashSort);
+  });
+  document.querySelectorAll("[data-dash-detail]").forEach(b=>{
+    b.onclick = ()=>{ dashMetricClose(); openDetail(b.dataset.dashDetail); };
+  });
+  const exportBtn = document.getElementById("dashMetricExportBtn");
+  if(exportBtn) exportBtn.onclick = exportDashMetricToExcel;
+}
+
+function exportDashMetricToExcel(){
+  const key = state.dashMetricKey;
+  if(!key) return;
+  const all = dashMetricStocks(key);
+  const q = state.dashMetricSearch.trim().toUpperCase();
+  const rows = all.filter(s=>!q || s.ticker.includes(q) || String(s.name||"").toUpperCase().includes(q));
+  const data = [["Kode","Nama","Sektor","Harga","Perubahan %","Skor","Tier","Nilai Transaksi","PER","ROE"]];
+  rows.forEach(s=>data.push([s.ticker, s.name||"", s.sektor||"", s.cClose??"", s.changePct??"", s.baggerScoreTotal??"", s.baggerTier||"", Number(s.turnover ?? s.valueTraded ?? 0)||0, s.per??"", s.roe??""]));
+  const ws = XLSX.utils.aoa_to_sheet(data);
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, "Dashboard Metric");
+  XLSX.writeFile(wb, `dashboard-${key}-${todayLocalISO()}.xlsx`);
 }
 
 function attachPortoModalEvents(){
@@ -4391,9 +4629,10 @@ const FILTER_LABELS = {
   sektor:"Sektor", syariahLabel:"Syariah", trendHarga:"Trend", cekMacd:"MACD", polaCandle:"Pola Candle",
   sinyalVolume:"Sinyal Volume", sinyalFrekuensi:"Sinyal Frekuensi", keyakinanNaik:"Keyakinan Naik", cekHarga:"Sinyal Harga", cekRsi:"Sinyal RSI",
   statusRsi:"Status RSI", band:"Bandarmologi", uangGedeMasuk:"Uang Gede", isBBSqueeze:"BB Squeeze", valuasi:"Valuasi",
-  bbWidth:"BB Width", atr14:"ATR 14", clv:"CLV", rsi7:"RSI 7", rsi21:"RSI 21", frequency:"Frekuensi"
+  bbWidth:"BB Width", atr14:"ATR 14", clv:"CLV", rsi7:"RSI 7", rsi21:"RSI 21", frequency:"Frekuensi",
+  capTier:"Market Cap", lq45:"LQ45", marketCap:"Market Cap (Rp)", week52ChangePct:"52W Change (%)", ytdPct:"YTD (%)"
 };
-const PRESET_LABELS = { bagger:"Skor Bagger ≥75", eri:"Eri Ginanjar", rsicross:"RSI & Harga Cross", golden:"Golden Cross DSI", uptrend:"Super Uptrend", breakout:"Volatility Breakout", pullback:"Pullback Uptrend", custom_bandar:"BPJS", asing_akumulasi:"Akumulasi Asing (IDX)", freq_spike:"Lonjakan Frekuensi" };
+const PRESET_LABELS = { bagger:"Skor Bagger ≥75", eri:"Eri Ginanjar", rsicross:"RSI & Harga Cross", golden:"Golden Cross DSI", uptrend:"Super Uptrend", breakout:"Volatility Breakout", pullback:"Pullback Uptrend", custom_bandar:"BPJS", asing_akumulasi:"Akumulasi Asing (IDX)", freq_spike:"Lonjakan Frekuensi", deepvalue:"Deep Value", multibagger:"Multibagger", growth:"Growth", defensive:"Defensive", smallcap:"Small Cap (<1T)" };
 function clearChip(kind, key, value){
   if(kind==="search") state.search="";
   else if(kind==="preset") state.activePreset=null;
@@ -4507,6 +4746,15 @@ const SCREENER_COLUMNS = [
   { key:"atr14", label:"ATR 14", group:"Teknikal", cell:s=>`<td class="mono">${s.atr14??"-"}</td>` },
   { key:"clv", label:"CLV", group:"Teknikal", cell:s=>`<td class="mono">${s.clv??"-"}</td>` },
   { key:"baggerScoreTotal", label:"🎯 Skor Bagger", group:"Analisa", cell:s=>`<td><div style="display:flex;align-items:center;gap:7px;flex-wrap:wrap;"><span class="mono" style="font-weight:800;font-size:13.5px;color:var(--${s.baggerTone});">${s.baggerScoreTotal}<span style="font-size:10px;font-weight:500;color:var(--muted);">/100</span></span>${pillHtml(s.baggerTier, s.baggerTone)}</div></td>` },
+  { key:"fundTechScore", label:"🧮 Skor Gabungan", group:"Analisa", cell:s=>{
+      const ft = s.fundTech;
+      if(!ft) return `<td>-</td>`;
+      return `<td><div style="display:flex;align-items:center;gap:7px;flex-wrap:wrap;"><span class="mono" style="font-weight:800;font-size:13.5px;color:var(--${ft.tone});">${ft.total}<span style="font-size:10px;font-weight:500;color:var(--muted);">/100</span></span>${pillHtml(ft.label, ft.tone)}<span class="mono" style="font-size:10px;color:var(--muted);" title="Fundamental ${ft.fund}/60 · Teknikal ${ft.tech}/40">F${ft.fund} · T${ft.tech}</span></div></td>`;
+    } },
+  { key:"marketCap", label:"Market Cap", group:"Fundamental", cell:s=>`<td class="mono">${s.marketCap!=null?fmtCap(s.marketCap):"-"}</td>` },
+  { key:"capTier", label:"Kategori Cap (Tier)", group:"Umum", cell:s=>`<td>${pillHtml(marketCapTier(s.marketCap), s.marketCap!=null?"teal":"muted")}</td>` },
+  { key:"lq45", label:"LQ45", group:"Umum", cell:s=>`<td>${s.indexLq45!=null ? (isLq45(s)?"✅":"-") : "-"}</td>` },
+  { key:"ytdPct", label:"YTD%", group:"Teknikal", cell:s=>`<td class="mono" style="color:${(s.ytdPct??0)>=0?'var(--up)':'var(--down)'}">${s.ytdPct!=null?((s.ytdPct>=0?'+':'')+s.ytdPct.toFixed(2)+'%'):'-'}</td>` },
   { key:"stockbitLive", label:"🔴 Live Stockbit", group:"Analisa", sortable:false, cell:s=>{
       const live = state.stockbitLive[s.ticker];
       if(!live) return `<td><button type="button" class="btn btn-outline" data-stockbit-live="${s.ticker}" style="font-size:11px;padding:4px 8px;color:#f87171;border-color:rgba(239,68,68,0.35);">Tarik</button></td>`;
@@ -4599,6 +4847,7 @@ const RULE_METRICS = [
   { key:"payoutRatio", label:"Payout Ratio (%)" }, { key:"beta", label:"Beta" },
   { key:"der", label:"DER" }, { key:"currentRatio", label:"Current Ratio" },
   { key:"marketCap", label:"Market Cap" }, { key:"sharesOutstanding", label:"Shares Outstanding" },
+  { key:"indexLq45", label:"LQ45" }, { key:"ytdPct", label:"YTD (%)" },
 
   // --- Harga & posisi 52 minggu ---
   { key:"high52w", label:"52 Week High" }, { key:"low52w", label:"52 Week Low" },
@@ -4658,9 +4907,24 @@ const RULE_METRICS = [
   { key:"valuasi", label:"Valuasi", type:"category", options:[
     "Kemahalan (Overvalued)", "Murah (Undervalued)", "Wajar (Fair)"
   ]},
-  { key:"capCategory", label:"Kategori Cap", type:"category", options:[
-    "Mid Cap", "Small Cap", "Big Cap"
+  { key:"capCategory", label:"Kategori Cap (DB)", type:"category", options:[
+    "Mega", "Big", "Mid", "Small", "Micro", "Tidak tersedia"
   ]},
+  // capTier = tier hasil KALKULASI dari marketCap (marketCapTier()), bukan
+  // kolom DB — sinkron dengan filter multi-select "Market Cap" di Screener.
+  // capCategory di atas adalah kolom `cap_category` mentah dari DB; dua-duanya
+  // disediakan karena bisa berbeda isi kalau skema DB belum sinkron.
+  { key:"capTier", label:"Kategori Cap (Tier)", type:"category", options:[
+    "Mega", "Big", "Mid", "Small", "Micro", "Tidak tersedia"
+  ]},
+  // Metrik turunan baru (paritas screener publik) — angka, sehingga bisa
+  // dipakai di rule builder seperti metrik lain. Catatan: ytdPct & indexLq45
+  // TIDAK dideklarasikan di sini karena sudah ada di blok Fundamental atas
+  // (indexLq45 bernilai boolean true/false → ruleMetricValue mengonversinya
+  // jadi 1/0 lewat Number(), jadi rule "LQ45 = 1" tetap valid).
+  { key:"fundTechScore", label:"Skor Gabungan (F60+T40)" },
+  { key:"fundScore60", label:"Skor Fundamental (0-60)" },
+  { key:"techScore40", label:"Skor Teknikal (0-40)" },
   { key:"cekVolume", label:"Sinyal Volume (kategori mentah)", type:"category", options:[
     "Volume Normal", "Volume Spike Kuat", "Volume Sepi", "Volume Spike", "Volume Spike Ekstrem"
   ]},
@@ -5184,6 +5448,11 @@ function renderScreener(){
           <button class="pill ${state.activePreset === 'custom_bandar' ? 'pill-up' : 'pill-muted'}" onclick="state.activePreset = state.activePreset === 'custom_bandar' ? null : 'custom_bandar'; state.page=1; render();" title="Proxy dari lonjakan volume — bukan data asing resmi">🔥 BPJS (proxy volume)</button>
           <button class="pill ${state.activePreset === 'asing_akumulasi' ? 'pill-up' : 'pill-muted'}" onclick="state.activePreset = state.activePreset === 'asing_akumulasi' ? null : 'asing_akumulasi'; state.page=1; render();" title="Net beli asing 20 hari &ge; 50M, konsisten &ge;12/20 hari, likuid &ge;5M/hari — dari data resmi IDX">🐋 Akumulasi Asing (IDX)</button>
           <button class="pill ${state.activePreset === 'freq_spike' ? 'pill-teal' : 'pill-muted'}" onclick="state.activePreset = state.activePreset === 'freq_spike' ? null : 'freq_spike'; state.page=1; render();" title="Rasio Frekuensi &ge; 1.5x rata-rata — butuh kolom frequency/freq_ma20 di DB, kalau belum ada preset ini tidak akan menampilkan hasil">🔊 Lonjakan Frekuensi</button>
+          <button class="pill ${state.activePreset === 'deepvalue' ? 'pill-up' : 'pill-muted'}" onclick="state.activePreset = state.activePreset === 'deepvalue' ? null : 'deepvalue'; state.page=1; render();" title="PER &le;15 · PBV &le;1.5 · ROE &ge;8% · DER &le;2 — kriteria Deep Value ala screener publik">💎 Deep Value</button>
+          <button class="pill ${state.activePreset === 'multibagger' ? 'pill-up' : 'pill-muted'}" onclick="state.activePreset = state.activePreset === 'multibagger' ? null : 'multibagger'; state.page=1; render();" title="PER &le;20 · ROE &ge;12% · DER &le;1.5 · NPM &ge;5% — kandidat multibagger">📈 Multibagger</button>
+          <button class="pill ${state.activePreset === 'growth' ? 'pill-up' : 'pill-muted'}" onclick="state.activePreset = state.activePreset === 'growth' ? null : 'growth'; state.page=1; render();" title="ROE &ge;15% · NPM &ge;10% — bisnis efisien & profitabel">🌱 Growth</button>
+          <button class="pill ${state.activePreset === 'defensive' ? 'pill-up' : 'pill-muted'}" onclick="state.activePreset = state.activePreset === 'defensive' ? null : 'defensive'; state.page=1; render();" title="ROE &ge;8% · DER &le;1.5 · NPM &ge;5% — fundamental stabil">🛡️ Defensive</button>
+          <button class="pill ${state.activePreset === 'smallcap' ? 'pill-up' : 'pill-muted'}" onclick="state.activePreset = state.activePreset === 'smallcap' ? null : 'smallcap'; state.page=1; render();" title="ROE &ge;8% · PER &le;25 · Market Cap &lt; Rp1 T — butuh kolom market_cap/shares_outstanding di DB">🐜 Small Cap (&lt;1T)</button>
             </div>
         </div>
         <div class="field">
@@ -5296,6 +5565,11 @@ function renderScreener(){
         <div class="filter-grid">
           ${renderMultiSelect("sektor", "Sektor", getOpts("sektor"))}
           ${renderMultiSelect("syariahLabel", "Syariah", getOpts("syariahLabel"))}
+          ${renderMultiSelect("capTier", "Market Cap", ["Mega", "Big", "Mid", "Small", "Micro", "Tidak tersedia"])}
+          ${renderMultiSelect("lq45", "LQ45", ["Ya", "Tidak", "Tidak tersedia"])}
+        </div>
+        <div style="font-size:10.5px;color:var(--muted);margin-top:6px;line-height:1.5;" title="Mega >100T · Big 10–100T · Mid 1–10T · Small 100M–1T · Micro <100M">
+          📐 Kategori Cap: Mega &gt;100T · Big 10–100T · Mid 1–10T · Small 100M–1T · Micro &lt;100M (Rp). Kolom "Tidak tersedia" muncul kalau market_cap belum ada di DB — saat itu filter Cap tidak bisa memilah.
         </div>
       </div>
 
@@ -5336,6 +5610,9 @@ function renderScreener(){
             ${renderRangeFilter("rsi7", "RSI 7", {step:"0.1"})}
             ${renderRangeFilter("rsi21", "RSI 21", {step:"0.1"})}
             ${renderRangeFilter("frequency", "Frekuensi (x transaksi)", {step:"1"})}
+            ${renderRangeFilter("marketCap", "Market Cap (Rp)", {step:"1000000000"})}
+            ${renderRangeFilter("week52ChangePct", "52W Change (%)", {step:"1"})}
+            ${renderRangeFilter("ytdPct", "YTD (%)", {step:"1"})}
           </div>
         </div>
       </div>
@@ -5698,6 +5975,12 @@ function renderDashboard(){
   const losers = data.filter(s=>(s.changePct||0)<0).length;
   const breadth = total ? Math.round(gainers/total*100) : 0;
   const top = leaders[0];
+  // Kartu metrik jadi tombol — klik membuka modal daftar saham (ala
+  // ihsgscreener) sesuai metriknya. Top Candidate langsung buka detail.
+  const dashCard = (key, tone, lbl, valHtml, note, extraStyle) => `
+    <button type="button" class="summary-card ${tone} dash-card" data-dash-metric="${key}" ${extraStyle?`style="${extraStyle}"`:""} title="Klik untuk lihat detail ${lbl}">
+      <div class="summary-lbl">${lbl}</div><div class="summary-val"${extraStyle?` style="${extraStyle}"`:""}>${valHtml}</div><div class="summary-note">${note}</div>
+    </button>`;
   return `<div class="dashboard-page">
     <div class="dashboard-hero panel">
       <div><div class="filter-section-title"><span>◈ MARKET OVERVIEW</span><span class="line"></span></div>
@@ -5705,13 +5988,13 @@ function renderDashboard(){
       <div class="dashboard-breadth"><div class="dashboard-breadth-label"><span>Market breadth</span><strong>${breadth}% naik</strong></div><div class="breadth-track"><div style="width:${breadth}%"></div></div><div class="dashboard-breadth-foot"><span style="color:var(--up)">▲ ${gainers} naik</span><span style="color:var(--down)">▼ ${losers} turun</span></div></div>
     </div>
     <div class="summary-grid dashboard-summary">
-      <div class="summary-card tone-teal"><div class="summary-lbl">Total Saham</div><div class="summary-val">${fmtNum(total)}</div><div class="summary-note">universe aktif</div></div>
-      <div class="summary-card tone-up"><div class="summary-lbl">Undervalued</div><div class="summary-val" style="color:var(--up)">${fmtNum(undervalued)}</div><div class="summary-note">PER &lt; 10 · ROE ≥ 15%</div></div>
-      <div class="summary-card tone-gold"><div class="summary-lbl">Fair Value</div><div class="summary-val" style="color:var(--gold)">${fmtNum(fair)}</div><div class="summary-note">score 35–74</div></div>
-      <div class="summary-card tone-down"><div class="summary-lbl">Danger Zone</div><div class="summary-val" style="color:var(--down)">${fmtNum(danger)}</div><div class="summary-note">score rendah / turun tajam</div></div>
-      <div class="summary-card"><div class="summary-lbl">Rata-rata Score</div><div class="summary-val">${avgScore.toFixed(1)}<span style="font-size:12px;color:var(--muted)"> / 100</span></div><div class="summary-note">rule-based intelligence</div></div>
-      <div class="summary-card tone-gold"><div class="summary-lbl">Top Candidate</div><div class="summary-val" style="font-size:18px;color:var(--gold)">${top?escapeHtml(top.ticker):'-'}</div><div class="summary-note">${top?`score ${top.baggerScoreTotal}/100`:'-'}</div></div>
-      <div class="summary-card tone-teal"><div class="summary-lbl">Total Nilai Transaksi</div><div class="summary-val" style="font-size:18px;color:var(--teal)">${fmtCap(volume)}</div><div class="summary-note">estimasi satu sesi</div></div>
+      ${dashCard("total","tone-teal","Total Saham",fmtNum(total),"universe aktif · klik untuk lihat semua")}
+      ${dashCard("under","tone-up","Undervalued",fmtNum(undervalued),"PER &lt; 10 · ROE ≥ 15%")}
+      ${dashCard("fair","tone-gold","Fair Value",fmtNum(fair),"score 35–74")}
+      ${dashCard("danger","tone-down","Danger Zone",fmtNum(danger),"score rendah / turun tajam")}
+      ${dashCard("avgscore","","Rata-rata Score",`${avgScore.toFixed(1)}<span style="font-size:12px;color:var(--muted)"> / 100</span>`,"rule-based intelligence")}
+      ${dashCard("top","tone-gold","Top Candidate",top?escapeHtml(top.ticker):'-',top?`score ${top.baggerScoreTotal}/100 · klik untuk detail`:'-',"font-size:18px;color:var(--gold)")}
+      ${dashCard("value","tone-teal","Total Nilai Transaksi",fmtCap(volume),"estimasi satu sesi · klik untuk peringkat likuiditas","font-size:18px;color:var(--teal)")}
     </div>
     <div class="dashboard-columns">
       <div class="panel"><div class="panel-heading"><h3>IHSG breadth snapshot</h3><span class="pill pill-up">LIVE · EOD</span></div>
@@ -5722,6 +6005,141 @@ function renderDashboard(){
     </div>
     <div class="panel"><div class="panel-heading"><h3>Ultimate Score leaderboard</h3><span class="panel-heading-note">kombinasi fundamental · momentum · smart money</span></div><div class="table-wrap"><table class="data-table dashboard-leaderboard"><thead><tr><th>#</th><th>Saham</th><th>Sektor</th><th>Harga</th><th>Perubahan</th><th>Score</th><th>Tier</th><th></th></tr></thead><tbody>${leaders.map((s,i)=>`<tr><td class="mono">${i+1}</td><td><button class="ticker-link" data-detail="${escapeHtml(s.ticker)}">${escapeHtml(s.ticker)}</button></td><td>${escapeHtml(s.sektor||'-')}</td><td class="mono">${dNum(s.cClose)}</td><td class="mono" style="color:${(s.changePct||0)>=0?'var(--up)':'var(--down)'}">${dNum(s.changePct,{plusSign:true,decimals:2,suffix:'%'})}</td><td class="mono" style="color:var(--gold);font-weight:700">${s.baggerScoreTotal}</td><td>${pillHtml(s.baggerTier||'-',s.baggerTone||'muted')}</td><td><button class="btn btn-outline" data-detail="${escapeHtml(s.ticker)}">Detail</button></td></tr>`).join('')}</tbody></table></div></div>
   </div>`;
+}
+
+// ==========================================
+// DETAIL KARTU DASHBOARD (ala ihsgscreener) — klik kartu ringkasan →
+// modal berisi daftar saham yang memenuhi metrik tsb + filter pencarian,
+// sortir kolom, dan tombol "Detail" ke modal Detail Emiten.
+// ==========================================
+function dashMetricStocks(key){
+  const data = enriched().filter(s=>s.ticker);
+  switch(key){
+    case "total":   return data;
+    case "under":   return data.filter(s => (s.per != null && s.per > 0 && s.per < 10) && (s.roe == null || s.roe >= 15));
+    case "fair":    return data.filter(s => (s.per == null || s.per >= 10) && (s.baggerScoreTotal||0) >= 35 && (s.baggerScoreTotal||0) < 75);
+    case "danger":  return data.filter(s => (s.baggerScoreTotal||0) < 35 || (s.changePct||0) < -5);
+    case "value":   return [...data].sort((a,b)=>(Number(b.turnover ?? b.valueTraded ?? 0)||0)-(Number(a.turnover ?? a.valueTraded ?? 0)||0));
+    case "avgscore":return [...data].sort((a,b)=>(b.baggerScoreTotal||0)-(a.baggerScoreTotal||0));
+    default:        return data;
+  }
+}
+const DASH_METRIC_META = {
+  total:    { title:"Semua Saham (Universe Aktif)", desc:"Seluruh saham dalam database screener hari ini." },
+  under:    { title:"Undervalued — PER < 10 · ROE ≥ 15%", desc:"Fundamental murah dengan profitabilitas sehat. Bukan rekomendasi beli." },
+  fair:     { title:"Fair Value — Skor 35–74", desc:"Valuasi tidak ekstrem & skor komposit menengah. Pantau momentumnya." },
+  danger:   { title:"Danger Zone — Skor < 35 / Turun > 5%", desc:"Skor komposit rendah atau jatuh tajam hari ini. Waspada pisau jatuh." },
+  avgscore: { title:"Distribusi Skor Komposit", desc:"Rata-rata skor seluruh pasar + peringkat tertinggi. Menunjukkan apakah pasar sedang murah atau mahal secara agregat." },
+  value:    { title:"Peringkat Nilai Transaksi (Likuiditas)", desc:"Saham paling likuid hari ini berdasarkan total nilai (turnover). Likuiditas = kemudahan masuk/keluar posisi." }
+};
+function dashMetricOpen(key){
+  state.dashMetricKey = key;
+  state.dashMetricSearch = "";
+  state.dashMetricSort = { key: key==="value" ? "value" : "score", asc:false };
+  render();
+}
+function dashMetricClose(){
+  state.dashMetricKey = null;
+  render();
+}
+function dashMetricToggleSort(key){
+  if(state.dashMetricSort.key === key) state.dashMetricSort.asc = !state.dashMetricSort.asc;
+  else state.dashMetricSort = { key, asc:true };
+  render();
+}
+function renderDashMetricModal(){
+  const key = state.dashMetricKey;
+  if(!key) return "";
+  const meta = DASH_METRIC_META[key] || { title:key, desc:"" };
+  const all = dashMetricStocks(key);
+  const q = state.dashMetricSearch.trim().toUpperCase();
+  let rows = all.filter(s=>!q || s.ticker.includes(q) || String(s.name||"").toUpperCase().includes(q));
+  const dir = state.dashMetricSort.asc ? 1 : -1;
+  const sorters = {
+    code:  s=>s.ticker, score: s=>s.baggerScoreTotal||0, price: s=>s.cClose,
+    chg:   s=>s.changePct, value: s=>Number(s.turnover ?? s.valueTraded ?? 0)||0,
+    per: s=>s.per, roe: s=>s.roe
+  };
+  const sorter = sorters[state.dashMetricSort.key];
+  if(sorter) rows = [...rows].sort((a,b)=>{
+    const va=sorter(a), vb=sorter(b);
+    if(va==null&&vb==null) return 0; if(va==null) return 1; if(vb==null) return -1;
+    return typeof va==="string" ? va.localeCompare(vb)*dir : (va-vb)*dir;
+  });
+
+  const arrow = k => state.dashMetricSort.key===k ? (state.dashMetricSort.asc?" ▲":" ▼") : "";
+  const th = (k,label)=>`<th style="cursor:pointer;user-select:none;" data-dash-sort="${k}">${label}${arrow(k)}</th>`;
+
+  // Statistik tambahan khusus "Rata-rata Score" & "Total Nilai Transaksi"
+  let extraHtml = "";
+  if(key==="avgscore"){
+    const avg = all.length ? all.reduce((a,s)=>a+(Number(s.baggerScoreTotal)||0),0)/all.length : 0;
+    const buckets = [0,0,0,0]; // <35, 35-49, 50-74, >=75
+    all.forEach(s=>{ const v=Number(s.baggerScoreTotal)||0; if(v>=75) buckets[3]++; else if(v>=50) buckets[2]++; else if(v>=35) buckets[1]++; else buckets[0]++; });
+    extraHtml = `
+      <div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:14px;">
+        ${[["Skor < 35",buckets[0],"var(--down)"],["35–49",buckets[1],"var(--muted)"],["50–74",buckets[2],"var(--gold)"],["≥ 75",buckets[3],"var(--up)"]].map(([l,v,c])=>`
+          <div style="flex:1;min-width:110px;background:rgba(0,0,0,.2);border:1px solid var(--border);border-radius:10px;padding:10px 12px;">
+            <div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;">${l}</div>
+            <div style="font-size:20px;font-weight:800;color:${c};font-family:'JetBrains Mono',monospace;">${v}</div>
+          </div>`).join("")}
+        <div style="flex:1;min-width:110px;background:rgba(0,0,0,.2);border:1px solid var(--border);border-radius:10px;padding:10px 12px;">
+          <div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;">Rata-rata</div>
+          <div style="font-size:20px;font-weight:800;font-family:'JetBrains Mono',monospace;">${avg.toFixed(1)}</div>
+        </div>
+      </div>`;
+  } else if(key==="value"){
+    const tot = all.reduce((a,s)=>a+(Number(s.turnover ?? s.valueTraded ?? 0)||0),0);
+    const top5 = all.slice(0,5).reduce((a,s)=>a+(Number(s.turnover ?? s.valueTraded ?? 0)||0),0);
+    extraHtml = `
+      <div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:14px;">
+        <div style="flex:1;min-width:140px;background:rgba(0,0,0,.2);border:1px solid var(--border);border-radius:10px;padding:10px 12px;">
+          <div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;">Total Pasar</div>
+          <div style="font-size:20px;font-weight:800;color:var(--teal);font-family:'JetBrains Mono',monospace;">${fmtCap(tot)}</div>
+        </div>
+        <div style="flex:1;min-width:140px;background:rgba(0,0,0,.2);border:1px solid var(--border);border-radius:10px;padding:10px 12px;">
+          <div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;">Konsentrasi Top 5</div>
+          <div style="font-size:20px;font-weight:800;font-family:'JetBrains Mono',monospace;">${tot>0?Math.round(top5/tot*100):0}%</div>
+        </div>
+      </div>`;
+  }
+
+  return `
+    <div style="margin-bottom:12px;">
+      <div style="font-size:16px;font-weight:800;">${escapeHtml(meta.title)}</div>
+      <div style="font-size:12px;color:var(--muted);margin-top:2px;">${escapeHtml(meta.desc)}</div>
+    </div>
+    ${extraHtml}
+    <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:10px;">
+      <div class="search-wrap" style="flex:1;min-width:200px;">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--muted)" stroke-width="2.5"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+        <input id="dashMetricSearch" value="${escapeHtml(state.dashMetricSearch)}" placeholder="Cari kode / nama…" />
+      </div>
+      <span style="font-size:11.5px;color:var(--muted);">${rows.length} saham tampil${q?` (dari ${all.length})`:""}</span>
+      <button type="button" class="btn btn-outline" id="dashMetricExportBtn" style="color:#22d3ee;border-color:rgba(6,182,212,0.4);" title="Ekspor daftar ini ke Excel">📊 Ekspor Excel</button>
+    </div>
+    <div class="table-wrap" style="max-height:55vh;">
+      <table class="data-table mono">
+        <thead><tr><th>#</th>${th("code","Kode")}<th style="cursor:default;">Sektor</th>${th("price","Harga")}${th("chg","Δ%")}${th("score","Skor")}<th style="cursor:default;">Tier</th>${key==="value"?th("value","Nilai (Rp)"):""}${key==="under"?th("per","PER")+"<th style=\"cursor:default;\">ROE</th>":""}<th style="cursor:default;"></th></tr></thead>
+        <tbody>
+          ${rows.slice(0,300).map((s,i)=>`
+            <tr>
+              <td>${i+1}</td>
+              <td class="ticker-cell"><button class="ticker-link" data-dash-detail="${escapeHtml(s.ticker)}">${escapeHtml(s.ticker)}</button></td>
+              <td style="white-space:normal;max-width:150px;font-family:'Sora',sans-serif;">${escapeHtml(s.sektor||"-")}</td>
+              <td>${fmtNum(s.cClose)}</td>
+              <td style="font-weight:700;color:${(s.changePct||0)>=0?'var(--up)':'var(--down)'};">${s.changePct!=null?(s.changePct>=0?"+":"")+s.changePct.toFixed(2)+"%":"-"}</td>
+              <td style="color:var(--gold);font-weight:700;">${s.baggerScoreTotal||"-"}</td>
+              <td>${pillHtml(s.baggerTier||"-", s.baggerTone||"muted")}</td>
+              ${key==="value"?`<td>${fmtCap(Number(s.turnover ?? s.valueTraded ?? 0)||0)}</td>`:""}
+              ${key==="under"?`<td>${s.per!=null?s.per.toFixed(1)+"x":"-"}</td><td>${s.roe!=null?s.roe.toFixed(1)+"%":"-"}</td>`:""}
+              <td><button type="button" class="link-btn" data-dash-detail="${escapeHtml(s.ticker)}">Detail</button></td>
+            </tr>`).join("") || `<tr><td colspan="10"><div class="empty-box">Tidak ada saham yang cocok.</div></td></tr>`}
+        </tbody>
+      </table>
+    </div>
+    ${rows.length>300?`<div style="font-size:11px;color:var(--muted);margin-top:8px;">Menampilkan 300 teratas dari ${rows.length} — persempit pencarian untuk melihat lainnya, atau ekspor ke Excel.</div>`:""}
+  `;
 }
 
 function renderBrokerStalker(){
@@ -8547,6 +8965,13 @@ function attachContentEvents(){
   });
 
   document.querySelectorAll("[data-detail]").forEach(b=> b.onclick=()=>openDetail(b.dataset.detail));
+  document.querySelectorAll("[data-dash-metric]").forEach(b=> b.onclick=()=>{
+    const key=b.dataset.dashMetric;
+    if(key==="top"){
+      const top=dashMetricStocks("avgscore")[0];
+      if(top) openDetail(top.ticker);
+    } else dashMetricOpen(key);
+  });
   document.querySelectorAll("[data-fav]").forEach(b=> b.onclick=()=>toggleFav(b.dataset.fav));
   document.querySelectorAll("[data-chart]").forEach(b=> b.onclick=()=>loadChart(b.dataset.chart));
   document.querySelectorAll("[data-stockbit-live]").forEach(b=> b.onclick=(e)=>{ e.stopPropagation(); fetchStockbitLive(b.dataset.stockbitLive); });
@@ -8958,11 +9383,12 @@ window.addEventListener("resize", ()=>{
 
 // Fungsi Pemanis UI: Membuat baris tabel berkedip saat ada data live masuk
 window.updateLivePriceUI = function(ticker, currentPrice, prevPrice) {
-    if (!currentPrice || currentPrice === prevPrice) return;
-    const row = document.getElementById('row-' + ticker);
+    if (!Number.isFinite(Number(currentPrice)) || Number(currentPrice) === Number(prevPrice)) return;
+    const row = document.getElementById('row-' + String(ticker).toUpperCase());
     if (row) {
+        const prev = Number.isFinite(Number(prevPrice)) ? Number(prevPrice) : Number(currentPrice);
         // Hijau jika naik, Merah jika turun
-        const flashColor = currentPrice > prevPrice ? 'rgba(16,185,129,0.3)' : 'rgba(239,68,68,0.3)';
+        const flashColor = currentPrice > prev ? 'rgba(16,185,129,0.3)' : 'rgba(239,68,68,0.3)';
         row.style.transition = 'none';
         row.style.backgroundColor = flashColor;
         
@@ -9011,7 +9437,14 @@ function showToast(message, tone = "up") {
     const toast = document.createElement('div');
     toast.className = 'toast';
     toast.style.borderLeftColor = `var(--${tone})`;
-    toast.innerHTML = `<div style="font-size:12px; font-weight:bold;">🔥 Radar Day Trade</div><div style="font-size:11px;">${message}</div>`;
+    const msgEl = document.createElement('div');
+    msgEl.style.fontSize = '11px';
+    msgEl.textContent = String(message); // textContent, bukan innerHTML — pesan bisa memuat data eksternal
+    const head = document.createElement('div');
+    head.style.cssText = 'font-size:12px; font-weight:bold;';
+    head.textContent = '🔥 Radar Day Trade';
+    toast.appendChild(head);
+    toast.appendChild(msgEl);
     
     container.appendChild(toast);
     playAlertSound();
@@ -9026,11 +9459,7 @@ function showToast(message, tone = "up") {
 
 
 // --- LISTENER UNTUK DATA LIVE WEBSOCKET DARI EKSTENSI ---
-window.addEventListener('message', function(event) {
-  if (event.data && event.data.type === 'FROM_EXTENSION_WS') {
-      console.log("🔥 DATA LIVE MASUK DARI STOCKBIT:", event.data.data);
-  }
-});
+// (log awal dipindah ke listener utama di bawah agar tidak dobel)
 
 // ==========================================
 // 🥷 WEBSOCKET INTERCEPTOR (DAY TRADE MODE)
@@ -9072,11 +9501,11 @@ function handleLiveTick(parsedData) {
     if (!payload) return;
 
     // Asumsi nama field dari Stockbit (Akan kita revisi besok)
-    const ticker = payload.symbol || payload.code; 
-    const currentPrice = payload.price || payload.last;
-    const currentVol = payload.volume || payload.vol;
+    const ticker = String(payload.symbol || payload.code || '').trim().toUpperCase();
+    const currentPrice = Number(payload.price ?? payload.last);
+    const currentVol = Number(payload.volume ?? payload.vol);
 
-    if (!ticker) return;
+    if (!ticker || !Number.isFinite(currentPrice) || currentPrice <= 0) return;
 
     // Pastikan state saham live sudah siap
     if (!state.stockbitLive[ticker]) {
@@ -9088,14 +9517,14 @@ function handleLiveTick(parsedData) {
     // Perbarui State Harga
     state.stockbitLive[ticker].mapped = {
         ...state.stockbitLive[ticker].mapped,
-        last: currentPrice || prevPrice,
-        volume: currentVol || state.stockbitLive[ticker].mapped.volume
+        last: currentPrice,
+        volume: Number.isFinite(currentVol) && currentVol >= 0 ? currentVol : state.stockbitLive[ticker].mapped.volume
     };
     state.stockbitLive[ticker].fetchedAt = Date.now();
 
     // 🔥 LOGIKA DETEKSI VOLUME SPIKE (DAY TRADE)
     const dbData = state.stocks.find(s => s.ticker === ticker);
-    if (dbData && dbData.cVol && currentVol) {
+    if (dbData && dbData.cVol && Number.isFinite(currentVol) && currentVol > 0) {
          // Jika volume lompat 20% dari EOD sebelumnya dengan sangat cepat
          if (currentVol > (dbData.cVol * 1.2)) {
              state.stockbitLive[ticker].intradaySpike = true;
@@ -9104,23 +9533,24 @@ function handleLiveTick(parsedData) {
 
     // Perbarui UI jika saham ini sedang dirender di layar (tanpa me-render seluruh tabel agar tidak lag)
     updateLivePriceUI(ticker, currentPrice, prevPrice);
-// (Panggil fungsi animasi kedip di akhir handleLiveTick)
-    updateLivePriceUI(ticker, currentPrice, prevPrice);
-} // <--- Ini adalah kurung tutup dari fungsi handleLiveTick}
+} // <--- kurung tutup fungsi handleLiveTick
 
-// 3. Fungsi Pemanis UI (Berkedip Hijau/Merah)
+// 3. Fungsi Pemanis UI (Berkedip Hijau/Merah) — dedup: dua versi identik
+// sebelumnya saling menimpa (function declaration terakhir menang).
 function updateLivePriceUI(ticker, currentPrice, prevPrice) {
-    if (!currentPrice || currentPrice === prevPrice) return;
+    if (!Number.isFinite(Number(currentPrice)) || currentPrice === prevPrice) return;
+    const prev = Number.isFinite(Number(prevPrice)) ? Number(prevPrice) : Number(currentPrice);
 
-    // Cari elemen di DOM yang menampilkan harga saham ini
-    // (Pastikan tabel screener Anda memiliki class/id yang mudah ditarget)
-    const priceCells = document.querySelectorAll(`.ticker-row-${ticker} .price-cell`);
+    // Tabel utama memakai id `row-TICKER`; gunakan selector CSS yang aman
+    // agar ticker tidak dapat memecahkan selector dan dukung UI terbaru.
+    const row = document.getElementById('row-' + String(ticker).toUpperCase());
+    const priceCells = row ? row.querySelectorAll('.price-cell') : document.querySelectorAll(`.ticker-row-${CSS.escape(String(ticker))} .price-cell`);
     
     priceCells.forEach(cell => {
         cell.textContent = fmtNum(currentPrice);
         
         // Efek Kedip Harga (Naik = Hijau, Turun = Merah)
-        const flashColor = currentPrice > prevPrice ? 'rgba(16,185,129,0.5)' : 'rgba(239,68,68,0.5)';
+        const flashColor = currentPrice > prev ? 'rgba(16,185,129,0.5)' : 'rgba(239,68,68,0.5)';
         cell.style.transition = 'none';
         cell.style.backgroundColor = flashColor;
         

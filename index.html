@@ -11,6 +11,7 @@
 <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 
 <link rel="stylesheet" href="styles.css">
+<link rel="stylesheet" href="quant-hub.css">
 </head>
 <body>
 
@@ -248,7 +249,19 @@
   </div>
 </div>
 
+<!-- Modal Detail Metrik Dashboard (klik kartu ringkasan) -->
+<div class="modal-overlay" id="dashMetricModalOverlay">
+  <div class="modal detail-modal" role="dialog" aria-modal="true" aria-labelledby="dashMetricModalTitle" tabindex="-1">
+    <div class="modal-top">
+      <h3 id="dashMetricModalTitle">Detail Metrik</h3>
+      <button class="close-btn" id="dashMetricModalClose" aria-label="Tutup detail metrik">✕</button>
+    </div>
+    <div id="dashMetricModalContent"></div>
+  </div>
+</div>
+
 <script src="config.js"></script>
 <script src="app.js"></script>
+<script src="quant-hub.js"></script>
 </body>
 </html>
