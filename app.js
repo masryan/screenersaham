@@ -256,56 +256,53 @@ function tradingDaysInRange(fromDateStr, toDateStr){
 async function stockbitFetchMarketDetector(ticker, fromDate, toDate, days){
   if(!state.stockbitToken) return { error: 'Token Stockbit belum diisi. Buka "⚙️ Pengaturan" → Live Data Stockbit.' };
   if(!state.stockbitBrokerEndpoint) return { error: 'Endpoint Broker Summary belum diisi di Pengaturan.' };
-  // Endpoint /marketdetectors mengembalikan baris CAMPUR banyak tanggal
-  // sekaligus dalam satu response, dan "limit" di URL membatasi TOTAL baris
-  // gabungan itu — bukan per hari. Kalau limit terlalu kecil untuk rentang
-  // hari & keaktifan saham, tanggal-tanggal lama bisa kepotong (tidak ikut
-  // ke-return sama sekali). Di sini limit dihitung otomatis dari jumlah
-  // hari yang diminta (dengan margin), supaya tidak perlu diutak-atik
-  // manual tiap kali "Periode" diubah. Kalau URL endpoint kamu (custom di
-  // Pengaturan) masih pakai angka mati (mis. "limit=200"), ganti jadi
-  // "limit={limit}" dulu supaya nilai otomatis ini kepakai.
+  // Endpoint /order-trade/broker/distribution dipanggil SATU tanggal per
+  // request ({date} di URL) — bukan rentang. Param toDate/days tidak dipakai
+  // lagi, dibiarkan demi kompatibilitas pemanggil lama. Kalau nanti Stockbit
+  // mengubah skemanya, sesuaikan URL default (STOCKBIT_DEFAULT_BROKER_EP)
+  // dan parser parseStockbitMarketDetector() di bawah.
   const url = state.stockbitBrokerEndpoint
     .replace("{ticker}", encodeURIComponent(ticker))
-    .replace("{date}", fromDate); 
-    
+    .replace("{date}", fromDate);
+
   return stockbitRawRequest(url);
 }
 
-// Endpoint /marketdetectors/{ticker} mengembalikan broker_summary.brokers_buy /
-// .brokers_sell sebagai daftar baris CAMPUR banyak tanggal sekaligus (field
-// netbs_date per baris, format YYYYMMDD) — bukan sudah dikelompokkan per hari.
-// Fungsi ini mengelompokkan per tanggal lalu ambil top 5 net value per sisi
-// (buy/sell) untuk tiap tanggal. Field asli (blot/bval untuk buy,
-// slot/sval untuk sell) diverifikasi manual dari DevTools tanggal 25 Agu 2026 —
-// kalau Stockbit ganti skema respons di masa depan, sesuaikan lagi di sini.
+// Endpoint /order-trade/broker/distribution mengembalikan broker distribution
+// untuk SATU tanggal ({date} di URL) — bukan rentang. Struktur respons yang
+// diverifikasi manual dari DevTools (25 Agu 2026): data.brokers_buy /
+// data.brokers_sell (alias kemungkinan buy/sell), tiap barisnya berisi broker
+// + lot/value (alias blot/bval untuk buy, slot/sval untuk sell). Parser di
+// bawah menerima semua alias itu; kalau Stockbit ganti skema respons di masa
+// depan, tambahkan alias barunya di daftar kunci di sini.
 function parseStockbitMarketDetector(raw, fetchDate){
   if(!raw || typeof raw !== "object") return null;
-  const bs = raw.data || null;
-  if(!bs) return null;
-  
-  // Endpoint distribution biasanya memisahkan 'buy' dan 'sell'
-  const buyRows = Array.isArray(bs.buy) ? bs.buy : [];
-  const sellRows = Array.isArray(bs.sell) ? bs.sell : [];
+  const bs = raw.data || raw.result || raw;
+  if(!bs || typeof bs !== "object") return null;
+
+  const buyRows = ["brokers_buy", "buy", "buy_rows", "distribution_buy"]
+    .map(k => (Array.isArray(bs[k]) ? bs[k] : null)).find(Boolean) || [];
+  const sellRows = ["brokers_sell", "sell", "sell_rows", "distribution_sell"]
+    .map(k => (Array.isArray(bs[k]) ? bs[k] : null)).find(Boolean) || [];
   if(!buyRows.length && !sellRows.length) return null;
 
-  const byDate = {}; 
+  const byDate = {};
   const ensure = (date) => (byDate[date] ||= { buy: [], sell: [] });
-  const dateStr = fetchDate; // Menggunakan tanggal dari parameter request
+  const dateStr = fetchDate || todayLocalISO(); // endpoint ini 1 tanggal/request
 
   buyRows.forEach(r => {
     ensure(dateStr).buy.push({
-      broker_code: String(r.broker || r.broker_code || "").toUpperCase(),
-      lot: Number(r.lot) || null,
-      value_idr: Number(r.value || r.value_idr) || 0,
+      broker_code: String(r.broker || r.broker_code || r.brokerId || "").toUpperCase(),
+      lot: Number(r.lot ?? r.blot ?? r.slot) || null,
+      value_idr: Number(r.value ?? r.bval ?? r.sval ?? r.value_idr) || 0,
     });
   });
-  
+
   sellRows.forEach(r => {
     ensure(dateStr).sell.push({
-      broker_code: String(r.broker || r.broker_code || "").toUpperCase(),
-      lot: Number(r.lot) || null,
-      value_idr: Number(r.value || r.value_idr) || 0,
+      broker_code: String(r.broker || r.broker_code || r.brokerId || "").toUpperCase(),
+      lot: Number(r.lot ?? r.slot ?? r.blot) || null,
+      value_idr: Number(r.value ?? r.sval ?? r.bval ?? r.value_idr) || 0,
     });
   });
 
@@ -497,7 +494,7 @@ async function fetchAndSaveBrokerSummaryBulk(tickers, rangeFrom, rangeTo){
       if(res.error){
         lastError = res.error;
       } else {
-        const parsed = parseStockbitMarketDetector(res.raw);
+        const parsed = parseStockbitMarketDetector(res.raw, chunkFrom);
         if(parsed && Object.keys(parsed).length){
           Object.assign(byDate, parsed);
           anyOk = true;
@@ -1450,7 +1447,11 @@ function loadSettings(){
   try{
     state.stockbitToken = sanitizeStockbitToken(localStorage.getItem(LS_STOCKBIT_TOKEN) || "");
     state.stockbitQuoteEndpoint = localStorage.getItem(LS_STOCKBIT_QUOTE_EP) || STOCKBIT_DEFAULT_QUOTE_EP;
-    state.stockbitBrokerEndpoint = localStorage.getItem(LS_STOCKBIT_BROKER_EP) || STOCKBIT_DEFAULT_BROKER_EP;
+    // Guard: endpoint lama (marketdetectors dengan {from}/{to}) tidak punya
+    // placeholder {date} yang wajib dipakai fetcher sekarang — kalau masih
+    // tersimpan di localStorage, paksa balik ke default terverifikasi.
+    const savedBrokerEp = localStorage.getItem(LS_STOCKBIT_BROKER_EP) || "";
+    state.stockbitBrokerEndpoint = (savedBrokerEp && savedBrokerEp.includes("{date}")) ? savedBrokerEp : STOCKBIT_DEFAULT_BROKER_EP;
     state.stockbitHistoricalEndpoint = localStorage.getItem(LS_STOCKBIT_HISTORICAL_EP) || STOCKBIT_DEFAULT_HISTORICAL_EP;
     state.stockbitProxyUrl = localStorage.getItem(LS_STOCKBIT_PROXY) || "";
     const savedSrc = localStorage.getItem(LS_STOCKBIT_TOKEN_SOURCE);
@@ -6599,19 +6600,20 @@ function renderBrokerSummary(){
 
       ${state.bsMsg ? `<div class="bs-msg ${state.bsMsgError?"bs-msg-error":"bs-msg-ok"}">${escapeHtml(state.bsMsg)}</div>` : ""}
 
-      <div style="margin:14px 0; padding:12px; border:1px solid rgba(239,68,68,0.25); border-radius:10px; background:rgba(239,68,68,0.06);">
-        <div style="display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:10px;">
-          <div style="font-size:12px; color:var(--muted); max-width:560px; line-height:1.5;">
+      <div class="bs-auto-bulk-box" style="margin:14px 0; padding:12px; border:1px solid rgba(239,68,68,0.25); border-radius:10px; background:rgba(239,68,68,0.06);">
+        <div class="bs-auto-bulk-inner" style="display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:10px;">
+          <div class="bs-auto-bulk-desc" style="font-size:12px; color:var(--muted); max-width:560px; line-height:1.5;">
             🔴 Tarik otomatis Top 5 Buy/Sell dari Stockbit untuk
             <b>${state.selectedForBacktest.size} saham yang dicentang</b> di tab 📋 Screener,
             untuk hari bursa dari <b>${escapeHtml(fmtDateID(state.bsAutoBulkFrom))}</b> sampai
-            <b>${escapeHtml(fmtDateID(state.bsAutoBulkTo))}</b> (Senin&ndash;Jumat, libur bursa nasional otomatis dilewati).
+            <b>${escapeHtml(fmtDateID(state.bsAutoBulkTo))}</b>
+            <span class="bs-auto-bulk-desc-extra">(Senin&ndash;Jumat, libur bursa nasional otomatis dilewati).
             Hari yang datanya sudah ada di database otomatis dilewati (skip) — hanya hari yang belum ada
             dan hari bursa paling baru yang benar-benar ditarik ulang ke Stockbit.
             Butuh "Endpoint Broker Summary" &amp; Token terisi di ⚙️ Pengaturan. Hasil otomatis disimpan
-            langsung ke database yang sama seperti input manual di bawah.
+            langsung ke database yang sama seperti input manual di bawah.</span>
           </div>
-          <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
+          <div class="bs-auto-bulk-controls" style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
             <label style="font-size:11.5px; color:var(--muted); display:flex; align-items:center; gap:6px; white-space:nowrap;">
               Dari
               <input type="date" id="bsAutoBulkFromInput"
@@ -6626,7 +6628,7 @@ function renderBrokerSummary(){
                 ${state.stockbitBrokerBulkLoading ? "disabled" : ""}
                 style="padding:6px 8px; border-radius:8px; border:1px solid var(--border); background:var(--bg2,#0f1420); color:var(--text,#fff); font-size:12px;">
             </label>
-            <button type="button" class="btn btn-outline" id="bsAutoBulkBtn"
+            <button type="button" class="btn btn-outline bs-auto-bulk-btn" id="bsAutoBulkBtn"
               ${state.stockbitBrokerBulkLoading || state.selectedForBacktest.size===0 ? "disabled" : ""}
               style="color:#f87171;border-color:rgba(239,68,68,0.4);white-space:nowrap;"
               title="${state.selectedForBacktest.size===0 ? 'Centang minimal 1 saham di tab Screener dulu' : ''}">
@@ -6642,9 +6644,9 @@ function renderBrokerSummary(){
               <span class="bs-bulk-results-arrow" style="display:inline-block; transition:transform .15s; transform:rotate(${state.bsBulkResultsOpen?90:0}deg);">▶</span>
               Hasil (${state.stockbitBrokerBulkResults.length} saham)
             </summary>
-            <div class="mono" style="margin-top:8px; max-height:220px; overflow-y:auto; font-size:11.5px;">
+            <div class="bs-result-list mono" style="margin-top:8px; max-height:220px; overflow-y:auto; font-size:11.5px;">
               ${state.stockbitBrokerBulkResults.map(r => `
-                <div style="padding:4px 0; border-bottom:1px solid var(--border); color:${r.ok ? 'var(--up)' : 'var(--down)'};">
+                <div class="bs-result-line" style="padding:4px 0; border-bottom:1px solid var(--border); color:${r.ok ? 'var(--up)' : 'var(--down)'};">
                   ${r.ok ? '✅' : '❌'} ${escapeHtml(r.ticker)} &middot; ${escapeHtml(r.date)} — ${escapeHtml(r.msg||"")}
                 </div>`).join("")}
             </div>

@@ -793,6 +793,18 @@
 .bs-bulk-results-panel summary::-webkit-details-marker { display: none; }
 .bs-bulk-results-panel summary::marker { content: ""; }
 
+/* Panel "Tarik Otomatis" Broker Summary — teks panjang harus bisa wrap,
+   jangan sampai deskripsi/hasil memaksa lebar panel melebihi layar. */
+.bs-auto-bulk-desc { max-width: 560px; min-width: 0; }
+.bs-auto-bulk-controls { min-width: 0; }
+.bs-result-list { min-width: 0; }
+.bs-result-list .bs-result-line {
+  white-space: normal;
+  word-break: break-word;
+  overflow-wrap: anywhere;
+  line-height: 1.55;
+}
+
 /* Entry Price Scanner — panel info collapsible, sembunyikan marker
    bawaan browser karena label buka/tutupnya sudah ditulis manual di JS. */
 #epsInfoPanel > summary::-webkit-details-marker { display: none; }
@@ -818,6 +830,53 @@
 
 @media (max-width: 640px) {
   .bs-display-grid, .bs-editor-grid { grid-template-columns: 1fr; }
+
+  /* Auto-bulk: satu kolom supaya kontrol tanggal dan tombol tidak terpotong */
+  .bs-auto-bulk-box { padding: 10px !important; }
+  .bs-auto-bulk-inner { display: block !important; }
+  .bs-auto-bulk-desc {
+    max-width: 100% !important;
+    font-size: 11.5px !important;
+    line-height: 1.45 !important;
+    margin-bottom: 10px;
+  }
+  /* Ringkas deskripsi di layar kecil: detail teknis disembunyikan */
+  .bs-auto-bulk-desc-extra { display: none; }
+  .bs-auto-bulk-controls {
+    width: 100%;
+    display: flex !important;
+    align-items: stretch !important;
+    gap: 7px !important;
+  }
+  .bs-auto-bulk-controls > label {
+    flex: 1 1 0;
+    min-width: 0;
+    white-space: normal !important;
+    display: block !important;
+  }
+  .bs-auto-bulk-controls > label input[type="date"] {
+    display: block;
+    width: 100%;
+    min-width: 0;
+    box-sizing: border-box;
+    margin-top: 4px;
+  }
+  .bs-auto-bulk-btn {
+    flex: 1 1 100% !important;
+    min-width: 0;
+    width: 100%;
+    white-space: normal !important;
+    line-height: 1.3;
+    padding: 8px 7px !important;
+  }
+  .bs-bulk-results-panel { min-width: 0; }
+  .bs-bulk-results-panel summary { line-height: 1.4; }
+  .bs-result-list {
+    max-height: 42vh !important;
+    font-size: 10.5px !important;
+    -webkit-overflow-scrolling: touch;
+  }
+  .bs-result-list .bs-result-line { padding: 5px 0 !important; }
 }
 
 /* ========================================== */
