@@ -1,4 +1,4 @@
-const CACHE_NAME = "ihsg-screener-shell-v2";
+const CACHE_NAME = "ihsg-screener-shell-v3";
 const APP_SHELL = [
   "./",
   "./index.html",
@@ -54,8 +54,21 @@ self.addEventListener("fetch", (event) => {
     return;
   }
 
-  // Static assets: cache-first
+  // Static assets: stale-while-revalidate — balas dari cache agar cepat,
+  // tapi selalu tarik versi baru di latar belakang sehingga app.js terbaru
+  // terpasang tanpa menunggu user menghapus cache manual.
   event.respondWith(
-    caches.match(request).then((cached) => cached || fetch(request))
+    caches.match(request).then((cached) => {
+      const network = fetch(request)
+        .then((response) => {
+          if (response && response.ok) {
+            const copy = response.clone();
+            caches.open(CACHE_NAME).then((cache) => cache.put(request, copy));
+          }
+          return response;
+        })
+        .catch(() => cached);
+      return cached || network;
+    })
   );
 });
