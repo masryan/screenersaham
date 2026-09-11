@@ -754,6 +754,19 @@
   max-width: 100%;
 }
 
+/* Popup opsi <select> dirender browser dengan latar putih bawaan sistem,
+   terpisah dari styling kontrol utamanya di atas. Tanpa aturan ini, teks
+   opsi ikut warna --text (nyaris putih) di atas latar putih itu — nyaris
+   tidak terbaca kecuali baris yang sedang di-hover/dipilih (dapat highlight
+   biru bawaan browser). Berlaku untuk SEMUA <select> di aplikasi ini, tidak
+   cuma yang berclass .bs-input, karena select lain di app ini juga memakai
+   styling gelap serupa (background rgba(0,0,0,0.2) + color var(--text)
+   inline) yang kena masalah sama persis. */
+select option {
+  color: #0f172a;
+  background: #ffffff;
+}
+
 /* Input tanggal/teks di dalam modal & panel tidak boleh memaksa lebar parent */
 .modal .bs-input, .detail-modal .bs-input { max-width: 100%; }
 
