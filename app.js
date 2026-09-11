@@ -6288,6 +6288,7 @@ function renderScreener(){
      <div class="toolbar-footer">
         <div style="display:flex; align-items:center; gap:12px; flex-wrap:wrap;">
           <span class="count-badge" style="margin:0;">${filtered.length} emiten sesuai filter &middot; ${state.selectedForBacktest.size} dipilih</span>
+          ${state.selectedForBacktest.size > 0 ? `<button class="btn btn-outline" id="resetChkBtn" style="color:#fbbf24;border-color:rgba(251,191,36,0.35);padding:4px 10px;font-size:12px;" title="Kosongkan semua centang (termasuk yang dicentang dari filter sebelumnya), lalu centang ulang sesuai hasil filter yang SEDANG tampil sekarang">🧹 Reset Centang ke Filter Ini</button>` : ""}
           <label style="display:flex;align-items:center;gap:6px;font-size:12px;cursor:pointer; background:rgba(34,211,238,0.06); border:1px solid rgba(34,211,238,0.3); padding:4px 10px; border-radius:6px; color:var(--teal); font-weight:bold;">
             <input type="checkbox" id="hideGocapChk" class="custom-checkbox" onchange="render()" ${document.getElementById("hideGocapChk")?.checked ? "checked" : ""}>
             🛡️ Sembunyikan Gocap & Suspend
@@ -10418,6 +10419,20 @@ function attachContentEvents(){
     const v = e.target.value;
     state.limit = v === "all" ? "all" : parseInt(v, 10);
     state.page = 1;
+    render();
+  };
+
+  // Fix: "X dicentang" di tombol Tarik Data/Live Stockbit/Historical bisa
+  // beda jumlah dari "Y emiten sesuai filter" karena state.selectedForBacktest
+  // adalah keranjang lintas-filter yang TIDAK otomatis ke-uncheck saat filter
+  // berubah (lihat komentar baris ~171). Tombol ini mengosongkan total centang
+  // lalu mencentang ulang PERSIS sesuai hasil filter yang sedang tampil,
+  // supaya kedua angka itu balik sinkron kalau memang itu yang diinginkan user.
+  const resetChkBtn = document.getElementById("resetChkBtn");
+  if(resetChkBtn) resetChkBtn.onclick = () => {
+    const currentlyFiltered = getFiltered();
+    state.selectedForBacktest.clear();
+    currentlyFiltered.forEach(s => state.selectedForBacktest.add(s.ticker));
     render();
   };
 
