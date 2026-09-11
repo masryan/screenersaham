@@ -5917,7 +5917,7 @@ function renderRuleBuilder(){
     const selected = ruleBConstArray(r);
     const ddKey = `rule_${r.id}`;
     const isOpen = state.openDropdown === ddKey;
-    const btnText = selected.length === 0 ? "(Pilih nilai)" : selected.length === 1 ? selected[0] : `${selected.length} dipilih`;
+    const btnText = selected.length === 0 ? "☑ (Pilih 1 atau lebih)" : selected.length === 1 ? `☑ ${selected[0]}` : `☑ ${selected.length} dipilih: ${selected.join(", ")}`;
     const itemsHtml = catOpts.map(o => `
       <label class="select-item" onclick="event.stopPropagation()">
         <input type="checkbox" value="${escapeHtml(o)}" data-rule-cat-id="${r.id}" ${selected.includes(o) ? 'checked' : ''}>
@@ -5926,7 +5926,7 @@ function renderRuleBuilder(){
     `).join("");
     return `
       <div class="multi-select rule-const" style="min-width:170px;max-width:220px;">
-        <button type="button" class="select-btn" data-rule-dd-toggle="${ddKey}" style="width:100%;">
+        <button type="button" class="select-btn" data-rule-dd-toggle="${ddKey}" style="width:100%;" title="Klik untuk centang lebih dari 1 nilai sekaligus (dicocokkan dengan OR)">
           <span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:150px;">${escapeHtml(btnText)}</span>
           <span style="font-size:9px;color:var(--muted)">▼</span>
         </button>
