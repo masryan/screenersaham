@@ -70,7 +70,7 @@
 .wl-portfolio-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;}.wl-pl{display:flex;justify-content:space-between;align-items:center;gap:8px;border:1px solid var(--border);border-radius:7px;padding:7px 9px;margin:-5px 0 12px;font-size:11px;}.wl-pl strong{font-size:14px;} .wl-card-top{grid-template-columns:auto 1fr auto!important;}
 .sector-compare-list{display:grid;gap:14px;}.sector-compare-row{display:grid;grid-template-columns:145px 1fr;gap:14px;align-items:center;padding:10px 0;border-bottom:1px solid rgba(255,255,255,.07)}.sector-compare-label{display:flex;flex-direction:column;gap:3px;font-size:12px}.sector-compare-label span{font-size:10px;color:var(--muted)}.sector-bar-track{height:10px;background:rgba(255,255,255,.1);border-radius:8px;overflow:hidden}.sector-bar-stock{height:100%;background:var(--gold-grad);border-radius:inherit}.sector-bar-stock.good{background:var(--up-grad)}.sector-bar-stock.bad{background:var(--down-grad)}.sector-bar-values{display:flex;justify-content:space-between;gap:12px;margin-top:5px;color:var(--muted);font-size:10px}.sector-bar-values b{color:var(--text);font-family:'JetBrains Mono',monospace;font-weight:500}
 @media(max-width:600px){.sector-compare-row{grid-template-columns:1fr}.sector-bar-values{font-size:9px}}
-@media(max-width:820px){.dashboard-hero{display:block}.dashboard-breadth{width:100%;max-width:none;margin-top:18px}.dashboard-columns{grid-template-columns:1fr}.panel-heading-note{display:none}}
+@media (max-width:820px), (pointer:coarse) {.dashboard-hero{display:block}.dashboard-breadth{width:100%;max-width:none;margin-top:18px}.dashboard-columns{grid-template-columns:1fr}.panel-heading-note{display:none}}
 
   * { box-sizing: border-box; }
   html, body {
@@ -271,7 +271,22 @@
 
   /* MODERN TABLE */
   table{width:100%;border-collapse:separate; border-spacing: 0; font-size:12.5px;}
-  .table-wrap{background: var(--surface); backdrop-filter: var(--glass-blur); border:1px solid var(--border); border-radius:12px; overflow:auto; max-height:70vh; box-shadow: var(--shadow-md);}
+  .table-wrap{
+    background: var(--surface); backdrop-filter: var(--glass-blur); border:1px solid var(--border); border-radius:12px;
+    overflow:auto; max-height:70vh; box-shadow: var(--shadow-md);
+    /* FIX responsif HP: dulu perbaikan ini ("min-width:0" pada tabel di
+       dalamnya, scroll sentuh momentum, dst) HANYA aktif di dalam
+       @media(max-width:820px) — kalau breakpoint itu tidak kena di HP
+       tertentu (dikonfirmasi di komentar lain file ini: sebagian HP entry
+       level melaporkan viewport CSS sampai ~750px, TAPI ada juga yang lebih
+       lebar dari itu / device pixel ratio aneh), fix-nya tidak pernah aktif
+       dan tabel jadi "kepotong tanpa bisa digeser". Sekarang dibuat SELALU
+       aktif (tidak digantung breakpoint), tidak ada downside di desktop. */
+    width:100%; max-width:100%; min-width:0;
+    -webkit-overflow-scrolling:touch;
+    touch-action:pan-x pan-y;
+  }
+  .table-wrap table{ min-width:0; }
   
   thead th {
     position:sticky; top:0; z-index:3;
@@ -445,7 +460,7 @@
   .chart-tooltip{position:absolute;pointer-events:none;background:rgba(15,23,42,0.95);border:1px solid var(--border-light);border-radius:8px;padding:6px 10px;font-size:11.5px;color:var(--text);opacity:0;transition:opacity .12s ease;white-space:nowrap;z-index:5;box-shadow:0 8px 20px rgba(0,0,0,0.4);transform:translate(-50%,-115%);}
   .chart-tooltip.show{opacity:1;}
   /* Di layar sempit, tooltip yang mepet tepi kiri/kanan digeser ke dalam */
-  @media (max-width: 820px) {
+  @media (max-width: 820px), (pointer: coarse) {
     .chart-tooltip{max-width:62vw;white-space:normal;text-align:left;}
   }
   .chart-controls{display:flex;align-items:center;gap:18px;flex-wrap:wrap;margin-bottom:12px;}
@@ -566,7 +581,7 @@
      viewport CSS sampai ~720-750px, jadi kalau breakpoint cuma 640px,
      mode mobile ini TIDAK PERNAH aktif di HP tersebut dan yang tampil
      malah layout desktop (sidebar ikon collapsed, grid 2 kolom, dst). */
-  @media (max-width: 820px) {
+  @media (max-width: 820px), (pointer: coarse) {
     body{font-size:13px;}
 
     /* HEADER */
@@ -867,7 +882,7 @@ select option {
 .bs-msg-ok { color: #10b981; }
 .bs-msg-error { color: #ef4444; }
 
-@media (max-width: 820px) {
+@media (max-width: 820px), (pointer: coarse) {
   .bs-display-grid, .bs-editor-grid { grid-template-columns: 1fr; }
 
   /* Auto-bulk: satu kolom supaya kontrol tanggal dan tombol tidak terpotong */
@@ -982,7 +997,7 @@ select option {
 
 .sp-toolbar { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; margin-top: 14px; }
 
-@media (max-width: 820px) {
+@media (max-width: 820px), (pointer: coarse) {
   .sp-crit-grid { grid-template-columns: 1fr; }
   .sp-finalize-bar { flex-direction: column; align-items: stretch; text-align: left; }
 }
