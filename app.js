@@ -4949,8 +4949,15 @@ function exportSmartPickToExcel(){
 }
 
 function render(){
-  document.getElementById("modePill").className = "pill pill-up";
-  document.getElementById("modePill").textContent = "Data Live";
+  // Guard defensif: kalau index.html yang di-deploy ternyata beda versi
+  // dengan app.js (elemen tertentu belum ada di HTML), JANGAN biarkan itu
+  // menghentikan seluruh render() secara diam-diam — terutama krusial di
+  // sini karena render() juga dipanggil dari loadLive() SEBELUM data mulai
+  // ditarik (cuma untuk munculkan status loading); kalau baris ini crash,
+  // loadLive() berhenti total dan data tidak pernah ditarik sama sekali
+  // (persis skenario "screener kosong tanpa error" yang bikin bingung).
+  const modePillEl = document.getElementById("modePill");
+  if(modePillEl){ modePillEl.className = "pill pill-up"; modePillEl.textContent = "Data Live"; }
   document.querySelectorAll(".tab-btn").forEach(b=> b.classList.toggle("active", b.dataset.tab===state.tab));
 
   const content = document.getElementById("content");
@@ -5044,8 +5051,10 @@ function render(){
 
   document.getElementById("spListModalClose").onclick = closeSmartPickList;
   document.getElementById("spListModalOverlay").onclick = (e)=>{ if(e.target.id==="spListModalOverlay") closeSmartPickList(); };
-  document.getElementById("dashMetricModalClose").onclick = dashMetricClose;
-  document.getElementById("dashMetricModalOverlay").onclick = (e)=>{ if(e.target.id==="dashMetricModalOverlay") dashMetricClose(); };
+  const dashMetricModalCloseEl = document.getElementById("dashMetricModalClose");
+  if(dashMetricModalCloseEl) dashMetricModalCloseEl.onclick = dashMetricClose;
+  const dashMetricModalOverlayEl = document.getElementById("dashMetricModalOverlay");
+  if(dashMetricModalOverlayEl) dashMetricModalOverlayEl.onclick = (e)=>{ if(e.target.id==="dashMetricModalOverlay") dashMetricClose(); };
   document.getElementById("spListModalOverlay").classList.toggle("open", !!state.spListOpenDefId);
   if(state.spListOpenDefId){
     document.getElementById("spListModalTitle").textContent = `📋 Daftar Saham · ${spTitleFor(state.spListOpenDefId)}`;
@@ -5056,19 +5065,30 @@ function render(){
   }
 
   // --- Modal detail metrik Dashboard (klik kartu ringkasan) ---
-  document.getElementById("dashMetricModalOverlay").classList.toggle("open", !!state.dashMetricKey);
-  if(state.dashMetricKey){
-    document.getElementById("dashMetricModalTitle").textContent = (DASH_METRIC_META[state.dashMetricKey]||{}).title || "Detail Metrik";
-    document.getElementById("dashMetricModalContent").innerHTML = renderDashMetricModal();
-    const dms = document.getElementById("dashMetricSearch");
-    if(dms) dms.oninput = (e)=>{ state.dashMetricSearch = e.target.value;
-      // Render ulang hanya isi modal, jangan seluruh halaman, supaya fokus ketik tidak hilang
-      document.getElementById("dashMetricModalContent").innerHTML = renderDashMetricModal();
+  // Dibungkus guard elemen (bukan cuma .onclick di atas) karena SELURUH blok
+  // modal "Detail Metrik" ini baru ditambahkan belakangan — kalau index.html
+  // yang ter-deploy belum sinkron (versi lebih lama, belum punya markup
+  // modal ini), render() harus tetap jalan sampai selesai, bukan berhenti
+  // di tengah jalan. Lihat catatan di atas fungsi render().
+  const dashMetricModalOverlayEl2 = document.getElementById("dashMetricModalOverlay");
+  if(dashMetricModalOverlayEl2){
+    dashMetricModalOverlayEl2.classList.toggle("open", !!state.dashMetricKey);
+    if(state.dashMetricKey){
+      const dmTitleEl = document.getElementById("dashMetricModalTitle");
+      if(dmTitleEl) dmTitleEl.textContent = (DASH_METRIC_META[state.dashMetricKey]||{}).title || "Detail Metrik";
+      const dmContentEl = document.getElementById("dashMetricModalContent");
+      if(dmContentEl) dmContentEl.innerHTML = renderDashMetricModal();
+      const dms = document.getElementById("dashMetricSearch");
+      if(dms) dms.oninput = (e)=>{ state.dashMetricSearch = e.target.value;
+        // Render ulang hanya isi modal, jangan seluruh halaman, supaya fokus ketik tidak hilang
+        const dmContentEl2 = document.getElementById("dashMetricModalContent");
+        if(dmContentEl2) dmContentEl2.innerHTML = renderDashMetricModal();
+        bindDashMetricModalEvents();
+        const again = document.getElementById("dashMetricSearch");
+        if(again){ again.focus(); const p = again.value.length; again.setSelectionRange(p,p); }
+      };
       bindDashMetricModalEvents();
-      const again = document.getElementById("dashMetricSearch");
-      if(again){ again.focus(); const p = again.value.length; again.setSelectionRange(p,p); }
-    };
-    bindDashMetricModalEvents();
+    }
   }
 }
 
@@ -5555,6 +5575,7 @@ function ruleDescription(rule){
   }
   if(isCategoryMetric(rule.aKey)){
     const vals = ruleBConstArray(rule);
+    if(!vals.length) return `${aLabel} (belum pilih nilai — nonaktif)`;
     const opWord = rule.op === "≠" ? "bukan salah satu dari" : (vals.length > 1 ? "salah satu dari" : rule.op);
     return `${aLabel} ${opWord} [${vals.join(", ")}]`;
   }
@@ -5620,7 +5641,13 @@ function evalCustomRule(s, rule){
     // pilihan, mis. ["Volume Spike", "Volume Spike Kuat"]) — "=" berarti
     // "cocok salah satu dari daftar" (OR), "≠" berarti "tidak cocok semua".
     const selected = ruleBConstArray(rule);
-    if(!selected.length) return false;
+    // PENTING: kalau user meng-uncheck SEMUA nilai (checklist kosong), rule
+    // ini dianggap NONAKTIF (lolos/true, tidak membatasi apa-apa) — BUKAN
+    // "tolak semua baris". Sebelumnya checklist kosong bikin seluruh
+    // screener jadi 0 baris tanpa error/peringatan apapun, karena rule ini
+    // di-AND-kan otomatis ke tabel utama; itu jebakan diam-diam yang
+    // membingungkan, jadi sekarang checklist kosong = rule diabaikan.
+    if(!selected.length) return true;
     const isIn = selected.some(v => String(v) === String(aVal));
     return rule.op === "=" ? isIn : !isIn;
   }
@@ -5917,7 +5944,7 @@ function renderRuleBuilder(){
     const selected = ruleBConstArray(r);
     const ddKey = `rule_${r.id}`;
     const isOpen = state.openDropdown === ddKey;
-    const btnText = selected.length === 0 ? "☑ (Pilih 1 atau lebih)" : selected.length === 1 ? `☑ ${selected[0]}` : `☑ ${selected.length} dipilih: ${selected.join(", ")}`;
+    const btnText = selected.length === 0 ? "⚠️ (belum pilih — nonaktif)" : selected.length === 1 ? selected[0] : `${selected.length} dipilih`;
     const itemsHtml = catOpts.map(o => `
       <label class="select-item" onclick="event.stopPropagation()">
         <input type="checkbox" value="${escapeHtml(o)}" data-rule-cat-id="${r.id}" ${selected.includes(o) ? 'checked' : ''}>
@@ -5926,7 +5953,7 @@ function renderRuleBuilder(){
     `).join("");
     return `
       <div class="multi-select rule-const" style="min-width:170px;max-width:220px;">
-        <button type="button" class="select-btn" data-rule-dd-toggle="${ddKey}" style="width:100%;" title="Klik untuk centang lebih dari 1 nilai sekaligus (dicocokkan dengan OR)">
+        <button type="button" class="select-btn" data-rule-dd-toggle="${ddKey}" style="width:100%;">
           <span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:150px;">${escapeHtml(btnText)}</span>
           <span style="font-size:9px;color:var(--muted)">▼</span>
         </button>
@@ -6288,7 +6315,6 @@ function renderScreener(){
      <div class="toolbar-footer">
         <div style="display:flex; align-items:center; gap:12px; flex-wrap:wrap;">
           <span class="count-badge" style="margin:0;">${filtered.length} emiten sesuai filter &middot; ${state.selectedForBacktest.size} dipilih</span>
-          ${state.selectedForBacktest.size > 0 ? `<button class="btn btn-outline" id="resetChkBtn" style="color:#fbbf24;border-color:rgba(251,191,36,0.35);padding:4px 10px;font-size:12px;" title="Kosongkan semua centang (termasuk yang dicentang dari filter sebelumnya), lalu centang ulang sesuai hasil filter yang SEDANG tampil sekarang">🧹 Reset Centang ke Filter Ini</button>` : ""}
           <label style="display:flex;align-items:center;gap:6px;font-size:12px;cursor:pointer; background:rgba(34,211,238,0.06); border:1px solid rgba(34,211,238,0.3); padding:4px 10px; border-radius:6px; color:var(--teal); font-weight:bold;">
             <input type="checkbox" id="hideGocapChk" class="custom-checkbox" onchange="render()" ${document.getElementById("hideGocapChk")?.checked ? "checked" : ""}>
             🛡️ Sembunyikan Gocap & Suspend
@@ -10419,20 +10445,6 @@ function attachContentEvents(){
     const v = e.target.value;
     state.limit = v === "all" ? "all" : parseInt(v, 10);
     state.page = 1;
-    render();
-  };
-
-  // Fix: "X dicentang" di tombol Tarik Data/Live Stockbit/Historical bisa
-  // beda jumlah dari "Y emiten sesuai filter" karena state.selectedForBacktest
-  // adalah keranjang lintas-filter yang TIDAK otomatis ke-uncheck saat filter
-  // berubah (lihat komentar baris ~171). Tombol ini mengosongkan total centang
-  // lalu mencentang ulang PERSIS sesuai hasil filter yang sedang tampil,
-  // supaya kedua angka itu balik sinkron kalau memang itu yang diinginkan user.
-  const resetChkBtn = document.getElementById("resetChkBtn");
-  if(resetChkBtn) resetChkBtn.onclick = () => {
-    const currentlyFiltered = getFiltered();
-    state.selectedForBacktest.clear();
-    currentlyFiltered.forEach(s => state.selectedForBacktest.add(s.ticker));
     render();
   };
 
