@@ -13,5 +13,25 @@ html,body{max-width:100%;overflow-x:hidden}
 .content .toolbar,.content .filter-bar,.content .filter-row,.content .action-row,.content .control-row,.content .form-row,.content .button-row{align-items:stretch;gap:8px}.content .toolbar>*,.content .filter-bar>*,.content .filter-row>*,.content .action-row>*,.content .control-row>*,.content .form-row>*,.content .button-row>*{min-width:0}.content .toolbar .btn,.content .filter-bar .btn,.content .filter-row .btn,.content .action-row .btn,.content .control-row .btn,.content .button-row .btn{flex:1 1 auto}
 .table-wrap::after,.table-container::after,.table-responsive::after,.data-table-wrap::after,[class*="table-wrap"]::after{content:"Geser tabel ke samping";display:block;width:max-content;margin:4px 0 0 auto;color:var(--muted);font-size:10px;pointer-events:none}.table-wrap>table,.table-container>table,.table-responsive>table,.data-table-wrap>table,[class*="table-wrap"]>table{min-width:820px}
 .modal-overlay{padding:10px;align-items:flex-start}.modal{width:100%;max-width:100%;max-height:calc(100dvh - 20px);overflow-x:hidden}
+/* Sidebar mobile: label menu tidak boleh terpotong */
+.sidebar .tab-label{white-space:normal!important;line-height:1.35;word-break:break-word}
+/* Tabel: sentuhan horizontal di mobile harus geser tabel, bukan halaman */
+.table-wrap,.table-container,.table-responsive,.data-table-wrap,[class*="table-wrap"]{overscroll-behavior-x:contain;touch-action:pan-x pan-y!important}
+/* Toolbar filter: tombol/field wrap rapi */
+.filter-toolbar{flex-wrap:wrap!important}
+.filter-toolbar .field{min-width:0!important}
+/* Modal: pastikan tidak meluber */
+.modal,.detail-modal{max-width:calc(100vw - 20px)!important}
+.modal-overlay{padding:10px!important}
+/* Hindari cut-off teks panjang di pill/label */
+.pill,.btn,.filter-chip{min-width:0;max-width:100%}
+.pill{white-space:normal!important;text-align:center;line-height:1.35}
+/* Header: judul panjang tidak boleh overflow */
+.title-row{min-width:0!important;overflow:hidden}
+.title-row h1{overflow:hidden;text-overflow:ellipsis}
+.subtitle{overflow-wrap:anywhere!important;word-break:break-word}
+/* Sub-menu tab horizontal (detail tabs, mover tabs, chart controls) bisa scroll */
+.detail-tabs,.mover-tabs,.chart-controls,.qh-subtabs,.stalker-toggle{overflow-x:auto!important;-webkit-overflow-scrolling:touch;overscroll-behavior-x:contain;scrollbar-width:none}
+.detail-tabs::-webkit-scrollbar,.mover-tabs::-webkit-scrollbar,.chart-controls::-webkit-scrollbar,.qh-subtabs::-webkit-scrollbar,.stalker-toggle::-webkit-scrollbar{display:none}
 }
 @media(max-width:420px){.header-row{display:block}.header-actions{margin-top:10px;justify-content:flex-end}.content{padding-left:8px;padding-right:8px}}
