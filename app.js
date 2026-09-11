@@ -5931,15 +5931,7 @@ function renderRuleBuilder(){
     return ops.map(op=>`<option value="${op}" ${selected===op?'selected':''}>${opLabels[op]||op}</option>`).join("");
   };
 
-  // Checklist multi-pilih untuk field kategori (mis. "Sinyal Volume") — user
-  // sekarang bisa mencentang lebih dari 1 nilai sekaligus, dicocokkan
-  // pakai OR (untuk "=") atau exclude-semua (untuk "≠"). Dropdown-nya
-  // dirender position:fixed (bukan absolute) dan posisinya dihitung ulang
-  // lewat JS tiap kali dibuka (lihat repositionRuleDropdown() di
-  // attachContentEvents) — supaya TIDAK kepotong oleh ancestor manapun yang
-  // punya overflow/scroll/stacking context sendiri (mis. daftar rule yang
-  // panjang atau bar "Screener DSI" di bawahnya), beda dari dropdown
-  // absolute biasa yang gampang ketutup begitu.
+  // Checklist multi-pilih untuk field kategori (mis. "Sinyal Volume")
   const ruleCategoryMultiSelect = (r, catOpts) => {
     const selected = ruleBConstArray(r);
     const ddKey = `rule_${r.id}`;
@@ -5952,7 +5944,7 @@ function renderRuleBuilder(){
       </label>
     `).join("");
     return `
-      <div class="multi-select rule-const" style="min-width:170px;max-width:220px;">
+      <div class="multi-select rule-const" style="min-width:170px;max-width:220px;flex:1 1 100%;">
         <button type="button" class="select-btn" data-rule-dd-toggle="${ddKey}" style="width:100%;">
           <span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:150px;">${escapeHtml(btnText)}</span>
           <span style="font-size:9px;color:var(--muted)">▼</span>
@@ -5969,20 +5961,20 @@ function renderRuleBuilder(){
     const isBroker = isBrokerMetric(r.aKey);
     const catOpts = isCat ? RULE_METRICS_BY_KEY[r.aKey].options : [];
     return `
-    <div class="rule-row" data-rule-id="${r.id}">
+    <div class="rule-row" data-rule-id="${r.id}" style="display:flex; gap:8px; flex-wrap:wrap; align-items:center;">
       ${metricInput("aKey", r.id, r.aKey, true)}
       <select class="rule-op" data-rule-field="op" data-rule-id="${r.id}">${opOptions(r.op, isCat, isBroker)}</select>
       ${isCat
         ? ruleCategoryMultiSelect(r, catOpts)
         : isBroker
-          ? `<input type="text" class="rule-const" data-rule-field="bConst" data-rule-id="${r.id}" value="${escapeHtml(r.bConst||"")}" placeholder="Kode broker, mis. AK" maxlength="6" style="text-transform:uppercase;width:150px">`
+          ? `<input type="text" class="rule-const" data-rule-field="bConst" data-rule-id="${r.id}" value="${escapeHtml(r.bConst||"")}" placeholder="Kode broker, mis. AK" maxlength="6" style="text-transform:uppercase; max-width:150px; width:100%; min-width:0;">`
           : r.op === "between"
-            ? `<input type="number" step="any" class="rule-const" data-rule-field="bConstMin" data-rule-id="${r.id}" value="${r.bConstMin ?? ""}" placeholder="dari" style="width:80px">
+            ? `<input type="number" step="any" class="rule-const" data-rule-field="bConstMin" data-rule-id="${r.id}" value="${r.bConstMin ?? ""}" placeholder="dari" style="max-width:80px; width:100%; min-width:0;">
                <span class="rule-times">&ndash;</span>
-               <input type="number" step="any" class="rule-const" data-rule-field="bConstMax" data-rule-id="${r.id}" value="${r.bConstMax ?? ""}" placeholder="sampai" style="width:80px">`
+               <input type="number" step="any" class="rule-const" data-rule-field="bConstMax" data-rule-id="${r.id}" value="${r.bConstMax ?? ""}" placeholder="sampai" style="max-width:80px; width:100%; min-width:0;">`
             : (r.bType === "const"
-              ? `<input type="number" step="any" class="rule-const" data-rule-field="bConst" data-rule-id="${r.id}" value="${r.bConst}" placeholder="angka">`
-              : `<input type="number" step="any" class="rule-mult" data-rule-field="mult" data-rule-id="${r.id}" value="${r.mult}">
+              ? `<input type="number" step="any" class="rule-const" data-rule-field="bConst" data-rule-id="${r.id}" value="${r.bConst}" placeholder="angka" style="min-width:0;">`
+              : `<input type="number" step="any" class="rule-mult" data-rule-field="mult" data-rule-id="${r.id}" value="${r.mult}" style="min-width:0;">
                  <span class="rule-times">&times;</span>
                  ${metricInput("bKey", r.id, r.bKey, false)}`
             )
@@ -6016,14 +6008,19 @@ function renderRuleBuilder(){
         ${state.customRules.length ? `<span style="font-size:12px;color:var(--muted);">${state.customRules.length} rule aktif — otomatis diterapkan ke tabel di bawah (AND, semua harus terpenuhi).</span>` : ""}
       </div>` : ""}
       <div style="display:flex;align-items:center;gap:10px;margin-top:14px;flex-wrap:wrap;padding-top:12px;border-top:1px solid var(--border);">
-        <label style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;">Preset Tersimpan</label>
-        <select id="presetSelect" style="background:rgba(0,0,0,0.2);border:1px solid var(--border);color:var(--text);font-size:12.5px;border-radius:7px;padding:8px 9px;min-width:220px;flex:1;max-width:320px;">
+        <label style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;flex:1 1 100%;">Preset Tersimpan</label>
+        
+        <!-- PERBAIKAN DI SINI: min-width:0 dan flex:1 1 100% agar responsif -->
+        <select id="presetSelect" style="background:rgba(0,0,0,0.2);border:1px solid var(--border);color:var(--text);font-size:12.5px;border-radius:7px;padding:8px 9px;min-width:0;flex:1 1 100%;width:100%;max-width:100%;">
           <option value="">${state.customPresets.length ? '— pilih preset —' : 'Belum ada preset tersimpan'}</option>
           ${presetOptions}
         </select>
-        <button type="button" class="btn btn-outline" id="loadPresetBtn" ${!state.selectedPresetId || state.presetsLoading ? 'disabled' : ''} title="Muat rule dari preset ini (menimpa rule kustom yang aktif)">📥 Muat</button>
-        <button type="button" class="btn btn-outline" id="updatePresetBtn" ${!state.selectedPresetId || !state.customRules.length || state.presetsLoading ? 'disabled' : ''} title="Timpa preset ini dengan Rules Kustom yang sedang aktif — tidak perlu simpan dengan nama baru" style="color:#34d399;border-color:rgba(16,185,129,0.35);">🔄 Update Preset</button>
-        <button type="button" class="btn btn-outline" id="deletePresetBtn" ${!state.selectedPresetId || state.presetsLoading ? 'disabled' : ''} title="Hapus preset ini" style="color:#f87171;border-color:rgba(239,68,68,0.3);">🗑️ Hapus</button>
+        
+        <div style="display:flex; gap:10px; flex-wrap:wrap; width:100%;">
+          <button type="button" class="btn btn-outline" id="loadPresetBtn" ${!state.selectedPresetId || state.presetsLoading ? 'disabled' : ''} title="Muat rule dari preset ini (menimpa rule kustom yang aktif)" style="flex:1; justify-content:center;">📥 Muat</button>
+          <button type="button" class="btn btn-outline" id="updatePresetBtn" ${!state.selectedPresetId || !state.customRules.length || state.presetsLoading ? 'disabled' : ''} title="Timpa preset ini dengan Rules Kustom yang sedang aktif — tidak perlu simpan dengan nama baru" style="color:#34d399;border-color:rgba(16,185,129,0.35); flex:1; justify-content:center;">🔄 Update Preset</button>
+          <button type="button" class="btn btn-outline" id="deletePresetBtn" ${!state.selectedPresetId || state.presetsLoading ? 'disabled' : ''} title="Hapus preset ini" style="color:#f87171;border-color:rgba(239,68,68,0.3); flex:1; justify-content:center;">🗑️ Hapus</button>
+        </div>
       </div>
     </div>
   `;
