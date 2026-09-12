@@ -1521,7 +1521,7 @@ let state = {
   // bisa klik "🔄 Analisis Ulang" untuk memaksa refresh.
   // ==========================================
   geminiApiKey: "", geminiModel: GEMINI_DEFAULT_MODEL,
-  geminiLoading: new Set(), geminiAnalysis: new Map(), geminiError: new Map(),
+  geminiLoading: new Set(), geminiAnalysis: new Map(), geminiError: new Map(), geminiLevels: new Map(),
   telegramLastRunAt: null, telegramLastRunNote: null,
   telegramTestMsg: "", telegramTestMsgError: false, telegramTesting: false,
   // ==========================================
@@ -3765,11 +3765,46 @@ function buildGeminiPrompt(s){
 2. **Kekuatan** (poin-poin positif dari data yang ada)
 3. **Risiko / Hal yang Perlu Diwaspadai** (poin-poin negatif/peringatan dari data yang ada)
 4. **Catatan Penutup** (satu kalimat netral, TANPA rekomendasi beli/jual/hold eksplisit)
+5. **Level Ilustratif** (1-2 kalimat singkat menjelaskan DASAR penentuan level entry/TP/SL di bawah, misalnya mengacu ke support/resistance/MA/ATR dari data teknikal di atas — bukan angka baru di luar data yang diberikan)
 
 Data screener (semua angka berasal dari data historis/heuristik, BUKAN prediksi):
 ${lines.join("\n")}
 
-PENTING: Ini BUKAN saran/rekomendasi investasi finansial. Jangan menyebut diri sebagai penasihat keuangan, jangan memberi instruksi eksplisit "beli"/"jual"/"hold", dan ingatkan secara implisit bahwa keputusan akhir tetap di tangan pembaca. Gunakan bahasa Indonesia yang natural dan ringkas (maksimal ~250 kata).`;
+PENTING: Ini BUKAN saran/rekomendasi investasi finansial. Jangan menyebut diri sebagai penasihat keuangan, jangan memberi instruksi eksplisit "beli"/"jual"/"hold", dan ingatkan secara implisit bahwa keputusan akhir tetap di tangan pembaca. Gunakan bahasa Indonesia yang natural dan ringkas (maksimal ~250 kata) untuk poin 1-5 di atas.
+
+SETELAH poin 1-5 selesai, WAJIB tambahkan tepat SATU baris baru paling akhir (tanpa markdown code fence, tanpa teks apapun setelahnya) persis berformat:
+LEVELS_JSON: {"entry": <angka>, "tp1": <angka>, "tp2": <angka atau null>, "sl": <angka>, "basis": "<alasan singkat, maks 12 kata>"}
+Aturan angka level ini: harus turunan wajar dari Harga Terakhir/Support/Resistance/Trend yang sudah ada di data di atas (bukan mengarang di luar itu), entry mendekati harga terakhir/area support, tp1 < tp2 (kalau ada) di atas entry, sl di bawah entry/support terdekat. Kalau data teknikal terlalu minim untuk membuat level yang wajar, isi entry/tp1/sl dengan angka Harga Terakhir apa adanya dan jelaskan keterbatasannya di "basis".`;
+}
+
+// Ekstrak baris "LEVELS_JSON: {...}" dari akhir respons teks Gemini (lihat
+// instruksi format di buildGeminiPrompt). Mengembalikan {cleanText, levels}
+// — levels bernilai null kalau baris tidak ada / gagal di-parse, dan
+// cleanText selalu berupa teks analisis TANPA baris JSON tsb (supaya tidak
+// tampil dobel ke pengguna).
+function parseGeminiLevels(rawText){
+  const lines = String(rawText||"").split("\n");
+  let levels = null;
+  let cleanLines = lines;
+  for(let i = lines.length - 1; i >= 0; i--){
+    const m = lines[i].match(/^\s*LEVELS_JSON:\s*(\{.*\})\s*$/);
+    if(m){
+      try{
+        const parsed = JSON.parse(m[1]);
+        const num = v => (v===null || v===undefined || v==="" || isNaN(Number(v))) ? null : Number(v);
+        levels = {
+          entry: num(parsed.entry),
+          tp1: num(parsed.tp1),
+          tp2: num(parsed.tp2),
+          sl: num(parsed.sl),
+          basis: (parsed.basis || "").toString().slice(0, 200)
+        };
+      }catch(e){ levels = null; }
+      cleanLines = lines.slice(0, i).concat(lines.slice(i+1));
+      break;
+    }
+  }
+  return { cleanText: cleanLines.join("\n").trim(), levels };
 }
 
 async function runGeminiAnalysis(ticker){
@@ -3802,12 +3837,14 @@ async function runGeminiAnalysis(ticker){
       throw new Error(msg);
     }
     const candidate = data?.candidates?.[0];
-    const text = (candidate?.content?.parts || []).map(p => p.text || "").join("").trim();
-    if(!text){
+    const rawText = (candidate?.content?.parts || []).map(p => p.text || "").join("").trim();
+    if(!rawText){
       const blockReason = data?.promptFeedback?.blockReason;
       throw new Error(blockReason ? `Diblokir oleh safety filter Gemini (${blockReason}).` : "Respons kosong dari Gemini.");
     }
-    state.geminiAnalysis.set(ticker, { text, model, at: Date.now() });
+    const { cleanText, levels } = parseGeminiLevels(rawText);
+    state.geminiAnalysis.set(ticker, { text: cleanText, model, at: Date.now() });
+    if(levels) state.geminiLevels.set(ticker, levels); else state.geminiLevels.delete(ticker);
   }catch(e){
     state.geminiError.set(ticker, e.message || String(e));
   }finally{
@@ -3816,16 +3853,41 @@ async function runGeminiAnalysis(ticker){
   }
 }
 
+// Card Entry/TP/SL dari hasil parse LEVELS_JSON Gemini (lihat parseGeminiLevels).
+// Gaya visual disamakan dengan bsjpTradePlanCard() supaya konsisten dengan
+// Trading Plan rule-based yang sudah ada.
+function geminiLevelsCard(levels){
+  if(!levels) return "";
+  const row = (label, val, tone) => `<div style="display:flex;justify-content:space-between;padding:5px 0;border-bottom:1px dashed var(--border);"><span style="color:var(--muted);font-size:12px;">${label}</span><span class="mono" style="font-weight:700;color:${tone||'var(--text)'};">${val}</span></div>`;
+  const rp = v => v!=null ? "Rp "+fmtNum(Math.round(v)) : "-";
+  const rr = (levels.entry!=null && levels.tp1!=null && levels.sl!=null && (levels.entry - levels.sl) > 0)
+    ? ((levels.tp1 - levels.entry) / (levels.entry - levels.sl)).toFixed(2)
+    : null;
+  return `
+    <div style="background:rgba(167,139,250,0.06);border:1px solid rgba(167,139,250,0.25);border-radius:10px;padding:14px;margin-top:10px;">
+      <div style="font-size:11px;text-transform:uppercase;letter-spacing:.05em;color:var(--muted);font-weight:700;margin-bottom:8px;">🎯 Level Ilustratif dari AI (Entry / TP / SL)</div>
+      ${row("Entry", rp(levels.entry))}
+      ${row("Target Profit 1", rp(levels.tp1), "var(--up)")}
+      ${levels.tp2!=null ? row("Target Profit 2", rp(levels.tp2), "var(--up)") : ""}
+      ${row("Stop Loss", rp(levels.sl), "var(--down)")}
+      ${rr!=null ? row("Risk : Reward (ke TP1)", "1 : "+rr) : ""}
+      ${levels.basis ? `<div style="margin-top:10px;padding-top:10px;border-top:1px dashed var(--border);font-size:11px;color:var(--muted);"><b>Dasar:</b> ${escapeHtml(levels.basis)}</div>` : ""}
+      <div style="margin-top:8px;font-size:10px;color:var(--muted);">⚠️ Angka ini dihasilkan model AI dari data yang sama seperti di atas — BUKAN rekomendasi/jaminan, dan bisa saja tidak masuk akal. Selalu cek ulang manual (support/resistance, orderbook, berita) sebelum dipakai.</div>
+    </div>`;
+}
+
 function renderDetailAiGemini(s){
   const ticker = s.ticker;
   const loading = state.geminiLoading.has(ticker);
   const cached = state.geminiAnalysis.get(ticker);
   const error = state.geminiError.get(ticker);
+  const levels = state.geminiLevels.get(ticker);
   const hasKey = !!state.geminiApiKey;
 
   const analysisHtml = cached
     ? `<div class="empty-box" style="text-align:left;white-space:pre-wrap;line-height:1.6;font-size:13px;background:rgba(167,139,250,0.06);border-color:rgba(167,139,250,0.25);">${escapeHtml(cached.text)}</div>
-       <div style="font-size:11px;color:var(--muted);margin-top:6px;">Model: <code>${escapeHtml(cached.model)}</code> · Dihasilkan ${new Date(cached.at).toLocaleString("id-ID")}</div>`
+       <div style="font-size:11px;color:var(--muted);margin-top:6px;">Model: <code>${escapeHtml(cached.model)}</code> · Dihasilkan ${new Date(cached.at).toLocaleString("id-ID")}</div>
+       ${geminiLevelsCard(levels)}`
     : "";
   const errorHtml = error
     ? `<div class="empty-box" style="text-align:left;color:#f87171;background:rgba(239,68,68,0.08);border-color:rgba(239,68,68,0.3);">⚠️ ${escapeHtml(error)}</div>`
@@ -3836,7 +3898,7 @@ function renderDetailAiGemini(s){
     <div style="font-size:11.5px;color:var(--muted);margin-bottom:12px;line-height:1.5;">
       Ringkasan berbahasa natural dari model Gemini (Google), berdasarkan data fundamental/teknikal/Bandarmologi
       yang sudah tampil di screener ini sebagai konteks — <b>bukan rekomendasi/nasihat investasi</b>, dan bukan
-      riset independen di luar data yang tersedia di sini.
+      riset independen di luar data yang tersedia di sini. Termasuk level Entry/TP/SL ilustratif di bawah.
     </div>
     ${!hasKey ? `<div class="empty-box" style="text-align:left;">API key Gemini belum diisi. Buka <button type="button" onclick="closeDetail();openSettings();" style="background:none;border:none;color:var(--teal);text-decoration:underline;cursor:pointer;padding:0;font-size:12px;">⚙️ Pengaturan</button> → bagian "🤖 Analisis AI (Gemini)" untuk mengisi API key gratis dari Google AI Studio.</div>` : ""}
     <button type="button" class="btn btn-outline" data-gemini-run="${escapeHtml(ticker)}" ${loading || !hasKey ? "disabled" : ""} style="margin-bottom:12px;">
