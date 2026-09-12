@@ -5453,6 +5453,14 @@ const RULE_METRICS = [
   { key:"uangGedeMasuk", label:"Uang Gede Masuk", type:"category", options:[
     "Normal", "Akumulasi Kuat (RVOL>2 & CLV>0.7)", "Guyuran (RVOL>2 & CLV Negatif)"
   ]},
+  // Sama dengan filter dropdown "Bandarmologi" di panel Momentum, Volume &
+  // Keyakinan (lihat uniqueOpts key "band") — proxy heuristik dari rasio
+  // volume + arah harga (fungsi bandarmologi()), BUKAN data transaksi
+  // broker asli. Nilainya nested di s.band.label, jadi ditangani khusus di
+  // ruleRawValue() (sama pola seperti top3BuyBrokers/top3SellBrokers).
+  { key:"band", label:"Bandarmologi (proxy vol.)", type:"category", options:[
+    "Indikasi Akumulasi", "Indikasi Distribusi", "Minat Beli Naik", "Tekanan Jual", "Netral"
+  ]},
   { key:"valuasi", label:"Valuasi", type:"category", options:[
     "Kemahalan (Overvalued)", "Murah (Undervalued)", "Wajar (Fair)"
   ]},
@@ -5516,6 +5524,23 @@ const RULE_METRIC_DATALIST_ALL_HTML = RULE_METRICS_ALL_SORTED
   .map(m=> `<option value="${escapeHtml(metricDisplayLabel(m))}"></option>`).join("");
 const RULE_METRIC_DATALIST_NUMERIC_HTML = RULE_METRICS_NUMERIC_SORTED
   .map(m=> `<option value="${escapeHtml(m.label)}"></option>`).join("");
+// Daftar metrik untuk dropdown "Sortir Hasil" di panel Rules Kustom — field
+// ANGKA + KATEGORI (kategori diurutkan alfabetis berdasar nilainya) boleh
+// dipakai, tapi field BROKER (array kode broker) dikecualikan karena tidak
+// ada artinya untuk diurutkan. Diurutkan abjad seperti dropdown lain.
+const RULE_METRICS_SORT_SORTED = RULE_METRICS
+  .filter(m=> m.type !== "broker")
+  .slice()
+  .sort((a,b)=> metricDisplayLabel(a).localeCompare(metricDisplayLabel(b), "id"));
+const RULE_METRIC_DATALIST_SORT_HTML = RULE_METRICS_SORT_SORTED
+  .map(m=> `<option value="${escapeHtml(metricDisplayLabel(m))}"></option>`).join("");
+// Field kategori "band" (Bandarmologi proxy vol.) nilainya nested di
+// s.band.label, sedangkan kolom tabel yang sama (SCREENER_COLUMNS) dan
+// klik-sort di header memakai key "band.label" (lihat getSorted()) — dua
+// fungsi ini menjembatani supaya sortir dari panel Rules Kustom tetap
+// konsisten/nyambung dengan sort yang dipicu klik header kolom tabel.
+function ruleSortKeyToCol(key){ return key === "band" ? "band.label" : key; }
+function sortColToRuleKey(col){ return col === "band.label" ? "band" : col; }
 // Reverse lookup: teks label (huruf kecil, di-trim) -> key metrik asli.
 // Dipakai untuk mengembalikan pilihan/ketikan user di kotak autocomplete
 // (yang nilainya berupa teks label) balik ke key aslinya.
@@ -5552,6 +5577,12 @@ function ruleRawValue(s, key){
     if(!data) return null;
     const arr = key === "top3BuyBrokers" ? data.buy : data.sell;
     return (arr && arr.length) ? arr : null;
+  }
+  // Field "band" (Bandarmologi proxy vol.) nilainya nested di s.band.label,
+  // bukan properti langsung s["band"] — ditangani khusus di sini supaya
+  // isCategoryMetric/evalCustomRule generik lainnya tetap tidak berubah.
+  if(key === "band"){
+    return (s.band && s.band.label) ? s.band.label : null;
   }
   const v = s[key];
   return (v===undefined || v===null || v==="") ? null : v;
@@ -5924,7 +5955,15 @@ function renderRuleBuilder(){
     const listId = includeExtra ? "metricDatalistAll" : "metricDatalistNumeric";
     return `<input type="text" class="rule-select" list="${listId}" autocomplete="off" placeholder="Cari metrik..." data-rule-field="${field}" data-rule-id="${ruleId}" value="${escapeHtml(currentLabel)}">`;
   };
-  const metricDatalists = `<datalist id="metricDatalistAll">${RULE_METRIC_DATALIST_ALL_HTML}</datalist><datalist id="metricDatalistNumeric">${RULE_METRIC_DATALIST_NUMERIC_HTML}</datalist>`;
+  const metricDatalists = `<datalist id="metricDatalistAll">${RULE_METRIC_DATALIST_ALL_HTML}</datalist><datalist id="metricDatalistNumeric">${RULE_METRIC_DATALIST_NUMERIC_HTML}</datalist><datalist id="metricDatalistSort">${RULE_METRIC_DATALIST_SORT_HTML}</datalist>`;
+
+  // Sortir hasil (Asc/Desc) — memakai state.sort yang sama dengan sort klik
+  // header kolom tabel, supaya field yang dipilih di sini benar-benar
+  // mengurutkan tabel screener (dan sebaliknya: kalau user sudah sort lewat
+  // klik header, field itu otomatis kelihatan terisi di sini juga).
+  const currentSortKey = sortColToRuleKey(state.sort.col);
+  const currentSortMetric = currentSortKey ? (RULE_METRICS_BY_KEY[currentSortKey] || { label: currentSortKey }) : null;
+  const currentSortLabel = currentSortMetric ? metricDisplayLabel(currentSortMetric) : "";
   const opLabels = { "contains":"contains", "!contains":"tidak mengandung", "between":"antara (between)" };
   const opOptions = (selected, categoryOnly, brokerOnly) => {
     const ops = brokerOnly ? ["contains","!contains"] : categoryOnly ? ["=","≠"] : [...Object.keys(RULE_OPS).filter(op=>op!=="contains"&&op!=="!contains"), "between"];
@@ -6007,6 +6046,15 @@ function renderRuleBuilder(){
         <button type="button" class="btn btn-outline" id="savePresetBtn" ${state.presetsLoading?'disabled':''}>💾 Simpan sebagai Preset...</button>
         ${state.customRules.length ? `<span style="font-size:12px;color:var(--muted);">${state.customRules.length} rule aktif — otomatis diterapkan ke tabel di bawah (AND, semua harus terpenuhi).</span>` : ""}
       </div>` : ""}
+      <div style="display:flex;align-items:center;gap:10px;margin-top:14px;flex-wrap:wrap;padding-top:12px;border-top:1px solid var(--border);">
+        <label style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;flex:1 1 100%;">Sortir Hasil (opsional)</label>
+        <input type="text" id="ruleSortInput" list="metricDatalistSort" autocomplete="off" placeholder="Cari metrik untuk sortir, mis. Turnover..." value="${escapeHtml(currentSortLabel)}" style="flex:1 1 220px;min-width:0;background:rgba(0,0,0,0.2);border:1px solid var(--border);color:var(--text);font-size:12.5px;border-radius:7px;padding:8px 9px;">
+        <div style="display:flex;gap:6px;flex-wrap:wrap;">
+          <button type="button" class="btn btn-outline" id="ruleSortAscBtn" ${!state.sort.col ? "disabled" : ""} ${state.sort.col && state.sort.asc ? 'style="color:#34d399;border-color:rgba(16,185,129,0.5);"' : ""} title="Urutkan naik (kecil→besar / A→Z)">▲ Naik</button>
+          <button type="button" class="btn btn-outline" id="ruleSortDescBtn" ${!state.sort.col ? "disabled" : ""} ${state.sort.col && !state.sort.asc ? 'style="color:#34d399;border-color:rgba(16,185,129,0.5);"' : ""} title="Urutkan turun (besar→kecil / Z→A)">▼ Turun</button>
+          ${state.sort.col ? `<button type="button" class="btn btn-outline" id="ruleSortClearBtn" title="Hapus sortir" style="color:#f87171;border-color:rgba(239,68,68,0.3);">✕ Hapus</button>` : ""}
+        </div>
+      </div>
       <div style="display:flex;align-items:center;gap:10px;margin-top:14px;flex-wrap:wrap;padding-top:12px;border-top:1px solid var(--border);">
         <label style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;flex:1 1 100%;">Preset Tersimpan</label>
         
@@ -10351,6 +10399,30 @@ function attachContentEvents(){
       el.onchange = (e) => updateCustomRule(id, field, e.target.value);
     }
   });
+
+  // Sortir hasil di panel Rules Kustom — kotak metrik autocomplete sama
+  // pola dengan aKey/bKey (nilai input = LABEL, resolve balik ke key lewat
+  // metricKeyForLabel()); tombol Naik/Desc tinggal flip state.sort.asc,
+  // dan Hapus me-reset ke keadaan tanpa sortir (sama seperti sebelum ada
+  // fitur ini). Field BROKER sengaja ditolak karena bukan nilai yang bisa
+  // diurutkan (array kode broker).
+  const ruleSortInput = document.getElementById("ruleSortInput");
+  if(ruleSortInput) ruleSortInput.onchange = (e) => {
+    const text = e.target.value.trim();
+    if(!text){ state.sort.col = null; state.sort.asc = true; state.page = 1; render(); return; }
+    const key = metricKeyForLabel(text);
+    if(!key || isBrokerMetric(key)){ render(); return; }
+    state.sort.col = ruleSortKeyToCol(key);
+    state.sort.asc = true;
+    state.page = 1;
+    render();
+  };
+  const ruleSortAscBtn = document.getElementById("ruleSortAscBtn");
+  if(ruleSortAscBtn) ruleSortAscBtn.onclick = () => { if(!state.sort.col) return; state.sort.asc = true; state.page = 1; render(); };
+  const ruleSortDescBtn = document.getElementById("ruleSortDescBtn");
+  if(ruleSortDescBtn) ruleSortDescBtn.onclick = () => { if(!state.sort.col) return; state.sort.asc = false; state.page = 1; render(); };
+  const ruleSortClearBtn = document.getElementById("ruleSortClearBtn");
+  if(ruleSortClearBtn) ruleSortClearBtn.onclick = () => { state.sort.col = null; state.sort.asc = true; state.page = 1; render(); };
 
   const colPickerBtn = document.getElementById("colPickerBtn");
   if(colPickerBtn) colPickerBtn.onclick = (e) => { e.stopPropagation(); state.colPickerOpen = !state.colPickerOpen; render(); };
