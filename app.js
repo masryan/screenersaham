@@ -968,6 +968,10 @@ async function openSettings() {
   if(stbHistorical) stbHistorical.value = state.stockbitHistoricalEndpoint || STOCKBIT_DEFAULT_HISTORICAL_EP;
   const stbProxy = document.getElementById("setStockbitProxyUrl");
   if(stbProxy) stbProxy.value = state.stockbitProxyUrl || "";
+  const geminiKeyEl = document.getElementById("setGeminiApiKey");
+  if(geminiKeyEl) geminiKeyEl.value = state.geminiApiKey || "";
+  const geminiModelEl = document.getElementById("setGeminiModel");
+  if(geminiModelEl) geminiModelEl.value = state.geminiModel || GEMINI_DEFAULT_MODEL;
   document.getElementById("settingsModalOverlay").classList.add("open");
   updateStockbitTokenStatusUI();
   updateStockbitLastSuccessStatusUI();
@@ -1047,6 +1051,11 @@ function saveSettings() {
   localStorage.setItem(LS_STOCKBIT_BROKER_EP, state.stockbitBrokerEndpoint);
   localStorage.setItem(LS_STOCKBIT_HISTORICAL_EP, state.stockbitHistoricalEndpoint);
   localStorage.setItem(LS_STOCKBIT_PROXY, state.stockbitProxyUrl);
+
+  state.geminiApiKey = (document.getElementById("setGeminiApiKey")?.value || "").trim();
+  state.geminiModel = (document.getElementById("setGeminiModel")?.value || "").trim() || GEMINI_DEFAULT_MODEL;
+  localStorage.setItem(LS_GEMINI_API_KEY, state.geminiApiKey);
+  localStorage.setItem(LS_GEMINI_MODEL, state.geminiModel);
 
   state.telegramFunctionUrl = (document.getElementById("setTelegramFunctionUrl")?.value || "").trim();
   localStorage.setItem(LS_TELEGRAM_FUNCTION_URL, state.telegramFunctionUrl);
@@ -1217,6 +1226,14 @@ const STOCKBIT_AUTOREFRESH_MAX_TICKERS = 30; // di atas ini auto-refresh otomati
 // telegram_settings), bukan localStorage — supaya Edge Function di server
 // (dipanggil Cron, bukan dari browser ini) bisa membacanya juga.
 const LS_TELEGRAM_FUNCTION_URL = "ihsg_telegram_function_url";
+// Analisis AI (Gemini) — API key & nama model disimpan lokal di browser
+// (LS_GEMINI_*), dipanggil LANGSUNG dari sini ke Google (tidak lewat
+// Supabase/proxy manapun) pakai API key milik user sendiri. Model default
+// "gemini-flash-latest" adalah ALIAS resmi Google yang otomatis mengarah ke
+// rilis Flash stabil terbaru — supaya tidak perlu diupdate manual tiap kali
+// Google merilis versi baru (lihat https://ai.google.dev/gemini-api/docs/models).
+const LS_GEMINI_API_KEY = "ihsg_gemini_api_key", LS_GEMINI_MODEL = "ihsg_gemini_model";
+const GEMINI_DEFAULT_MODEL = "gemini-flash-latest";
 const STOCKBIT_DEFAULT_QUOTE_EP = "https://exodus.stockbit.com/stream/v3/symbol/{ticker}";
 // NOTE (25 Agu 2026): endpoint di atas TERBUKTI SALAH — itu API "Stream"
 // (linimasa komentar komunitas), bukan API harga. Endpoint quote/orderbook
@@ -1475,6 +1492,15 @@ let state = {
   telegramBotToken: "", telegramChatId: "", telegramEnabled: false,
   telegramOnlyMarketHours: true, telegramPresetIds: [],
   telegramFunctionUrl: "", telegramLoading: false,
+  // ==========================================
+  // Analisis AI (Gemini) — dipanggil langsung dari browser ke Google pakai
+  // API key milik user (lihat ⚙️ Pengaturan). geminiAnalysis/geminiError
+  // di-cache per ticker (Map) supaya tidak minta ulang ke Gemini tiap kali
+  // modal Detail Emiten dibuka/ditutup untuk ticker yang sama — user tetap
+  // bisa klik "🔄 Analisis Ulang" untuk memaksa refresh.
+  // ==========================================
+  geminiApiKey: "", geminiModel: GEMINI_DEFAULT_MODEL,
+  geminiLoading: new Set(), geminiAnalysis: new Map(), geminiError: new Map(),
   telegramLastRunAt: null, telegramLastRunNote: null,
   telegramTestMsg: "", telegramTestMsgError: false, telegramTesting: false,
   // ==========================================
@@ -1602,6 +1628,10 @@ function loadSettings(){
     state.customRules = Array.isArray(savedRules) ? savedRules : [];
   }catch(e){ state.customRules = []; }
   try{ state.telegramFunctionUrl = localStorage.getItem(LS_TELEGRAM_FUNCTION_URL) || ""; }catch(e){}
+  try{
+    state.geminiApiKey = localStorage.getItem(LS_GEMINI_API_KEY) || "";
+    state.geminiModel = localStorage.getItem(LS_GEMINI_MODEL) || GEMINI_DEFAULT_MODEL;
+  }catch(e){}
 }
 function saveVisibleCols(){ localStorage.setItem(LS_VISIBLE_COLS, JSON.stringify([...state.visibleCols])); }
 function toggleColumn(key){
@@ -3669,6 +3699,133 @@ function renderDetailTradingPlan(s){
     ${bsjpTradePlanCard(s)}`;
 }
 
+// ==========================================
+// ANALISIS AI (GEMINI)
+//
+// Beda dengan "🧠 Analisa" (renderDetailAnalisa) yang skornya rule-based
+// murni di app.js — tab ini benar-benar memanggil model Gemini (Google)
+// lewat REST API generateContent, dipanggil LANGSUNG dari browser pakai
+// API key milik user sendiri (lihat ⚙️ Pengaturan → "Analisis AI (Gemini)"),
+// bukan lewat Supabase/proxy manapun. Data yang dikirim ke Gemini sebagai
+// konteks HANYA field yang sudah ada & terlihat di screener (bukan data
+// baru) — jadi kualitas analisisnya seasli/semutakhir data screener itu
+// sendiri, bukan riset independen Gemini.
+// ==========================================
+function buildGeminiPrompt(s){
+  const num = (v, suffix="") => (v===null||v===undefined||isNaN(v)) ? "tidak tersedia" : `${fmtNum(Number(v).toFixed ? Number(Number(v).toFixed(2)) : v)}${suffix}`;
+  const bandLabel = s.band ? s.band.label : "tidak tersedia";
+  const lines = [
+    `Ticker: ${s.ticker}`,
+    `Sektor: ${s.sektor || "tidak diketahui"}`,
+    `Harga terakhir: ${num(s.cClose)} (${s.changePct!=null ? (s.changePct>=0?'+':'')+Number(s.changePct).toFixed(2)+'%' : 'tidak tersedia'} dari hari sebelumnya)`,
+    `Market Cap: ${s.marketCap!=null ? fmtCap(s.marketCap) : "tidak tersedia"} — Kategori: ${marketCapTier(s.marketCap)}`,
+    `Turnover: Rp ${num(s.turnover)}`,
+    `--- Fundamental ---`,
+    `PER: ${num(s.per)}x, PBV: ${num(s.pbv)}x, ROE: ${num(s.roe)}%, ROA: ${num(s.roa)}%, DER: ${num(s.der)}x`,
+    `Dividend Yield: ${num(s.divYield)}%, Valuasi (heuristik screener): ${s.valuasi || "tidak tersedia"}`,
+    `--- Teknikal ---`,
+    `Trend Harga (MA): ${s.trendHarga || "tidak tersedia"}`,
+    `RSI 7: ${num(s.rsi7)}, RSI 21: ${num(s.rsi21)}, Status RSI: ${s.statusRsi || "tidak tersedia"}`,
+    `Sinyal MACD: ${s.cekMacd || "tidak tersedia"}`,
+    `Rasio Volume vs rata-rata: ${num(s.volRatio)}x (${s.sinyalVolume || "tidak tersedia"})`,
+    `Support terdekat: ${num(s.support)}, Resistance terdekat: ${num(s.resistance)}`,
+    `--- Bandarmologi ---`,
+    `Sinyal proxy volume+harga: ${bandLabel}`,
+    `Net Asing 20 Hari (data resmi IDX): ${s.foreignNet20D!=null ? fmtRp(s.foreignNet20D) : "tidak tersedia"}`,
+    `Hari Asing Net Beli: ${s.foreignUpDays!=null ? `${s.foreignUpDays}/${s.flowDays??20} hari` : "tidak tersedia"}`,
+    `Uang Gede Masuk: ${s.uangGedeMasuk || "tidak tersedia"}`,
+    `--- Ringkasan Screener (rule-based, BUKAN dari AI) ---`,
+    `Keyakinan Naik: ${s.keyakinanNaik || "tidak tersedia"}`,
+    `Rekomendasi Setup: ${s.rekomendasi && s.rekomendasi!=="-" ? s.rekomendasi : "tidak ada"}`,
+  ];
+  return `Kamu adalah asisten riset saham untuk investor ritel di Bursa Efek Indonesia (BEI). Berdasarkan data screener saham berikut untuk ticker ${s.ticker}, buat analisis singkat berbahasa Indonesia dengan format:
+
+1. **Ringkasan** (2-3 kalimat kondisi saat ini)
+2. **Kekuatan** (poin-poin positif dari data yang ada)
+3. **Risiko / Hal yang Perlu Diwaspadai** (poin-poin negatif/peringatan dari data yang ada)
+4. **Catatan Penutup** (satu kalimat netral, TANPA rekomendasi beli/jual/hold eksplisit)
+
+Data screener (semua angka berasal dari data historis/heuristik, BUKAN prediksi):
+${lines.join("\n")}
+
+PENTING: Ini BUKAN saran/rekomendasi investasi finansial. Jangan menyebut diri sebagai penasihat keuangan, jangan memberi instruksi eksplisit "beli"/"jual"/"hold", dan ingatkan secara implisit bahwa keputusan akhir tetap di tangan pembaca. Gunakan bahasa Indonesia yang natural dan ringkas (maksimal ~250 kata).`;
+}
+
+async function runGeminiAnalysis(ticker){
+  if(state.geminiLoading.has(ticker)) return;
+  if(!state.geminiApiKey){
+    state.geminiError.set(ticker, 'API key Gemini belum diisi. Buka "⚙️ Pengaturan" → bagian "🤖 Analisis AI (Gemini)".');
+    render();
+    return;
+  }
+  const s = enriched().find(x => x.ticker === ticker);
+  if(!s){ state.geminiError.set(ticker, `Data untuk ${ticker} tidak ditemukan.`); render(); return; }
+
+  state.geminiLoading.add(ticker);
+  state.geminiError.delete(ticker);
+  render();
+  try{
+    const model = state.geminiModel || GEMINI_DEFAULT_MODEL;
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent?key=${encodeURIComponent(state.geminiApiKey)}`;
+    const res = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        contents: [{ role: "user", parts: [{ text: buildGeminiPrompt(s) }] }],
+        generationConfig: { temperature: 0.4 }
+      })
+    });
+    const data = await res.json().catch(()=>null);
+    if(!res.ok){
+      const msg = data?.error?.message || `HTTP ${res.status}`;
+      throw new Error(msg);
+    }
+    const candidate = data?.candidates?.[0];
+    const text = (candidate?.content?.parts || []).map(p => p.text || "").join("").trim();
+    if(!text){
+      const blockReason = data?.promptFeedback?.blockReason;
+      throw new Error(blockReason ? `Diblokir oleh safety filter Gemini (${blockReason}).` : "Respons kosong dari Gemini.");
+    }
+    state.geminiAnalysis.set(ticker, { text, model, at: Date.now() });
+  }catch(e){
+    state.geminiError.set(ticker, e.message || String(e));
+  }finally{
+    state.geminiLoading.delete(ticker);
+    render();
+  }
+}
+
+function renderDetailAiGemini(s){
+  const ticker = s.ticker;
+  const loading = state.geminiLoading.has(ticker);
+  const cached = state.geminiAnalysis.get(ticker);
+  const error = state.geminiError.get(ticker);
+  const hasKey = !!state.geminiApiKey;
+
+  const analysisHtml = cached
+    ? `<div class="empty-box" style="text-align:left;white-space:pre-wrap;line-height:1.6;font-size:13px;background:rgba(167,139,250,0.06);border-color:rgba(167,139,250,0.25);">${escapeHtml(cached.text)}</div>
+       <div style="font-size:11px;color:var(--muted);margin-top:6px;">Model: <code>${escapeHtml(cached.model)}</code> · Dihasilkan ${new Date(cached.at).toLocaleString("id-ID")}</div>`
+    : "";
+  const errorHtml = error
+    ? `<div class="empty-box" style="text-align:left;color:#f87171;background:rgba(239,68,68,0.08);border-color:rgba(239,68,68,0.3);">⚠️ ${escapeHtml(error)}</div>`
+    : "";
+
+  return `
+    <div class="detail-subtitle">🤖 Analisis AI (Gemini) — ${escapeHtml(ticker)}</div>
+    <div style="font-size:11.5px;color:var(--muted);margin-bottom:12px;line-height:1.5;">
+      Ringkasan berbahasa natural dari model Gemini (Google), berdasarkan data fundamental/teknikal/Bandarmologi
+      yang sudah tampil di screener ini sebagai konteks — <b>bukan rekomendasi/nasihat investasi</b>, dan bukan
+      riset independen di luar data yang tersedia di sini.
+    </div>
+    ${!hasKey ? `<div class="empty-box" style="text-align:left;">API key Gemini belum diisi. Buka <button type="button" onclick="closeDetail();openSettings();" style="background:none;border:none;color:var(--teal);text-decoration:underline;cursor:pointer;padding:0;font-size:12px;">⚙️ Pengaturan</button> → bagian "🤖 Analisis AI (Gemini)" untuk mengisi API key gratis dari Google AI Studio.</div>` : ""}
+    <button type="button" class="btn btn-outline" data-gemini-run="${escapeHtml(ticker)}" ${loading || !hasKey ? "disabled" : ""} style="margin-bottom:12px;">
+      ${loading ? "⏳ Menganalisis..." : cached ? "🔄 Analisis Ulang" : "🤖 Buat Analisis AI"}
+    </button>
+    ${errorHtml}
+    ${analysisHtml}
+  `;
+}
+
 
 function renderDetailModalContent(){
   const s = enriched().find(x => x.ticker === state.detailTicker);
@@ -3682,6 +3839,7 @@ function renderDetailModalContent(){
     { key:"brokersum", label:"🏦 Broker Summary" },
     { key:"historical", label:"📅 Historical Data" },
     { key:"analisa", label:"🧠 Analisa" },
+    { key:"aiGemini", label:"🤖 AI (Gemini)" },
     { key:"vssektor", label:"⚖️ vs Sektor" },
     { key:"plan", label:"📋 Trading Plan" }
   ];
@@ -3692,6 +3850,7 @@ function renderDetailModalContent(){
   else if(state.detailTab === "bandarmologi") body = renderDetailBandarmologi(s);
   else if(state.detailTab === "brokersum") body = renderDetailBrokerSummary(s);
   else if(state.detailTab === "historical") body = renderDetailHistorical(s);
+  else if(state.detailTab === "aiGemini") body = renderDetailAiGemini(s);
   else if(state.detailTab === "vssektor") body = renderDetailVsSektor(s);
   else if(state.detailTab === "plan") body = renderDetailTradingPlan(s);
   else body = renderDetailAnalisa(s);
@@ -5003,6 +5162,9 @@ function render(){
     document.getElementById("detailModalContent").innerHTML = renderDetailModalContent();
     document.querySelectorAll("[data-detail-tab]").forEach(btn=>{
       btn.onclick = () => setDetailTab(btn.dataset.detailTab);
+    });
+    document.querySelectorAll("[data-gemini-run]").forEach(btn=>{
+      btn.onclick = () => runGeminiAnalysis(btn.dataset.geminiRun);
     });
     document.querySelectorAll("#detailModalContent [data-chart]").forEach(b=> b.onclick = ()=>{ closeDetail(); loadChart(b.dataset.chart); });
 
