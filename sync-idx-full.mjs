@@ -33,9 +33,15 @@
 // 6.  Retensi `flows` dinaikkan jadi 450 hari KALENDER — 320 hari
 //     kalender hanya ~225 hari bursa, kurang untuk 52w + MA200, jadi
 //     cleanup lama bisa menghapus riwayat yang masih dibutuhkan.
-// 7.  Snapshot bid/offer cuma dipasang pada mode harian biasa (tanpa
-//     --start/--end/--offset) supaya orderbook periode lama tidak
-//     menempel ke baris `stocks` yang isinya harga terbaru.
+// 7.  Bid/offer sekarang disimpan HISTORIS per hari di `flows` (kolom
+//     bid/bid_volume/offer/offer_volume -- lihat migration
+//     sql/08_flows_bid_offer_history.sql) untuk SEMUA mode, termasuk
+//     backfill --start/--end/--offset. Snapshot bid/offer yang
+//     ditempel ke `stocks` (kolom terpisah, dipakai sebagai fallback
+//     cepat tanpa perlu query `flows`) TETAP cuma dipasang pada mode
+//     harian biasa (tanpa --start/--end/--offset) supaya orderbook
+//     periode lama tidak menempel ke baris `stocks` yang isinya harga
+//     terbaru.
 // 8.  Kolom `vwap` di stock_indicators_ext sekarang VWAP20 sungguhan
 //     (sebelumnya typical price 1 hari: (H+L+C)/3).
 // 9.  listed_shares fallback ke nilai terakhir yang tersedia, bukan
@@ -67,7 +73,7 @@
 //
 // Pakai:
 //   node sync-idx-full.mjs                    -> hari perdagangan terakhir saja
-//   node sync-idx-full.mjs --days=260          -> isi riwayat 260 hari (perlu sekali di awal / backfill)
+//   node sync-idx-full.mjs --days=420          -> isi riwayat 260 hari (perlu sekali di awal / backfill)
 //   node sync-idx-full.mjs --skip-fundamentals -> lewati panggilan Yahoo, murni IDX
 //   node sync-idx-full.mjs --dry-run           -> tarik & hitung saja, tanpa menulis ke Supabase
 //   node sync-idx-full.mjs --debug-fields      -> print nama kolom mentah IDX untuk 1 hari, lalu keluar
@@ -177,7 +183,7 @@ const UA =
   "(KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36";
 
 // Butuh minimal ~260 hari bursa untuk 52w high/low (252) + MA200.
-const MAX_DAYS = 320;
+const MAX_DAYS = 420;
 // Retensi `flows` dalam hari KALENDER. Harus lebih panjang dari kebutuhan
 // 260 hari BURSA karena sabtu/minggu/libur tidak menghasilkan bar
 // (~250 hari bursa = ~365 hari kalender; 450 memberi ruang aman).
@@ -1313,6 +1319,19 @@ try {
           nonreg_volume: num(pickIdx(r, IDX_FIELDS.nonRegVolume)),
           nonreg_value: num(pickIdx(r, IDX_FIELDS.nonRegValue)),
           listed_shares: num(pickIdx(r, IDX_FIELDS.listedShares)),
+          // Snapshot antrian bid/offer HARI ITU JUGA disimpan ke `flows`
+          // (kolom ditambahkan lewat migration sql/08_flows_bid_offer_history.sql)
+          // supaya Kraken Flow (ORCA) punya histori bid/offer per hari,
+          // bukan cuma snapshot hari terakhir di `stocks`. Ini aman
+          // ditulis untuk SETIAP hari yang ditarik (termasuk mode
+          // historis --start/--end/--offset) karena masing-masing baris
+          // sudah punya tanggalnya sendiri -- beda dengan snapshot
+          // `latestQuotes` di bawah yang cuma boleh diambil dari hari
+          // PALING BARU untuk ditempel ke `stocks` (lihat catatan di situ).
+          offer: num(pickIdx(r, IDX_FIELDS.offer)),
+          offer_volume: num(pickIdx(r, IDX_FIELDS.offerVolume)),
+          bid: num(pickIdx(r, IDX_FIELDS.bid)),
+          bid_volume: num(pickIdx(r, IDX_FIELDS.bidVolume)),
         }));
 
       if (!dryRun) {

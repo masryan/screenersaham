@@ -28,6 +28,61 @@ const SYARIAH_TICKERS = new Set([
   "BANK","BBMI","BRIS","BTPS","JMAS","PNBS","SPOT","AADI","ABMM","ADMR","ADRO","AKRA","ARII","ATLA","BBRM","BESS","BOAT","BSML","BSSR","BULL","BUMI","BYAN","CANI","CGAS","COAL","DEWA","DSSA","DWGL","ELSA","ENRG","FIRE","GEMS","HRUM","IATA","INDY","ITMA","ITMG","KKGI","KOPI","MAHA","MBAP","MCOL","MEDC","MKAP","MYOH","PGAS","PKPK","PSAT","PSSI","PTBA","PTIS","RAJA","RATU","RGAS","RMKE","RMKO","RUIS","SEMA","SGER","SICO","SMMT","SOCI","SUNI","TCPI","TEBE","TOBA","TPMA","UNIQ","WINS","WOWS","ADMG","AGII","AKPI","ALDO","ALKA","ANTM","APLI","ARCI","ASPR","AVIA","AYLS","BATR","BLES","BMSR","BRMS","BRNA","CHEM","CITA","CLPI","CTBN","DGWG","DKFT","EKAD","EPAC","ESIP","ESSA","FASW","FPNI","FWCT","GDST","GGRP","IFII","IFSH","IGAR","INCI","INKP","INTD","INTP","IPOL","ISSP","KDSI","KKES","LMSH","LTLS","MBMA","MDKA","MDKI","MINE","NICE","NICL","NIKL","OBMD","OKAS","PACK","PBID","PDPP","PICO","PPRI","PSAB","PTMR","SAMF","SBMA","SMBR","SMCB","SMGA","SMGR","SMKL","SMLE","SOLA","SPMA","SULI","TALF","TBMS","TINS","TIRT","TKIM","TPIA","TRST","UNIC","WTON","YPAS","AMFG","AMIN","APII","ARNA","ASGR","BINO","BLUE","CAKK","CCSI","CRSN","DYAN","FOLK","GPSO","HEXA","HOPE","HYGN","ICON","IKAI","IKBI","IMPC","JECC","JTPE","KBLI","KBLM","KIAS","KING","KOBX","KOIN","KONI","KUAS","LION","MARK","MFMI","MHKI","MLIA","MUTU","NAIK","NTBK","PADA","PTMP","SCCO","SKRN","SMIL","SOSS","SPTO","TIRA","TOTO","UNTR","VISI","VOKS","WIDI","AALI","ADES","AGAR","AISA","AMMS","ASHA","AYAM","BISI","BOBA","BRRC","BUAH","BUDI","BWPT","CAMP","CEKA","CLEO","CMRY","CPIN","CPRO","CSRA","DAYA","DEWI","DMND","DSFI","DSNG","EPMT","EURO","FISH","FLMC","FOOD","FORE","GOOD","GRPM","GULA","GUNA","GZCO","HERO","HOKI","ICBP","IKAN","INDF","JARR","JAWA","JPFA","KEJU","KINO","KMDS","LSIP","MAIN","MAXI","MBTO","MKTR","MLPL","MPPA","MRAT","MSJA","MYOR","NANO","NASI","NAYZ","NEST","NSSS","PCAR","PGUN","PNGO","PSDN","PSGO","PTPS","RANC","ROTI","SDPC","SGRO","SIMP","SIPD","SKBM","SKLT","SMAR","STAA","STTP","TAPG","TCID","TGKA","TGUK","TLDN","UCID","UDNG","ULTJ","UNVR","VICI","WAPO","YUPI","ACES","AEGS","ASLC","AUTO","BABY","BAIK","BAUT","BAYU","BELL","BIKE","BLTZ","BMBL","BMTR","BOGA","BOLT","BRAM","CINT","CNMA","CSAP","CSMI","DEPO","DOOH","DOSS","DRMA","EAST","ECII","ENAK","ERAA","ERAL","ERTX","ESTA","FAST","FILM","GDYR","GEMA","GJTL","GOLF","GRPH","GWSA","HAJJ","HRTA","IDEA","IIKP","INDR","INDS","IPTV","ISAP","JGLE","JIHD","KAQI","KICI","KLIN","KOTA","KPIG","LFLO","LIVE","LMAX","LMPI","LPIN","LPPF","MAPA","MAPB","MAPI","MDIA","MDIY","MEJA","MERI","MGLV","MICE","MKNT","MNCN","MPMX","MSIN","MSKY","OLIV","PANR","PART","PDES","PGLI","PJAA","PLAN","PMJS","PMUI","POLU","PSKT","PTSP","PZZA","RAAM","RALS","SCNP","SHID","SLIS","SMSM","SNLK","SOFA","SOTS","SPRE","SSTM","SWID","TFCO","TMPO","TOOL","TRIS","TYRE","UFOE","VERN","VKTR","WOOD","YELO","ZONE","BMHS","CARE","CHEK","DGNS","DVLA","HALO","HEAL","IKPM","IRRA","KLBF","LABS","MDLA","MEDS","MERK","MIKA","MMIX","MTMH","OBAT","OMED","PEHA","PEVE","PRAY","PRDA","PRIM","RSCH","RSGK","SAME","SCPI","SIDO","SILO","SOHO","SURI","TSPC","SRTG","PALM","DEFI","ADCP","AMAN","APLN","ASPI","ASRI","ATAP","BAPI","BBSS","BCIP","BEST","BIPP","BKDP","BKSL","BSBK","BSDE","CITY","CSIS","CTRA","DADA","DILD","DMAS","DUTI","ELTY","EMDE","FMII","GMTD","GPRA","GRIA","HBAT","HOMI","INPP","IPAC","JRPT","KBAG","KIJA","KOCI","LAND","LPCK","LPLI","MKPI","MMLP","MSIE","MTLA","MTSM","NZIA","PAMG","PLIN","POLI","PURI","RBMS","REAL","RELF","RISE","ROCK","RODA","SAGE","SATU","SMDM","SMRA","UANG","URBN","VAST","WINR","AREA","ATIC","AWAN","AXIO","BELI","CASH","CHIP","CYBR","DCII","DIVA","DMMX","ELIT","GLVA","HDIT","IOTF","IRSX","JATI","KIOS","KREN","LUCK","MCAS","MLPT","MPIX","MSTI","MTDL","NFCX","PGJO","PTSN","RUNS","TFAS","TOSK","TRON","UVCR","WGSH","WIFI","WIRG","ZYRX","ASLI","BALI","BDKR","CASS","CMNP","DATA","DGIK","EXCL","FIMP","GHON","GOLD","HADE","IBST","IDPR","INET","IPCM","ISAT","JAST","JKON","JSMR","KARW","KEEN","KETR","KOKA","MANG","META","MORA","MPOW","MTEL","MTPS","NRCA","PORT","POWR","PPRE","PTPP","PTPW","SMKM","SSIA","SUPR","TAMA","TLKM","TOTL","WEGE","AKSI","ASSA","BIRD","BLOG","BLTA","CMPP","ELPI","GIAA","GTRA","HAIS","HATM","HELI","JAYA","KJEN","KLAS","LAJU","LOPI","LRNA","MIRA","MITI","NELY","PJHB","PPGL","PURA","RCCC","SAFE","SAPX","SMDR","TAXI","TMAS","TNCA","TRJA","TRUK","WBSA","WEHA","GRHA"
 ]);
 function isSyariah(ticker){ return SYARIAH_TICKERS.has(String(ticker||"").toUpperCase()); }
+
+// ==========================================
+// PETA KODE BROKER -> NAMA PERUSAHAAN SEKURITAS
+//
+// Dipakai fitur Broker Stalker supaya baris hasil menampilkan nama lengkap
+// ("CLSA SEKURITAS INDONESIA") alih-alih cuma kode 2 huruf ("KZ"). Sumber:
+// daftar Anggota Bursa (AB) BEI yang dipublikasikan ulang oleh media (per
+// 2025/2026) — bukan hasil scraping API resmi, jadi kalau ada kode broker
+// baru/berganti nama, tambahkan/perbarui manual di sini (sama semangatnya
+// dengan SYARIAH_TICKERS & EPS_FOREIGN_BROKER_CODES di atas & di bawah).
+// Kode yang tidak ada di peta ini tetap ditampilkan (fallback ke kode +
+// "SEKURITAS" generik lewat brokerFullName()), tidak menyembunyikan data.
+// ==========================================
+const BROKER_NAME_MAP = {
+  AF:"Harita Kencana Sekuritas", AG:"Kiwoom Sekuritas Indonesia", AH:"Shinhan Sekuritas Indonesia",
+  AI:"UOB Kay Hian Sekuritas", AK:"UBS Sekuritas Indonesia", AN:"Wanteg Sekuritas",
+  AO:"Erdikha Elit Sekuritas", AP:"Pacific Sekuritas Indonesia", AR:"Binaartha Sekuritas",
+  AT:"Phintraco Sekuritas", AZ:"Sucor Sekuritas", BB:"Verdhana Sekuritas Indonesia",
+  BF:"Inti Fikasa Sekuritas", BK:"J.P. Morgan Sekuritas Indonesia", BQ:"Korea Investment and Sekuritas Indonesia",
+  BR:"Trust Sekuritas", BS:"Equity Sekuritas Indonesia", CC:"Mandiri Sekuritas",
+  CD:"Mega Capital Sekuritas", CP:"KB Valbury Sekuritas", CS:"Credit Suisse Sekuritas Indonesia",
+  DD:"Makindo Sekuritas", DH:"Sinarmas Sekuritas", DM:"Masindo Artha Sekuritas",
+  DP:"DBS Vickers Sekuritas Indonesia", DR:"RHB Sekuritas Indonesia", DU:"KAF Sekuritas Indonesia",
+  DX:"Bahana Sekuritas", EL:"Evergreen Sekuritas Indonesia", EP:"MNC Sekuritas",
+  ES:"Ekokapital Sekuritas", FO:"Forte Global Sekuritas", FS:"Yuanta Sekuritas Indonesia",
+  FZ:"Waterfront Sekuritas Indonesia", GA:"BNC Sekuritas Indonesia", GI:"Webull Sekuritas Indonesia",
+  GR:"Panin Sekuritas Tbk.", GW:"HSBC Sekuritas Indonesia", HD:"KGI Sekuritas Indonesia",
+  HP:"Henan Putihrai Sekuritas", ID:"Anugerah Sekuritas Indonesia", IF:"Samuel Sekuritas Indonesia",
+  IH:"Pacific 2000 Sekuritas", II:"Danatama Makmur Sekuritas", IN:"Investindo Nusantara Sekuritas",
+  IP:"Yugen Bertumbuh Sekuritas", IT:"Inti Teladan Sekuritas", IU:"Indo Capital Sekuritas",
+  KI:"Ciptadana Sekuritas Asia", KK:"Phillip Sekuritas Indonesia", KZ:"CLSA Sekuritas Indonesia",
+  LG:"Trimegah Sekuritas Indonesia Tbk.", LS:"Reliance Sekuritas Indonesia Tbk.", MG:"Semesta Indovest Sekuritas",
+  MI:"Victoria Sekuritas Indonesia", MK:"Ekuator Swarna Sekuritas", MU:"Minna Padi Investama Sekuritas",
+  NI:"BNI Sekuritas", OD:"BRI Danareksa Sekuritas", OK:"NET Sekuritas",
+  PC:"FAC Sekuritas Indonesia", PD:"Indo Premier Sekuritas", PF:"Danasakti Sekuritas Indonesia",
+  PG:"Panca Global Sekuritas", PO:"Pilarmas Investindo Sekuritas", PP:"Aldiracita Sekuritas Indonesia",
+  PS:"Paramitra Alfa Sekuritas", QA:"Tuntun Sekuritas Indonesia", RB:"Nikko Sekuritas Indonesia",
+  RF:"Buana Capital Sekuritas", RG:"Profindo Sekuritas Indonesia", RO:"Nilai Inti Sekuritas",
+  RS:"Yulie Sekuritas Indonesia Tbk.", RX:"Macquarie Sekuritas Indonesia", SA:"Elit Sukses Sekuritas",
+  SC:"IMG Sekuritas", SF:"Surya Fajar Sekuritas", SH:"Artha Sekuritas Indonesia",
+  SQ:"BCA Sekuritas", SS:"Supra Sekuritas Indonesia", TF:"Universal Broker Indonesia Sekuritas",
+  TP:"OCBC Sekuritas Indonesia", TS:"Dwidana Sakti Sekuritas", XA:"NH Korindo Sekuritas Indonesia",
+  XC:"Ajaib Sekuritas Asia", XL:"Stockbit Sekuritas Digital", YB:"Jasa Utama Capital Sekuritas",
+  YJ:"Lotus Andalan Sekuritas", YO:"Amantara Sekuritas Indonesia", YP:"Mirae Asset Sekuritas Indonesia",
+  YU:"CGS International Sekuritas Indonesia", ZP:"Maybank Sekuritas Indonesia", ZR:"Bumiputera Sekuritas",
+  // Kode lama/non-aktif — SPAB sudah dicabut BEI, tapi baris histori lama di
+  // broker_summary bisa saja masih memakainya, jadi tetap dipetakan.
+  MS:"Morgan Stanley Sekuritas Indonesia (non-aktif)", DB:"Deutsche Sekuritas Indonesia (non-aktif)",
+  BW:"BNP Paribas Sekuritas Indonesia (non-aktif)"
+};
+function brokerFullName(code){
+  const c = String(code||"").trim().toUpperCase();
+  return BROKER_NAME_MAP[c] || (c ? `Sekuritas ${c}` : "-");
+}
+
 function escapeHtml(str){
   return String(str ?? "").replace(/[&<>"']/g, c => ({ "&":"&amp;", "<":"&lt;", ">":"&gt;", '"':"&quot;", "'":"&#39;" }[c]));
 }
@@ -1286,6 +1341,20 @@ function stockbitHistoricalPeriodParam(period){
 let state = {
   demoMode: false, stocks: [], watchlist: new Set(), backtests: [],
   selectedForBacktest: new Set(),
+  // ==========================================
+  // "Simpan ke Backtest" GENERIK — dipakai oleh tab-tab selain 📋 Screener
+  // (yang sudah punya mekanismenya sendiri lewat selectedForBacktest di
+  // atas) supaya SETIAP menu yang menghasilkan daftar kandidat saham —
+  // 🎯 Entry Price Scanner, ⬢ Kraken Flow (ORCA), 🌆 BSJP, ✨ Smart Pick —
+  // juga bisa mengirim hasilnya ke tab 🔬 Backtest dengan harga & tanggal
+  // entry yang sama-sama terkunci begitu tersimpan (lihat saveToBacktest
+  // untuk pola aslinya, dan saveGenericListToBacktest di bawah untuk
+  // versi generiknya). Satu namespace ("eps"/"orca"/"bsjp"/"smartpick")
+  // = satu Set centang independen, supaya centang di satu tab tidak
+  // tercampur dengan tab lain.
+  genericBacktestSelections: {}, // { [namespace]: Set<ticker> }
+  genericBacktestItems: {},      // { [namespace]: Array<{ticker, price, kriteria, keterangan}> } — snapshot item yang SEDANG tampil di render terakhir, dipakai wiring select-all/save
+
   portfolio: [], portoEditId: null, portoModalOpen: false, portoPrefill: null, selectedPorto: new Set(),
   tab: "screener", search: "", activePreset: null,
   visibleCols: new Set(), // diisi loadSettings() dari localStorage atau DEFAULT_VISIBLE_COLS
@@ -1308,7 +1377,7 @@ let state = {
   page: 1, limit: 10,
   expanded: new Set(),
   selectedTicker: null, chartData: [], chartLoading: false, selectedLevels: null, loading:false, chartSearch: "",
-  chartRange: "all", chartSeries: { close:true, support:true, resistance:true, ema:true, fib:true, bb:false, rsi:false, macd:false, volume:false },
+  chartRange: "all", chartSeries: { close:true, support:true, resistance:true, fib:true, bb:false, emaHL:false, ema89:false, sar:false, supertrend:false, pc:false, bandar:false, vol:false, stochrsi:false, rsi721:false, foreignflow:false, macd:false, netforeign:false },
   detailTicker: null, detailTab: "teknikal",
   // Modal "detail metrik Dashboard": dibuka saat kartu ringkasan (Total
   // Saham, Undervalued, dst) diklik. key = metrik, lihat DASH_METRIC_DEFS.
@@ -1357,6 +1426,26 @@ let state = {
   dashboardBrokerRows: [], dashboardBrokerDate: null, dashboardBrokerLoading: false,
   brokerStalkerMode: "stock", brokerStalkerQuery: "", brokerStalkerRows: [],
   brokerStalkerDate: null, brokerStalkerLoading: false, brokerStalkerMsg: "",
+  // ==========================================
+  // Field tambahan untuk tampilan Broker Stalker versi baru (Periode,
+  // Urutkan, Filter Asing/Lokal, cari broker di hasil, toggle grafik).
+  // brokerStalkerRawRows menyimpan hasil AGREGAT MENTAH (belum difilter/
+  // diurutkan) dari searchBrokerStalker() — brokerStalkerRows (di atas)
+  // dihitung ulang dari sini secara instan tiap Urutkan/Filter/cari
+  // berubah, TANPA fetch ulang ke Supabase. brokerStalkerDailyNet dipakai
+  // untuk grafik batang akumulasi harian ("Tampilkan Grafik Akumulasi
+  // Broker") — net gabungan SEMUA broker per hari dalam rentang tanggal
+  // yang sedang dilihat.
+  // ==========================================
+  brokerStalkerRawRows: [],
+  brokerStalkerDailyNet: [], // [{date, net}], urut lama->baru
+  brokerStalkerPeriod: "today", // "today" | "1w" | "1m" | "3m" | "range"
+  brokerStalkerRangeFrom: "", brokerStalkerRangeTo: "",
+  brokerStalkerDateFrom: null, brokerStalkerDateTo: null, // rentang tanggal AKTUAL yang dipakai query terakhir
+  brokerStalkerSort: "net", // "net" | "buy" | "sell" | "vol"
+  brokerStalkerFilterType: null, // null (semua) | "asing" | "lokal"
+  brokerStalkerResultSearch: "", // cari broker/saham di dalam hasil (client-side)
+  brokerStalkerChartOpen: false,
   // Tab Broker Summary: top 5 broker buy/sell per saham per tanggal.
   // Data diisi MANUAL (dari screenshot akun Stockbit sendiri) lewat
   // form atau tempel CSV — bukan hasil scraping otomatis.
@@ -3945,7 +4034,7 @@ function renderDetailModalContent(){
         <div class="detail-head-sub">${s.sektor||"Sektor tidak diketahui"} ${s.syariahLabel==="Ya" ? "· Syariah" : ""}</div>
       </div>
       <div style="display:flex;gap:10px;">
-        <button class="btn btn-outline" data-chart="${s.ticker}">Lihat Grafik</button>
+        <a class="btn btn-outline" href="#/chart/${encodeURIComponent(s.ticker)}" data-chart="${s.ticker}">Lihat Grafik</a>
         <a class="btn btn-outline btn-tradingview" href="${tvChartPageUrl(s.ticker)}" target="_blank" rel="noopener">TV</a>
         <a class="btn btn-outline btn-stockbit" href="${stockbitUrl(s.ticker)}" target="_blank" rel="noopener">SB</a>
       </div>
@@ -3958,28 +4047,55 @@ function renderDetailModalContent(){
 
 async function loadChart(ticker){
   state.selectedTicker=ticker; state.tab="chart";
+  syncHashFromState();
+  // Setiap kali buka/ganti ticker, reset tampilan chart ke default yang
+  // sudah terbukti paling kepake: rentang 1 bulan, overlay Close/Support/
+  // Resisten/EMA21 High-Low/EMA89 aktif (Fibonacci, Bollinger Bands, SAR,
+  // SuperTrend, Price Channel dimatikan biar tidak penuh), dan semua panel
+  // bawah (Bandar Volume, Volume 20, Stoch RSI, RSI 7&21, Foreign Flow,
+  // MACD, Net Foreign Buy/Sell) aktif. User tetap bisa toggle manual
+  // sesudahnya lewat checkbox — ini cuma titik awal tiap ganti ticker.
+  state.chartRange = "1m";
+  state.chartSeries = {
+    close:true, support:true, resistance:true, fib:false, bb:false,
+    emaHL:true, ema89:true, sar:false, supertrend:false, pc:false,
+    bandar:true, vol:true, stochrsi:true, rsi721:true, foreignflow:true, macd:true, netforeign:true
+  };
   const stock = enriched().find(s=>s.ticker===ticker);
   state.selectedLevels = stock ? {
     support:stock.support, resistance:stock.resistance,
     ema21H:stock.ema21H, ema21L:stock.ema21L, fib:stock.fib
   } : null;
 
-  // Histori harga close ASLI dari tabel `flows` (diisi sync-flow.mjs dari
+  // Histori harga ASLI dari tabel `flows` (diisi sync-idx-full.mjs dari
   // IDX), bukan lagi deret acak (genDemoSeries lama). `flows` disimpan
-  // sampai ~200 hari terakhir per ticker — lihat MAX_DAYS di sync-flow.mjs.
+  // sampai ~450 hari kalender terakhir per ticker — lihat MAX_DAYS di
+  // sync-idx-full.mjs. Sekarang tarik OHLC penuh + foreign_buy/foreign_sell
+  // (bukan cuma close/volume) supaya panel chart custom (SAR, SuperTrend,
+  // Price Channel, Bandar Volume, Foreign Flow, Net Foreign Buy/Sell) bisa
+  // dihitung -- semuanya butuh high/low atau data asing harian.
   state.chartData = [];
   state.chartLoading = true;
   render();
   try{
     const rows = await fetch(
-      `${SUPABASE_URL}/flows?ticker=eq.${encodeURIComponent(ticker)}&select=date,close,volume&order=date.asc`,
+      `${SUPABASE_URL}/flows?ticker=eq.${encodeURIComponent(ticker)}&select=date,open_price,high,low,close,volume,foreign_buy,foreign_sell&order=date.asc`,
       { headers: getSupaHeaders() }
     ).then(r=>r.json());
 
     if (Array.isArray(rows) && rows.length){
       state.chartData = rows
         .filter(r => r.close != null)
-        .map(r => ({ date: r.date, close: Math.round(r.close), volume: r.volume == null ? null : Number(r.volume) }));
+        .map(r => ({
+          date: r.date,
+          open: r.open_price == null ? null : Number(r.open_price),
+          high: r.high == null ? null : Number(r.high),
+          low: r.low == null ? null : Number(r.low),
+          close: Math.round(r.close),
+          volume: r.volume == null ? null : Number(r.volume),
+          foreignBuy: r.foreign_buy == null ? null : Number(r.foreign_buy),
+          foreignSell: r.foreign_sell == null ? null : Number(r.foreign_sell),
+        }));
     }
   } catch(e){
     state.chartData = [];
@@ -4097,6 +4213,149 @@ async function saveToBacktest(){
   alert(synced
     ? `${toSave.length} emiten yang dipilih berhasil disimpan ke tab Backtest.`
     : `${toSave.length} emiten disimpan lokal, tapi gagal sinkron ke Supabase. Lihat pesan error di atas halaman.`);
+}
+
+// ==========================================
+// "SIMPAN KE BACKTEST" GENERIK — dipakai tab EPS Scanner, Kraken Flow
+// (ORCA), BSJP, dan Smart Pick ("Lihat Daftar Lengkap"). Sengaja dibuat
+// terpisah dari saveToBacktest() (yang khusus tab Screener & bergantung
+// pada getActiveScreenerContext/getFiltered) supaya tiap tab bisa kirim
+// item apa adanya (ticker, harga saat itu, label sumber & keterangan
+// sendiri) tanpa perlu berpura-pura datang dari filter Screener.
+//
+// Cara pakai di sebuah renderXxx(): panggil renderBacktestSaveBar(ns, items)
+// di tempat toolbar tabel, dengan items = [{ticker, price, kriteria?, keterangan?}].
+// Wiring klik/centangnya otomatis lewat wireBacktestSaveControls() yang
+// dipanggil dari attachContentEvents() — lihat di bawah.
+// ==========================================
+function getBacktestSelection(namespace){
+  if(!state.genericBacktestSelections[namespace]) state.genericBacktestSelections[namespace] = new Set();
+  return state.genericBacktestSelections[namespace];
+}
+
+// Merender toolbar kecil "Pilih semua" + tombol "💾 Simpan ke Backtest" di
+// atas/bawah sebuah tabel hasil. SEKALIGUS menyimpan snapshot `items` ke
+// state.genericBacktestItems[namespace] — inilah yang dibaca wiring
+// (select-all & tombol simpan) saat diklik nanti, supaya tidak perlu
+// closure atas array yang mungkin sudah basi setelah render berikutnya.
+function renderBacktestSaveBar(namespace, items, opts){
+  opts = opts || {};
+  state.genericBacktestItems[namespace] = items;
+  const sel = getBacktestSelection(namespace);
+  const validItems = items.filter(it => it && it.ticker && it.price > 0);
+  const selectedCount = validItems.filter(it => sel.has(it.ticker)).length;
+  const allChecked = validItems.length > 0 && validItems.every(it => sel.has(it.ticker));
+  if(!validItems.length) return "";
+  return `
+    <div class="bt-savebar" style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin:${opts.margin || "10px 0"};padding:8px 12px;background:rgba(6,182,212,0.06);border:1px solid rgba(6,182,212,0.2);border-radius:8px;">
+      <label style="display:flex;align-items:center;gap:6px;font-size:11.5px;color:var(--muted);cursor:pointer;">
+        <input type="checkbox" class="custom-checkbox" data-bt-select-all="${namespace}" ${allChecked?"checked":""}> Pilih semua (${validItems.length})
+      </label>
+      <span style="font-size:11px;color:var(--muted);">${selectedCount} dipilih untuk dikirim ke 🔬 Backtest</span>
+      <button type="button" class="btn btn-primary" data-bt-save="${namespace}" ${selectedCount===0?"disabled":""} style="margin-left:auto;padding:6px 14px;font-size:12px;">
+        💾 Simpan ke Backtest${selectedCount>0?` (${selectedCount})`:""}
+      </button>
+    </div>`;
+}
+
+// Checkbox per-baris — dipasang di kolom pertama tiap <tr>. `item` dipakai
+// hanya untuk validasi (ticker & harga wajib ada, kalau tidak baris ini
+// tidak bisa dicentang sama sekali — mis. baris tanpa harga live).
+function backtestRowCheckbox(namespace, item){
+  if(!item || !item.ticker || !(item.price > 0)) return `<td style="width:28px;"></td>`;
+  const checked = getBacktestSelection(namespace).has(item.ticker);
+  return `<td style="width:28px;"><input type="checkbox" class="custom-checkbox" data-bt-row="${namespace}::${escapeHtml(item.ticker)}" ${checked?"checked":""}></td>`;
+}
+
+async function saveGenericListToBacktest(namespace, contextLabel){
+  const items = state.genericBacktestItems[namespace] || [];
+  const sel = getBacktestSelection(namespace);
+  const toSave = items.filter(it => it && it.ticker && it.price > 0 && sel.has(it.ticker));
+  if(!toSave.length) return alert("Tidak ada emiten yang dicentang.");
+
+  const sessionId = String(Date.now());
+  const tglSesi = new Date().toLocaleString('id-ID');
+  // Sama seperti saveToBacktest(): tanggal & harga entry dikunci SEKALI
+  // saat disimpan, tidak pernah ditulis ulang oleh refresh data live
+  // berikutnya (lihat renderBacktest).
+  const tglEntryIso = todayLocalISO();
+  const entryItems = toSave.map(it => ({
+    ticker: it.ticker,
+    entryPrice: it.price,
+    entryDate: tglEntryIso,
+    sumber: contextLabel,
+    kriteria: it.kriteria || contextLabel,
+    keterangan: it.keterangan || contextLabel
+  }));
+
+  state.backtests.unshift({
+    id: sessionId, date: tglSesi,
+    items: entryItems.map(it => ({ ticker: it.ticker, entryPrice: it.entryPrice, entryDate: it.entryDate, filterStr: it.keterangan, kriteria: it.kriteria, sumber: it.sumber }))
+  });
+  saveBacktests();
+  sel.clear();
+  render();
+
+  const synced = await syncBacktestToSupabase(sessionId, tglSesi, entryItems);
+  alert(synced
+    ? `${toSave.length} emiten dari "${contextLabel}" berhasil disimpan ke tab Backtest.`
+    : `${toSave.length} emiten disimpan lokal, tapi gagal sinkron ke Supabase. Lihat pesan error di atas halaman.`);
+}
+
+// Dipanggil dari attachContentEvents() (untuk area tab utama) dan dari
+// render() tepat setelah #spListModalContent diisi (untuk modal "Lihat
+// Daftar Lengkap" Smart Pick) — scopeEl membatasi querySelectorAll supaya
+// tidak salah pasang handler ke elemen di luar area yang baru di-render.
+function wireBacktestSaveControls(scopeEl){
+  if(!scopeEl) return;
+  scopeEl.querySelectorAll("[data-bt-row]").forEach(chk => {
+    chk.onchange = () => {
+      const [ns, ticker] = String(chk.dataset.btRow).split("::");
+      const sel = getBacktestSelection(ns);
+      if(chk.checked) sel.add(ticker); else sel.delete(ticker);
+      render();
+    };
+  });
+  scopeEl.querySelectorAll("[data-bt-select-all]").forEach(chk => {
+    chk.onchange = () => {
+      const ns = chk.dataset.btSelectAll;
+      const items = (state.genericBacktestItems[ns] || []).filter(it => it && it.ticker && it.price > 0);
+      const sel = getBacktestSelection(ns);
+      if(chk.checked) items.forEach(it => sel.add(it.ticker));
+      else items.forEach(it => sel.delete(it.ticker));
+      render();
+    };
+  });
+  scopeEl.querySelectorAll("[data-bt-save]").forEach(btn => {
+    btn.onclick = () => {
+      const ns = btn.dataset.btSave;
+      const labelByNs = {
+        eps: "Entry Price Scanner",
+        orca: "Kraken Flow (ORCA)",
+        bsjp: "BSJP (Beli Sore, Jual Pagi)",
+        smartpick: `Smart Pick — ${spTitleFor(state.spListOpenDefId)}`
+      };
+      saveGenericListToBacktest(ns, labelByNs[ns] || ns);
+    };
+  });
+}
+
+// Versi single-item dari mekanisme "Simpan ke Backtest" generik, khusus
+// tab 🎯 Target Bandar — tab ini menganalisis SATU ticker pada satu waktu
+// (bukan tabel banyak baris seperti EPS/ORCA/BSJP/Smart Pick), jadi cukup
+// satu tombol langsung tanpa checkbox/select-all.
+async function saveTargetBandarToBacktest(){
+  const ticker = String(state.targetStockCode||"").trim().toUpperCase();
+  const price = Math.round(state.targetCurrentPrice||0);
+  const avgB = state.targetAvgBandar, lv = state.targetLevels;
+  if(!ticker) return alert("Isi dulu Kode Saham di atas.");
+  if(!price) return alert("Harga sekarang belum tersedia — klik \"Muat Data\" dulu.");
+  const keterangan = (avgB && lv)
+    ? `Avg Bandar: ${fmtNum(Math.round(avgB.avgPrice))}; Target R1: ${fmtNum(Math.round(lv.r1))}; Target Max: ${fmtNum(Math.round(lv.max))}${avgB.isEstimate?' (Avg Bandar estimasi)':''}`
+    : "Target Bandar";
+  state.genericBacktestItems.targetbandar = [{ ticker, price, kriteria: "Target Bandar", keterangan }];
+  getBacktestSelection("targetbandar").add(ticker);
+  await saveGenericListToBacktest("targetbandar", "Target Bandar");
 }
 
 async function addManualBacktest(sessionId, ticker, entryPrice, keterangan, entryDate){
@@ -5218,7 +5477,8 @@ function render(){
     else if(state.tab==="eps") content.innerHTML = renderEntryPriceScanner();
     else if(state.tab==="kraken") content.innerHTML = renderKrakenFlow();
     else if(state.tab==="bsjp") content.innerHTML = renderBsjp();
-    else if(state.tab==="about") content.innerHTML = renderAbout();
+    else if(state.tab==="about") content.innerHTML = renderPanduan(); // alias lama, redirect ke Panduan
+    else if(state.tab==="panduan") content.innerHTML = renderPanduan();
     else if(state.tab==="quanthub"){ /* ditangani quant-hub.js (halaman #qhPage terpisah) */ }
     else content.innerHTML = `<div class="empty-box">Tab tidak dikenal: ${escapeHtml(state.tab)}</div>`;
   }catch(e){
@@ -5249,7 +5509,7 @@ function render(){
     document.querySelectorAll("[data-gemini-run]").forEach(btn=>{
       btn.onclick = () => runGeminiAnalysis(btn.dataset.geminiRun);
     });
-    document.querySelectorAll("#detailModalContent [data-chart]").forEach(b=> b.onclick = ()=>{ closeDetail(); loadChart(b.dataset.chart); });
+    document.querySelectorAll("#detailModalContent [data-chart]").forEach(b=> bindInternalLink(b, ()=>{ closeDetail(); loadChart(b.dataset.chart); }));
 
     // --- Broker Summary di dalam modal Detail Emiten ---
     const dbsDateInput = document.getElementById("dbsDate");
@@ -5307,6 +5567,7 @@ function render(){
     document.querySelectorAll("[data-sp-list-detail]").forEach(b=>{
       b.onclick = () => { closeSmartPickList(); openDetail(b.dataset.spListDetail); };
     });
+    wireBacktestSaveControls(document.getElementById("spListModalContent"));
   }
 
   // --- Modal detail metrik Dashboard (klik kartu ringkasan) ---
@@ -5953,6 +6214,19 @@ function evalCustomRule(s, rule){
 }
 function saveCustomRules(){ localStorage.setItem(LS_CUSTOM_RULES, JSON.stringify(state.customRules)); }
 
+// Reset semua Rules Kustom sekaligus (tombol "↺ Reset" di panel rule builder).
+// Beda dari clearChip('rules'): ini dipanggil langsung dari dalam panel rule
+// builder itu sendiri (bukan dari chip filter aktif), dan selalu minta
+// konfirmasi dulu karena aksinya tidak bisa dibatalkan.
+function resetCustomRules(){
+  if(!state.customRules.length) return;
+  if(!confirm(`Reset semua ${state.customRules.length} rule kustom? Ini tidak akan menghapus preset yang sudah tersimpan.`)) return;
+  state.customRules = [];
+  saveCustomRules();
+  state.page = 1;
+  render();
+}
+
 // ==========================================
 // PRESET SCREENER KUSTOM (tabel custom_presets di Supabase)
 //
@@ -6289,6 +6563,7 @@ function renderRuleBuilder(){
       <div style="display:flex;align-items:center;gap:12px;margin-top:12px;flex-wrap:wrap;">
         <button type="button" class="btn btn-outline" id="addRuleBtn">+ Tambah Rule</button>
         <button type="button" class="btn btn-outline" id="savePresetBtn" ${state.presetsLoading?'disabled':''}>💾 Simpan sebagai Preset...</button>
+        ${state.customRules.length ? `<button type="button" class="btn btn-outline" id="resetRulesBtn" title="Kosongkan semua rule kustom" style="color:#f87171;border-color:rgba(239,68,68,0.3);">↺ Reset</button>` : ""}
         ${state.customRules.length ? `<span style="font-size:12px;color:var(--muted);">${state.customRules.length} rule aktif — otomatis diterapkan ke tabel di bawah (AND, semua harus terpenuhi).</span>` : ""}
       </div>` : ""}
       <div style="display:flex;align-items:center;gap:10px;margin-top:14px;flex-wrap:wrap;padding-top:12px;border-top:1px solid var(--border);">
@@ -6418,7 +6693,7 @@ function renderScreener(){
       ${bodyCells}
       <td>
         <div style="display:flex; gap: 8px;">
-          <button class="link-btn" data-chart="${s.ticker}">Chart</button>
+          <a class="link-btn" href="#/chart/${encodeURIComponent(s.ticker)}" data-chart="${s.ticker}">Chart</a>
           <a class="link-btn link-btn-tv" href="${tvChartPageUrl(s.ticker)}" target="_blank" rel="noopener" title="Buka ${s.ticker} di TradingView">TV</a>
           <a class="link-btn link-btn-sb" href="${stockbitUrl(s.ticker)}" target="_blank" rel="noopener" title="Buka ${s.ticker} di Stockbit">SB</a>
         </div>
@@ -6754,7 +7029,7 @@ function renderBacktest(){
   }
 
   const sessions = state.backtests.map(session => {
-    let winCount = 0, totalPL = 0, maxPL = -Infinity, minPL = Infinity, validItems = 0;
+    let winCount = 0, lossCount = 0, winCountMax = 0, lossCountMax = 0, totalPL = 0, maxPL = -Infinity, minPL = Infinity, validItems = 0;
 
     const rows = session.items.map(item => {
       const liveData = state.stocks.find(s => s.ticker === item.ticker);
@@ -6767,10 +7042,15 @@ function renderBacktest(){
 
       if (pl != null) {
         if (pl > 0) winCount++;
+        else if (pl < 0) lossCount++;
         totalPL += pl;
         if (pl > maxPL) maxPL = pl;
         if (pl < minPL) minPL = pl;
         validItems++;
+      }
+      if (periodMaxPL != null) {
+        if (periodMaxPL > 0) winCountMax++;
+        else if (periodMaxPL < 0) lossCountMax++;
       }
 
       const tone = plTone;
@@ -6799,7 +7079,7 @@ function renderBacktest(){
         <td class="mono" title="Harga tertinggi sejak tanggal entry (dari data historical harian)">${fmtNum(period.highPeriod)}</td>
         <td class="mono" style="color:var(--${maxTone}); font-weight:700; font-size:14px;" title="P/L maksimum: (Harga Tertinggi periode − Harga Entry) ÷ Harga Entry">${plText(periodMaxPL)}</td>
         <td class="mono">${hariStr}</td>
-        <td><button class="link-btn" data-chart="${item.ticker}">Chart</button></td>
+        <td><a class="link-btn" href="#/chart/${encodeURIComponent(item.ticker)}" data-chart="${item.ticker}">Chart</a></td>
         <td><button class="link-btn" style="color:#f87171;" data-del-bt-item="${session.id}|${item.ticker}">Hapus</button></td>
       </tr>`;
     }).join("");
@@ -6817,6 +7097,7 @@ function renderBacktest(){
         <div style="background:rgba(0,0,0,0.2); border:1px solid var(--border); border-radius:8px; padding:12px; border-top: 3px solid var(--${winTone});">
           <div style="font-size:10.5px; color:var(--muted); text-transform:uppercase; font-weight:600; margin-bottom:4px;">Win Rate</div>
           <div style="font-size:18px; font-weight:700; font-family:'JetBrains Mono',monospace; color:var(--text);">${winRate}%</div>
+          <div style="font-size:11px; margin-top:4px; font-family:'JetBrains Mono',monospace;"><span style="color:var(--up);">${winCount} menang</span> <span style="color:var(--muted);">/</span> <span style="color:var(--down);">${lossCount} kalah</span></div>
         </div>
         <div style="background:rgba(0,0,0,0.2); border:1px solid var(--border); border-radius:8px; padding:12px; border-top: 3px solid var(--${avgTone});">
           <div style="font-size:10.5px; color:var(--muted); text-transform:uppercase; font-weight:600; margin-bottom:4px;">Rata-rata P/L</div>
@@ -6825,6 +7106,7 @@ function renderBacktest(){
         <div style="background:rgba(0,0,0,0.2); border:1px solid var(--border); border-radius:8px; padding:12px; border-top: 3px solid var(--up);">
           <div style="font-size:10.5px; color:var(--muted); text-transform:uppercase; font-weight:600; margin-bottom:4px;">P/L Tertinggi</div>
           <div style="font-size:18px; font-weight:700; font-family:'JetBrains Mono',monospace; color:var(--up);">${bestPL > 0 ? '+' : ''}${bestPL}%</div>
+          <div style="font-size:11px; margin-top:4px; font-family:'JetBrains Mono',monospace;"><span style="color:var(--up);">${winCountMax} menang</span> <span style="color:var(--muted);">/</span> <span style="color:var(--down);">${lossCountMax} kalah</span></div>
         </div>
         <div style="background:rgba(0,0,0,0.2); border:1px solid var(--border); border-radius:8px; padding:12px; border-top: 3px solid var(--down);">
           <div style="font-size:10.5px; color:var(--muted); text-transform:uppercase; font-weight:600; margin-bottom:4px;">P/L Terendah</div>
@@ -7195,29 +7477,329 @@ function renderDashMetricModal(){
   `;
 }
 
-function renderBrokerStalker(){
-  const rows = state.brokerStalkerRows || [];
+// ==========================================================================
+// BROKER STALKER v2 — helper: agregasi baris mentah broker_summary jadi
+// satu baris per entitas (per broker kalau mode "stock", per saham kalau
+// mode "broker") + deret net harian gabungan (untuk grafik akumulasi).
+// Dipanggil SEKALI tiap kali searchBrokerStalker() berhasil fetch; hasilnya
+// (brokerStalkerRawRows) disimpan lalu Urutkan/Filter/cari di bawah cukup
+// dihitung ulang dari sini secara instan (brokerStalkerFilteredSorted()),
+// TANPA fetch ulang ke Supabase.
+// ==========================================================================
+function computeBrokerStalkerAggregation(rawRows, mode){
+  const grouped = {};
+  const dailyMap = {};
+  (rawRows||[]).forEach(r=>{
+    const key = mode==='stock' ? r.broker_code : r.stock_code;
+    if(!key) return;
+    const g = grouped[key] || (grouped[key] = { code:key, stock_code:r.stock_code, broker_code:r.broker_code, buyLot:0, sellLot:0, buyValue:0, sellValue:0 });
+    const lot = Number(r.lot)||0, val = Number(r.value_idr)||0;
+    const isBuy = String(r.side).toLowerCase()==='buy';
+    if(isBuy){ g.buyLot+=lot; g.buyValue+=val; } else { g.sellLot+=lot; g.sellValue+=val; }
+    if(r.trade_date){
+      const dd = dailyMap[r.trade_date] || (dailyMap[r.trade_date] = { date:r.trade_date, net:0 });
+      dd.net += isBuy ? val : -val;
+    }
+  });
+  const rows = Object.values(grouped).map(g=>{
+    const net = g.buyValue - g.sellValue;
+    return {
+      ...g,
+      net,
+      volTotal: g.buyLot + g.sellLot,
+      avgBuy: g.buyLot>0 ? g.buyValue/(g.buyLot*100) : null,
+      avgSell: g.sellLot>0 ? g.sellValue/(g.sellLot*100) : null,
+      type: mode==='stock' ? epsBrokerType(g.broker_code) : null,
+      name: mode==='stock' ? brokerFullName(g.broker_code) : (enriched().find(s=>s.ticker===g.stock_code)?.name || g.stock_code || '-'),
+      status: net>=0 ? 'AKUMULASI' : 'DISTRIBUSI'
+    };
+  });
+  const dailyNet = Object.values(dailyMap).sort((a,b)=> a.date<b.date?-1:(a.date>b.date?1:0));
+  return { rows, dailyNet };
+}
+
+// Urutkan (Net/Buy/Sell/Vol) + Filter (Asing/Lokal, mode Lacak Saham saja) +
+// cari di dalam hasil — semua dihitung dari brokerStalkerRawRows, dipanggil
+// tiap kali salah satu kontrol itu berubah (lihat attachContentEvents()).
+function brokerStalkerFilteredSorted(){
+  let rows = (state.brokerStalkerRawRows||[]).slice();
   const modeStock = state.brokerStalkerMode === 'stock';
-  return `<div class="panel broker-stalker-page"><div class="filter-section-title"><span>🛰️ BROKER STALKER</span><span class="line"></span></div><div class="dashboard-subtitle">Lacak aliran akumulasi dan distribusi dari data Broker Summary.</div>
-    <div class="stalker-toggle"><button class="filter-chip ${modeStock?'active':''}" data-bs-mode="stock">Lacak Saham</button><button class="filter-chip ${!modeStock?'active':''}" data-bs-mode="broker">Lacak Broker</button></div>
-    <div class="stalker-search"><input id="stalkerQuery" value="${escapeHtml(state.brokerStalkerQuery)}" placeholder="${modeStock?'Ticker, mis. BBCA':'Kode broker, mis. AK'}" maxlength="12"><button class="btn btn-primary" id="stalkerSearchBtn">🔎 Lacak</button>${state.brokerStalkerDate?`<span class="pill pill-teal">Data ${fmtDateID(state.brokerStalkerDate)}</span>`:''}</div>
-    ${state.brokerStalkerLoading?'<div class="empty-box">Memuat data broker…</div>':state.brokerStalkerMsg?`<div class="empty-box">${escapeHtml(state.brokerStalkerMsg)}</div>`:rows.length?`<div class="table-wrap"><table class="data-table"><thead><tr>${modeStock?'<th>Broker</th><th>Buy Lot</th><th>Sell Lot</th><th>Net Value</th><th>Dominan</th>':'<th>Saham</th><th>Buy Lot</th><th>Sell Lot</th><th>Net Value</th><th>Status</th>'}</tr></thead><tbody>${rows.map(r=>`<tr><td>${modeStock?escapeHtml(r.broker_code):`<button class="ticker-link" data-detail="${escapeHtml(r.stock_code)}">${escapeHtml(r.stock_code)}</button>`}</td><td class="mono">${fmtNum(r.buyLot)}</td><td class="mono">${fmtNum(r.sellLot)}</td><td class="mono" style="color:${r.net>=0?'var(--up)':'var(--down)'}">${fmtCap(r.net)}</td><td>${pillHtml(r.status,r.net>=0?'up':'down')}</td></tr>`).join('')}</tbody></table></div>`:'<div class="empty-box">Masukkan ticker atau kode broker, lalu klik Lacak.</div>'}
+  if(modeStock && state.brokerStalkerFilterType){
+    rows = rows.filter(r=>r.type===state.brokerStalkerFilterType);
+  }
+  const q = String(state.brokerStalkerResultSearch||'').trim().toUpperCase();
+  if(q){
+    rows = rows.filter(r=> String(r.code||'').toUpperCase().includes(q) || String(r.name||'').toUpperCase().includes(q));
+  }
+  const sortKey = state.brokerStalkerSort;
+  rows.sort((a,b)=>{
+    if(sortKey==='buy') return b.buyValue - a.buyValue;
+    if(sortKey==='sell') return b.sellValue - a.sellValue;
+    if(sortKey==='vol') return b.volTotal - a.volTotal;
+    return b.net - a.net; // default: "net"
+  });
+  return rows;
+}
+function applyBrokerStalkerView(){ state.brokerStalkerRows = brokerStalkerFilteredSorted(); render(); }
+
+// Ringkasan "BROKER AKTIF" (kartu Broker/Net Buy Agg/Net Sell Agg/Dominan +
+// bar Akumulasi vs Distribusi) — dihitung dari daftar yang SEDANG tampil
+// (state.brokerStalkerRows, setelah filter/cari), bukan dari raw, supaya
+// kartu ikut berubah kalau Filter Asing/Lokal atau pencarian diubah.
+function brokerStalkerSummary(rows){
+  let netBuyAgg=0, netSellAgg=0;
+  (rows||[]).forEach(r=>{ if(r.net>=0) netBuyAgg+=r.net; else netSellAgg += -r.net; });
+  const total = netBuyAgg+netSellAgg;
+  const akumulasiPct = total>0 ? Math.round(netBuyAgg/total*100) : 50;
+  return {
+    brokerCount:(rows||[]).length, netBuyAgg, netSellAgg,
+    akumulasiPct, distribusiPct: 100-akumulasiPct,
+    dominant: netBuyAgg>=netSellAgg ? 'AKUMULASI' : 'DISTRIBUSI'
+  };
+}
+
+// Grafik batang sederhana (bukan library chart) untuk toggle "Tampilkan
+// Grafik Akumulasi Broker" — satu batang per hari bursa dalam
+// brokerStalkerDailyNet (net GABUNGAN semua broker/saham hari itu), hijau
+// kalau net beli, merah kalau net jual, tinggi proporsional ke net
+// terbesar (absolut) dalam periode yang sedang dilihat.
+function renderBrokerStalkerChartHtml(dailyNet){
+  if(!dailyNet || dailyNet.length < 2) return '<div class="empty-box" style="margin:8px 0 14px;">Perlu lebih dari 1 hari data untuk grafik akumulasi — coba periode 1W/1M/3M/Range.</div>';
+  const maxAbs = Math.max(1, ...dailyNet.map(d=>Math.abs(d.net)));
+  const bars = dailyNet.map(d=>{
+    const pct = Math.max(4, Math.round(Math.abs(d.net)/maxAbs*100));
+    const color = d.net>=0 ? 'var(--up)' : 'var(--down)';
+    return `<div class="bs2-chart-bar" title="${fmtDateID(d.date)}: ${fmtRp(d.net)}"><div class="bs2-chart-bar-fill" style="height:${pct}%;background:${color};"></div></div>`;
+  }).join('');
+  return `<div class="bs2-chart">${bars}</div>`;
+}
+
+function renderBrokerStalker(){
+  const modeStock = state.brokerStalkerMode === 'stock';
+  const rows = state.brokerStalkerRows || [];
+  const period = state.brokerStalkerPeriod;
+  const rangeOpen = period === 'range';
+  const summary = brokerStalkerSummary(rows);
+  const dateLabel = (state.brokerStalkerDateFrom && state.brokerStalkerDateTo)
+    ? (state.brokerStalkerDateFrom === state.brokerStalkerDateTo ? fmtDateID(state.brokerStalkerDateFrom) : `${fmtDateID(state.brokerStalkerDateFrom)} s/d ${fmtDateID(state.brokerStalkerDateTo)}`)
+    : '';
+  const periodChips = [["today","Today"],["1w","1W"],["1m","1M"],["3m","3M"]];
+  const hasResults = !state.brokerStalkerLoading && (state.brokerStalkerRawRows||[]).length > 0;
+
+  return `<div class="panel broker-stalker-page">
+    <style>
+      .broker-stalker-page .bs2-tabs{display:flex;gap:8px;margin:10px 0 16px;}
+      .broker-stalker-page .bs2-tab{padding:8px 16px;border-radius:8px;border:1px solid var(--border);background:transparent;color:var(--muted);font-weight:700;font-size:12px;cursor:pointer;letter-spacing:.03em;}
+      .broker-stalker-page .bs2-tab.active{background:linear-gradient(90deg,#7c5cff,#5b8cff);border-color:transparent;color:#fff;}
+      .broker-stalker-page .bs2-card{background:rgba(255,255,255,0.02);border:1px solid var(--border);border-radius:12px;padding:16px;margin-bottom:16px;}
+      .broker-stalker-page .bs2-card-title{display:flex;align-items:center;gap:8px;font-weight:800;letter-spacing:.03em;font-size:13px;margin-bottom:14px;}
+      .broker-stalker-page .bs2-label{font-size:11px;color:var(--muted);font-weight:700;letter-spacing:.04em;display:block;margin-bottom:6px;}
+      .broker-stalker-page .bs2-input-big{width:100%;background:rgba(255,255,255,0.03);border:1px solid var(--border);border-radius:8px;padding:12px 14px;color:var(--text);font-weight:800;font-size:15px;letter-spacing:.03em;text-transform:uppercase;box-sizing:border-box;}
+      .broker-stalker-page .bs2-row{display:flex;gap:24px;flex-wrap:wrap;margin-top:16px;}
+      .broker-stalker-page .bs2-chipset{display:flex;gap:6px;flex-wrap:wrap;}
+      .broker-stalker-page .bs2-chip{padding:6px 12px;border-radius:6px;border:1px solid var(--border);background:transparent;color:var(--muted);font-size:11px;font-weight:700;cursor:pointer;}
+      .broker-stalker-page .bs2-chip.active{background:#7c5cff;border-color:#7c5cff;color:#fff;}
+      .broker-stalker-page .bs2-range{display:flex;gap:8px;align-items:center;margin-top:8px;}
+      .broker-stalker-page .bs2-range input{background:rgba(255,255,255,0.03);border:1px solid var(--border);border-radius:6px;padding:6px 8px;color:var(--text);font-size:12px;}
+      .broker-stalker-page .bs2-select{background:rgba(255,255,255,0.03);border:1px solid var(--border);border-radius:6px;padding:8px 10px;color:var(--muted);font-size:12px;}
+      .broker-stalker-page .bs2-cta{margin-top:18px;width:100%;padding:14px;border:none;border-radius:8px;background:linear-gradient(90deg,#22d3ee,#34d399);color:#04211c;font-weight:800;font-size:13px;letter-spacing:.05em;cursor:pointer;}
+      .broker-stalker-page .bs2-cta:disabled{opacity:.6;cursor:wait;}
+      .broker-stalker-page .bs2-head{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;}
+      .broker-stalker-page .bs2-results-search{background:rgba(255,255,255,0.03);border:1px solid var(--border);border-radius:6px;padding:6px 10px;color:var(--text);font-size:12px;width:160px;}
+      .broker-stalker-page .bs2-summary-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin:14px 0;}
+      .broker-stalker-page .bs2-summary-card{border:1px solid var(--border);border-radius:8px;padding:10px 12px;text-align:center;}
+      .broker-stalker-page .bs2-summary-card .lab{font-size:10px;color:var(--muted);font-weight:700;letter-spacing:.04em;}
+      .broker-stalker-page .bs2-summary-card .val{font-size:18px;font-weight:800;margin-top:4px;}
+      .broker-stalker-page .bs2-domsplit{display:flex;align-items:center;gap:8px;margin:12px 0 2px;font-size:10px;color:var(--muted);}
+      .broker-stalker-page .bs2-domsplit-bar{flex:1;height:8px;border-radius:4px;overflow:hidden;display:flex;background:var(--border);}
+      .broker-stalker-page .bs2-chart-toggle{width:100%;text-align:center;padding:8px;border-radius:6px;border:1px solid var(--border);background:transparent;color:var(--teal);font-size:11px;font-weight:700;cursor:pointer;margin:10px 0;}
+      .broker-stalker-page .bs2-chart{display:flex;align-items:flex-end;gap:3px;height:90px;margin:6px 0 16px;}
+      .broker-stalker-page .bs2-chart-bar{flex:1;height:100%;display:flex;align-items:flex-end;background:rgba(255,255,255,0.03);border-radius:2px;}
+      .broker-stalker-page .bs2-chart-bar-fill{width:100%;border-radius:2px;}
+      .broker-stalker-page .bs2-broker-row{display:flex;align-items:center;gap:12px;padding:12px 4px;border-bottom:1px solid var(--border);}
+      .broker-stalker-page .bs2-broker-row:last-child{border-bottom:none;}
+      .broker-stalker-page .bs2-broker-rank{width:18px;color:var(--muted);font-size:12px;font-weight:700;}
+      .broker-stalker-page .bs2-broker-code{width:64px;flex-shrink:0;}
+      .broker-stalker-page .bs2-broker-code .code{font-size:16px;font-weight:800;display:block;}
+      .broker-stalker-page .bs2-broker-mid{flex:1;min-width:0;}
+      .broker-stalker-page .bs2-broker-name{font-weight:700;font-size:13px;margin-bottom:6px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+      .broker-stalker-page .bs2-mini-bar-row{display:flex;align-items:center;gap:6px;font-size:10px;color:var(--muted);margin-bottom:3px;}
+      .broker-stalker-page .bs2-mini-bar{flex:1;max-width:140px;height:5px;border-radius:3px;background:var(--border);overflow:hidden;}
+      .broker-stalker-page .bs2-mini-bar-fill{height:100%;}
+      .broker-stalker-page .bs2-broker-right{text-align:right;min-width:90px;flex-shrink:0;}
+      .broker-stalker-page .bs2-broker-net{font-weight:800;font-size:15px;}
+      .broker-stalker-page .bs2-broker-avg{font-size:10px;color:var(--muted);margin-top:4px;line-height:1.5;}
+    </style>
+    <div class="filter-section-title"><span>🛰️ BROKER STALKER</span><span class="line"></span></div>
+    <div class="dashboard-subtitle">Lacak aliran akumulasi dan distribusi dari data Broker Summary.</div>
+
+    <div class="bs2-tabs">
+      <button class="bs2-tab ${!modeStock?'active':''}" data-bs-mode="broker">◎ Lacak Broker</button>
+      <button class="bs2-tab ${modeStock?'active':''}" data-bs-mode="stock">◆ Lacak Saham</button>
+    </div>
+
+    <div class="bs2-card">
+      <div class="bs2-card-title"><span>${modeStock?'LACAK SAHAM':'LACAK BROKER'}</span><span class="pill pill-teal" style="font-size:9px;">BROKER SCAN</span></div>
+      <label class="bs2-label">${modeStock?'KODE SAHAM':'KODE BROKER'}</label>
+      <input class="bs2-input-big" id="stalkerQuery" value="${escapeHtml(state.brokerStalkerQuery)}" placeholder="${modeStock?'Mis. BBCA':'Mis. AK'}" maxlength="12">
+
+      <div class="bs2-row">
+        <div>
+          <label class="bs2-label">PERIODE</label>
+          <div class="bs2-chipset">
+            ${periodChips.map(([val,lab])=>`<button class="bs2-chip ${period===val?'active':''}" data-bs-period="${val}">${lab}</button>`).join('')}
+            <button class="bs2-chip ${period==='range'?'active':''}" data-bs-period="range">Range</button>
+          </div>
+          ${rangeOpen?`<div class="bs2-range"><input type="date" id="stalkerRangeFrom" value="${escapeHtml(state.brokerStalkerRangeFrom)}"><span style="color:var(--muted)">–</span><input type="date" id="stalkerRangeTo" value="${escapeHtml(state.brokerStalkerRangeTo)}"></div>`:''}
+        </div>
+        <div>
+          <label class="bs2-label">MARKET</label>
+          <select class="bs2-select" disabled title="Broker Summary yang tersimpan belum memisahkan papan RG/TN/NG — cuma agregat Reguler yang tersedia saat ini">
+            <option>Regular (RG)</option>
+          </select>
+        </div>
+        <div>
+          <label class="bs2-label">URUTKAN</label>
+          <div class="bs2-chipset">
+            <button class="bs2-chip ${state.brokerStalkerSort==='net'?'active':''}" data-bs-sort="net">Net</button>
+            <button class="bs2-chip ${state.brokerStalkerSort==='buy'?'active':''}" data-bs-sort="buy">Buy</button>
+            <button class="bs2-chip ${state.brokerStalkerSort==='sell'?'active':''}" data-bs-sort="sell">Sell</button>
+            <button class="bs2-chip ${state.brokerStalkerSort==='vol'?'active':''}" data-bs-sort="vol">Vol</button>
+          </div>
+        </div>
+        ${modeStock?`<div>
+          <label class="bs2-label">FILTER</label>
+          <div class="bs2-chipset">
+            <button class="bs2-chip ${state.brokerStalkerFilterType==='asing'?'active':''}" data-bs-filtertype="asing">Asing</button>
+            <button class="bs2-chip ${state.brokerStalkerFilterType==='lokal'?'active':''}" data-bs-filtertype="lokal">Lokal</button>
+          </div>
+        </div>`:''}
+      </div>
+
+      <button class="bs2-cta" id="stalkerSearchBtn" ${state.brokerStalkerLoading?'disabled':''}>${state.brokerStalkerLoading?'Memuat…':`◆ ${modeStock?'LACAK SAHAM':'LACAK BROKER'}`}</button>
+    </div>
+
+    ${state.brokerStalkerLoading ? '<div class="empty-box">Memuat data broker…</div>' : (state.brokerStalkerMsg && !hasResults ? `<div class="empty-box">${escapeHtml(state.brokerStalkerMsg)}</div>` : '')}
+
+    ${hasResults ? `
+      <div class="bs2-card">
+        <div class="bs2-head">
+          <div class="bs2-card-title" style="margin-bottom:0;"><span>BROKER AKTIF — ${escapeHtml(state.brokerStalkerQuery)}</span></div>
+          <input class="bs2-results-search" id="stalkerResultSearch" placeholder="Cari broker..." value="${escapeHtml(state.brokerStalkerResultSearch)}">
+        </div>
+        <div style="font-size:10px;color:var(--muted);margin:2px 0 12px;">${escapeHtml(state.brokerStalkerQuery)} · ${dateLabel} · RG</div>
+
+        <div class="bs2-summary-grid">
+          <div class="bs2-summary-card"><div class="lab">BROKER</div><div class="val">${summary.brokerCount}</div></div>
+          <div class="bs2-summary-card"><div class="lab">NET BUY AGG</div><div class="val" style="color:var(--up)">${fmtCap(summary.netBuyAgg)}</div></div>
+          <div class="bs2-summary-card"><div class="lab">NET SELL AGG</div><div class="val" style="color:var(--down)">${fmtCap(summary.netSellAgg)}</div></div>
+          <div class="bs2-summary-card"><div class="lab">DOMINAN</div><div class="val">${pillHtml(summary.dominant, summary.dominant==='AKUMULASI'?'up':'down')}</div></div>
+        </div>
+
+        <div class="bs2-domsplit">
+          <span>${summary.akumulasiPct}%</span>
+          <div class="bs2-domsplit-bar"><div style="width:${summary.akumulasiPct}%;background:var(--up);"></div><div style="width:${summary.distribusiPct}%;background:var(--down);"></div></div>
+          <span>${summary.distribusiPct}%</span>
+        </div>
+        <div style="display:flex;justify-content:space-between;font-size:9px;color:var(--muted);margin-bottom:6px;"><span>◂ AKUMULASI</span><span>DISTRIBUSI ▸</span></div>
+
+        <button class="bs2-chart-toggle" id="stalkerChartToggle">${state.brokerStalkerChartOpen?'▲ Sembunyikan':'▾ Tampilkan'} Grafik Akumulasi Broker</button>
+        ${state.brokerStalkerChartOpen ? renderBrokerStalkerChartHtml(state.brokerStalkerDailyNet) : ''}
+
+        ${rows.length ? rows.map((r,i)=>{
+          const buyPct = r.volTotal>0 ? Math.round(r.buyLot/r.volTotal*100) : 0;
+          const sellPct = 100-buyPct;
+          const codeBlock = modeStock
+            ? `<span class="code">${escapeHtml(r.code)}</span>`
+            : `<button class="ticker-link code" data-detail="${escapeHtml(r.code)}" style="font-size:16px;font-weight:800;">${escapeHtml(r.code)}</button>`;
+          return `<div class="bs2-broker-row">
+            <div class="bs2-broker-rank">${i+1}</div>
+            <div class="bs2-broker-code">
+              ${codeBlock}
+              ${modeStock?`<span class="pill ${r.type==='asing'?'pill-teal':'pill-muted'}" style="font-size:9px;">${r.type==='asing'?'ASING':'LOKAL'}</span>`:''}
+            </div>
+            <div class="bs2-broker-mid">
+              <div class="bs2-broker-name" title="${escapeHtml(r.name||'-')}">${escapeHtml(r.name||'-')}</div>
+              <div class="bs2-mini-bar-row"><span style="width:10px;color:var(--up)">B</span><div class="bs2-mini-bar"><div class="bs2-mini-bar-fill" style="width:${buyPct}%;background:var(--up);"></div></div><span class="mono">${fmtCap(r.buyValue)}</span></div>
+              <div class="bs2-mini-bar-row"><span style="width:10px;color:var(--down)">S</span><div class="bs2-mini-bar"><div class="bs2-mini-bar-fill" style="width:${sellPct}%;background:var(--down);"></div></div><span class="mono">${fmtCap(r.sellValue)}</span></div>
+            </div>
+            <div class="bs2-broker-right">
+              <div class="bs2-broker-net" style="color:${r.net>=0?'var(--up)':'var(--down)'}">${fmtRp(r.net)}</div>
+              <div class="bs2-broker-avg">${r.avgBuy!=null?fmtNum(Math.round(r.avgBuy)):'-'} AVG BUY<br>${r.avgSell!=null?fmtNum(Math.round(r.avgSell)):'-'} AVG SELL</div>
+            </div>
+          </div>`;
+        }).join('') : `<div class="empty-box">Tidak ada broker yang cocok dengan filter/pencarian saat ini.</div>`}
+      </div>
+    ` : ''}
   </div>`;
 }
 
+// Resolusi rentang tanggal query berdasarkan Periode yang dipilih:
+// - "today": tarik histori terbaru (limit besar), lalu di searchBrokerStalker()
+//   difilter ke SATU tanggal trade_date terbaru yang ketemu (sama seperti
+//   perilaku lama, supaya tetap benar walau data hari ini belum lengkap).
+// - "1w"/"1m"/"3m": gte tanggal N hari kalender ke belakang dari sekarang
+//   (pola sama seperti loadTargetWindow()) — tanpa batas atas, jadi otomatis
+//   ikut data terbaru yang tersedia.
+// - "range": gte Dari + lte Sampai (dua filter trade_date via
+//   URLSearchParams.append, pola sama seperti loadDetailBrokerSummaryRange()).
 async function searchBrokerStalker(){
   const q = String(state.brokerStalkerQuery||'').trim().toUpperCase();
-  if(!q || !SUPABASE_URL || !SUPABASE_KEY){ state.brokerStalkerMsg = 'Isi pencarian dan pastikan koneksi Supabase tersedia.'; state.brokerStalkerRows=[]; render(); return; }
+  if(!q || !SUPABASE_URL || !SUPABASE_KEY){
+    state.brokerStalkerMsg = 'Isi pencarian dan pastikan koneksi Supabase tersedia.';
+    state.brokerStalkerRawRows=[]; state.brokerStalkerRows=[]; render(); return;
+  }
+  if(state.brokerStalkerPeriod === 'range' && (!state.brokerStalkerRangeFrom || !state.brokerStalkerRangeTo)){
+    state.brokerStalkerMsg = 'Isi tanggal "Dari" dan "Sampai" dulu untuk mode Range.';
+    state.brokerStalkerRawRows=[]; state.brokerStalkerRows=[]; render(); return;
+  }
   state.brokerStalkerLoading=true; state.brokerStalkerMsg=''; render();
   try{
     const field = state.brokerStalkerMode==='stock' ? 'stock_code' : 'broker_code';
-    const qs = new URLSearchParams({select:'stock_code,trade_date,side,broker_code,lot,value_idr', [field]:`eq.${q}`, order:'trade_date.desc', limit:'5000'});
+    const qs = new URLSearchParams();
+    qs.append(field, `eq.${q}`);
+    qs.append('select', 'stock_code,trade_date,side,broker_code,lot,value_idr');
+    const todayMode = state.brokerStalkerPeriod === 'today';
+    if(todayMode){
+      qs.append('order', 'trade_date.desc');
+      qs.append('limit', '8000');
+    } else if(state.brokerStalkerPeriod === 'range'){
+      qs.append('trade_date', `gte.${state.brokerStalkerRangeFrom}`);
+      qs.append('trade_date', `lte.${state.brokerStalkerRangeTo}`);
+      qs.append('order', 'trade_date.asc');
+    } else {
+      const daysBack = state.brokerStalkerPeriod==='1w' ? 7 : state.brokerStalkerPeriod==='1m' ? 30 : 90;
+      const cutoff = new Date(); cutoff.setDate(cutoff.getDate()-daysBack);
+      qs.append('trade_date', `gte.${toLocalISODate(cutoff)}`);
+      qs.append('order', 'trade_date.asc');
+    }
     const res = await fetch(`${SUPABASE_URL}/broker_summary?${qs}`,{headers:getSupaHeaders(),cache:'no-store'});
-    const raw = await res.json(); if(!res.ok || !Array.isArray(raw)) throw new Error(raw?.message||`HTTP ${res.status}`);
-    if(!raw.length){ state.brokerStalkerRows=[]; state.brokerStalkerMsg='Tidak ada data broker untuk pencarian ini.'; }
-    else { const latest=raw.reduce((m,r)=>!m||r.trade_date>m?r.trade_date:m,null); state.brokerStalkerDate=latest; const grouped={}; raw.filter(r=>r.trade_date===latest).forEach(r=>{const k=state.brokerStalkerMode==='stock'?r.broker_code:r.stock_code; const g=grouped[k] ||= {stock_code:r.stock_code,broker_code:r.broker_code,buyLot:0,sellLot:0,net:0}; const lot=Number(r.lot)||0, val=Number(r.value_idr)||0; if(String(r.side).toLowerCase()==='buy'){g.buyLot+=lot;g.net+=val}else{g.sellLot+=lot;g.net-=val;}}); state.brokerStalkerRows=Object.values(grouped).map(r=>({...r,status:r.net>=0?'AKUMULASI':'DISTRIBUSI'})).sort((a,b)=>b.net-a.net); }
-  }catch(e){state.brokerStalkerRows=[];state.brokerStalkerMsg='Gagal memuat broker summary: '+e.message;}
-  state.brokerStalkerLoading=false; render();
+    let raw = await res.json(); if(!res.ok || !Array.isArray(raw)) throw new Error(raw?.message||`HTTP ${res.status}`);
+
+    if(todayMode && raw.length){
+      const latest = raw.reduce((m,r)=>!m||r.trade_date>m?r.trade_date:m,null);
+      raw = raw.filter(r=>r.trade_date===latest);
+    }
+
+    if(!raw.length){
+      state.brokerStalkerRawRows=[]; state.brokerStalkerDailyNet=[];
+      state.brokerStalkerDateFrom=null; state.brokerStalkerDateTo=null;
+      state.brokerStalkerMsg='Tidak ada data broker untuk pencarian/periode ini.';
+    } else {
+      const dates = raw.map(r=>r.trade_date).sort();
+      state.brokerStalkerDateFrom = dates[0];
+      state.brokerStalkerDateTo = dates[dates.length-1];
+      state.brokerStalkerDate = state.brokerStalkerDateTo;
+      const { rows, dailyNet } = computeBrokerStalkerAggregation(raw, state.brokerStalkerMode);
+      state.brokerStalkerRawRows = rows;
+      state.brokerStalkerDailyNet = dailyNet;
+    }
+  }catch(e){
+    state.brokerStalkerRawRows=[];
+    state.brokerStalkerMsg='Gagal memuat broker summary: '+e.message;
+  }
+  state.brokerStalkerLoading=false;
+  applyBrokerStalkerView(); // sekaligus menghitung brokerStalkerRows (filter/urut default) + render()
 }
 
 function renderSektoral(){
@@ -7405,7 +7987,7 @@ function renderWatchlist(){
         <span>Fib 50%: <span style="color:var(--text); font-weight:600;">${fmtNum(s.fib?.f50)}</span></span>
         <span>Fib 61.8%: <span style="color:var(--text); font-weight:600;">${fmtNum(s.fib?.f618)}</span></span>
       </div>
-      <button class="btn btn-outline" style="width: 100%; justify-content:center; color: var(--teal); border-color: rgba(6,182,212,0.3);" data-chart="${s.ticker}">Lihat grafik →</button>
+      <a class="btn btn-outline" style="width: 100%; justify-content:center; color: var(--teal); border-color: rgba(6,182,212,0.3);" href="#/chart/${encodeURIComponent(s.ticker)}" data-chart="${s.ticker}">Lihat grafik →</a>
     </div>
   `;}).join("");
   const totPl = totEntry>0 ? ((totNow-totEntry)/totEntry)*100 : null;
@@ -7596,7 +8178,7 @@ function renderTickerPicker(){
     candidates = [];
     hint = `<div class="hint-text" style="color:var(--muted); font-size:12px;">Ketik kode ticker (mis. BBCA) di kotak pencarian di atas untuk menampilkan chart.</div>`;
   }
-  const chips = candidates.map(s=>`<button class="chip ${state.selectedTicker===s.ticker?'active':''}" data-chart="${s.ticker}">${s.ticker}</button>`).join("");
+  const chips = candidates.map(s=>`<a class="chip ${state.selectedTicker===s.ticker?'active':''}" href="#/chart/${encodeURIComponent(s.ticker)}" data-chart="${s.ticker}">${s.ticker}</a>`).join("");
   return `
     <div class="field" style="margin-bottom:16px;max-width:300px;">
       <label>Cari &amp; Pilih Ticker</label>
@@ -7620,7 +8202,7 @@ function renderChart(){
   const toggle = (key, label, color) => `<label class="chart-toggle"><input type="checkbox" data-chart-series="${key}" ${series[key]!==false?'checked':''}><span class="chart-swatch" style="background:${color}"></span>${label}</label>`;
   const chartToolbar = `
     <div class="chart-toolbar" style="margin-top: 24px;">
-      <span style="color:var(--muted);font-size:13px; font-weight:500;">Chart live <b class="mono" style="color:var(--text); font-size:15px;">${t}</b> via TradingView (IDX:${t})</span>
+      <span style="color:var(--muted);font-size:13px; font-weight:500;">Chart <b class="mono" style="color:var(--text); font-size:15px;">${t}</b> (dihitung &amp; digambar langsung dari data <code>flows</code>)</span>
       <div class="chart-external-links">
         <a class="btn btn-outline btn-tradingview" href="${tvChartPageUrl(t)}" target="_blank" rel="noopener">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 13v6a2 2 0 01-2 2H5a2 2 0 01-2-2V8a2 2 0 012-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
@@ -7632,7 +8214,6 @@ function renderChart(){
         </a>
       </div>
     </div>`;
-  const tvBox = `<div class="tv-chart-box"><iframe src="${tvEmbedUrl(t)}" title="TradingView ${t}" allowtransparency="true" scrolling="no"></iframe></div>`;
 
   // Toolbar interaktif ala TradingView: rentang waktu + toggle tiap seri.
   // State-nya disimpan di state.chartRange / state.chartSeries supaya nilai
@@ -7644,16 +8225,27 @@ function renderChart(){
       ${ranges.map(([v,l])=>`<button class="chart-range-btn ${state.chartRange===v?'active':''}" data-chart-range="${v}">${l}</button>`).join('')}
     </div>
     <div class="chart-control-group chart-series-group">
-      <span class="chart-control-label">Indikator</span>
+      <span class="chart-control-label">Overlay Harga</span>
       ${toggle('close','Close','var(--gold)')}
       ${toggle('support','Support','var(--down)')}
       ${toggle('resistance','Resisten','var(--up)')}
-      ${toggle('ema','EMA21 H/L','var(--teal)')}
       ${toggle('fib','Fibonacci','#94a3b8')}
       ${toggle('bb','Bollinger Bands','#c084fc')}
-      ${toggle('rsi','RSI (14)','#f472b6')}
+      ${toggle('emaHL','EMA21 High/Low','#2dd4bf')}
+      ${toggle('ema89','EMA89 Close','#f472b6')}
+      ${toggle('sar','SAR (0.02,0.02,0.2)','#ef4444')}
+      ${toggle('supertrend','SuperTrend (10,3)','#a855f7')}
+      ${toggle('pc','Price Channel (20)','#e879f9')}
+    </div>
+    <div class="chart-control-group chart-series-group">
+      <span class="chart-control-label">Panel Bawah</span>
+      ${toggle('bandar','Bandar Volume','#22c55e')}
+      ${toggle('vol','Volume 20','rgba(148,163,184,.8)')}
+      ${toggle('stochrsi','Stoch RSI (14,14,3,3)','#ef4444')}
+      ${toggle('rsi721','RSI 7 &amp; 21','#22c55e')}
+      ${toggle('foreignflow','Foreign Flow','#60a5fa')}
       ${toggle('macd','MACD (12,26,9)','#60a5fa')}
-      ${toggle('volume','Volume','rgba(148,163,184,.8)')}
+      ${toggle('netforeign','Net Foreign Buy/Sell','#22c55e')}
     </div>
   </div>`;
 
@@ -7665,8 +8257,7 @@ function renderChart(){
 
   return `${picker}
     ${chartToolbar}
-    ${tvBox}
-    <div class="chart-section-title">Level Teknikal Internal (harga close asli dari tabel flows)</div>
+    <div class="chart-section-title">Chart &amp; Indikator (dihitung dari harga close/OHLC asli tabel flows)</div>
     ${controls}
     <div class="chart-box chart-box-expanded">${chartBoxInner}</div>`;
 }
@@ -7675,6 +8266,95 @@ function chartSMA(values, period){ return values.map((_,i)=>i+1<period?null:valu
 function chartEMA(values, period){ const out=[]; const k=2/(period+1); values.forEach((v,i)=>out.push(i===0?v:(v*k+out[i-1]*(1-k)))); return out; }
 function chartStd(values, period, i, mean){ if(i+1<period)return null; const a=values.slice(i+1-period,i+1), m=mean??a.reduce((x,y)=>x+y,0)/period; return Math.sqrt(a.reduce((x,y)=>x+(y-m)**2,0)/period); }
 function chartRSI(values, period=14){ const out=values.map(()=>null); let gains=0,losses=0; for(let i=1;i<values.length;i++){const d=values[i]-values[i-1]; if(i<=period){gains+=Math.max(d,0);losses+=Math.max(-d,0);if(i===period)out[i]=losses===0?100:100-100/(1+gains/losses);} else {gains=(gains*(period-1)+Math.max(d,0))/period;losses=(losses*(period-1)+Math.max(-d,0))/period;out[i]=losses===0?100:100-100/(1+gains/losses);}} return out; }
+function chartHighest(values, period, i){ if(i+1<period)return null; const a=values.slice(i+1-period,i+1).filter(v=>v!=null); return a.length?Math.max(...a):null; }
+function chartLowest(values, period, i){ if(i+1<period)return null; const a=values.slice(i+1-period,i+1).filter(v=>v!=null); return a.length?Math.min(...a):null; }
+// ATR Wilder (dipakai SuperTrend) -- true range dihaluskan dengan rumus
+// smoothing Wilder yang sama dengan RSI di atas (bukan SMA biasa).
+function chartATR(highs, lows, closes, period=10){
+  const tr = closes.map((c,i)=> i===0 ? (highs[i]-lows[i]) : Math.max(highs[i]-lows[i], Math.abs(highs[i]-closes[i-1]), Math.abs(lows[i]-closes[i-1])));
+  const out = tr.map(()=>null); let sum=0;
+  for(let i=0;i<tr.length;i++){
+    if(i<period-1){ sum+=tr[i]; continue; }
+    if(i===period-1){ sum+=tr[i]; out[i]=sum/period; continue; }
+    out[i] = (out[i-1]*(period-1)+tr[i])/period;
+  }
+  return out;
+}
+// SuperTrend standar (period, multiplier) -- garis tunggal yang berpindah
+// posisi (di bawah harga saat uptrend, di atas saat downtrend), plus arah
+// (+1 uptrend / -1 downtrend) supaya bisa diwarnai sesuai TradingView.
+function chartSuperTrend(highs, lows, closes, period=10, mult=3){
+  const atr = chartATR(highs, lows, closes, period);
+  const hl2 = highs.map((h,i)=>(h+lows[i])/2);
+  const upperBasic = hl2.map((v,i)=> atr[i]==null?null:v+mult*atr[i]);
+  const lowerBasic = hl2.map((v,i)=> atr[i]==null?null:v-mult*atr[i]);
+  const upper=[...upperBasic], lower=[...lowerBasic];
+  const trendLine=closes.map(()=>null), dir=closes.map(()=>1);
+  for(let i=1;i<closes.length;i++){
+    if(upper[i]==null||upper[i-1]==null) continue;
+    upper[i] = (upperBasic[i]<upper[i-1] || closes[i-1]>upper[i-1]) ? upperBasic[i] : upper[i-1];
+    lower[i] = (lowerBasic[i]>lower[i-1] || closes[i-1]<lower[i-1]) ? lowerBasic[i] : lower[i-1];
+  }
+  for(let i=0;i<closes.length;i++){
+    if(upper[i]==null){ continue; }
+    if(i===0 || trendLine[i-1]==null){ dir[i]=1; trendLine[i]=lower[i]; continue; }
+    if(dir[i-1]===1){
+      dir[i] = closes[i] < lower[i] ? -1 : 1;
+    } else {
+      dir[i] = closes[i] > upper[i] ? 1 : -1;
+    }
+    trendLine[i] = dir[i]===1 ? lower[i] : upper[i];
+  }
+  return { line: trendLine, dir };
+}
+// Parabolic SAR standar Wilder (step/increment/max default 0.02/0.02/0.2 --
+// sama seperti label "SAR 0.02 0.02 0.2" di TradingView).
+function chartSAR(highs, lows, step=0.02, maxStep=0.2){
+  const n=highs.length, out=new Array(n).fill(null);
+  if(n<2) return out;
+  let uptrend = highs[1] >= highs[0];
+  let af = step;
+  let ep = uptrend ? highs[0] : lows[0];
+  let sar = uptrend ? lows[0] : highs[0];
+  out[0]=sar;
+  for(let i=1;i<n;i++){
+    sar = sar + af*(ep-sar);
+    if(uptrend){
+      sar = Math.min(sar, lows[i-1], i>1?lows[i-2]:lows[i-1]);
+      if(highs[i] > ep){ ep=highs[i]; af=Math.min(maxStep, af+step); }
+      if(lows[i] < sar){ uptrend=false; sar=ep; ep=lows[i]; af=step; }
+    } else {
+      sar = Math.max(sar, highs[i-1], i>1?highs[i-2]:highs[i-1]);
+      if(lows[i] < ep){ ep=lows[i]; af=Math.min(maxStep, af+step); }
+      if(highs[i] > sar){ uptrend=true; sar=ep; ep=highs[i]; af=step; }
+    }
+    out[i]=sar;
+  }
+  return out;
+}
+// Stochastic RSI (rsiPeriod, stochPeriod, kSmooth, dSmooth) -- dihitung DARI
+// deret RSI (bukan dari harga langsung): %K mentah = posisi RSI hari ini
+// dalam rentang RSI tertinggi/terendah `stochPeriod` hari, lalu %K & %D
+// masing-masing di-SMA-kan (kSmooth/dSmooth).
+function chartStochRSI(rsiValues, stochPeriod=14, kSmooth=3, dSmooth=3){
+  const rawK = rsiValues.map((v,i)=>{
+    if(v==null) return null;
+    const hi=chartHighest(rsiValues, stochPeriod, i), lo=chartLowest(rsiValues, stochPeriod, i);
+    if(hi==null||lo==null) return null;
+    return hi===lo ? 0 : ((v-lo)/(hi-lo))*100;
+  });
+  const kSma = arr => arr.map((_,i)=>{
+    const win=arr.slice(Math.max(0,i-kSmooth+1),i+1).filter(v=>v!=null);
+    return win.length===Math.min(kSmooth,i+1) && win.length>0 ? win.reduce((a,b)=>a+b,0)/win.length : null;
+  });
+  const k = kSma(rawK);
+  const dSma = arr => arr.map((_,i)=>{
+    const win=arr.slice(Math.max(0,i-dSmooth+1),i+1).filter(v=>v!=null);
+    return win.length===Math.min(dSmooth,i+1) && win.length>0 ? win.reduce((a,b)=>a+b,0)/win.length : null;
+  });
+  const d = dSma(k);
+  return { k, d };
+}
 
 function drawChartSVG(){
   const svg = document.getElementById("chartSvg");
@@ -7687,19 +8367,65 @@ function drawChartSVG(){
   const plotted = data.length ? data : allData;
   const closes = plotted.map(d=>d.close);
   const on = k => series[k] !== false;
-  const showBB=on('bb'), showRSI=on('rsi'), showMACD=on('macd'), showVol=on('volume');
-  const fullCloses=allData.map(d=>d.close), off=Math.max(0,allData.indexOf(plotted[0]));
+  const showBB=on('bb'), showMACD=on('macd'), showVol=on('vol');
+  const showEmaHL=on('emaHL'), showEma89=on('ema89'), showSar=on('sar'), showSuperTrend=on('supertrend'), showPC=on('pc');
+  const showBandar=on('bandar'), showStochRsi=on('stochrsi'), showRsi721=on('rsi721'), showForeignFlow=on('foreignflow'), showNetForeign=on('netforeign');
+  const fullCloses=allData.map(d=>d.close);
+  // High/Low dipakai banyak indikator (SAR, SuperTrend, PC) -- kalau baris
+  // lama belum punya high/low (flows ditulis sebelum kolom itu ada di
+  // sync), fallback ke close supaya tidak NaN, bukan skip total.
+  const fullHighs=allData.map(d=>d.high!=null?d.high:d.close), fullLows=allData.map(d=>d.low!=null?d.low:d.close);
+  const fullVols=allData.map(d=>d.volume==null?0:Number(d.volume));
+  const off=Math.max(0,allData.indexOf(plotted[0]));
   const bbMidAll=chartSMA(fullCloses,20), bbUpAll=bbMidAll.map((m,i)=>m==null?null:m+2*chartStd(fullCloses,20,i,m)), bbLoAll=bbMidAll.map((m,i)=>m==null?null:m-2*chartStd(fullCloses,20,i,m));
-  const rsiAll=chartRSI(fullCloses,14), ema12=chartEMA(fullCloses,12), ema26=chartEMA(fullCloses,26), macdAll=ema12.map((v,i)=>v-ema26[i]), macdSigAll=chartEMA(macdAll,9);
-  const pick=arr=>arr.slice(off,off+plotted.length);
-  const bbUp=pick(bbUpAll), bbMid=pick(bbMidAll), bbLo=pick(bbLoAll), rsi=pick(rsiAll), macd=pick(macdAll), macdSig=pick(macdSigAll);
+  const rsi14All=chartRSI(fullCloses,14), ema12=chartEMA(fullCloses,12), ema26=chartEMA(fullCloses,26), macdAll=ema12.map((v,i)=>v-ema26[i]), macdSigAll=chartEMA(macdAll,9);
+  // --- Overlay harga baru ---
+  const emaHAll=chartEMA(fullHighs,21), emaLAll=chartEMA(fullLows,21), ema89All=chartEMA(fullCloses,89);
+  const sarAll=chartSAR(fullHighs,fullLows,0.02,0.2);
+  const stAll=chartSuperTrend(fullHighs,fullLows,fullCloses,10,3);
+  const pcHiAll=fullHighs.map((_,i)=>chartHighest(fullHighs,20,i)), pcLoAll=fullLows.map((_,i)=>chartLowest(fullLows,20,i));
+  const pcCenterAll=pcHiAll.map((h,i)=>h==null||pcLoAll[i]==null?null:(h+pcLoAll[i])/2), pcAvgAll=chartSMA(fullCloses,20);
+  // --- Panel bawah baru ---
+  // Bandar Volume: PROKSI volume bertanda (bukan replikasi 1:1 indikator
+  // proprietary TradingView, karena formula aslinya tidak publik/tidak bisa
+  // diverifikasi tanpa source Pine Script-nya) -- volume hari itu diberi
+  // tanda + kalau close > close kemarin, - kalau close < close kemarin,
+  // sama seperti prinsip OBV harian. Kalau kamu punya source Pine Script
+  // indikator "Bandar Volume" versimu, kirim ke saya supaya bisa disamakan
+  // persis.
+  const bandarAll=fullCloses.map((c,i)=> i===0?0: (c>fullCloses[i-1]?fullVols[i]: c<fullCloses[i-1]?-fullVols[i]:0));
+  const volMA20All=chartSMA(fullVols,20);
+  const stochRsiAll=chartStochRSI(rsi14All,14,3,3);
+  const rsi7All=chartRSI(fullCloses,7), rsi21All=chartRSI(fullCloses,21);
+  // Foreign Flow: kumulatif Net Asing (Rp) sejak data flows paling awal
+  // yang tersedia untuk ticker ini -- foreign_buy/foreign_sell dari IDX
+  // satuannya LEMBAR, dikali close hari itu supaya jadi Rupiah (sama
+  // seperti sumForeignNetRp di orcaWindowAggregate). Net harian dipakai
+  // juga untuk panel "Net Foreign Buy/Sell".
+  const netForeignAll=allData.map(d=>{
+    const fb=d.foreignBuy, fs=d.foreignSell;
+    return (fb==null||fs==null) ? null : (fb-fs)*d.close;
+  });
+  const foreignFlowAll=(()=>{ let acc=0; return netForeignAll.map(v=>{ acc += (v||0); return acc; }); })();
 
-  const levelVals = lv ? [lv.support,lv.resistance,lv.ema21H,lv.ema21L,lv.fib?.f382,lv.fib?.f50,lv.fib?.f618].filter(v=>v!=null) : [];
-  const priceExtras = showBB ? bbUp.concat(bbLo).filter(v=>v!=null) : [];
+  const pick=arr=>arr.slice(off,off+plotted.length);
+  const bbUp=pick(bbUpAll), bbMid=pick(bbMidAll), bbLo=pick(bbLoAll), macd=pick(macdAll), macdSig=pick(macdSigAll);
+  const emaH=pick(emaHAll), emaL=pick(emaLAll), ema89=pick(ema89All), sar=pick(sarAll), stLine=pick(stAll.line), stDir=pick(stAll.dir);
+  const pcHi=pick(pcHiAll), pcLo=pick(pcLoAll), pcCenter=pick(pcCenterAll), pcAvg=pick(pcAvgAll);
+  const bandar=pick(bandarAll), volMA20=pick(volMA20All), stochK=pick(stochRsiAll.k), stochD=pick(stochRsiAll.d);
+  const rsi7=pick(rsi7All), rsi21=pick(rsi21All), foreignFlow=pick(foreignFlowAll), netForeign=pick(netForeignAll);
+
+  const levelVals = lv ? [lv.support,lv.resistance,lv.fib?.f382,lv.fib?.f50,lv.fib?.f618].filter(v=>v!=null) : [];
+  const priceExtras = [
+    showBB ? bbUp.concat(bbLo) : [],
+    showEmaHL ? emaH.concat(emaL) : [], showEma89 ? ema89 : [],
+    showSar ? sar : [], showSuperTrend ? stLine : [],
+    showPC ? pcHi.concat(pcLo) : [],
+  ].flat().filter(v=>v!=null);
   const allVals = closes.concat(levelVals, priceExtras), min=Math.min(...allVals), max=Math.max(...allVals), pad=(max-min)*.08||1;
   const yMin=min-pad,yMax=max+pad,T=18,B=38;
-  const subH={rsi:80,macd:80,vol:60}, gap=14, mainH=380-T-B;
-  const subKeys=[showRSI&&'rsi',showMACD&&'macd',showVol&&'vol'].filter(Boolean);
+  const subH={bandar:70,vol:70,stochrsi:80,rsi721:80,foreignflow:70,macd:80,netforeign:70}, gap=14, mainH=380-T-B;
+  const subKeys=[showBandar&&'bandar',showVol&&'vol',showStochRsi&&'stochrsi',showRsi721&&'rsi721',showForeignFlow&&'foreignflow',showMACD&&'macd',showNetForeign&&'netforeign'].filter(Boolean);
   const Htot=T+mainH+gap+subKeys.reduce((a,k)=>a+subH[k],0)+B+6;
 
   // Tinggi kotak chart = tinggi panel harga (CSS) + tambahan sub-panel aktif
@@ -7726,7 +8452,7 @@ function drawChartSVG(){
   let html='';
   for(let i=0;i<=5;i++){ const y=T+i*mainH/5, val=yMax-i*(yMax-yMin)/5; html+=`<line x1="${L}" y1="${y}" x2="${W-R}" y2="${y}" stroke="rgba(255,255,255,.06)" stroke-dasharray="4,4"/><text x="5" y="${y+4}" fill="var(--muted)" font-size="${fs(11)}" font-family="JetBrains Mono,monospace">${fmtNum(Math.round(val))}</text>`; }
   const drawLevel=(val,color,label,dashed,visible)=>{ if(!visible||val==null||isNaN(val))return; const y=yScale(val); html+=`<line x1="${L}" y1="${y}" x2="${W-R}" y2="${y}" stroke="${color}" stroke-width="1.7" ${dashed?'stroke-dasharray="6,5"':''} opacity=".85"/><text x="${W-R+7}" y="${(y+4).toFixed(1)}" fill="${color}" font-size="${fs(10.5)}" font-family="JetBrains Mono,monospace" font-weight="600">${label}</text>`; };
-  if(lv){ drawLevel(lv.support,'var(--down)',fmtNum(Math.round(lv.support)),false,on('support')); drawLevel(lv.resistance,'var(--up)',fmtNum(Math.round(lv.resistance)),false,on('resistance')); drawLevel(lv.ema21H,'var(--teal)','E21H',true,on('ema')); drawLevel(lv.ema21L,'var(--teal)','E21L',true,on('ema')); if(lv.fib){drawLevel(lv.fib.f382,'#94a3b8','Fib38',true,on('fib'));drawLevel(lv.fib.f50,'#94a3b8','Fib50',true,on('fib'));drawLevel(lv.fib.f618,'#94a3b8','Fib61',true,on('fib'));}}
+  if(lv){ drawLevel(lv.support,'var(--down)',fmtNum(Math.round(lv.support)),false,on('support')); drawLevel(lv.resistance,'var(--up)',fmtNum(Math.round(lv.resistance)),false,on('resistance')); if(lv.fib){drawLevel(lv.fib.f382,'#94a3b8','Fib38',true,on('fib'));drawLevel(lv.fib.f50,'#94a3b8','Fib50',true,on('fib'));drawLevel(lv.fib.f618,'#94a3b8','Fib61',true,on('fib'));}}
 
   // Bollinger Bands: area + garis atas/tengah/bawah (bongkar-pasang via toggle BB)
   if(showBB){
@@ -7746,6 +8472,38 @@ function drawChartSVG(){
     if(lL!=null)html+=`<text x="${W-R+7}" y="${(yScale(lL)+4).toFixed(1)}" fill="#c084fc" font-size="${fs(10.5)}" font-family="JetBrains Mono,monospace" font-weight="600">BB-L</text>`;
   }
 
+  // --- Overlay harga baru: EMA21 High/Low, EMA89, SAR, SuperTrend, Price Channel ---
+  const segPath=arr=>arr.map((v,i)=>v==null?'':`${i?'L':'M'}${xScale(i).toFixed(1)},${yScale(v).toFixed(1)}`).filter(Boolean).join(' ');
+  const lastVal=arr=>[...arr].reverse().find(v=>v!=null);
+  const labelRight=(val,color,label,weight)=>{ if(val==null)return; html+=`<text x="${W-R+7}" y="${(yScale(val)+4).toFixed(1)}" fill="${color}" font-size="${fs(10)}" font-family="JetBrains Mono,monospace" font-weight="${weight||600}">${label}</text>`; };
+  if(showEmaHL){
+    html += `<path d="${segPath(emaH)}" fill="none" stroke="#2dd4bf" stroke-width="1.4" opacity=".85"/>`;
+    html += `<path d="${segPath(emaL)}" fill="none" stroke="#2dd4bf" stroke-width="1.4" opacity=".85" stroke-dasharray="5,3"/>`;
+    labelRight(lastVal(emaH),'#2dd4bf','EMA21H'); labelRight(lastVal(emaL),'#2dd4bf','EMA21L');
+  }
+  if(showEma89){ html += `<path d="${segPath(ema89)}" fill="none" stroke="#f472b6" stroke-width="1.6" opacity=".9"/>`; labelRight(lastVal(ema89),'#f472b6','EMA89'); }
+  if(showPC){
+    html += `<path d="${segPath(pcHi)}" fill="none" stroke="#e879f9" stroke-width="1.2" opacity=".7"/>`;
+    html += `<path d="${segPath(pcLo)}" fill="none" stroke="#e879f9" stroke-width="1.2" opacity=".7"/>`;
+    html += `<path d="${segPath(pcCenter)}" fill="none" stroke="#e879f9" stroke-width="1" stroke-dasharray="3,4" opacity=".55"/>`;
+    html += `<path d="${segPath(pcAvg)}" fill="none" stroke="#e879f9" stroke-width="1" opacity=".45"/>`;
+    labelRight(lastVal(pcHi),'#e879f9','PC-Hi'); labelRight(lastVal(pcLo),'#e879f9','PC-Lo');
+  }
+  if(showSuperTrend){
+    // Digambar per-segmen supaya warnanya berubah sesuai arah (hijau naik,
+    // merah turun) seperti tampilan aslinya di TradingView.
+    for(let i=1;i<stLine.length;i++){
+      if(stLine[i]==null||stLine[i-1]==null) continue;
+      const col = stDir[i]===1 ? 'rgba(16,185,129,.9)' : 'rgba(239,68,68,.9)';
+      html += `<line x1="${xScale(i-1).toFixed(1)}" y1="${yScale(stLine[i-1]).toFixed(1)}" x2="${xScale(i).toFixed(1)}" y2="${yScale(stLine[i]).toFixed(1)}" stroke="${col}" stroke-width="2"/>`;
+    }
+    const lst=lastVal(stLine); if(lst!=null) labelRight(lst, stDir[stDir.length-1]===1?'#10b981':'#ef4444', 'ST');
+  }
+  if(showSar){
+    sar.forEach((v,i)=>{ if(v==null)return; html += `<circle cx="${xScale(i).toFixed(1)}" cy="${yScale(v).toFixed(1)}" r="1.6" fill="#ef4444"/>`; });
+    labelRight(lastVal(sar),'#ef4444','SAR');
+  }
+
   const closePath=on('close') ? `<path d="${linePath(plotted,d=>d.close)}" fill="none" stroke="var(--gold)" stroke-width="2.8" stroke-linejoin="round"/>` : '';
   html += `<rect x="${L}" y="${T}" width="${plotW}" height="${mainH}" fill="transparent" data-chart-plot="1"/>${closePath}`;
 
@@ -7754,12 +8512,59 @@ function drawChartSVG(){
   subKeys.forEach(k=>{
     const h=subH[k];
     html+=`<line x1="${L}" y1="${sTop+h}" x2="${W-R}" y2="${sTop+h}" stroke="rgba(255,255,255,.10)"/>`;
-    if(k==='rsi'){
+    if(k==='bandar'){
+      const vals=bandar.filter(v=>v!=null&&!isNaN(v));
+      const vmax=Math.max(...vals.map(v=>Math.abs(v)))||1;
+      const yB=v=>sTop+h/2-(v/vmax)*(h/2-8);
+      const bw=Math.max(1.2,plotW/plotted.length*0.6);
+      html+=`<line x1="${L}" y1="${sTop+h/2}" x2="${W-R}" y2="${sTop+h/2}" stroke="rgba(255,255,255,.12)"/>`;
+      bandar.forEach((v,i)=>{ if(v==null)return; const y0=yB(0),y1=yB(v); html+=`<rect x="${(xScale(i)-bw/2).toFixed(1)}" y="${Math.min(y0,y1).toFixed(1)}" width="${bw.toFixed(1)}" height="${Math.max(1,Math.abs(y1-y0)).toFixed(1)}" fill="${v>=0?'rgba(16,185,129,.6)':'rgba(239,68,68,.6)'}"/>`; });
+      html+=`<text x="5" y="${sTop+12}" fill="#22c55e" font-size="${fs(10)}" font-family="JetBrains Mono,monospace" font-weight="700">BANDAR VOLUME</text>`;
+      const lb=lastVal(bandar); if(lb!=null)html+=`<text x="${W-R+7}" y="${sTop+12}" fill="${lb>=0?'#22c55e':'#ef4444'}" font-size="${fs(10)}" font-family="JetBrains Mono,monospace">${fmtNum(Math.round(lb))}</text>`;
+    }
+    if(k==='vol'){
+      const vols=plotted.map(d=>d.volume==null?null:Number(d.volume));
+      const vmax=Math.max(...vols.map(v=>v||0), ...volMA20.map(v=>v||0))||1;
+      const bw=Math.max(1.2,plotW/plotted.length*0.6);
+      const yV=v=>sTop+h-(v/vmax)*(h-14);
+      vols.forEach((v,i)=>{if(v==null)return;const hgt=(v/vmax)*(h-14);const up=i===0||plotted[i].close>=plotted[i-1].close;html+=`<rect x="${(xScale(i)-bw/2).toFixed(1)}" y="${(sTop+h-hgt).toFixed(1)}" width="${bw.toFixed(1)}" height="${Math.max(1,hgt).toFixed(1)}" fill="${up?'rgba(16,185,129,.45)':'rgba(239,68,68,.45)'}"/>`;});
+      html+=`<path d="${volMA20.map((v,i)=>v==null?'':`${i?'L':'M'}${xScale(i).toFixed(1)},${yV(v).toFixed(1)}`).filter(Boolean).join(' ')}" fill="none" stroke="#60a5fa" stroke-width="1.6"/>`;
+      html+=`<text x="5" y="${sTop+12}" fill="var(--muted)" font-size="${fs(10)}" font-family="JetBrains Mono,monospace" font-weight="700">VOLUME 20</text>`;
+      const lv2=lastVal(vols), lm2=lastVal(volMA20);
+      if(lv2!=null)html+=`<text x="${W-R+7}" y="${sTop+12}" fill="var(--muted)" font-size="${fs(10)}" font-family="JetBrains Mono,monospace">${fmtNum(Math.round(lv2))}</text>`;
+      if(lm2!=null)html+=`<text x="${W-R+7}" y="${(sTop+26)}" fill="#60a5fa" font-size="${fs(10)}" font-family="JetBrains Mono,monospace">MA ${fmtNum(Math.round(lm2))}</text>`;
+    }
+    if(k==='stochrsi'){
+      const yR=v=>sTop+h-((v-0)/100)*h;
+      [20,50,80].forEach(g=>{const y=yR(g);html+=`<line x1="${L}" y1="${y}" x2="${W-R}" y2="${y}" stroke="${g===50?'rgba(255,255,255,.06)':'rgba(239,68,68,.25)'}" stroke-dasharray="3,4"/>`;});
+      const linePts=arr=>arr.map((v,i)=>v==null?'':`${i?'L':'M'}${xScale(i).toFixed(1)},${yR(v).toFixed(1)}`).filter(Boolean).join(' ');
+      html+=`<path d="${linePts(stochD)}" fill="none" stroke="#ef4444" stroke-width="1.6"/>`;
+      html+=`<path d="${linePts(stochK)}" fill="none" stroke="#22c55e" stroke-width="1.6"/>`;
+      html+=`<text x="5" y="${sTop+12}" fill="var(--text)" font-size="${fs(10)}" font-family="JetBrains Mono,monospace" font-weight="700">STOCH RSI 14,14,3,3</text>`;
+      const lk=lastVal(stochK), ld=lastVal(stochD);
+      if(lk!=null)html+=`<text x="${W-R+7}" y="${(yR(lk)+4).toFixed(1)}" fill="#22c55e" font-size="${fs(10)}" font-family="JetBrains Mono,monospace">%K ${lk.toFixed(1)}</text>`;
+      if(ld!=null)html+=`<text x="${W-R+7}" y="${(yR(ld)+14).toFixed(1)}" fill="#ef4444" font-size="${fs(10)}" font-family="JetBrains Mono,monospace">%D ${ld.toFixed(1)}</text>`;
+    }
+    if(k==='rsi721'){
       const yR=v=>sTop+h-((v-0)/100)*h;
       [30,50,70].forEach(g=>{const y=yR(g);html+=`<line x1="${L}" y1="${y}" x2="${W-R}" y2="${y}" stroke="${g===50?'rgba(255,255,255,.06)':'rgba(244,114,182,.25)'}" stroke-dasharray="3,4"/>`;});
-      html+=`<path d="${rsi.map((v,i)=>v==null?'':`${i?'L':'M'}${xScale(i).toFixed(1)},${yR(v).toFixed(1)}`).filter(Boolean).join(' ')}" fill="none" stroke="#f472b6" stroke-width="1.8"/>`;
-      html+=`<text x="5" y="${sTop+12}" fill="#f472b6" font-size="${fs(10)}" font-family="JetBrains Mono,monospace" font-weight="700">RSI 14</text>`;
-      const last=[...rsi].reverse().find(v=>v!=null); if(last!=null)html+=`<text x="${W-R+7}" y="${(yR(last)+4).toFixed(1)}" fill="#f472b6" font-size="${fs(10)}" font-family="JetBrains Mono,monospace">${last.toFixed(1)}</text>`;
+      const linePts=arr=>arr.map((v,i)=>v==null?'':`${i?'L':'M'}${xScale(i).toFixed(1)},${yR(v).toFixed(1)}`).filter(Boolean).join(' ');
+      html+=`<path d="${linePts(rsi21)}" fill="none" stroke="#60a5fa" stroke-width="1.6"/>`;
+      html+=`<path d="${linePts(rsi7)}" fill="none" stroke="#22c55e" stroke-width="1.8"/>`;
+      html+=`<text x="5" y="${sTop+12}" fill="var(--text)" font-size="${fs(10)}" font-family="JetBrains Mono,monospace" font-weight="700">RSI 7 &amp; 21</text>`;
+      const l7=lastVal(rsi7), l21=lastVal(rsi21);
+      if(l7!=null)html+=`<text x="${W-R+7}" y="${(yR(l7)+4).toFixed(1)}" fill="#22c55e" font-size="${fs(10)}" font-family="JetBrains Mono,monospace">${l7.toFixed(1)}</text>`;
+      if(l21!=null)html+=`<text x="${W-R+7}" y="${(yR(l21)+14).toFixed(1)}" fill="#60a5fa" font-size="${fs(10)}" font-family="JetBrains Mono,monospace">${l21.toFixed(1)}</text>`;
+    }
+    if(k==='foreignflow'){
+      const vals=foreignFlow.filter(v=>v!=null&&!isNaN(v));
+      if(vals.length){
+        const lo=Math.min(...vals),hi=Math.max(...vals),p2=(hi-lo)*.1||1,yF=v=>sTop+h-((v-(lo-p2))/((hi+p2)-(lo-p2)))*h;
+        const linePts=arr=>arr.map((v,i)=>v==null?'':`${i?'L':'M'}${xScale(i).toFixed(1)},${yF(v).toFixed(1)}`).filter(Boolean).join(' ');
+        html+=`<path d="${linePts(foreignFlow)}" fill="none" stroke="#60a5fa" stroke-width="1.8"/>`;
+        const lf=lastVal(foreignFlow); if(lf!=null)html+=`<text x="${W-R+7}" y="${(yF(lf)+4).toFixed(1)}" fill="#60a5fa" font-size="${fs(10)}" font-family="JetBrains Mono,monospace">${fmtRp(lf)}</text>`;
+      }
+      html+=`<text x="5" y="${sTop+12}" fill="#60a5fa" font-size="${fs(10)}" font-family="JetBrains Mono,monospace" font-weight="700">FOREIGN FLOW</text>`;
     }
     if(k==='macd'){
       const vals=macd.concat(macdSig).filter(v=>v!=null&&!isNaN(v));
@@ -7775,13 +8580,15 @@ function drawChartSVG(){
       if(lm!=null)html+=`<text x="${W-R+7}" y="${(yM(lm)+4).toFixed(1)}" fill="#60a5fa" font-size="${fs(10)}" font-family="JetBrains Mono,monospace">${lm.toFixed(1)}</text>`;
       if(ls!=null)html+=`<text x="${W-R+7}" y="${(yM(ls)+4).toFixed(1)}" fill="#fbbf24" font-size="${fs(10)}" font-family="JetBrains Mono,monospace">${ls.toFixed(1)}</text>`;
     }
-    if(k==='vol'){
-      const vols=plotted.map(d=>d.volume==null?null:Number(d.volume));
-      const vmax=Math.max(...vols.map(v=>v||0))||1;
+    if(k==='netforeign'){
+      const vals=netForeign.filter(v=>v!=null&&!isNaN(v));
+      const vmax=Math.max(...vals.map(v=>Math.abs(v)))||1;
+      const yN=v=>sTop+h/2-(v/vmax)*(h/2-8);
       const bw=Math.max(1.2,plotW/plotted.length*0.6);
-      vols.forEach((v,i)=>{if(v==null)return;const hgt=(v/vmax)*(h-14);const up=i===0||plotted[i].close>=plotted[i-1].close;html+=`<rect x="${(xScale(i)-bw/2).toFixed(1)}" y="${(sTop+h-hgt).toFixed(1)}" width="${bw.toFixed(1)}" height="${Math.max(1,hgt).toFixed(1)}" fill="${up?'rgba(16,185,129,.45)':'rgba(239,68,68,.45)'}"/>`;});
-      html+=`<text x="5" y="${sTop+12}" fill="var(--muted)" font-size="${fs(10)}" font-family="JetBrains Mono,monospace" font-weight="700">VOLUME</text>`;
-      const lv2=[...vols].reverse().find(v=>v!=null); if(lv2!=null)html+=`<text x="${W-R+7}" y="${sTop+12}" fill="var(--muted)" font-size="${fs(10)}" font-family="JetBrains Mono,monospace">${fmtNum(Math.round(lv2))}</text>`;
+      html+=`<line x1="${L}" y1="${sTop+h/2}" x2="${W-R}" y2="${sTop+h/2}" stroke="rgba(255,255,255,.12)"/>`;
+      netForeign.forEach((v,i)=>{ if(v==null)return; const y0=yN(0),y1=yN(v); html+=`<rect x="${(xScale(i)-bw/2).toFixed(1)}" y="${Math.min(y0,y1).toFixed(1)}" width="${bw.toFixed(1)}" height="${Math.max(1,Math.abs(y1-y0)).toFixed(1)}" fill="${v>=0?'rgba(16,185,129,.6)':'rgba(239,68,68,.6)'}"/>`; });
+      html+=`<text x="5" y="${sTop+12}" fill="#22c55e" font-size="${fs(10)}" font-family="JetBrains Mono,monospace" font-weight="700">NET FOREIGN BUY/SELL</text>`;
+      const ln=lastVal(netForeign); if(ln!=null)html+=`<text x="${W-R+7}" y="${sTop+12}" fill="${ln>=0?'#22c55e':'#ef4444'}" font-size="${fs(10)}" font-family="JetBrains Mono,monospace">${fmtRp(ln)}</text>`;
     }
     sTop+=h+gap;
   });
@@ -7831,14 +8638,20 @@ function renderSmartPickListModalContent(){
     <div style="font-size:12px;color:var(--muted);margin-bottom:12px;">
       ${escapeHtml(def.shortDesc)} — <b class="mono">${list.length}</b> saham lolos, diurutkan dari skor tertinggi.
     </div>
+    ${renderBacktestSaveBar("smartpick", list.map(s=>({
+      ticker: s.ticker, price: Math.round(s.price||0),
+      kriteria: `Smart Pick · ${def.title}`,
+      keterangan: `Skor: ${s.score.toFixed(0)}${s.strong?' · Sinyal Kuat':''}; Δ%: ${(s.changePct||0)>=0?'+':''}${(s.changePct||0).toFixed(1)}%; Posisi 52W: ${s.pos52w!=null?s.pos52w.toFixed(0)+'%':'-'}; Vol Ratio: ${s.volRatio!=null?s.volRatio.toFixed(1)+'x':'-'}`
+    })))}
     <div class="table-wrap" style="max-height:60vh;">
       <table class="mono">
         <thead>
-          <tr><th>#</th><th>Kode</th><th>Sektor</th><th>Harga</th><th>Δ%</th><th>Posisi 52W</th><th>Vol Ratio</th><th>Skor</th><th></th></tr>
+          <tr><th></th><th>#</th><th>Kode</th><th>Sektor</th><th>Harga</th><th>Δ%</th><th>Posisi 52W</th><th>Vol Ratio</th><th>Skor</th><th></th></tr>
         </thead>
         <tbody>
           ${list.map((s,i)=>`
             <tr>
+              ${backtestRowCheckbox("smartpick", { ticker: s.ticker, price: Math.round(s.price||0) })}
               <td>${i+1}</td>
               <td class="ticker-cell">${escapeHtml(s.ticker)}${s.strong?' <span title="Sinyal Kuat">🔥</span>':''}${s.stockbitVerified?' <span title="Volume spike tervalidasi Value (Rp) riil dari Stockbit, bukan cuma rasio volume lembar">💠</span>':''}</td>
               <td style="white-space:normal;max-width:160px;font-family:'Sora',sans-serif;">${escapeHtml(s.sektor||"-")}</td>
@@ -8024,39 +8837,480 @@ const ABOUT_INTEGRATION_GUIDE = [
     desc:"Supabase URL/Key, token Stockbit, dan pengaturan Telegram disimpan di Local Storage browser perangkat ini — tidak tertanam di HTML, jadi tetap aman kalau aplikasi ini di-hosting publik. Selalu pakai anon key Supabase, jangan pernah service_role key." },
 ];
 
-function renderAbout(){
-  const row=(title,tone,desc)=>`<div class="about-row">${pillHtml(title,tone)}<p>${desc}</p></div>`;
-  const tabRow=(t)=>`
-    <details class="about-row" style="display:block;padding:10px 0;">
-      <summary style="cursor:pointer;list-style:none;display:flex;align-items:center;gap:10px;">
-        <span style="font-size:15px;">${t.icon}</span>${pillHtml(t.title,t.tone)}
-        <span style="font-size:11.5px;color:var(--muted);font-weight:400;">▾ detail</span>
-      </summary>
-      <div style="margin-top:8px;padding-left:24px;">
-        <p style="margin:0 0 6px;">${t.desc}</p>
-        ${t.catatan ? `<p style="margin:0;font-size:11.5px;color:var(--gold);">⚠️ ${t.catatan}</p>` : ""}
-      </div>
-    </details>`;
+// Catatan: fitur tab "ℹ️ Info" (renderAbout) SUDAH DIHAPUS — isinya
+// (ABOUT_TAB_GUIDE & ABOUT_INTEGRATION_GUIDE di atas) sekarang jadi
+// bagian "🗂️ Panduan Fitur — Ringkasan Semua Tab" dan "🔌 Sumber Data
+// & Integrasi" di dalam Panduan Lengkap (lihat renderPanduan()), supaya
+// tidak ada dua halaman terpisah yang isinya tumpang tindih. Kalau masih
+// ada tombol nav "Info" (data-tab="about") di index.html, hapus juga
+// elemen tombolnya di sana — dispatch di bawah cuma jaring pengaman
+// supaya tidak error kalau tombolnya kelewatan kehapus.
+
+
+// ==========================================
+// PANDUAN LENGKAP — helper kecil buat bikin accordion, callout, kartu,
+// step bernomor, baris istilah (kv), dan checklist yang bisa dicentang.
+// Semua CSS-nya sengaja ditulis inline lewat <style> di dalam HTML yang
+// dikembalikan renderPanduan() (bukan di file CSS terpisah) supaya fitur
+// ini tetap jalan walau index.html yang dipakai belum sempat diupdate.
+// ==========================================
+function pndAcc(id, icon, title, sub, open, bodyHtml){
   return `
-    <div class="panel" style="flex-direction:column;align-items:stretch;margin-bottom:16px;">
+    <details class="pnd-acc" id="pnd-${id}" ${open ? "open" : ""}>
+      <summary class="pnd-acc-summary">
+        <span class="pnd-acc-icon">${icon}</span>
+        <span class="pnd-acc-titlewrap">
+          <span class="pnd-acc-title">${title}</span>
+          ${sub ? `<span class="pnd-acc-sub">${sub}</span>` : ""}
+        </span>
+        <span class="pnd-acc-chev">⌄</span>
+      </summary>
+      <div class="pnd-acc-body">${bodyHtml}</div>
+    </details>`;
+}
+function pndCard(title, tagText, tagTone, bodyHtml){
+  return `
+    <div class="pnd-card">
+      <div class="pnd-card-head">
+        <span class="pnd-card-title">${title}</span>
+        ${tagText ? `<span class="pnd-tag pnd-tag-${tagTone||"muted"}">${tagText}</span>` : ""}
+      </div>
+      <div class="pnd-card-body">${bodyHtml}</div>
+    </div>`;
+}
+function pndCallout(html, tone){
+  return `<div class="pnd-callout pnd-${tone||"info"}">${html}</div>`;
+}
+function pndStep(n, html){
+  return `<div class="pnd-step"><div class="pnd-step-num">${n}</div><div class="pnd-step-text">${html}</div></div>`;
+}
+function pndKv(term, desc){
+  return `<div class="pnd-kv"><span class="pnd-kv-term">${term}</span><span class="pnd-kv-desc">${desc}</span></div>`;
+}
+let PND_CHECK_SEQ = 0;
+function pndCheck(text){
+  const id = "pndchk_" + (PND_CHECK_SEQ++);
+  return `<label class="pnd-check"><input type="checkbox" class="pnd-check-input" data-pnd-check="${id}"><span>${text}</span></label>`;
+}
+function pndOpenState(id, defaultOpen){
+  try{
+    const raw = localStorage.getItem("ihsg_panduan_open_pnd-" + id);
+    if(raw === null) return defaultOpen;
+    return raw === "1";
+  }catch(e){ return defaultOpen; }
+}
+const LS_PANDUAN_CHECKLIST = "ihsg_panduan_checklist_v1";
+function loadPanduanChecklist(){
+  try{ return JSON.parse(localStorage.getItem(LS_PANDUAN_CHECKLIST) || "{}"); }catch(e){ return {}; }
+}
+function wirePanduanChecklist(){
+  const saved = loadPanduanChecklist();
+  document.querySelectorAll("[data-pnd-check]").forEach((el, idx) => {
+    // Index berurutan sesuai urutan render (stabil selama struktur halaman
+    // tidak berubah) dipakai sebagai key penyimpanan, supaya tidak perlu
+    // ngasih id unik manual di tiap baris checklist.
+    const key = "item" + idx;
+    el.checked = !!saved[key];
+    el.onchange = () => {
+      const state2 = loadPanduanChecklist();
+      state2[key] = el.checked;
+      try{ localStorage.setItem(LS_PANDUAN_CHECKLIST, JSON.stringify(state2)); }catch(e){}
+    };
+  });
+  document.querySelectorAll(".pnd-acc").forEach(acc=>{
+    acc.addEventListener("toggle", () => {
+      try{ localStorage.setItem("ihsg_panduan_open_"+acc.id, acc.open ? "1" : "0"); }catch(e){}
+    });
+  });
+  // Tombol pintasan "Lompat ke bagian" di atas: buka <details>-nya dulu
+  // (kalau lagi tertutup) baru scroll, karena klik anchor #id polos tidak
+  // otomatis membuka elemen <details> tertutup di semua browser.
+  document.querySelectorAll("[data-pnd-jump]").forEach(a=>{
+    a.onclick = (e) => {
+      e.preventDefault();
+      const target = document.getElementById("pnd-" + a.dataset.pndJump);
+      if(!target) return;
+      if(!target.open){
+        target.open = true;
+        try{ localStorage.setItem("ihsg_panduan_open_"+target.id, "1"); }catch(err){}
+      }
+      target.scrollIntoView({ behavior:"smooth", block:"start" });
+    };
+  });
+}
+
+const PANDUAN_STYLES = `
+<style>
+.pnd-wrap{ display:flex; flex-direction:column; }
+.pnd-wrap details.pnd-acc{ border:1px solid var(--border); border-radius:10px; margin-bottom:12px; overflow:hidden; background:rgba(255,255,255,0.02); }
+.pnd-acc-summary{ list-style:none; cursor:pointer; display:flex; align-items:center; gap:10px; padding:13px 16px; user-select:none; }
+.pnd-acc-summary::-webkit-details-marker{ display:none; }
+.pnd-acc-summary::marker{ content:""; }
+.pnd-acc-icon{ font-size:16px; flex:0 0 auto; }
+.pnd-acc-titlewrap{ display:flex; flex-direction:column; gap:2px; }
+.pnd-acc-title{ font-weight:700; font-size:13.5px; color:var(--text); }
+.pnd-acc-sub{ font-size:11px; color:var(--muted); font-weight:400; }
+.pnd-acc-chev{ margin-left:auto; color:var(--muted); font-size:12px; transition:transform .18s ease; }
+details.pnd-acc[open] > .pnd-acc-summary .pnd-acc-chev{ transform:rotate(180deg); }
+.pnd-acc-body{ padding:2px 16px 16px; display:flex; flex-direction:column; gap:10px; border-top:1px solid var(--border); padding-top:14px; }
+.pnd-card{ border:1px solid var(--border); border-radius:8px; padding:12px 14px; background:rgba(255,255,255,0.015); }
+.pnd-card-head{ display:flex; align-items:center; justify-content:space-between; gap:10px; margin-bottom:7px; flex-wrap:wrap; }
+.pnd-card-title{ font-weight:700; font-size:13px; color:var(--text); }
+.pnd-tag{ font-size:9px; font-weight:700; letter-spacing:.04em; text-transform:uppercase; padding:3px 8px; border-radius:20px; border:1px solid currentColor; white-space:nowrap; }
+.pnd-tag-teal{ color:var(--teal); }
+.pnd-tag-up{ color:var(--up); }
+.pnd-tag-down{ color:var(--down); }
+.pnd-tag-gold{ color:var(--gold); }
+.pnd-tag-muted{ color:var(--muted); }
+.pnd-card-body{ font-size:12.5px; line-height:1.7; color:var(--text); }
+.pnd-card-body p{ margin:0 0 8px; }
+.pnd-card-body p:last-child{ margin-bottom:0; }
+.pnd-callout{ border-left:3px solid; border-radius:6px; padding:9px 12px; font-size:11.8px; line-height:1.6; margin-top:8px; }
+.pnd-callout:first-child{ margin-top:0; }
+.pnd-info{ border-color:var(--teal); background:rgba(45,212,191,0.08); color:var(--text); }
+.pnd-success{ border-color:var(--up); background:rgba(34,197,94,0.08); color:var(--up); }
+.pnd-warn{ border-color:var(--gold); background:rgba(234,179,8,0.09); color:var(--gold); }
+.pnd-danger{ border-color:var(--down); background:rgba(239,68,68,0.09); color:var(--down); }
+.pnd-step{ display:flex; gap:10px; align-items:flex-start; margin-bottom:9px; }
+.pnd-step:last-child{ margin-bottom:0; }
+.pnd-step-num{ flex:0 0 auto; width:19px; height:19px; margin-top:1px; border-radius:5px; background:rgba(45,212,191,0.15); color:var(--teal); font-size:10.5px; font-weight:700; display:flex; align-items:center; justify-content:center; }
+.pnd-step-text{ font-size:12.5px; line-height:1.6; color:var(--text); }
+.pnd-kv{ display:flex; gap:12px; padding:6px 0; border-bottom:1px dashed var(--border); font-size:12px; flex-wrap:wrap; }
+.pnd-kv:last-child{ border-bottom:none; }
+.pnd-kv-term{ flex:0 0 140px; color:var(--teal); font-weight:700; }
+.pnd-kv-desc{ flex:1 1 200px; color:var(--text); }
+.pnd-list{ margin:0; padding-left:18px; font-size:12.5px; line-height:1.85; color:var(--text); }
+.pnd-list li{ margin-bottom:3px; }
+.pnd-check{ display:flex; align-items:center; gap:9px; padding:6px 2px; font-size:12.5px; color:var(--text); cursor:pointer; border-bottom:1px dashed var(--border); }
+.pnd-check:last-child{ border-bottom:none; }
+.pnd-check input{ width:15px; height:15px; accent-color:var(--teal); flex:0 0 auto; }
+.pnd-jump{ display:flex; flex-wrap:wrap; gap:6px; margin-bottom:18px; }
+.pnd-jump a{ font-size:11px; padding:5px 10px; border-radius:20px; border:1px solid var(--border); color:var(--muted); text-decoration:none; background:rgba(255,255,255,0.02); }
+.pnd-jump a:hover{ color:var(--teal); border-color:var(--teal); }
+@media (max-width:640px){ .pnd-kv-term{ flex-basis:100%; } }
+</style>`;
+
+function renderPanduan(){
+  const S = [];
+
+  // ---------- 1. Tutorial Pemula ----------
+  S.push(pndAcc("mulai", "🚀", "Tutorial Pemula – Mulai dari Sini", "Alur kerja & peta fitur", pndOpenState("mulai", true), `
+    ${pndCard("Apa itu IHSG Screener Pro?", null, null, `
+      <p>Ini alat <b>penyaring</b>, bukan robot yang menyuruh beli. Tugasnya menyaring ratusan emiten IDX menjadi belasan yang layak Anda lihat lebih dekat. Keputusan beli/jual tetap 100% di tangan Anda.</p>
+    `)}
+    ${pndCard("Alur kerja yang disarankan", "URUTAN", "teal", `
+      ${pndStep(1, `Buka <b>Dashboard</b> — lihat kondisi pasar hari ini secara umum (jumlah Undervalue vs Danger Zone). Ini menentukan seberapa agresif Anda hari ini.`)}
+      ${pndStep(2, `Kumpulkan nama emiten dari fitur pencari: <b>Smart Pick</b>, kolom <b>Bandarmologi</b> di Screener, <b>BSJP</b>, atau <b>Entry Price Scanner</b>. Ambil 3–5 nama yang paling sering muncul.`)}
+      ${pndStep(3, `Verifikasi di <b>Broker Stalker → Lacak Saham</b> — masukkan kode emitennya, lihat berapa Buy Lot vs Sell Lot dan broker mana yang dominan. Konfirmasi tambahan: cek juga di <b>Kraken Flow (ORCA)</b>.`)}
+      ${pndStep(4, `Analisa mendalam di <b>Detail Emiten</b> (klik kode saham di tabel manapun) — FundTech Score, Trading Plan otomatis (entry/target/stop loss), Broker Summary, dan perbandingan vs Sektor.`)}
+      ${pndStep(5, `Simpan ke <b>Watchlist</b> dan pantau pergerakannya keesokan hari — atau beberapa hari — sebelum benar-benar eksekusi.`)}
+      ${pndCallout(`Langkah 2 hanya mengumpulkan kandidat, langkah 3 dan 4 yang menyaring. Banyak pemula berhenti di langkah 2 lalu langsung beli — di situlah kesalahan paling sering terjadi.`, "success")}
+      ${pndCallout(`Kalau satu nama muncul di lebih dari satu fitur sekaligus (misalnya lolos Smart Pick <i>dan</i> nongol di BSJP), itu konfirmasi ganda — biasanya kandidat yang paling layak diprioritaskan.`, "info")}
+    `)}
+    ${pndCard("Peta fitur: mana pencari, mana penyaring", "ORIENTASI", "gold", `
+      ${pndKv("PENCARI", "Smart Pick · Bandarmologi (kolom Screener) · BSJP · Entry Price Scanner — melempar nama kandidat ke meja Anda.")}
+      ${pndKv("PENYARING", "Kraken Flow (ORCA) · Broker Stalker (Lacak Saham) · Detail Emiten — membuktikan apakah kandidat itu layak.")}
+      ${pndKv("PEMANTAU", "Watchlist · Sektoral (Top Movers) — menjaga Anda tetap tahu perkembangan.")}
+    `)}
+    ${pndCard("7 hal yang selalu dicek, apa pun fiturnya", null, null, `
+      <ul class="pnd-list">
+        <li><b>Likuiditas</b> — di bawah Rp1 M/hari, harga sulit naik dan Anda sulit keluar saat butuh jual.</li>
+        <li><b>Posisi harga</b> — di mana harga dalam rentang 52 minggu? Dekat bawah = area beli, dekat atas = hati-hati.</li>
+        <li><b>Reaksi hari ini</b> — hijau atau setidaknya bertahan. Jangan menangkap pisau jatuh.</li>
+        <li><b>Jejak bandar</b> — ada broker/asing yang mengumpulkan? Cek Broker Stalker / Kraken Flow.</li>
+        <li><b>Trading Plan</b> — sudah jelas zona entry, target, dan stop loss-nya? Kalau belum tahu di harga berapa Anda keluar, jangan masuk.</li>
+        <li><b>Broker Flow</b> — di tab Detail Emiten, apakah garis net kumulatif broker menanjak konsisten, atau sudah mendatar/menurun? Garis berbalik turun = distribusi mulai jalan.</li>
+        <li><b>Support &amp; Resistance</b> — jarak harga ke support (batas rugi) dan ke resistance (batas untung) menentukan apakah risk/reward masuk akal.</li>
+      </ul>
+      ${pndCallout(`Empat poin terakhir tersedia dalam satu layar di <b>Detail Emiten</b>. Itulah alasan langkah 4 di alur kerja di atas tidak boleh dilewati.`, "success")}
+    `)}
+  `));
+
+  // ---------- 2. Skor vs Momentum ----------
+  S.push(pndAcc("skor-momentum", "⚖️", "FundTech Score vs Momentum – Salah Paham Paling Umum", null, pndOpenState("skor-momentum", false), `
+    ${pndCard("Skor hanyalah nilai FUNDAMENTAL + histori teknikal", "PENTING", "down", `
+      <p><b>FundTech Score</b> (Fundamental 60 poin + Teknikal 40 poin) hanya menilai kesehatan &amp; kemurahan perusahaan — PER, PBV, ROE, DER, dan posisi harga historis dalam range 52 minggu. Skor ini <b>tidak tahu apa-apa</b> soal ke mana harga akan bergerak minggu ini akibat sentimen atau berita.</p>
+      <p>Sebaliknya, emiten yang muncul di <b>BSJP</b>, <b>Smart Pick</b>, <b>Kraken Flow</b>, dan kolom <b>Bandarmologi</b> di Screener adalah emiten yang sedang <i>on trend</i>. Kenyataannya, emiten seperti ini sering bergerak tanpa dasar fundamental yang baik — yang menggerakkannya adalah momentum harga, volume, dan efek FOMO, bukan laporan keuangan.</p>
+      ${pndCallout(`Jangan heran kalau ada saham berskor rendah (bahkan Danger Zone di Dashboard) tapi harganya terbang. Itu bukan bug — itu memang dua hal berbeda yang diukur.`, "warn")}
+      ${pndCallout(`Kalau Anda masuk ke emiten on-trend berfundamental buruk, Anda sedang <b>ikut momentum, bukan berinvestasi</b>. Momentum bisa berhenti kapan saja tanpa aba-aba, dan tidak ada nilai fundamental yang menahan harga di bawah. Wajib punya stop loss, dan porsinya harus kecil.`, "danger")}
+    `)}
+    ${pndCard("Dua gaya, jangan dicampur", "RINGKASAN", "teal", `
+      ${pndKv("INVESTASI", "Berpegang pada filter Screener (PER/PBV/ROE/DER) &amp; FundTech Score. Horizon bulanan–tahunan. Yang dibeli: perusahaannya.")}
+      ${pndKv("MOMENTUM", "Berpegang pada Smart Pick, BSJP, Kraken Flow, Bandarmologi. Horizon harian–mingguan. Yang dibeli: pergerakannya. Wajib stop loss.")}
+      ${pndCallout(`Boleh melakukan keduanya — tapi <b>pisahkan modalnya dan pisahkan catatannya</b> (misalnya lewat Backtest terpisah). Masalah muncul ketika seseorang membeli karena momentum, lalu saat rugi berpindah alasan menjadi "tidak apa-apa, ini investasi jangka panjang".`, "success")}
+    `)}
+  `));
+
+  // ---------- 3. Smart Pick ----------
+  S.push(pndAcc("smartpick", "✨", "Smart Pick – 5 Kategori", "Area Demand · Throwback · Bull Divergence · Early Breakout · Liquidity Sweep", pndOpenState("smartpick", false), `
+    ${pndCard("Cara pakai", null, null, `
+      ${pndStep(1, "Pilih kategori yang cocok dengan gaya Anda di tab Smart Pick.")}
+      ${pndStep(2, "Buka detail kriteria tiap kartu untuk tahu persis filter &amp; cara scoring-nya.")}
+      ${pndStep(3, "Klik saham mana pun di daftar untuk membuka Detail Emiten lengkapnya.")}
+      ${pndCallout(`Jangan pakai kelima kategori sekaligus untuk memilih saham yang sama. Pilih satu yang sesuai karakter risiko Anda, dan konsisten selama beberapa minggu.`, "success")}
+    `)}
+    ${pndCard("Area Demand", "Paling Aman", "gold", `
+      <p>Saham <b>tidak rugi</b> (NPM ≥ 0 &amp; ROE ≥ 0), volume besar, harga sedang di area support bawah. Ibarat beli barang bagus saat diskon.</p>
+      <ul class="pnd-list">
+        <li>Posisi ≤ 30% dari range 52 minggu (zona bawah)</li>
+        <li>Nilai transaksi wajib ≥ Rp1 M/hari</li>
+        <li>Harga ≥ Rp100 (menghindari saham gocap/mati suri)</li>
+        <li>Range 52 minggu ≥ 15% (bukan saham datar tanpa pergerakan)</li>
+        <li>Reaksi hari ini &gt; -4% (bertahan/memantul, bukan anjlok)</li>
+      </ul>
+    `)}
+    ${pndCard("Throwback / Retest Breakout", "Tren Lanjutan", "teal", `
+      <p>Sudah breakout dari uptrend menengah, lalu turun sebentar menguji area breakout sebagai support baru, sekarang mulai memantul lagi. Posisi 45–90% range 52W dengan perubahan hari ini ≥ 0%. Uptrend (MA21&gt;MA50&gt;MA100) dan kualitas retest jadi bonus skor, bukan syarat wajib.</p>
+    `)}
+    ${pndCard("Bull Divergence", "Risiko Sedang", "up", `
+      <p>Harga masih di zona bawah (posisi &lt; 55% range 52W) tapi hari ini naik dengan volume tinggi — tanda tenaga jual mulai habis. Makin dekat ke low 52W, makin tinggi skornya.</p>
+      ${pndCallout(`Titik balik sering gagal di percobaan pertama. Tunggu konfirmasi: candle hijau kuat disertai volume naik, jangan langsung all-in di percobaan bounce pertama.`, "warn")}
+    `)}
+    ${pndCard("Early Breakout", "Momentum", "up", `
+      <p>Posisi harga &gt; 50% range 52W dan mulai menembus resistance dengan volume tinggi — ikut tren sebelum ramai. Makin dekat ke high 52W, makin tinggi skornya.</p>
+      <p>Kalau masuk di kategori ini, <b>wajib punya stop loss</b> di bawah level breakout — early breakout yang gagal (fake breakout) turun cepat.</p>
+    `)}
+    ${pndCard("Liquidity Sweep", "Agresif", "muted", `
+      <p>Harga sempat menyapu ke bawah titik terendah 52 minggu (memancing stop loss orang lain / stop hunt bandar), lalu berbalik naik tajam hari itu juga dengan volume besar.</p>
+      ${pndCallout(`Kategori paling berisiko dari kelima Smart Pick. Lewati saja kalau Anda masih baru di dunia trading saham.`, "danger")}
+    `)}
+  `));
+
+  // ---------- 4. Entry Price Scanner ----------
+  S.push(pndAcc("eps", "🎯", "Entry Price Scanner", "Broker trap · konvergensi VWAP", pndOpenState("eps", false), `
+    ${pndCard("Logika di baliknya", "Kunci", "teal", `
+      <p>Setiap broker punya harga rata-rata beli (<b>VWAP Buy</b>) = total nilai beli ÷ total volume beli.</p>
+      <p>Kalau harga sekarang <b>di bawah</b> rata-rata broker itu, broker tersebut sedang rugi. Broker yang rugi cenderung menahan atau menambah posisi, bukan menjual murah. Sebaliknya, kalau harga sudah jauh <b>di atas</b> rata-rata mereka, mereka sudah untung dan rawan ambil untung — saham seperti itu biasanya dilewatkan.</p>
+      ${pndKv("NYANGKUT", "Harga di bawah VWAP bandar. Ada dorongan mempertahankan harga.")}
+      ${pndKv("DI AREA", "Harga masih dalam ±3% dari VWAP. Level ini biasanya dijaga.")}
+    `)}
+    ${pndCard("Cara pakai", null, null, `
+      ${pndStep(1, `Buka tab <b>Entry Price Scanner</b>, lalu klik "🔄 Scan Sekarang" untuk menarik data broker terbaru (hasil scan sebelumnya tetap tersimpan di cache).`)}
+      ${pndStep(2, "Atur filter sesuai kebutuhan: Periode, Broker, Konvergensi, Tanjakan, Min Mutu/Akumulasi/Gap.")}
+      ${pndStep(3, "Semua filter berjalan instan begitu diubah — hasil di tabel langsung menyesuaikan.")}
+    `)}
+    ${pndCard("Arti tiap filter", null, null, `
+      ${pndKv("Periode", "Rentang data broker: 1 minggu / 2 minggu / 1 bulan (hari bursa).")}
+      ${pndKv("Broker", "Asing, Lokal, atau Keduanya.")}
+      ${pndKv("Konvergensi", "Menyatu = harga mendekati VWAP (bagus). Diam = stabil. Menjauh = harga menjauh.")}
+      ${pndKv("Tanjakan 10H", "▲ Menanjak = akumulasi broker 10 hari terakhir naik terus. ⇈ Menyalip = harga menyeberang garis VWAP broker (dari di bawah jadi di atas rata-rata beli mereka).")}
+      ${pndKv("Min Akumulasi", "Nilai akumulasi bersih (net buy) minimal dalam periode terpilih. Saham net-sell otomatis gugur.")}
+      ${pndKv("Min Gap", "Ambang diskon dari VWAP — misal ≤ −5% berarti hanya saham dengan harga minimal 5% di bawah VWAP broker yang ditampilkan.")}
+      ${pndKv("Urut", "Bisa digabung beberapa sekaligus. Kombinasi favorit: Terdekat VWAP + Tanjakan 10H.")}
+      ${pndCallout(`Saham berharga di bawah ambang minimum dan sektor Properties &amp; Real Estate diblokir otomatis untuk mengurangi jebakan.`, "info")}
+    `)}
+  `));
+
+  // ---------- 5. Broker Stalker & Target Bandar ----------
+  S.push(pndAcc("broker-stalker", "🛰️", "Broker Stalker & Target Bandar – Lacak Bandar", "Dua mode, dua pertanyaan berbeda", pndOpenState("broker-stalker", false), `
+    ${pndCard("Dua mode, dua pertanyaan berbeda", "Penting", "down", `
+      ${pndKv("Lacak Saham", `"Emiten ini sedang dikumpulkan siapa?" — ini yang dipakai di langkah 3 alur kerja.`)}
+      ${pndKv("Lacak Broker", `"Broker ini sedang pegang saham apa saja?" — untuk membuntuti satu broker favorit.`)}
+    `)}
+    ${pndCard("Mode Lacak Saham – verifikasi kandidat", "Tiap Hari", "teal", `
+      ${pndStep(1, "Masukkan kode emiten yang Anda dapat dari Smart Pick / BSJP / Bandarmologi.")}
+      ${pndStep(2, "Atur rentang tanggal — mulai dari 5–10 hari terakhir.")}
+      ${pndStep(3, "Bandingkan Buy Lot vs Sell Lot dan lihat broker mana yang Dominan.")}
+      ${pndStep(4, "Buka juga tab <b>Target Bandar</b> untuk kalkulator harga rata-rata bandar (avg beli + ATR14 → target R1/Max) dan ringkasan hit-rate-nya.")}
+      ${pndCallout(`Kalau harga sekarang masih di bawah atau setara harga rata-rata broker yang akumulasi konsisten, posisi Anda relatif sejajar dengan mereka. Kalau harga sudah jauh di atas rata-rata mereka, Anda masuk lebih mahal daripada bandarnya.`, "success")}
+    `)}
+    ${pndCard("Mode Lacak Broker", null, null, `
+      ${pndStep(1, "Masukkan kode broker (contoh: ZP, YP, AK, RX, dll).")}
+      ${pndStep(2, "Lihat daftar saham dengan net beli/jual broker itu beserta Buy Lot dan Sell Lot-nya.")}
+      ${pndCallout(`Broker konsisten membeli saham yang sama 3–5 hari berturut-turut = akumulasi terencana, bukan kebetulan. Broker asing yang akumulasi biasanya lebih menarik dipantau karena mengindikasikan dana institusional.`, "info")}
+    `)}
+  `));
+
+  // ---------- 6. Kraken Flow ----------
+  S.push(pndAcc("kraken", "⬢", "Kraken Flow (ORCA)", "Screener order-flow", pndOpenState("kraken", false), `
+    ${pndCard("Cara pakai", "Penyaring", "gold", `
+      ${pndStep(1, "Pilih minimal satu filter dari daftar parameter (bisa digabung).")}
+      ${pndStep(2, "Atur durasi jendela agregasi (1–7 hari) dan batas kapitalisasi pasar bila perlu.")}
+      ${pndStep(3, "Hasil langsung menampilkan Top 25 saham per filter — tidak perlu tombol scan terpisah.")}
+      ${pndCallout(`Makin banyak filter digabung, makin sedikit dan makin selektif hasilnya. Kalau hasilnya kosong, kurangi filternya.`, "warn")}
+    `)}
+    ${pndCard("Arti tiap parameter", null, null, `
+      ${pndKv("High Bid/Offer", "Antrian beli jauh lebih tebal dari antrian jual — ada yang menampung.")}
+      ${pndKv("High ATS", "Average Trade Size besar = transaksi per eksekusi besar = pemain besar, bukan ritel.")}
+      ${pndKv("No Sell", "Nyaris tidak ada tekanan jual pada periode itu (antrian jual kosong).")}
+      ${pndKv("Close High", "Ditutup di harga tertinggi hari itu — tanda kekuatan.")}
+      ${pndKv("High Non-Regular", "Banyak transaksi crossing/negosiasi di luar pasar reguler.")}
+      ${pndKv("Top Volume / Frequency", "Top 25 saham paling ramai secara volume atau frekuensi transaksi.")}
+      ${pndKv("Foreign +", "Asing net beli pada jendela waktu terpilih.")}
+      ${pndKv("Offer's Slender", "Antrian jual menipis drastis — sedikit yang mau melepas barang.")}
+    `)}
+  `));
+
+  // ---------- 7. BSJP ----------
+  S.push(pndAcc("bsjp", "🌆", "BSJP – Beli Sore, Jual Pagi", "Strategi momentum & likuiditas", pndOpenState("bsjp", false), `
+    ${pndCard("Strategi di baliknya", "Kunci", "teal", `
+      <p>Entry di jendela <b>Pre-Closing/Post-Closing Auction (15:50–16:15 WIB)</b> pada saham yang menunjukkan akumulasi kuat sore hari, lalu exit di <b>liquidity surge pagi sesi berikutnya (09:00–09:30 WIB)</b>.</p>
+      <p>Untuk lolos rekomendasi BSJP, saham harus lulus 8 kriteria deterministik di bawah, lalu diberi Skor Komposit 0–100 berdasarkan kekuatan tiap sinyal.</p>
+    `)}
+    ${pndCard("8 kriteria checklist BSJP", null, null, `
+      <ul class="pnd-list">
+        <li><b>Likuiditas</b> — Turnover ≥ ambang minimum yang diatur di parameter.</li>
+        <li><b>Volume Spike</b> — Volume Ratio di atas ambang tertentu (dibanding rata-rata 20 hari).</li>
+        <li><b>Range Harga</b> — Gain harian dalam rentang tertentu (hindari saham yang sudah ARA).</li>
+        <li><b>Bullish Closing</b> — Close berada di persentase teratas dari range harga hari itu.</li>
+        <li><b>Trend Alignment</b> — Close di atas EMA20 &amp; EMA50.</li>
+        <li><b>Akumulasi Bandar</b> — Bandar Accumulation Proxy (CR3 / Net Asing).</li>
+        <li><b>Kedalaman Orderbook</b> — Rasio Bid/Offer di atas ambang minimum.</li>
+        <li><b>Bebas Notasi Khusus</b> — Tidak sedang kena notasi khusus / Papan Pemantauan Khusus.</li>
+      </ul>
+      ${pndCallout(`Kriteria yang datanya belum tersedia untuk suatu saham dihitung netral (tidak otomatis menggugurkan) — tapi makin banyak kriteria yang benar-benar lolos dengan data lengkap, makin meyakinkan sinyalnya. Semua threshold bisa Anda ubah sendiri lewat panel parameter di tab BSJP.`, "info")}
+    `)}
+  `));
+
+  // ---------- 8. Detail Emiten ----------
+  S.push(pndAcc("detail", "📊", "Detail Emiten (Terminal Analisa)", "9 tab dalam satu layar", pndOpenState("detail", false), `
+    ${pndCard("Isi tiap tab", null, null, `
+      ${pndKv("📊 Teknikal", "RSI, MACD, EMA, posisi &amp; perubahan 52 minggu, support/resistance.")}
+      ${pndKv("💰 Fundamental", "PER, PBV, ROE, ROA, DER, NPM, dividend yield dengan penilaian bahasa Indonesia.")}
+      ${pndKv("🐋 Bandarmologi (IDX)", "Proxy heuristik dari rasio volume terhadap rata-rata 20 hari, dikombinasikan arah harga.")}
+      ${pndKv("🏦 Broker Summary", "Tabel broker beli/jual lengkap dan grafik Broker Flow — garis net kumulatif menanjak terus = akumulasi konsisten.")}
+      ${pndKv("📅 Historical Data", "Riwayat harga &amp; volume harian saham ini.")}
+      ${pndKv("🧠 Analisa", "Ringkasan otomatis dari Teknikal + Fundamental + Bandarmologi jadi satu kesimpulan singkat.")}
+      ${pndKv("🤖 AI (Gemini)", "Analisis naratif dari AI berdasarkan data fundamental, RSI/MACD/EMA, dan momentum multi-timeframe — butuh API key gratis dari Google AI Studio.")}
+      ${pndKv("⚖️ vs Sektor", "Perbandingan tiap metrik dengan rata-rata peer sesektor.")}
+      ${pndKv("📋 Trading Plan", "Zona entry, target, stop loss, dan rasio risk/reward yang dihitung otomatis.")}
+    `)}
+    ${pndCard("Membaca Trading Plan", "Contoh", "teal", `
+      <p>Misal tertulis: Zona entry <b>100–112</b>, Target <b>155</b>, Stop loss <b>94</b>, Risk/reward <b>1:3</b>.</p>
+      <p>Artinya: beli di rentang 100–112. Kalau naik ke 155, untung sekitar 42%. Kalau turun ke 94, <b>keluar</b> dengan rugi sekitar 14%. Rasio 1:3 artinya potensi untung tiga kali lipat potensi rugi.</p>
+      ${pndCallout(`Angka stop loss hanya berguna kalau Anda benar-benar mematuhinya. Trader pemula paling sering rugi besar bukan karena salah pilih saham, tapi karena menolak keluar saat sudah rugi.`, "danger")}
+    `)}
+    ${pndCard("Kalau tanggal broker terlihat lama", null, null, `
+      <p>Data broker mengikuti <b>hari bursa terakhir</b> yang tersedia. Kalau Anda membuka saat akhir pekan atau hari libur, wajar tanggalnya mundur ke hari bursa sebelumnya.</p>
+    `)}
+  `));
+
+  // ---------- 9. Checklist Sebelum Beli ----------
+  S.push(pndAcc("checklist", "✅", "Checklist Sebelum Beli", null, pndOpenState("checklist", false), `
+    ${pndCard("Centang satu per satu", "Simpan", "up", `
+      ${pndCheck("Nilai transaksi harian ≥ Rp1 miliar?")}
+      ${pndCheck("Perusahaan tidak sedang rugi (NPM &amp; ROE positif)?")}
+      ${pndCheck("Harga di paruh bawah rentang 52 minggu, bukan sudah di puncak?")}
+      ${pndCheck("Ada jejak akumulasi (asing / broker / bandar) di Broker Stalker atau Kraken Flow?")}
+      ${pndCheck("Hari ini hijau atau setidaknya bertahan?")}
+      ${pndCheck("Sudah tahu harga stop loss saya di angka berapa?")}
+      ${pndCheck("Rasio risk/reward minimal 1:2?")}
+      ${pndCheck("Nilai posisi ini masih wajar dibanding total modal saya?")}
+      ${pndCheck("Tidak ada berita buruk terbaru soal emiten ini?")}
+      ${pndCallout(`Kalau ada satu saja kotak yang belum tercentang, tidak apa-apa melewatkan saham itu. Selalu ada kesempatan berikutnya — modal yang habis jauh lebih sulit diganti. Centang tersimpan otomatis di perangkat ini.`, "success")}
+    `)}
+    ${pndCard("3 kesalahan pemula yang paling mahal", "Hindari", "down", `
+      <ul class="pnd-list">
+        <li><b>Beli karena skornya tinggi saja</b> — tanpa melihat chart, berita, dan likuiditasnya.</li>
+        <li><b>Tidak punya stop loss</b> — lalu "menahan sampai balik modal" selama bertahun-tahun.</li>
+        <li><b>Masuk terlalu besar di satu saham</b> — satu kesalahan langsung menghapus banyak keuntungan sebelumnya.</li>
+      </ul>
+    `)}
+  `));
+
+  // ---------- 10. Istilah Fundamental ----------
+  S.push(pndAcc("istilah-fundamental", "📖", "Istilah Fundamental", null, pndOpenState("istilah-fundamental", false), `
+    ${pndCard("PER (Price to Earnings Ratio)", null, null, `
+      <p>Definisi: Harga saham dibagi Earnings Per Share (EPS). Berapa kali investor bersedia membayar per rupiah laba.</p>
+      ${pndCallout(`Panduan baca: PER &lt;10x = murah · 10–20x = wajar · &gt;25x = premium. Bandingkan dengan rata-rata sektornya di tab vs Sektor.`, "info")}
+    `)}
+    ${pndCard("PBV (Price to Book Value)", null, null, `
+      <p>Definisi: Harga saham dibagi nilai buku per saham. Apakah harga pasar di atas atau di bawah nilai aset bersih.</p>
+      ${pndCallout(`Panduan baca: PBV &lt;1x = di bawah nilai aset · 1–3x = wajar · &gt;3x = premium (perlu ROE tinggi untuk dianggap wajar).`, "info")}
+    `)}
+    ${pndCard("ROE (Return on Equity)", null, null, `
+      <p>Definisi: Laba bersih dibagi ekuitas. Efisiensi manajemen menggunakan modal investor untuk menghasilkan laba.</p>
+      ${pndCallout(`Panduan baca: ROE &gt;15% = bagus · &gt;20% = sangat bagus · &lt;8% = lemah. Perhatikan konsistensinya dari tahun ke tahun.`, "info")}
+    `)}
+    ${pndCard("ROA (Return on Assets)", null, null, `
+      <p>Definisi: Laba bersih dibagi total aset. Seberapa efisien perusahaan menggunakan seluruh asetnya.</p>
+      ${pndCallout(`Panduan baca: ROA &gt;10% = sangat efisien · 5–10% = baik · &lt;5% = kurang efisien.`, "info")}
+    `)}
+    ${pndCard("NPM (Net Profit Margin)", null, null, `
+      <p>Definisi: Laba bersih dibagi total pendapatan. Berapa persen dari setiap Rp1 penjualan yang menjadi laba bersih.</p>
+      ${pndCallout(`Panduan baca: NPM &gt;15% = premium · 5–15% = normal · &lt;5% = tipis · &lt;0% = rugi.`, "info")}
+    `)}
+    ${pndCard("DER (Debt to Equity Ratio)", null, null, `
+      <p>Definisi: Total utang dibagi ekuitas. Seberapa besar perusahaan menggunakan utang untuk membiayai operasinya.</p>
+      ${pndCallout(`Panduan baca: DER &lt;1x = konservatif · 1–2x = moderat · &gt;2x = agresif. Sektor perbankan &amp; properti wajar punya DER tinggi.`, "info")}
+    `)}
+    ${pndCard("Market Cap (Kapitalisasi Pasar)", null, null, `
+      <p>Definisi: Harga saham × jumlah saham beredar. Total nilai pasar seluruh perusahaan.</p>
+      ${pndCallout(`Panduan baca: &gt;Rp10T = Big Cap · Rp1–10T = Mid Cap · &lt;Rp1T = Small Cap.`, "info")}
+    `)}
+  `));
+
+  // ---------- 11. Indikator Teknikal ----------
+  S.push(pndAcc("indikator-teknikal", "📈", "Indikator Teknikal", null, pndOpenState("indikator-teknikal", false), `
+    ${pndCard("RSI (Relative Strength Index)", null, null, `
+      <p>Definisi: Indikator momentum 0–100 yang mengukur kecepatan pergerakan harga.</p>
+      ${pndCallout(`RSI &gt;70 = Overbought (potensi koreksi) · RSI &lt;30 = Oversold (potensi rebound) · 40–60 = netral.`, "info")}
+    `)}
+    ${pndCard("MACD", null, null, `
+      <p>Definisi: Selisih EMA12 dan EMA26. Histogram positif = momentum naik, negatif = momentum turun.</p>
+      ${pndCallout(`Bullish crossover = sinyal beli. Bearish crossover = sinyal jual.`, "info")}
+    `)}
+    ${pndCard("EMA (Exponential Moving Average)", null, null, `
+      <p>Definisi: Rata-rata bergerak dengan bobot lebih besar pada harga terbaru.</p>
+      ${pndCallout(`Harga di atas EMA21 &amp; EMA50 = bullish. Di bawah keduanya = bearish. Golden cross = EMA jangka pendek memotong EMA jangka panjang dari bawah.`, "info")}
+    `)}
+    ${pndCard("Posisi 52 Minggu", null, null, `
+      <p>Definisi: Posisi harga sekarang dalam rentang harga tertinggi &amp; terendah 52 minggu terakhir, dinyatakan dalam persen (0% = di titik terendah, 100% = di titik tertinggi).</p>
+      ${pndCallout(`Dipakai di hampir semua fitur pencari (Smart Pick, BSJP) sebagai penentu zona: dekat 0% = zona demand/support, dekat 100% = zona breakout/resistance.`, "info")}
+    `)}
+  `));
+
+  // ---------- 12. Panduan Fitur (ringkasan semua tab) ----------
+  S.push(pndAcc("panduan-fitur", "🗂️", "Panduan Fitur — Ringkasan Semua Tab", null, pndOpenState("panduan-fitur", false), `
+    ${ABOUT_TAB_GUIDE.map(t => pndCard(`${t.icon} ${t.title}`, null, t.tone, `
+      <p>${t.desc}</p>
+      ${t.catatan ? pndCallout(`⚠️ ${t.catatan}`, "warn") : ""}
+    `)).join("")}
+  `));
+
+  // ---------- 13. Sumber Data & Integrasi ----------
+  S.push(pndAcc("integrasi", "🔌", "Sumber Data & Integrasi", null, pndOpenState("integrasi", false), `
+    ${ABOUT_INTEGRATION_GUIDE.map(g => pndCard(g.title, null, g.tone, `<p>${g.desc}</p>`)).join("")}
+  `));
+
+  // ---------- 14. Disclaimer ----------
+  S.push(pndAcc("disclaimer", "⚠️", "Disclaimer Penting", null, pndOpenState("disclaimer", false), `
+    ${pndCard("Baca sebelum menggunakan data di aplikasi ini", null, "down", `
+      <ul class="pnd-list">
+        <li>IHSG Screener Pro adalah <b>alat bantu riset</b>, bukan penasihat investasi.</li>
+        <li>Data teknikal &amp; fundamental bersumber dari Yahoo Finance (data publik); data broker/bandarmologi bergantung pada input manual atau token Stockbit milik Anda sendiri.</li>
+        <li>FundTech Score dan seluruh sinyal (Smart Pick, BSJP, Kraken Flow) dihitung dari <b>data historis</b> — tidak menjamin performa masa depan.</li>
+        <li>Investasi saham mengandung risiko. Selalu <b>DYOR</b> (Do Your Own Research) sebelum keputusan investasi.</li>
+        <li>Keputusan beli/jual sepenuhnya tanggung jawab Anda sendiri.</li>
+      </ul>
+    `)}
+  `));
+
+  const jumpLinks = [
+    ["mulai","🚀 Mulai"], ["skor-momentum","⚖️ Skor vs Momentum"], ["smartpick","✨ Smart Pick"],
+    ["eps","🎯 EPS"], ["broker-stalker","🛰️ Broker Stalker"], ["kraken","⬢ Kraken Flow"],
+    ["bsjp","🌆 BSJP"], ["detail","📊 Detail Emiten"], ["checklist","✅ Checklist"],
+    ["istilah-fundamental","📖 Istilah"], ["indikator-teknikal","📈 Indikator"],
+    ["panduan-fitur","🗂️ Semua Fitur"], ["disclaimer","⚠️ Disclaimer"]
+  ].map(([id,label]) => `<a href="#pnd-${id}" data-pnd-jump="${id}">${label}</a>`).join("");
+
+  return `
+    ${PANDUAN_STYLES}
+    <div class="panel panduan-hero" style="flex-direction:column;align-items:stretch;margin-bottom:20px;">
+      <div style="display:flex;align-items:center;gap:12px;margin-bottom:8px;">
+        <span style="font-size:28px;">📖</span>
+        <div>
+          <h2 style="margin:0;font-size:18px;font-weight:700;">Panduan Lengkap</h2>
+          <p style="margin:4px 0 0;font-size:12px;color:var(--muted);">IHSG Screener Pro — cara pakai tiap fitur, istilah, dan disclaimer</p>
+        </div>
+      </div>
       <p style="margin:0;font-size:13px;color:var(--text);line-height:1.6;">
-        IHSG Screener Pro adalah alat bantu screening &amp; analisis saham IHSG pribadi —
-        menggabungkan data teknikal/fundamental, sinyal siap pakai (Smart Pick), pelacakan
-        bandarmologi (Broker Summary, Target Bandar, Kraken Flow), backtest, dan portofolio
-        dalam satu aplikasi. Ini <b>bukan nasihat/rekomendasi investasi</b> — semua sinyal
-        &amp; skor di sini adalah alat bantu keputusan, keputusan akhir tetap di tangan Anda.
+        Klik tiap judul di bawah untuk membuka/menutup bagiannya. Ini <b>bukan nasihat/rekomendasi investasi</b> —
+        semua sinyal &amp; skor di sini adalah alat bantu keputusan, keputusan akhir tetap di tangan Anda.
       </p>
     </div>
-
-    <div class="filter-section-title">📚 Peta Fitur (klik tiap baris untuk detail)<span class="line"></span></div>
-    <div class="panel" style="flex-direction:column;align-items:stretch;margin-bottom:16px;">
-      ${ABOUT_TAB_GUIDE.map(tabRow).join("")}
-    </div>
-
-    <div class="filter-section-title">🔌 Sumber Data &amp; Integrasi<span class="line"></span></div>
-    <div class="panel" style="flex-direction:column;align-items:stretch;">
-      ${ABOUT_INTEGRATION_GUIDE.map(g=>row(g.title,g.tone,g.desc)).join("")}
-    </div>
+    <div class="pnd-jump">${jumpLinks}</div>
+    <div class="pnd-wrap">${S.join("")}</div>
   `;
 }
 
@@ -8773,7 +10027,10 @@ function renderTargetBandar(){
       ATR14 dipakai: <span class="mono">${fmtNum(lv.atrUsed.toFixed(2))}</span>${lv.atrIsFallback?' <span style="color:var(--gold);">(fallback 3% — ATR14 kosong di stocks_screener)</span>':""}.
       Formula: R1 = Avg Bandar + ${TB_ATR_MULT_R1}×ATR14, Max = Avg Bandar + ${TB_ATR_MULT_MAX}×ATR14 — silakan disesuaikan (konstanta TB_ATR_MULT_* di app.js) sesuai gaya trading Anda.
     </div>
-    <button class="btn btn-primary" id="tbSaveCalcBtn">💾 Simpan Perhitungan Hari Ini ke Riwayat</button>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;">
+      <button class="btn btn-primary" id="tbSaveCalcBtn">💾 Simpan Perhitungan Hari Ini ke Riwayat</button>
+      <button class="btn btn-outline" id="tbSaveToBacktestBtn" style="color:#22d3ee;border-color:rgba(6,182,212,0.4);" title="Kirim ${escapeHtml(state.targetStockCode||'-')} ke tab Backtest dengan harga sekarang sebagai harga entry">🔬 Simpan ke Backtest</button>
+    </div>
   ` : `<div class="empty-box" style="padding:16px;font-size:12px;">Muat data dulu di atas untuk melihat Avg Bandar & Target.</div>`;
 
   const maxNet = Math.max(1, ...top5.map(b=>Math.abs(b.netValue)));
@@ -9812,17 +11069,23 @@ function renderEntryPriceScanner(){
     <div class="panel" style="flex-direction:column;align-items:stretch;">
       <div class="filter-section-title">Hasil Scan <span class="count-badge">${rows.length} saham</span><span class="line"></span></div>
       ${!rows.length ? `<div class="empty-box">${raw ? "Tidak ada saham yang lolos kombinasi filter ini — coba longgarkan Min Mutu/Akumulasi/Gap." : "Belum ada hasil. Klik \"🔄 Scan Sekarang\" di atas untuk mulai."}</div>` : `
+      ${renderBacktestSaveBar("eps", rows.map(r=>({
+        ticker: r.ticker, price: Math.round(r.harga),
+        kriteria: "Entry Price Scanner",
+        keterangan: `VWAP Buy: ${Math.round(r.vwapBuy)}; Gap: ${r.gapPct>=0?'+':''}${r.gapPct.toFixed(1)}%; Konvergensi: ${r.konvergensi}; Mutu: ${r.mutu}; Score: ${r.score}; Top Broker: ${r.topBroker}`
+      })))}
       <div class="table-wrap">
         <table class="mono">
           <thead>
             <tr>
               <tr>
-              <th>#</th><th>Kode</th><th>Nama</th><th>Harga</th><th>VWAP Buy</th><th>Gap %</th><th>Konv</th><th>Tanjakan / Salip</th><th>Mutu</th><th>Net Buy</th><th>Score</th><th>Top Broker</th><th>Tipe</th>
+              <th></th><th>#</th><th>Kode</th><th>Nama</th><th>Harga</th><th>VWAP Buy</th><th>Gap %</th><th>Konv</th><th>Tanjakan / Salip</th><th>Mutu</th><th>Net Buy</th><th>Score</th><th>Top Broker</th><th>Tipe</th>
             </tr>
           </thead>
           <tbody>
             ${rows.map((r,i)=>`
               <tr>
+                ${backtestRowCheckbox("eps", { ticker: r.ticker, price: Math.round(r.harga) })}
                 <td>${i+1}</td>
                 <td class="ticker-cell"><button class="ticker-link" data-detail="${r.ticker}" title="Lihat detail ${r.ticker}">${r.ticker}</button></td>
                 <td style="white-space:normal;max-width:180px;font-family:'Sora',sans-serif;font-size:12px;">${escapeHtml(r.nama)}</td>
@@ -10258,16 +11521,22 @@ function renderKrakenFlow(){
         ? `<div class="empty-box">⬢ Pilih minimal satu filter di atas — hasil akan langsung tampil di sini tanpa perlu scan.<br>${result.usingHistory ? `Data diagregasi dari histori ${ORCA_HISTORY_TRADING_DAYS} hari bursa terakhir (${state.stocks.length} emiten diikuti).` : `Data diambil dari snapshot Bandarmology terakhir (${state.stocks.length} emiten)${state.orcaHistoryLoading ? " — histori sedang dimuat..." : ""}.`}</div>`
         : !rows.length
           ? `<div class="empty-box">Tidak ada saham yang lolos kombinasi filter ini (dari ${result.universeSize} emiten setelah filter Market Cap) — coba kurangi filter atau longgarkan Market Cap.</div>`
-          : `<div class="table-wrap">
+          : `${renderBacktestSaveBar("orca", rows.map(r=>({
+              ticker: r.ticker, price: Math.round(r.cClose||0),
+              kriteria: "Kraken Flow (ORCA)",
+              keterangan: `B/O: ${r.orcaBidOfferRatio!=null?(r.orcaBidOfferRatio>=999?'∞':r.orcaBidOfferRatio.toFixed(1)+'x'):'-'}; ATS: ${r.avgTicket!=null?fmtCap(r.avgTicket):'-'}; Non-Reg%: ${r.crossingPct!=null?r.crossingPct.toFixed(1)+'%':'-'}; Foreign: ${r.orcaForeignVal!=null?fmtRp(r.orcaForeignVal):'-'}`
+            })))}
+            <div class="table-wrap">
         <table class="mono">
           <thead>
             <tr>
-              <th>#</th><th>Kode</th><th>Nama</th><th>Harga</th><th>1D%</th><th>Bid</th><th>Offer</th><th>B/O</th><th>ATS${result.usingHistory?` (${state.orcaDuration}H)`:""}</th><th>Freq${result.usingHistory?` (${state.orcaDuration}H)`:""}</th><th>Non-Reg%${result.usingHistory?` (${state.orcaDuration}H)`:""}</th><th>Foreign (${escapeHtml(result.foreignWinLabel||"")})</th><th>Volume</th><th>Mkt Cap</th>
+              <th></th><th>#</th><th>Kode</th><th>Nama</th><th>Harga</th><th>1D%</th><th>Bid</th><th>Offer</th><th>B/O</th><th>ATS${result.usingHistory?` (${state.orcaDuration}H)`:""}</th><th>Freq${result.usingHistory?` (${state.orcaDuration}H)`:""}</th><th>Non-Reg%${result.usingHistory?` (${state.orcaDuration}H)`:""}</th><th>Foreign (${escapeHtml(result.foreignWinLabel||"")})</th><th>Volume</th><th>Mkt Cap</th>
             </tr>
           </thead>
           <tbody>
             ${rows.map((r,i)=>`
               <tr>
+                ${backtestRowCheckbox("orca", { ticker: r.ticker, price: Math.round(r.cClose||0) })}
                 <td>${i+1}</td>
                 <td class="ticker-cell"><button class="ticker-link" data-detail="${r.ticker}" title="Lihat detail ${r.ticker}">${r.ticker}</button></td>
                 <td style="white-space:normal;max-width:160px;font-family:'Sora',sans-serif;font-size:12px;">${escapeHtml(r.name)}</td>
@@ -10532,6 +11801,7 @@ function renderBsjp(){
 
   const tableRows = rows.map(s => `
     <tr>
+      ${backtestRowCheckbox("bsjp", { ticker: s.ticker, price: Math.round(s.cClose||0) })}
       <td class="ticker-cell"><button class="ticker-link" data-detail="${s.ticker}" title="Lihat detail ${s.ticker}">${s.ticker}</button></td>
       <td>${fmtNum(s.cClose)}</td>
       <td style="color:${(s.changePct||0)>=0?'var(--up)':'var(--down)'};">${s.changePct!=null?((s.changePct>=0?'+':'')+s.changePct.toFixed(1)+'%'):'-'}</td>
@@ -10542,7 +11812,7 @@ function renderBsjp(){
       <td>${bsjpSignalPill(s.bsjp.signal, s.bsjp.signalTone)}</td>
       <td><button class="btn btn-outline" data-bsjp-expand="${s.ticker}" style="padding:4px 10px;font-size:11px;">${state.bsjpExpanded===s.ticker?"Tutup":"Trade Plan"}</button></td>
     </tr>
-    ${state.bsjpExpanded===s.ticker ? `<tr><td colspan="9" style="background:rgba(0,0,0,0.1);">${bsjpTradePlanCard(s)}</td></tr>` : ""}
+    ${state.bsjpExpanded===s.ticker ? `<tr><td colspan="10" style="background:rgba(0,0,0,0.1);">${bsjpTradePlanCard(s)}</td></tr>` : ""}
   `).join("");
 
   const resultsPanel = `
@@ -10551,9 +11821,14 @@ function renderBsjp(){
         <div class="filter-section-title" style="margin:0;">🌆 Radar BSJP · ${escapeHtml(activePreset.label)} <span class="count-badge">${rows.length} saham</span><span class="line"></span></div>
       </div>
       ${!rows.length ? `<div class="empty-box">Tidak ada saham yang cocok preset "${escapeHtml(activePreset.label)}" ini. Coba preset lain atau ubah parameter di Params.</div>` : `
+      ${renderBacktestSaveBar("bsjp", rows.map(s=>({
+        ticker: s.ticker, price: Math.round(s.cClose||0),
+        kriteria: `BSJP · ${activePreset.label}`,
+        keterangan: `Kriteria: ${s.bsjp.passedCount}/${s.bsjp.totalChecks}; Skor: ${s.bsjp.score}; Sinyal: ${s.bsjp.signal}; Vol Ratio: ${s.volRatio!=null?s.volRatio.toFixed(2)+'x':'-'}`
+      })))}
       <div class="table-wrap">
         <table class="mono">
-          <thead><tr><th>Kode</th><th>Harga</th><th>1D%</th><th>Vol Ratio</th><th>Turnover</th><th>Kriteria</th><th>Skor</th><th>Sinyal</th><th></th></tr></thead>
+          <thead><tr><th></th><th>Kode</th><th>Harga</th><th>1D%</th><th>Vol Ratio</th><th>Turnover</th><th>Kriteria</th><th>Skor</th><th>Sinyal</th><th></th></tr></thead>
           <tbody>${tableRows}</tbody>
         </table>
       </div>`}
@@ -10580,21 +11855,52 @@ function renderBsjp(){
 // SAMA (di-clamp ke panjang teks baru, bukan otomatis ke ujung) setelah
 // elemen input baru terpasang di DOM.
 // ==========================================
-function bindSearchInputPreservingCursor(id, onValueChange){
+// Debounce per id: tiap search input yang manggil fungsi ini share map
+// timer ini (key = id elemen), supaya ngetik cepat di satu field nggak
+// numpuk banyak render() yang saling menimpa.
+const _searchDebounceTimers = {};
+
+// Helper untuk semua link internal (ticker/chart) yang sekarang jadi <a
+// href="#/..."> beneran: klik KIRI biasa (tanpa Ctrl/Cmd/Shift/klik-tengah)
+// tetap di-handle sebagai navigasi SPA (preventDefault + panggil fn),
+// supaya tidak nambah 2x history entry / lompat scroll ke hash. Klik
+// KANAN (buka tab baru dari context menu), klik TENGAH, dan Ctrl/Cmd-klik
+// SENGAJA tidak di-preventDefault — dibiarkan browser yang tangani secara
+// native, jadi "Buka di tab baru" beneran jalan.
+function bindInternalLink(el, fn){
+  el.onclick = (e) => {
+    if(e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return; // biarkan browser (tab baru/klik-tengah)
+    e.preventDefault();
+    e.stopPropagation();
+    fn();
+  };
+}
+
+function bindSearchInputPreservingCursor(id, onValueChange, delay = 200){
   const el = document.getElementById(id);
   if(!el) return;
   el.oninput = (e) => {
     const start = e.target.selectionStart;
     const end = e.target.selectionEnd;
-    onValueChange(e.target.value);
-    render();
-    const newEl = document.getElementById(id);
-    if(newEl){
-      newEl.focus();
-      const pos = Math.min(start, newEl.value.length);
-      const posEnd = Math.min(end, newEl.value.length);
-      newEl.setSelectionRange(pos, posEnd);
-    }
+    const val = e.target.value;
+    // Debounce: render() penuh (rebuild seluruh innerHTML + rebind semua
+    // listener) baru dipanggil `delay` ms SETELAH user berhenti mengetik,
+    // bukan di tiap huruf. Selama jeda itu elemen <input> asli tidak
+    // disentuh sama sekali, jadi kursor tetap natural di posisi user
+    // mengetik -- render() (dan restore posisi kursor di bawah) cuma
+    // jalan sekali di akhir, bukan tiap keystroke.
+    clearTimeout(_searchDebounceTimers[id]);
+    _searchDebounceTimers[id] = setTimeout(() => {
+      onValueChange(val);
+      render();
+      const newEl = document.getElementById(id);
+      if(newEl){
+        newEl.focus();
+        const pos = Math.min(start, newEl.value.length);
+        const posEnd = Math.min(end, newEl.value.length);
+        newEl.setSelectionRange(pos, posEnd);
+      }
+    }, delay);
   };
 }
 
@@ -10611,6 +11917,9 @@ function attachContentEvents(){
 
   const savePresetBtn = document.getElementById("savePresetBtn");
   if(savePresetBtn) savePresetBtn.onclick = saveCurrentAsPreset;
+
+  const resetRulesBtn = document.getElementById("resetRulesBtn");
+  if(resetRulesBtn) resetRulesBtn.onclick = resetCustomRules;
 
   const presetSelect = document.getElementById("presetSelect");
   if(presetSelect) presetSelect.onchange = (e) => { state.selectedPresetId = e.target.value; render(); };
@@ -10968,7 +12277,7 @@ function attachContentEvents(){
     } else dashMetricOpen(key);
   });
   document.querySelectorAll("[data-fav]").forEach(b=> b.onclick=()=>toggleFav(b.dataset.fav));
-  document.querySelectorAll("[data-chart]").forEach(b=> b.onclick=()=>loadChart(b.dataset.chart));
+  document.querySelectorAll("[data-chart]").forEach(b=> bindInternalLink(b, () => loadChart(b.dataset.chart)));
   document.querySelectorAll("[data-stockbit-live]").forEach(b=> b.onclick=(e)=>{ e.stopPropagation(); fetchStockbitLive(b.dataset.stockbitLive); });
   document.querySelectorAll("[data-expand]").forEach(b=> b.onclick=()=>{
     const t = b.dataset.expand;
@@ -11091,6 +12400,8 @@ function attachContentEvents(){
   if(tbLoadBtn) tbLoadBtn.onclick = loadTargetWindow;
   const tbSaveCalcBtn = document.getElementById("tbSaveCalcBtn");
   if(tbSaveCalcBtn) tbSaveCalcBtn.onclick = saveTargetCalculation;
+  const tbSaveToBacktestBtn = document.getElementById("tbSaveToBacktestBtn");
+  if(tbSaveToBacktestBtn) tbSaveToBacktestBtn.onclick = saveTargetBandarToBacktest;
   const tbScopeSelect = document.getElementById("tbScopeSelect");
   if(tbScopeSelect) tbScopeSelect.onchange = (e) => { state.targetSummaryScope = e.target.value; };
   const tbHistoryBtn = document.getElementById("tbHistoryBtn");
@@ -11170,11 +12481,44 @@ function attachContentEvents(){
   const spExportBtn = document.getElementById("spExportBtn");
   if(spExportBtn) spExportBtn.onclick = exportSmartPickToExcel;
 
-  document.querySelectorAll("[data-bs-mode]").forEach(btn=>btn.onclick=()=>{ state.brokerStalkerMode=btn.dataset.bsMode; state.brokerStalkerRows=[]; state.brokerStalkerMsg=""; render(); });
+  document.querySelectorAll("[data-bs-mode]").forEach(btn=>btn.onclick=()=>{
+    state.brokerStalkerMode=btn.dataset.bsMode;
+    state.brokerStalkerRawRows=[]; state.brokerStalkerRows=[]; state.brokerStalkerDailyNet=[];
+    state.brokerStalkerMsg=""; state.brokerStalkerFilterType=null; state.brokerStalkerResultSearch="";
+    render();
+  });
   const stalkerQuery = document.getElementById("stalkerQuery");
   if(stalkerQuery) stalkerQuery.oninput = e => { state.brokerStalkerQuery=e.target.value; };
   const stalkerSearchBtn = document.getElementById("stalkerSearchBtn");
   if(stalkerSearchBtn) stalkerSearchBtn.onclick = searchBrokerStalker;
+  document.querySelectorAll("[data-bs-period]").forEach(btn=>btn.onclick=()=>{ state.brokerStalkerPeriod=btn.dataset.bsPeriod; render(); });
+  const stalkerRangeFrom = document.getElementById("stalkerRangeFrom");
+  if(stalkerRangeFrom) stalkerRangeFrom.onchange = e => { state.brokerStalkerRangeFrom = e.target.value; };
+  const stalkerRangeTo = document.getElementById("stalkerRangeTo");
+  if(stalkerRangeTo) stalkerRangeTo.onchange = e => { state.brokerStalkerRangeTo = e.target.value; };
+  document.querySelectorAll("[data-bs-sort]").forEach(btn=>btn.onclick=()=>{ state.brokerStalkerSort=btn.dataset.bsSort; applyBrokerStalkerView(); });
+  document.querySelectorAll("[data-bs-filtertype]").forEach(btn=>btn.onclick=()=>{
+    const val = btn.dataset.bsFiltertype;
+    state.brokerStalkerFilterType = (state.brokerStalkerFilterType===val) ? null : val;
+    applyBrokerStalkerView();
+  });
+  const stalkerChartToggle = document.getElementById("stalkerChartToggle");
+  if(stalkerChartToggle) stalkerChartToggle.onclick = () => { state.brokerStalkerChartOpen = !state.brokerStalkerChartOpen; render(); };
+  bindSearchInputPreservingCursor("stalkerResultSearch", v => {
+    state.brokerStalkerResultSearch = v;
+    state.brokerStalkerRows = brokerStalkerFilteredSorted();
+  });
+
+  // --- "Simpan ke Backtest" generik (EPS/ORCA/BSJP) — lihat definisi di
+  // dekat saveToBacktest/addManualBacktest. Aman dipanggil tanpa syarat
+  // tab: querySelectorAll cukup mengembalikan NodeList kosong kalau tab
+  // yang sedang aktif tidak punya elemen data-bt-* sama sekali.
+  wireBacktestSaveControls(document);
+
+  // --- Panduan Lengkap: checklist "Sebelum Beli" tersimpan di localStorage,
+  // dan aman dipanggil tanpa syarat tab (querySelectorAll kosong kalau
+  // sedang bukan di tab panduan).
+  if(state.tab === "panduan") wirePanduanChecklist();
 }
 
 document.addEventListener("click", (e) => {
@@ -11186,9 +12530,51 @@ document.addEventListener("click", (e) => {
   }
 });
 
+// ==========================================
+// ROUTING BERBASIS HASH URL
+//
+// Supaya navigasi internal (pindah tab & buka chart ticker) punya URL asli
+// yang bisa di-klik-kanan > "Buka di tab baru", di-bookmark, dipakai tombol
+// back/forward browser, atau ditempel langsung di address bar. Format:
+//   #/screener        -> tab biasa (nama tab apa adanya)
+//   #/chart/BBCA      -> tab chart dengan ticker terpilih
+//
+// PENTING: hash cuma REFLEKSI dari state (state.tab / state.selectedTicker),
+// bukan sumber kebenaran. Semua kode lama yang langsung manggil
+// selectMainTab(...) atau loadChart(...) tetap jalan seperti biasa — cuma
+// dua fungsi itu yang saya tambahi 1 baris syncHashFromState() supaya
+// address bar ikut ter-update. history.pushState() TIDAK memicu event
+// 'hashchange' (beda dengan set location.hash langsung), jadi tidak ada
+// risiko infinite loop antara syncHashFromState() <-> applyRouteFromHash().
+// ==========================================
+function currentRouteHash(){
+  return state.tab === "chart" && state.selectedTicker
+    ? `#/chart/${encodeURIComponent(state.selectedTicker)}`
+    : `#/${state.tab}`;
+}
+
+function syncHashFromState(){
+  const target = currentRouteHash();
+  if(location.hash !== target) history.pushState(null, "", target);
+}
+
+// Dipanggil saat halaman pertama dibuka (kalau URL-nya sudah punya hash,
+// misal dari tab baru hasil klik-kanan) & tiap kali user pencet tombol
+// back/forward browser (event 'popstate').
+function applyRouteFromHash(){
+  const raw = (location.hash || "").replace(/^#\/?/, "");
+  if(!raw) return; // hash kosong -> biarkan state default (tab "screener") yang sudah ada
+  const [tab, ticker] = raw.split("/");
+  if(!tab) return;
+  if(tab === "chart" && ticker) loadChart(decodeURIComponent(ticker));
+  else selectMainTab(tab);
+}
+window.addEventListener("popstate", applyRouteFromHash);
+
 function selectMainTab(tab){
   if(!tab) return;
   state.tab = tab;
+  syncHashFromState();
   state.openDropdown = null; // dropdown filter tidak boleh menggantung saat pindah tab
   // Tutup panel hamburger setelah user memilih menu di mobile.
   const mobileSidebar = document.getElementById("sidebarNav");
@@ -11204,12 +12590,7 @@ function selectMainTab(tab){
 // Pasang handler langsung pada setiap tombol (bukan hanya delegation di parent).
 // Ini tetap bekerja jika ada elemen/overlay lain yang menghentikan bubbling click.
 document.querySelectorAll("#tabs .tab-btn").forEach(btn=>{
-  btn.type = "button";
-  btn.onclick = (e) => {
-    e.preventDefault();
-    e.stopPropagation();
-    selectMainTab(btn.dataset.tab);
-  };
+  bindInternalLink(btn, () => selectMainTab(btn.dataset.tab));
 });
 document.getElementById("refreshBtn").onclick = ()=> loadLive();
 
@@ -11279,6 +12660,11 @@ setInterval(pollExtensionStockbitToken, 3000); // lihat catatan di pollExtension
 // dicek ulang tiap 60 detik — kalau extension menangkap token yang lebih
 // baru, aplikasi otomatis mengadopsinya tanpa perlu reload manual.
 setInterval(syncStockbitTokenFromSupabase, 60000);
+// Kalau halaman dibuka dengan hash di URL (mis. tab baru hasil klik-kanan
+// pada link ticker/tab), pulihkan state.tab/state.selectedTicker DULU
+// sebelum render pertama — supaya tab baru itu langsung nampilin konten
+// yang benar, bukan default tab Screener lalu "lompat" ke konten yang benar.
+applyRouteFromHash();
 loadLive();
 
 // ==========================================
