@@ -1059,7 +1059,11 @@ async function testStockbitBrokerEndpoint(){
   const buy = dayRows?.buy || [];
   const sell = dayRows?.sell || [];
   const allRows = [...buy, ...sell];
-  const withLot = allRows.filter(r => r.lot != null && r.lot > 0);
+  // NOTE: dulu filter ini pakai `r.lot > 0`, yang salah untuk endpoint
+  // marketdetectors — baris Top Sell (slot) memang NEGATIF (net jual), jadi
+  // dianggap "tidak punya Lot" walau datanya sebenarnya sudah kebaca benar.
+  // Cek `!= null` saja, tidak peduli tanda positif/negatif.
+  const withLot = allRows.filter(r => r.lot != null);
 
   let verdict;
   if(!allRows.length){
