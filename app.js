@@ -359,7 +359,18 @@ function parseStockbitMarketDetector(raw, fetchDate){
   // Stockbit kadang membungkus payload beberapa tingkat (data.data,
   // data.result, result.data), jadi cari objek yang benar-benar memiliki
   // array distribution secara rekursif dangkal.
-  const candidates = [raw, raw.data, raw.result, raw.data?.data, raw.data?.result, raw.result?.data, raw.result?.result].filter(v => v && typeof v === "object");
+  // FIX (lihat diskusi "kenapa jumlah lot null semua"): endpoint
+  // exodus.stockbit.com/marketdetectors membungkus brokers_buy/brokers_sell
+  // SATU LEVEL LEBIH DALAM lagi, di dalam data.broker_summary — bukan
+  // langsung di raw.data seperti candidate lain di bawah. Tanpa baris
+  // raw.data?.broker_summary dkk. di sini, candidates.find() di bawah tidak
+  // pernah ketemu array brokers_buy/brokers_sell, buyRows/sellRows jadi
+  // kosong, dan seluruh hasil parse (bukan cuma kolom Lot) jadi null.
+  const candidates = [
+    raw, raw.data, raw.result, raw.data?.data, raw.data?.result, raw.result?.data, raw.result?.result,
+    raw.data?.broker_summary, raw.result?.broker_summary, raw.broker_summary,
+    raw.data?.data?.broker_summary, raw.data?.result?.broker_summary
+  ].filter(v => v && typeof v === "object");
 
   // --- Coba skema baru (by_value/by_volume.top_broker_buy/sell) dulu ---
   // PENTING: by_value (nilai transaksi) dan by_volume (jumlah lot) adalah DUA
