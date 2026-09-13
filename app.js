@@ -359,18 +359,7 @@ function parseStockbitMarketDetector(raw, fetchDate){
   // Stockbit kadang membungkus payload beberapa tingkat (data.data,
   // data.result, result.data), jadi cari objek yang benar-benar memiliki
   // array distribution secara rekursif dangkal.
-  // FIX (lihat diskusi "kenapa jumlah lot null semua"): endpoint
-  // exodus.stockbit.com/marketdetectors membungkus brokers_buy/brokers_sell
-  // SATU LEVEL LEBIH DALAM lagi, di dalam data.broker_summary — bukan
-  // langsung di raw.data seperti candidate lain di bawah. Tanpa baris
-  // raw.data?.broker_summary dkk. di sini, candidates.find() di bawah tidak
-  // pernah ketemu array brokers_buy/brokers_sell, buyRows/sellRows jadi
-  // kosong, dan seluruh hasil parse (bukan cuma kolom Lot) jadi null.
-  const candidates = [
-    raw, raw.data, raw.result, raw.data?.data, raw.data?.result, raw.result?.data, raw.result?.result,
-    raw.data?.broker_summary, raw.result?.broker_summary, raw.broker_summary,
-    raw.data?.data?.broker_summary, raw.data?.result?.broker_summary
-  ].filter(v => v && typeof v === "object");
+  const candidates = [raw, raw.data, raw.result, raw.data?.data, raw.data?.result, raw.result?.data, raw.result?.result].filter(v => v && typeof v === "object");
 
   // --- Coba skema baru (by_value/by_volume.top_broker_buy/sell) dulu ---
   // PENTING: by_value (nilai transaksi) dan by_volume (jumlah lot) adalah DUA
@@ -431,18 +420,10 @@ function buildBrokerByDate(buyRows, sellRows, fetchDate){
   const dateStr = fetchDate || todayLocalISO();
   const pick = (r, keys) => { for(const k of keys){ if(r?.[k] != null && r[k] !== "") return r[k]; } return null; };
   const mapRows = (rows, side) => rows.forEach(r => {
-    // "netbs_broker_code" ditambahkan sebagai alias karena endpoint
-    // exodus.stockbit.com/marketdetectors (broker_summary.brokers_buy/sell)
-    // memakai nama field ini, bukan "broker_code" seperti alias lain — tanpa
-    // ini pick() balik null, baris kena drop total oleh guard di bawah
-    // (bukan cuma lot yang null, seluruh barisnya hilang).
-    const broker = pick(r, ["broker","broker_code","brokerCode","broker_id","brokerId","code","broker_name","netbs_broker_code"]);
+    const broker = pick(r, ["broker","broker_code","brokerCode","broker_id","brokerId","code","broker_name"]);
     const lot = Number(pick(r, side === "buy" ? ["lot","blot","buy_lot","quantity","qty"] : ["lot","slot","sell_lot","quantity","qty"])) || null;
     const value = Number(pick(r, side === "buy" ? ["value","bval","buy_value","value_idr","net_value","amount"] : ["value","sval","sell_value","value_idr","net_value","amount"])) || 0;
-    // Tipe investor (Asing/Lokal/Pemerintah) — dipisah jadi kolom sendiri,
-    // bukan digabung ke broker_code.
-    const investorType = pick(r, ["type","investor_type","investorType"]);
-    if(broker != null) ensure(dateStr)[side].push({ broker_code:String(broker).toUpperCase(), lot, value_idr:value, investor_type: investorType || null });
+    if(broker != null) ensure(dateStr)[side].push({ broker_code:String(broker).toUpperCase(), lot, value_idr:value });
   });
   mapRows(buyRows, "buy"); mapRows(sellRows, "sell");
   Object.values(byDate).forEach(d => {
@@ -576,6 +557,36 @@ async function fetchExistingBrokerDates(ticker, dates){
   }
 }
 
+// Parse isi file .txt daftar ticker -- terima format bebas: satu ticker per
+// baris, dipisah koma, titik-koma, atau spasi/tab, boleh campur. Kode saham
+// IDX selalu huruf (kadang diikuti 1 digit untuk saham seri tertentu, mis.
+// preferen), jadi validasinya longgar: 2-6 karakter alfanumerik, disaring
+// dari baris komentar (diawali # atau //) supaya orang bisa kasih catatan di
+// file-nya sendiri. Duplikat dibuang, urutan asli file dipertahankan.
+function parseTickerListTxt(text){
+  const seen = new Set();
+  const out = [];
+  String(text || "")
+    .split(/[\r\n,;\t ]+/)
+    .map(t => t.trim().toUpperCase())
+    .filter(t => t && !t.startsWith("#") && !t.startsWith("//"))
+    .filter(t => /^[A-Z0-9]{2,6}$/.test(t))
+    .forEach(t => { if(!seen.has(t)){ seen.add(t); out.push(t); } });
+  return out;
+}
+
+// Sumber ticker bersama untuk tombol-tombol bulk (Live Stockbit, Broker
+// Summary, Historical Data): kalau ada daftar hasil upload .txt, itu yang
+// dipakai (prioritas tertinggi, karena ini pilihan eksplisit paling
+// spesifik) -- kalau tidak, fallback ke perilaku lama: baris yang dicentang
+// di tabel Screener, atau kalau tidak ada yang dicentang, semua saham yang
+// lolos filter saat ini.
+function resolveBulkTickers(){
+  if(state.uploadedBulkTickers.length) return [...state.uploadedBulkTickers];
+  const checked = [...state.selectedForBacktest];
+  return checked.length ? checked : getSorted(getFiltered()).map(s => s.ticker);
+}
+
 async function fetchAndSaveBrokerSummaryBulk(tickers, rangeFrom, rangeTo){
   if(state.stockbitBrokerBulkLoading) return;
   if(!tickers || !tickers.length){
@@ -656,8 +667,8 @@ async function fetchAndSaveBrokerSummaryBulk(tickers, rangeFrom, rangeTo){
         datesToFetch.forEach(d => {
           const dd = byDate[d];
           if(!dd) return;
-          dd.buy.forEach(r => rows.push({ stock_code:ticker, trade_date:d, side:"buy", rank:r.rank, broker_code:r.broker_code, lot:r.lot, value_idr:r.value_idr, investor_type:r.investor_type }));
-          dd.sell.forEach(r => rows.push({ stock_code:ticker, trade_date:d, side:"sell", rank:r.rank, broker_code:r.broker_code, lot:r.lot, value_idr:r.value_idr, investor_type:r.investor_type }));
+          dd.buy.forEach(r => rows.push({ stock_code:ticker, trade_date:d, side:"buy", rank:r.rank, broker_code:r.broker_code, lot:r.lot, value_idr:r.value_idr }));
+          dd.sell.forEach(r => rows.push({ stock_code:ticker, trade_date:d, side:"sell", rank:r.rank, broker_code:r.broker_code, lot:r.lot, value_idr:r.value_idr }));
         });
         // "Hilang" di sini = hari yang sebelumnya belum ada di DB DAN gagal ditarik sekarang —
         // hari yang sudah ada di DB (di-skip) tidak dianggap hilang.
@@ -1059,11 +1070,7 @@ async function testStockbitBrokerEndpoint(){
   const buy = dayRows?.buy || [];
   const sell = dayRows?.sell || [];
   const allRows = [...buy, ...sell];
-  // NOTE: dulu filter ini pakai `r.lot > 0`, yang salah untuk endpoint
-  // marketdetectors — baris Top Sell (slot) memang NEGATIF (net jual), jadi
-  // dianggap "tidak punya Lot" walau datanya sebenarnya sudah kebaca benar.
-  // Cek `!= null` saja, tidak peduli tanda positif/negatif.
-  const withLot = allRows.filter(r => r.lot != null);
+  const withLot = allRows.filter(r => r.lot != null && r.lot > 0);
 
   let verdict;
   if(!allRows.length){
@@ -1463,11 +1470,6 @@ let state = {
   // Tab Sektoral: sektor mana yang sedang di-expand untuk melihat daftar
   // sahamnya, dan urutan sortir daftar saham di dalam tiap sektor.
   sektorExpanded: new Set(), sektorSearch: "", sektorSort: "changeDesc",
-  // Tab 📡 Rekap Sinyal ("conviction check"): pencarian ticker & baris mana
-  // yang sedang di-expand untuk lihat detail per sumber sinyal. Set
-  // terpisah dari state.expanded (dipakai tabel Screener) supaya expand di
-  // satu tab tidak ikut membuka baris di tab lain.
-  signalRecapSearch: "", signalRecapExpanded: new Set(),
   // Sub-tab aktif di panel "🔥 Top Movers" (bagian atas tab Sektoral):
   // gainer / loser / value / volume / frequency.
   topMoversTab: "gainer",
@@ -1675,6 +1677,12 @@ let state = {
   stockbitHistoricalBulkLoading: false, stockbitHistoricalBulkProgress: null, stockbitHistoricalBulkResults: [],
   hdAutoBulkFrom: null, hdAutoBulkTo: null,
   hdBulkResultsOpen: true,
+  // Daftar ticker custom dari upload .txt (lihat parseTickerListTxt() &
+  // resolveBulkTickers()) -- kalau diisi, dipakai sebagai target untuk
+  // SEMUA tombol bulk (Live Stockbit, Broker Summary, Historical Data),
+  // menggantikan sementara centang baris/filter tabel. Dikosongkan lagi
+  // lewat tombol "✕" di sebelah label jumlah ticker.
+  uploadedBulkTickers: [], uploadedBulkTickersFileName: null,
   // ==========================================
   // Notifikasi Telegram (tabel telegram_settings di Supabase, dieksekusi
   // oleh Edge Function `telegram-notifier` yang dijadwalkan Cron server —
@@ -4256,37 +4264,6 @@ async function syncBacktestToSupabase(sessionId, sessionDate, items) {
   }
 }
 
-// Cek apakah kombinasi ticker + tanggal entry + harga entry + sumber SUDAH
-// PERNAH tersimpan di backtest sebelumnya — di sesi MANAPUN, bukan cuma
-// sesi yang sedang aktif, karena tiap klik "Simpan ke Backtest" selalu
-// bikin sessionId baru (String(Date.now())), jadi data dobel biasanya
-// muncul sebagai sesi-sesi terpisah, bukan dalam satu sesi yang sama.
-// Dipakai oleh saveToBacktest, saveGenericListToBacktest, dan
-// addManualBacktest supaya klik "Simpan ke Backtest" berulang untuk
-// emiten/tanggal/harga/sumber yang PERSIS sama tidak menghasilkan baris
-// dobel — kalau ada satu saja dari (ticker, tanggal, harga, sumber) yang
-// beda, tetap dianggap entry baru (mis. harga entry beda karena harga live
-// sudah bergerak, atau sumbernya beda preset).
-function findDuplicateBacktestItem(ticker, entryDate, entryPrice, sumber){
-  const t = String(ticker || "").trim().toUpperCase();
-  const d = entryDate || null;
-  const p = Math.round(Number(entryPrice) || 0);
-  const src = String(sumber || "").trim();
-  for(const session of state.backtests){
-    for(const it of (session.items || [])){
-      if(
-        String(it.ticker || "").trim().toUpperCase() === t &&
-        (it.entryDate || null) === d &&
-        Math.round(Number(it.entryPrice) || 0) === p &&
-        String(it.sumber || "").trim() === src
-      ){
-        return { session, item: it };
-      }
-    }
-  }
-  return null;
-}
-
 async function saveToBacktest(){
   const filtered = getFiltered();
   const toSave = filtered.filter(s => state.selectedForBacktest.has(s.ticker));
@@ -4306,25 +4283,7 @@ async function saveToBacktest(){
   // ada (lihat renderBacktest — hanya "Harga Live" yang diambil dari data
   // live, "Harga Entry" & "Tanggal Entry" selalu dari item yang tersimpan).
   const tglEntryIso = todayLocalISO();
-
-  // Cek duplikat PERSIS (ticker + tanggal entry + harga entry + sumber)
-  // terhadap semua sesi backtest yang sudah ada — lihat
-  // findDuplicateBacktestItem(). Emiten yang cocok dilewati (tidak
-  // disimpan lagi), dan usernya diberi tahu lewat alert di akhir.
-  const duplicateTickers = [];
-  const uniqueToSave = toSave.filter(s => {
-    if(findDuplicateBacktestItem(s.ticker, tglEntryIso, s.cClose, ctx.label)){
-      duplicateTickers.push(s.ticker);
-      return false;
-    }
-    return true;
-  });
-
-  if(!uniqueToSave.length){
-    return alert(`Tidak ada yang disimpan — semua ${duplicateTickers.length} emiten yang dicentang (${duplicateTickers.join(", ")}) sudah pernah diinput ke Backtest dengan tanggal, harga entry, dan sumber yang sama persis.`);
-  }
-
-  const items = uniqueToSave.map(s => ({
+  const items = toSave.map(s => ({
     ticker: s.ticker,
     entryPrice: s.cClose,
     entryDate: tglEntryIso,
@@ -4342,12 +4301,9 @@ async function saveToBacktest(){
   render();
 
   const synced = await syncBacktestToSupabase(sessionId, tglSesi, items);
-  const dupNote = duplicateTickers.length
-    ? `\n\n⚠️ ${duplicateTickers.length} emiten dilewati karena sudah pernah diinput persis sama (tanggal, harga entry, sumber): ${duplicateTickers.join(", ")}.`
-    : "";
-  alert((synced
-    ? `${uniqueToSave.length} emiten yang dipilih berhasil disimpan ke tab Backtest.`
-    : `${uniqueToSave.length} emiten disimpan lokal, tapi gagal sinkron ke Supabase. Lihat pesan error di atas halaman.`) + dupNote);
+  alert(synced
+    ? `${toSave.length} emiten yang dipilih berhasil disimpan ke tab Backtest.`
+    : `${toSave.length} emiten disimpan lokal, tapi gagal sinkron ke Supabase. Lihat pesan error di atas halaman.`);
 }
 
 // ==========================================
@@ -4414,23 +4370,7 @@ async function saveGenericListToBacktest(namespace, contextLabel){
   // saat disimpan, tidak pernah ditulis ulang oleh refresh data live
   // berikutnya (lihat renderBacktest).
   const tglEntryIso = todayLocalISO();
-
-  // Cek duplikat PERSIS (ticker + tanggal entry + harga entry + sumber) —
-  // sama seperti saveToBacktest(), lihat findDuplicateBacktestItem().
-  const duplicateTickers = [];
-  const uniqueToSave = toSave.filter(it => {
-    if(findDuplicateBacktestItem(it.ticker, tglEntryIso, it.price, contextLabel)){
-      duplicateTickers.push(it.ticker);
-      return false;
-    }
-    return true;
-  });
-
-  if(!uniqueToSave.length){
-    return alert(`Tidak ada yang disimpan — semua ${duplicateTickers.length} emiten dari "${contextLabel}" (${duplicateTickers.join(", ")}) sudah pernah diinput ke Backtest dengan tanggal, harga entry, dan sumber yang sama persis.`);
-  }
-
-  const entryItems = uniqueToSave.map(it => ({
+  const entryItems = toSave.map(it => ({
     ticker: it.ticker,
     entryPrice: it.price,
     entryDate: tglEntryIso,
@@ -4448,12 +4388,9 @@ async function saveGenericListToBacktest(namespace, contextLabel){
   render();
 
   const synced = await syncBacktestToSupabase(sessionId, tglSesi, entryItems);
-  const dupNote = duplicateTickers.length
-    ? `\n\n⚠️ ${duplicateTickers.length} emiten dilewati karena sudah pernah diinput persis sama (tanggal, harga entry, sumber): ${duplicateTickers.join(", ")}.`
-    : "";
-  alert((synced
-    ? `${uniqueToSave.length} emiten dari "${contextLabel}" berhasil disimpan ke tab Backtest.`
-    : `${uniqueToSave.length} emiten disimpan lokal, tapi gagal sinkron ke Supabase. Lihat pesan error di atas halaman.`) + dupNote);
+  alert(synced
+    ? `${toSave.length} emiten dari "${contextLabel}" berhasil disimpan ke tab Backtest.`
+    : `${toSave.length} emiten disimpan lokal, tapi gagal sinkron ke Supabase. Lihat pesan error di atas halaman.`);
 }
 
 // Dipanggil dari attachContentEvents() (untuk area tab utama) dan dari
@@ -4494,158 +4431,6 @@ function wireBacktestSaveControls(scopeEl){
   });
 }
 
-// ==========================================
-// 📡 REKAP SINYAL / CONVICTION CHECK — menjawab pertanyaan "ticker A ini
-// muncul di berapa sinyal?" dengan mengumpulkan ticker dari SEMUA sumber
-// sinyal yang datanya SEDANG ADA di state saat ini, lalu dihitung berapa
-// sumber berbeda yang sama-sama menunjuk ke ticker yang sama. Semakin
-// banyak sumber yang "setuju", semakin kuat conviction-nya.
-//
-// PENTING — keterbatasan by design: setiap sumber di bawah ini (kecuali
-// Screener) HANYA terisi kalau tab terkait sudah pernah di-render di sesi
-// ini (state.genericBacktestItems[ns] diisi oleh renderBacktestSaveBar()
-// yang dipanggil dari renderEntryPriceScanner/renderKrakenFlow/renderBsjp/
-// dst — lihat definisinya). Jadi kalau user belum pernah buka tab EPS
-// Scanner sama sekali hari ini, sinyal dari EPS Scanner TIDAK akan ikut
-// dihitung di sini walau sebenarnya ada emiten yang lolos di sana — bukan
-// bug, ini konsekuensi dari data tab lain yang memang dihitung on-demand
-// (lihat renderSignalRecap() untuk pesan pengingatnya ke user).
-// ==========================================
-function getSignalSourcesForRecap(){
-  const sources = [];
-
-  // 1) Screener — hasil filter yang SEDANG AKTIF di tab Screener (preset
-  // DSI / Rule Kustom / pencarian). Kalau tidak ada filter apa pun yang
-  // aktif, ini akan berisi seluruh universe screener — tetap dihitung
-  // sebagai satu sumber, tapi labelnya menyebutkan filter apa yang aktif
-  // supaya user sadar seberapa "ketat" sumber ini.
-  try{
-    const filtered = getFiltered();
-    if(filtered && filtered.length){
-      const ctx = getActiveScreenerContext();
-      sources.push({
-        key: "screener",
-        label: `Screener — ${ctx.label}`,
-        items: filtered.map(s => ({
-          ticker: s.ticker, price: s.cClose,
-          detail: `Harga: ${s.cekHarga||'-'}; RSI: ${s.cekRsi||'-'} (${s.statusRsi||'-'}); MACD: ${s.cekMacd||'-'}; Score: ${s.baggerScoreTotal??'-'}`
-        }))
-      });
-    }
-  }catch(e){ /* Screener belum sempat dihitung (mis. data live belum dimuat) — lewati saja */ }
-
-  // 2) Sumber generik yang snapshot item-nya sudah ditangkap
-  // renderBacktestSaveBar() tiap kali tab terkait dirender — lihat catatan
-  // di atas fungsi ini soal keterbatasannya.
-  const nsLabel = {
-    eps: "Entry Price Scanner",
-    orca: "Kraken Flow (ORCA)",
-    bsjp: "BSJP (Beli Sore, Jual Pagi)",
-    smartpick: `Smart Pick${state.spListOpenDefId ? ` — ${spTitleFor(state.spListOpenDefId)}` : ""}`,
-    targetbandar: "Target Bandar"
-  };
-  Object.keys(nsLabel).forEach(ns => {
-    const items = state.genericBacktestItems[ns];
-    if(items && items.length){
-      const valid = items.filter(it => it && it.ticker && it.price > 0);
-      if(valid.length){
-        sources.push({
-          key: ns, label: nsLabel[ns],
-          items: valid.map(it => ({ ticker: it.ticker, price: it.price, detail: it.keterangan || it.kriteria || nsLabel[ns] }))
-        });
-      }
-    }
-  });
-
-  return sources;
-}
-
-// Menghasilkan { byTicker: { TICKER: [{source, price, detail}, ...] },
-// sourceCount, sourceLabels }. Satu ticker bisa punya beberapa entri kalau
-// muncul di beberapa sumber. Ticker yang muncul BERULANG di dalam satu
-// sumber yang sama cuma dihitung SEKALI per sumber, supaya "jumlah sinyal"
-// benar-benar berarti "jumlah sumber berbeda", bukan jumlah baris mentah.
-function buildSignalRecap(){
-  const sources = getSignalSourcesForRecap();
-  const byTicker = {};
-  sources.forEach(src => {
-    const seenInSrc = new Set();
-    src.items.forEach(it => {
-      const t = String(it.ticker || "").trim().toUpperCase();
-      if(!t || seenInSrc.has(t)) return;
-      seenInSrc.add(t);
-      (byTicker[t] ||= []).push({ source: src.label, price: it.price, detail: it.detail });
-    });
-  });
-  return { byTicker, sourceCount: sources.length, sourceLabels: sources.map(s => s.label) };
-}
-
-// Tab 📡 Rekap Sinyal — tabel semua ticker yang MUNCUL DI SETIDAKNYA SATU
-// sumber sinyal, diurutkan dari yang paling banyak "disetujui" beberapa
-// sumber sekaligus (conviction tertinggi) ke yang paling sedikit. Klik ▼
-// di baris untuk lihat rincian tiap sumber (harga saat itu + catatan).
-function renderSignalRecap(){
-  const { byTicker, sourceCount, sourceLabels } = buildSignalRecap();
-  const allTickers = Object.keys(byTicker);
-
-  const nsTitles = { eps:"Entry Price Scanner", orca:"Kraken Flow (ORCA)", bsjp:"BSJP (Beli Sore, Jual Pagi)", smartpick:"Smart Pick", targetbandar:"Target Bandar" };
-  const missingNs = Object.keys(nsTitles).filter(ns => !(state.genericBacktestItems[ns] && state.genericBacktestItems[ns].length));
-  const hintMissing = missingNs.length
-    ? `<div class="empty-box" style="margin-bottom:14px;">ℹ️ Sumber berikut belum ikut dihitung karena tabnya belum dibuka di sesi ini: <strong>${missingNs.map(ns=>escapeHtml(nsTitles[ns])).join(", ")}</strong>. Buka tab-tab itu sebentar lalu kembali ke sini supaya rekap makin lengkap.</div>`
-    : "";
-
-  if(!allTickers.length){
-    return `<div class="panel">
-      <div class="panel-heading"><h3>📡 Rekap Sinyal (Conviction Check)</h3></div>
-      <div class="empty-box">Belum ada sinyal yang bisa direkap. Buka tab Screener (dengan filter aktif), Entry Price Scanner, Kraken Flow (ORCA), BSJP, Smart Pick, atau Target Bandar dulu — begitu tabnya dirender, hasilnya otomatis ikut dihitung di sini.</div>
-    </div>`;
-  }
-
-  const q = (state.signalRecapSearch || "").trim().toUpperCase();
-  const rows = allTickers
-    .map(t => ({ ticker: t, hits: byTicker[t] }))
-    .filter(r => !q || r.ticker.includes(q))
-    .sort((a, b) => b.hits.length - a.hits.length || a.ticker.localeCompare(b.ticker));
-
-  const rowHtml = rows.map(r => {
-    const expanded = state.signalRecapExpanded.has(r.ticker);
-    const convictionTone = r.hits.length >= 3 ? "pill-up" : r.hits.length === 2 ? "pill-gold" : "pill-muted";
-    const convictionColor = r.hits.length >= 3 ? "var(--up)" : r.hits.length === 2 ? "var(--gold)" : "var(--muted)";
-    const badges = r.hits.map(h => pillHtml(escapeHtml(h.source), "muted")).join(" ");
-    const detailRows = r.hits.map(h => `
-        <div style="display:flex;gap:10px;padding:6px 0;border-bottom:1px dashed rgba(255,255,255,0.08);font-size:11.5px;flex-wrap:wrap;">
-          <span style="min-width:180px;color:var(--teal);font-weight:600;">${escapeHtml(h.source)}</span>
-          <span class="mono" style="min-width:90px;">${h.price ? fmtNum(Math.round(h.price)) : "-"}</span>
-          <span style="color:var(--muted);flex:1;">${escapeHtml(h.detail || "-")}</span>
-        </div>`).join("");
-    return `
-        <tr>
-          <td><button class="ticker-link" data-detail="${escapeHtml(r.ticker)}">${escapeHtml(r.ticker)}</button></td>
-          <td class="mono" style="text-align:center;"><strong style="color:${convictionColor};font-size:14px;">${r.hits.length}</strong><span style="color:var(--muted);"> / ${sourceCount}</span></td>
-          <td>${badges}</td>
-          <td style="width:34px;"><button type="button" class="btn btn-outline" data-signal-expand="${escapeHtml(r.ticker)}" style="padding:2px 8px;font-size:11px;">${expanded ? "▲" : "▼"}</button></td>
-        </tr>
-        ${expanded ? `<tr><td colspan="4" style="background:rgba(255,255,255,0.02);">${detailRows}</td></tr>` : ""}`;
-  }).join("");
-
-  return `<div class="panel">
-    <div class="panel-heading">
-      <h3>📡 Rekap Sinyal (Conviction Check)</h3>
-      <span class="panel-heading-note">${sourceCount} sumber sinyal aktif saat ini: ${escapeHtml(sourceLabels.join(", "))}</span>
-    </div>
-    ${hintMissing}
-    <div style="margin:10px 0;">
-      <input type="text" id="signalRecapSearchInput" value="${escapeHtml(state.signalRecapSearch)}" placeholder="Cari ticker tertentu (mis. BBCA)…" style="width:260px;">
-    </div>
-    <div class="table-wrap">
-      <table class="data-table">
-        <thead><tr><th>Saham</th><th style="text-align:center;">Jumlah Sinyal</th><th>Muncul di</th><th></th></tr></thead>
-        <tbody>${rowHtml || `<tr><td colspan="4" class="empty-box" style="border:none;">Tidak ada ticker yang cocok dengan pencarian.</td></tr>`}</tbody>
-      </table>
-    </div>
-  </div>`;
-}
-
 // Versi single-item dari mekanisme "Simpan ke Backtest" generik, khusus
 // tab 🎯 Target Bandar — tab ini menganalisis SATU ticker pada satu waktu
 // (bukan tabel banyak baris seperti EPS/ORCA/BSJP/Smart Pick), jadi cukup
@@ -4674,15 +4459,6 @@ async function addManualBacktest(sessionId, ticker, entryPrice, keterangan, entr
   // hari ini. Ini yang dikunci sebagai "Tanggal Entry" item — tidak pernah
   // berubah lagi setelah tersimpan (lihat catatan di saveToBacktest).
   const tglEntryIso = (entryDate && /^\d{4}-\d{2}-\d{2}$/.test(entryDate)) ? entryDate : todayLocalISO();
-
-  // Cek duplikat PERSIS (ticker + tanggal entry + harga entry + sumber
-  // "Manual") terhadap SEMUA sesi backtest yang sudah ada — bukan cuma
-  // guard "ticker sama di sesi ini" di bawah, karena entry manual yang
-  // sama bisa saja diketik ulang di sesi (tanggal-klik) yang berbeda.
-  // Lihat findDuplicateBacktestItem().
-  if(findDuplicateBacktestItem(ticker, tglEntryIso, entryPrice, "Manual")){
-    return alert(`${ticker} dengan tanggal entry ${tglEntryIso} dan harga entry ${entryPrice} sudah pernah diinput ke Backtest (sumber: Manual). Data tidak disimpan lagi supaya tidak dobel.`);
-  }
 
   let sid = sessionId || "";
   let session = sid ? state.backtests.find(b => String(b.id) === String(sid)) : null;
@@ -5792,7 +5568,6 @@ function render(){
     else if(state.tab==="eps") content.innerHTML = renderEntryPriceScanner();
     else if(state.tab==="kraken") content.innerHTML = renderKrakenFlow();
     else if(state.tab==="bsjp") content.innerHTML = renderBsjp();
-    else if(state.tab==="sinyal") content.innerHTML = renderSignalRecap();
     else if(state.tab==="about") content.innerHTML = renderPanduan(); // alias lama, redirect ke Panduan
     else if(state.tab==="panduan") content.innerHTML = renderPanduan();
     else if(state.tab==="quanthub"){ /* ditangani quant-hub.js (halaman #qhPage terpisah) */ }
@@ -7067,10 +6842,23 @@ function renderScreener(){
         </div>
         <div class="field" style="flex:0 0 auto;">
           <label>&nbsp;</label>
-          <button type="button" class="btn btn-outline" id="stockbitBulkBtn" ${state.stockbitBulkLoading ? "disabled" : ""} style="color:#f87171;border-color:rgba(239,68,68,0.4);white-space:nowrap;" title="${state.selectedForBacktest.size>0 ? 'Tarik harga/orderbook live dari Stockbit HANYA untuk saham yang dicentang' : 'Tarik harga/orderbook live dari Stockbit untuk semua saham yang lolos filter saat ini (centang baris tertentu untuk membatasi hanya itu saja)'} — butuh Token diisi di Pengaturan">
+          <div style="display:flex; align-items:center; gap:8px; background:rgba(167,139,250,0.06); border:1px solid rgba(167,139,250,0.25); border-radius:8px; padding:6px 10px;">
+            <label for="bulkTickerFileInput" class="btn btn-outline" style="cursor:pointer; margin:0; padding:6px 10px; font-size:11.5px; white-space:nowrap;" title="Upload file .txt berisi daftar kode saham (satu per baris, atau dipisah koma/spasi/baris baru) -- dipakai sebagai target Live Stockbit, Broker Summary & Historical Data di bawah, menggantikan sementara centang baris/filter">
+              📄 ${state.uploadedBulkTickers.length ? "Ganti Daftar .txt" : "Upload Daftar Ticker (.txt)"}
+            </label>
+            <input type="file" id="bulkTickerFileInput" accept=".txt,text/plain" style="display:none;">
+            ${state.uploadedBulkTickers.length
+              ? `<span style="font-size:11px;color:#a78bfa;white-space:nowrap;" title="${escapeHtml(state.uploadedBulkTickers.join(", "))}">${state.uploadedBulkTickers.length} ticker dari ${escapeHtml(state.uploadedBulkTickersFileName || "file")}</span>
+                 <button type="button" id="clearBulkTickerFileBtn" style="background:none;border:none;color:var(--down);cursor:pointer;font-size:14px;line-height:1;padding:0 4px;" title="Hapus daftar upload, kembali pakai centang/filter tabel">✕</button>`
+              : `<span style="font-size:10.5px;color:var(--muted);white-space:nowrap;">kosong = pakai centang/filter tabel</span>`}
+          </div>
+        </div>
+        <div class="field" style="flex:0 0 auto;">
+          <label>&nbsp;</label>
+          <button type="button" class="btn btn-outline" id="stockbitBulkBtn" ${state.stockbitBulkLoading ? "disabled" : ""} style="color:#f87171;border-color:rgba(239,68,68,0.4);white-space:nowrap;" title="${state.uploadedBulkTickers.length ? `Tarik harga/orderbook live dari Stockbit untuk ${state.uploadedBulkTickers.length} ticker dari file yang diupload` : (state.selectedForBacktest.size>0 ? 'Tarik harga/orderbook live dari Stockbit HANYA untuk saham yang dicentang' : 'Tarik harga/orderbook live dari Stockbit untuk semua saham yang lolos filter saat ini (centang baris tertentu untuk membatasi hanya itu saja)')} — butuh Token diisi di Pengaturan">
             ${state.stockbitBulkLoading
               ? `🔴 Menarik ${state.stockbitBulkProgress?.done||0}/${state.stockbitBulkProgress?.total||0}...`
-              : (state.selectedForBacktest.size>0 ? `🔴 Live Stockbit (${state.selectedForBacktest.size} dicentang)` : `🔴 Live Stockbit (${sorted.length} lolos)`)}
+              : (state.uploadedBulkTickers.length ? `🔴 Live Stockbit (${state.uploadedBulkTickers.length} dari file)` : (state.selectedForBacktest.size>0 ? `🔴 Live Stockbit (${state.selectedForBacktest.size} dicentang)` : `🔴 Live Stockbit (${sorted.length} lolos)`))}
           </button>
         </div>
         <div class="field" style="flex:0 0 auto;">
@@ -7106,10 +6894,10 @@ function renderScreener(){
             <button type="button" class="btn btn-outline" id="screenerBsBulkBtn"
               ${state.stockbitBrokerBulkLoading ? "disabled" : ""}
               style="color:#f87171;border-color:rgba(239,68,68,0.4);white-space:nowrap;"
-              title="Tarik data Broker Summary Stockbit untuk saham yang dicentang (atau semua hasil filter kalau tidak ada yang dicentang), untuk periode tanggal di samping">
+              title="Tarik data Broker Summary Stockbit ${state.uploadedBulkTickers.length ? `untuk ${state.uploadedBulkTickers.length} ticker dari file yang diupload` : "untuk saham yang dicentang (atau semua hasil filter kalau tidak ada yang dicentang)"}, untuk periode tanggal di samping">
               ${state.stockbitBrokerBulkLoading
                 ? `Menarik ${state.stockbitBrokerBulkProgress?.done||0}/${state.stockbitBrokerBulkProgress?.total||0}...`
-                : (state.selectedForBacktest.size>0 ? `Tarik Data (${state.selectedForBacktest.size} dicentang)` : `Tarik Data (${sorted.length} lolos)`)}
+                : (state.uploadedBulkTickers.length ? `Tarik Data (${state.uploadedBulkTickers.length} dari file)` : (state.selectedForBacktest.size>0 ? `Tarik Data (${state.selectedForBacktest.size} dicentang)` : `Tarik Data (${sorted.length} lolos)`))}
             </button>
           </div>
         </div>
@@ -7128,10 +6916,10 @@ function renderScreener(){
             <button type="button" class="btn btn-outline" id="screenerHdBulkBtn"
               ${state.stockbitHistoricalBulkLoading ? "disabled" : ""}
               style="color:#a78bfa;border-color:rgba(167,139,250,0.4);white-space:nowrap;"
-              title="Tarik Historical Data (Daily) Stockbit untuk saham yang dicentang (atau semua hasil filter kalau tidak ada yang dicentang), disaring ke periode tanggal di samping">
+              title="Tarik Historical Data (Daily) Stockbit ${state.uploadedBulkTickers.length ? `untuk ${state.uploadedBulkTickers.length} ticker dari file yang diupload` : "untuk saham yang dicentang (atau semua hasil filter kalau tidak ada yang dicentang)"}, disaring ke periode tanggal di samping">
               ${state.stockbitHistoricalBulkLoading
                 ? `Menarik ${state.stockbitHistoricalBulkProgress?.done||0}/${state.stockbitHistoricalBulkProgress?.total||0}...`
-                : (state.selectedForBacktest.size>0 ? `📅 Historical (${state.selectedForBacktest.size} dicentang)` : `📅 Historical (${sorted.length} lolos)`)}
+                : (state.uploadedBulkTickers.length ? `📅 Historical (${state.uploadedBulkTickers.length} dari file)` : (state.selectedForBacktest.size>0 ? `📅 Historical (${state.selectedForBacktest.size} dicentang)` : `📅 Historical (${sorted.length} lolos)`))}
             </button>
           </div>
         </div>
@@ -12465,14 +12253,31 @@ function attachContentEvents(){
 
   const exportScreenerBtn = document.getElementById("exportScreenerBtn");
   if(exportScreenerBtn) exportScreenerBtn.onclick = exportScreenerToExcel;
+  const bulkTickerFileInput = document.getElementById("bulkTickerFileInput");
+  if(bulkTickerFileInput) bulkTickerFileInput.onchange = (e) => {
+    const file = e.target.files && e.target.files[0];
+    if(!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      const list = parseTickerListTxt(String(reader.result || ""));
+      state.uploadedBulkTickers = list;
+      state.uploadedBulkTickersFileName = file.name;
+      render();
+    };
+    reader.onerror = () => { alert("Gagal membaca file " + file.name); };
+    reader.readAsText(file);
+    e.target.value = ""; // reset supaya upload file dgn nama sama tetap trigger onchange
+  };
+  const clearBulkTickerFileBtn = document.getElementById("clearBulkTickerFileBtn");
+  if(clearBulkTickerFileBtn) clearBulkTickerFileBtn.onclick = () => {
+    state.uploadedBulkTickers = [];
+    state.uploadedBulkTickersFileName = null;
+    render();
+  };
   const stockbitBulkBtn = document.getElementById("stockbitBulkBtn");
   if(stockbitBulkBtn) stockbitBulkBtn.onclick = () => {
     if(!state.stockbitToken){ openSettings(); return; }
-    // Kalau ada baris yang dicentang (kolom checkbox), pakai itu saja.
-    // Kalau tidak ada yang dicentang, fallback ke semua yang lolos filter
-    // (perilaku lama) supaya tombol tetap berguna tanpa harus centang dulu.
-    const checked = [...state.selectedForBacktest];
-    const tickers = checked.length ? checked : getSorted(getFiltered()).map(s=>s.ticker);
+    const tickers = resolveBulkTickers();
     if(tickers.length) fetchStockbitLiveBulk(tickers);
   };
   const stockbitAutoRefreshChk = document.getElementById("stockbitAutoRefreshChk");
@@ -12494,9 +12299,7 @@ function attachContentEvents(){
   if(screenerBsToInput) screenerBsToInput.onchange = (e) => { state.bsAutoBulkTo = e.target.value || state.bsAutoBulkTo; };
   const screenerBsBulkBtn = document.getElementById("screenerBsBulkBtn");
   if(screenerBsBulkBtn) screenerBsBulkBtn.onclick = () => {
-    const checked = [...state.selectedForBacktest];
-    const tickers = checked.length ? checked : getSorted(getFiltered()).map(s=>s.ticker);
-    fetchAndSaveBrokerSummaryBulk(tickers, state.bsAutoBulkFrom, state.bsAutoBulkTo);
+    fetchAndSaveBrokerSummaryBulk(resolveBulkTickers(), state.bsAutoBulkFrom, state.bsAutoBulkTo);
   };
   const screenerHdFromInput = document.getElementById("screenerHdFromInput");
   if(screenerHdFromInput) screenerHdFromInput.onchange = (e) => { state.hdAutoBulkFrom = e.target.value || state.hdAutoBulkFrom; };
@@ -12504,9 +12307,7 @@ function attachContentEvents(){
   if(screenerHdToInput) screenerHdToInput.onchange = (e) => { state.hdAutoBulkTo = e.target.value || state.hdAutoBulkTo; };
   const screenerHdBulkBtn = document.getElementById("screenerHdBulkBtn");
   if(screenerHdBulkBtn) screenerHdBulkBtn.onclick = () => {
-    const checked = [...state.selectedForBacktest];
-    const tickers = checked.length ? checked : getSorted(getFiltered()).map(s=>s.ticker);
-    fetchAndSaveHistoricalBulk(tickers, state.hdAutoBulkFrom, state.hdAutoBulkTo);
+    fetchAndSaveHistoricalBulk(resolveBulkTickers(), state.hdAutoBulkFrom, state.hdAutoBulkTo);
   };
   const hdBulkResultsPanel = document.getElementById("hdBulkResultsPanel");
   if(hdBulkResultsPanel) hdBulkResultsPanel.ontoggle = (e) => { state.hdBulkResultsOpen = e.target.open; };
@@ -12528,16 +12329,6 @@ function attachContentEvents(){
   });
 
   document.querySelectorAll("[data-detail]").forEach(b=> b.onclick=()=>openDetail(b.dataset.detail));
-
-  // --- Tab 📡 Rekap Sinyal (Conviction Check) ---
-  bindSearchInputPreservingCursor("signalRecapSearchInput", (val) => { state.signalRecapSearch = val; });
-  document.querySelectorAll("[data-signal-expand]").forEach(b => {
-    b.onclick = () => {
-      const t = b.dataset.signalExpand;
-      state.signalRecapExpanded.has(t) ? state.signalRecapExpanded.delete(t) : state.signalRecapExpanded.add(t);
-      render();
-    };
-  });
 
   // --- Tab BSJP (Beli Sore, Jual Pagi) ---
   bindSearchInputPreservingCursor("bsjpSearchInput", (val) => { state.bsjpSearch = val; });
