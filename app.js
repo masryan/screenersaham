@@ -431,10 +431,18 @@ function buildBrokerByDate(buyRows, sellRows, fetchDate){
   const dateStr = fetchDate || todayLocalISO();
   const pick = (r, keys) => { for(const k of keys){ if(r?.[k] != null && r[k] !== "") return r[k]; } return null; };
   const mapRows = (rows, side) => rows.forEach(r => {
-    const broker = pick(r, ["broker","broker_code","brokerCode","broker_id","brokerId","code","broker_name"]);
+    // "netbs_broker_code" ditambahkan sebagai alias karena endpoint
+    // exodus.stockbit.com/marketdetectors (broker_summary.brokers_buy/sell)
+    // memakai nama field ini, bukan "broker_code" seperti alias lain — tanpa
+    // ini pick() balik null, baris kena drop total oleh guard di bawah
+    // (bukan cuma lot yang null, seluruh barisnya hilang).
+    const broker = pick(r, ["broker","broker_code","brokerCode","broker_id","brokerId","code","broker_name","netbs_broker_code"]);
     const lot = Number(pick(r, side === "buy" ? ["lot","blot","buy_lot","quantity","qty"] : ["lot","slot","sell_lot","quantity","qty"])) || null;
     const value = Number(pick(r, side === "buy" ? ["value","bval","buy_value","value_idr","net_value","amount"] : ["value","sval","sell_value","value_idr","net_value","amount"])) || 0;
-    if(broker != null) ensure(dateStr)[side].push({ broker_code:String(broker).toUpperCase(), lot, value_idr:value });
+    // Tipe investor (Asing/Lokal/Pemerintah) — dipisah jadi kolom sendiri,
+    // bukan digabung ke broker_code.
+    const investorType = pick(r, ["type","investor_type","investorType"]);
+    if(broker != null) ensure(dateStr)[side].push({ broker_code:String(broker).toUpperCase(), lot, value_idr:value, investor_type: investorType || null });
   });
   mapRows(buyRows, "buy"); mapRows(sellRows, "sell");
   Object.values(byDate).forEach(d => {
@@ -648,8 +656,8 @@ async function fetchAndSaveBrokerSummaryBulk(tickers, rangeFrom, rangeTo){
         datesToFetch.forEach(d => {
           const dd = byDate[d];
           if(!dd) return;
-          dd.buy.forEach(r => rows.push({ stock_code:ticker, trade_date:d, side:"buy", rank:r.rank, broker_code:r.broker_code, lot:r.lot, value_idr:r.value_idr }));
-          dd.sell.forEach(r => rows.push({ stock_code:ticker, trade_date:d, side:"sell", rank:r.rank, broker_code:r.broker_code, lot:r.lot, value_idr:r.value_idr }));
+          dd.buy.forEach(r => rows.push({ stock_code:ticker, trade_date:d, side:"buy", rank:r.rank, broker_code:r.broker_code, lot:r.lot, value_idr:r.value_idr, investor_type:r.investor_type }));
+          dd.sell.forEach(r => rows.push({ stock_code:ticker, trade_date:d, side:"sell", rank:r.rank, broker_code:r.broker_code, lot:r.lot, value_idr:r.value_idr, investor_type:r.investor_type }));
         });
         // "Hilang" di sini = hari yang sebelumnya belum ada di DB DAN gagal ditarik sekarang —
         // hari yang sudah ada di DB (di-skip) tidak dianggap hilang.
