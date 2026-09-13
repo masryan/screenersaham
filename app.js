@@ -4239,6 +4239,37 @@ async function syncBacktestToSupabase(sessionId, sessionDate, items) {
   }
 }
 
+// Cek apakah kombinasi ticker + tanggal entry + harga entry + sumber SUDAH
+// PERNAH tersimpan di backtest sebelumnya — di sesi MANAPUN, bukan cuma
+// sesi yang sedang aktif, karena tiap klik "Simpan ke Backtest" selalu
+// bikin sessionId baru (String(Date.now())), jadi data dobel biasanya
+// muncul sebagai sesi-sesi terpisah, bukan dalam satu sesi yang sama.
+// Dipakai oleh saveToBacktest, saveGenericListToBacktest, dan
+// addManualBacktest supaya klik "Simpan ke Backtest" berulang untuk
+// emiten/tanggal/harga/sumber yang PERSIS sama tidak menghasilkan baris
+// dobel — kalau ada satu saja dari (ticker, tanggal, harga, sumber) yang
+// beda, tetap dianggap entry baru (mis. harga entry beda karena harga live
+// sudah bergerak, atau sumbernya beda preset).
+function findDuplicateBacktestItem(ticker, entryDate, entryPrice, sumber){
+  const t = String(ticker || "").trim().toUpperCase();
+  const d = entryDate || null;
+  const p = Math.round(Number(entryPrice) || 0);
+  const src = String(sumber || "").trim();
+  for(const session of state.backtests){
+    for(const it of (session.items || [])){
+      if(
+        String(it.ticker || "").trim().toUpperCase() === t &&
+        (it.entryDate || null) === d &&
+        Math.round(Number(it.entryPrice) || 0) === p &&
+        String(it.sumber || "").trim() === src
+      ){
+        return { session, item: it };
+      }
+    }
+  }
+  return null;
+}
+
 async function saveToBacktest(){
   const filtered = getFiltered();
   const toSave = filtered.filter(s => state.selectedForBacktest.has(s.ticker));
@@ -4258,7 +4289,25 @@ async function saveToBacktest(){
   // ada (lihat renderBacktest — hanya "Harga Live" yang diambil dari data
   // live, "Harga Entry" & "Tanggal Entry" selalu dari item yang tersimpan).
   const tglEntryIso = todayLocalISO();
-  const items = toSave.map(s => ({
+
+  // Cek duplikat PERSIS (ticker + tanggal entry + harga entry + sumber)
+  // terhadap semua sesi backtest yang sudah ada — lihat
+  // findDuplicateBacktestItem(). Emiten yang cocok dilewati (tidak
+  // disimpan lagi), dan usernya diberi tahu lewat alert di akhir.
+  const duplicateTickers = [];
+  const uniqueToSave = toSave.filter(s => {
+    if(findDuplicateBacktestItem(s.ticker, tglEntryIso, s.cClose, ctx.label)){
+      duplicateTickers.push(s.ticker);
+      return false;
+    }
+    return true;
+  });
+
+  if(!uniqueToSave.length){
+    return alert(`Tidak ada yang disimpan — semua ${duplicateTickers.length} emiten yang dicentang (${duplicateTickers.join(", ")}) sudah pernah diinput ke Backtest dengan tanggal, harga entry, dan sumber yang sama persis.`);
+  }
+
+  const items = uniqueToSave.map(s => ({
     ticker: s.ticker,
     entryPrice: s.cClose,
     entryDate: tglEntryIso,
@@ -4276,9 +4325,12 @@ async function saveToBacktest(){
   render();
 
   const synced = await syncBacktestToSupabase(sessionId, tglSesi, items);
-  alert(synced
-    ? `${toSave.length} emiten yang dipilih berhasil disimpan ke tab Backtest.`
-    : `${toSave.length} emiten disimpan lokal, tapi gagal sinkron ke Supabase. Lihat pesan error di atas halaman.`);
+  const dupNote = duplicateTickers.length
+    ? `\n\n⚠️ ${duplicateTickers.length} emiten dilewati karena sudah pernah diinput persis sama (tanggal, harga entry, sumber): ${duplicateTickers.join(", ")}.`
+    : "";
+  alert((synced
+    ? `${uniqueToSave.length} emiten yang dipilih berhasil disimpan ke tab Backtest.`
+    : `${uniqueToSave.length} emiten disimpan lokal, tapi gagal sinkron ke Supabase. Lihat pesan error di atas halaman.`) + dupNote);
 }
 
 // ==========================================
@@ -4345,7 +4397,23 @@ async function saveGenericListToBacktest(namespace, contextLabel){
   // saat disimpan, tidak pernah ditulis ulang oleh refresh data live
   // berikutnya (lihat renderBacktest).
   const tglEntryIso = todayLocalISO();
-  const entryItems = toSave.map(it => ({
+
+  // Cek duplikat PERSIS (ticker + tanggal entry + harga entry + sumber) —
+  // sama seperti saveToBacktest(), lihat findDuplicateBacktestItem().
+  const duplicateTickers = [];
+  const uniqueToSave = toSave.filter(it => {
+    if(findDuplicateBacktestItem(it.ticker, tglEntryIso, it.price, contextLabel)){
+      duplicateTickers.push(it.ticker);
+      return false;
+    }
+    return true;
+  });
+
+  if(!uniqueToSave.length){
+    return alert(`Tidak ada yang disimpan — semua ${duplicateTickers.length} emiten dari "${contextLabel}" (${duplicateTickers.join(", ")}) sudah pernah diinput ke Backtest dengan tanggal, harga entry, dan sumber yang sama persis.`);
+  }
+
+  const entryItems = uniqueToSave.map(it => ({
     ticker: it.ticker,
     entryPrice: it.price,
     entryDate: tglEntryIso,
@@ -4363,9 +4431,12 @@ async function saveGenericListToBacktest(namespace, contextLabel){
   render();
 
   const synced = await syncBacktestToSupabase(sessionId, tglSesi, entryItems);
-  alert(synced
-    ? `${toSave.length} emiten dari "${contextLabel}" berhasil disimpan ke tab Backtest.`
-    : `${toSave.length} emiten disimpan lokal, tapi gagal sinkron ke Supabase. Lihat pesan error di atas halaman.`);
+  const dupNote = duplicateTickers.length
+    ? `\n\n⚠️ ${duplicateTickers.length} emiten dilewati karena sudah pernah diinput persis sama (tanggal, harga entry, sumber): ${duplicateTickers.join(", ")}.`
+    : "";
+  alert((synced
+    ? `${uniqueToSave.length} emiten dari "${contextLabel}" berhasil disimpan ke tab Backtest.`
+    : `${uniqueToSave.length} emiten disimpan lokal, tapi gagal sinkron ke Supabase. Lihat pesan error di atas halaman.`) + dupNote);
 }
 
 // Dipanggil dari attachContentEvents() (untuk area tab utama) dan dari
@@ -4434,6 +4505,15 @@ async function addManualBacktest(sessionId, ticker, entryPrice, keterangan, entr
   // hari ini. Ini yang dikunci sebagai "Tanggal Entry" item — tidak pernah
   // berubah lagi setelah tersimpan (lihat catatan di saveToBacktest).
   const tglEntryIso = (entryDate && /^\d{4}-\d{2}-\d{2}$/.test(entryDate)) ? entryDate : todayLocalISO();
+
+  // Cek duplikat PERSIS (ticker + tanggal entry + harga entry + sumber
+  // "Manual") terhadap SEMUA sesi backtest yang sudah ada — bukan cuma
+  // guard "ticker sama di sesi ini" di bawah, karena entry manual yang
+  // sama bisa saja diketik ulang di sesi (tanggal-klik) yang berbeda.
+  // Lihat findDuplicateBacktestItem().
+  if(findDuplicateBacktestItem(ticker, tglEntryIso, entryPrice, "Manual")){
+    return alert(`${ticker} dengan tanggal entry ${tglEntryIso} dan harga entry ${entryPrice} sudah pernah diinput ke Backtest (sumber: Manual). Data tidak disimpan lagi supaya tidak dobel.`);
+  }
 
   let sid = sessionId || "";
   let session = sid ? state.backtests.find(b => String(b.id) === String(sid)) : null;
