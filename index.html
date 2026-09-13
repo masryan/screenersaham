@@ -128,6 +128,20 @@
       <label>Endpoint Broker Summary (sudah terisi default — timpa hanya kalau Stockbit ganti skemanya)</label>
       <input id="setStockbitBrokerEndpoint" type="text" placeholder="https://exodus.stockbit.com/marketdetectors/{ticker}?from={from}&to={to}&transaction_type=TRANSACTION_TYPE_NET&market_board=MARKET_BOARD_REGULER&investor_type=INVESTOR_TYPE_ALL&limit={limit}">
       <div style="font-size:11px;color:var(--muted);margin-top:4px;">⚠️ Kalau diisi manual, pastikan bagian akhir tetap <code>&limit={limit}</code> (placeholder, bukan angka mati) — kalau ditimpa jadi angka tetap seperti <code>&limit=200</code>, data hari-hari yang lebih lama bisa kepotong dan cuma 1 hari terakhir yang kesimpan.</div>
+      <div style="margin-top:10px; font-size: 11.5px; color: var(--gold); background: rgba(234,179,8,0.08); padding: 10px; border-radius: 8px; border: 1px solid rgba(234,179,8,0.2);">
+        ⚠️ Endpoint default memaksa <code>data_type=BROKER_DISTRIBUTION_DATA_TYPE_VALUE</code> — ini kemungkinan
+        alasan kolom <b>Lot</b> selalu kosong (server cuma diminta kirim data Nilai, bukan Volume/Lot). Coba
+        ganti jadi <code>BROKER_DISTRIBUTION_DATA_TYPE_VOLUME</code> di kotak endpoint di atas lalu tes lagi
+        di bawah — kalau JSON mentahnya berubah isi jadi angka lot, berarti itu solusinya (tinggal gabung dua
+        request VALUE+VOLUME). Tes ini baca langsung dari kotak endpoint di atas (belum perlu disimpan dulu).
+        <div style="display:flex;gap:8px;align-items:center;margin-top:10px;flex-wrap:wrap;">
+          <input id="testStockbitBrokerTicker" type="text" placeholder="Ticker uji, mis. BBCA" maxlength="6" style="text-transform:uppercase;max-width:140px;">
+          <input id="testStockbitBrokerDate" type="date" style="background:rgba(0,0,0,0.2);border:1px solid var(--border);color:var(--text);font-size:11.5px;border-radius:6px;padding:6px;">
+          <button type="button" class="btn btn-outline" onclick="testStockbitBrokerEndpoint()" style="font-size:11.5px;padding:6px 10px;">🧪 Uji Endpoint Ini</button>
+        </div>
+        <div style="font-size:10.5px;color:var(--muted);margin-top:4px;">Kosongkan tanggal untuk pakai hari ini. Pilih hari bursa (bukan Sabtu/Minggu/libur) supaya ada data.</div>
+        <div id="testStockbitBrokerResult" style="margin-top:8px;"></div>
+      </div>
     </div>
     <div class="field">
       <label>Endpoint Historical Data (sudah terisi default — timpa hanya kalau Stockbit ganti skemanya)</label>

@@ -1003,6 +1003,61 @@ async function testStockbitHistoricalEndpoint(){
     </details>`;
 }
 
+// Uji Endpoint Broker Summary — dibuat khusus untuk mengecek pertanyaan
+// "kenapa kolom Lot selalu kosong di broker_summary". Baca endpoint LANGSUNG
+// dari kotak input (sama seperti dua tester di atas), supaya bisa coba-coba
+// ganti data_type=..._VALUE jadi ..._VOLUME di URL tanpa perlu Simpan &
+// Reload dulu. Verdict di bawah secara eksplisit mengecek ada/tidaknya nilai
+// Lot pada baris yang berhasil diparse -- itu jawaban langsung ke pertanyaan
+// "apakah cabang by_volume memang tidak dikirim Stockbit, atau ada tapi
+// gagal dibaca parser".
+async function testStockbitBrokerEndpoint(){
+  const resultEl = document.getElementById("testStockbitBrokerResult");
+  const tickerEl = document.getElementById("testStockbitBrokerTicker");
+  const dateEl = document.getElementById("testStockbitBrokerDate");
+  const epEl = document.getElementById("setStockbitBrokerEndpoint");
+  const tokenEl = document.getElementById("setStockbitToken");
+  if(!resultEl || !tickerEl || !epEl) return;
+  const ticker = (tickerEl.value||"").trim().toUpperCase();
+  if(!ticker){ resultEl.innerHTML = `<div style="font-size:11.5px;color:var(--down);">Isi ticker uji dulu (mis. BBCA).</div>`; return; }
+  const dateStr = (dateEl?.value||"").trim() || todayLocalISO();
+
+  const prevEndpoint = state.stockbitBrokerEndpoint;
+  const prevToken = state.stockbitToken;
+  state.stockbitBrokerEndpoint = (epEl.value||"").trim() || STOCKBIT_DEFAULT_BROKER_EP;
+  if(tokenEl && tokenEl.value.trim()) state.stockbitToken = tokenEl.value.trim();
+  resultEl.innerHTML = `<div style="font-size:11.5px;color:var(--muted);">Menguji ${escapeHtml(ticker)} tanggal ${escapeHtml(dateStr)}...</div>`;
+  const res = await stockbitFetchMarketDetector(ticker, dateStr, dateStr, 1);
+  state.stockbitBrokerEndpoint = prevEndpoint;
+  state.stockbitToken = prevToken;
+
+  if(res.error){
+    resultEl.innerHTML = `<div style="font-size:11.5px;color:var(--down);">⚠️ ${escapeHtml(res.error)}</div>`;
+    return;
+  }
+  const byDate = parseStockbitMarketDetector(res.raw, dateStr);
+  const dayRows = byDate ? byDate[dateStr] : null;
+  const buy = dayRows?.buy || [];
+  const sell = dayRows?.sell || [];
+  const allRows = [...buy, ...sell];
+  const withLot = allRows.filter(r => r.lot != null && r.lot > 0);
+
+  let verdict;
+  if(!allRows.length){
+    verdict = `<span style="color:var(--down);">❌ Tidak ada baris Top Buy/Sell yang terbaca sama sekali untuk ${escapeHtml(dateStr)} — coba tanggal hari bursa lain (bukan Sabtu/Minggu/libur), atau kemungkinan skema respons berubah lagi. Cek JSON mentah di bawah.</span>`;
+  } else if(withLot.length){
+    verdict = `<span style="color:var(--up);">✅ Terbaca ${buy.length} broker Top Buy, ${sell.length} Top Sell — dan ${withLot.length}/${allRows.length} baris PUNYA Lot terisi (contoh: ${escapeHtml(withLot[0].broker_code)} = ${withLot[0].lot} lot). Cabang by_volume ADA untuk kombinasi endpoint/tanggal ini — kalau ini didapat setelah ganti data_type ke ..._VOLUME, berarti solusinya adalah tarik dua kali (VALUE + VOLUME) lalu gabung, seperti yang sudah dibaca mergeByCode() di parser.</span>`;
+  } else {
+    verdict = `<span style="color:var(--gold);">⚠️ Terbaca ${buy.length} broker Top Buy, ${sell.length} Top Sell, TAPI semua baris Lot-nya kosong/null (cuma value_idr yang terisi). Ini mengonfirmasi cabang by_volume memang tidak dikirim Stockbit untuk data_type/endpoint yang sedang dites ini — bukan salah baca parser, datanya sendiri tidak ada di respons. Coba timpa data_type di kotak endpoint di atas jadi BROKER_DISTRIBUTION_DATA_TYPE_VOLUME lalu tes ulang.</span>`;
+  }
+
+  resultEl.innerHTML = `
+    <div style="font-size:11.5px;margin-bottom:6px;">${verdict}</div>
+    <details><summary style="cursor:pointer;font-size:11px;color:var(--teal);">Lihat JSON mentah</summary>
+      <pre style="font-size:10.5px;background:rgba(0,0,0,0.3);padding:8px;border-radius:6px;overflow-x:auto;max-height:200px;">${escapeHtml(JSON.stringify(res.raw, null, 2))}</pre>
+    </details>`;
+}
+
 // ==========================================
 // PENGATURAN UI KONEKSI
 // ==========================================
