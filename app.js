@@ -1451,6 +1451,11 @@ let state = {
   // Tab Sektoral: sektor mana yang sedang di-expand untuk melihat daftar
   // sahamnya, dan urutan sortir daftar saham di dalam tiap sektor.
   sektorExpanded: new Set(), sektorSearch: "", sektorSort: "changeDesc",
+  // Tab 📡 Rekap Sinyal ("conviction check"): pencarian ticker & baris mana
+  // yang sedang di-expand untuk lihat detail per sumber sinyal. Set
+  // terpisah dari state.expanded (dipakai tabel Screener) supaya expand di
+  // satu tab tidak ikut membuka baris di tab lain.
+  signalRecapSearch: "", signalRecapExpanded: new Set(),
   // Sub-tab aktif di panel "🔥 Top Movers" (bagian atas tab Sektoral):
   // gainer / loser / value / volume / frequency.
   topMoversTab: "gainer",
@@ -4477,6 +4482,158 @@ function wireBacktestSaveControls(scopeEl){
   });
 }
 
+// ==========================================
+// 📡 REKAP SINYAL / CONVICTION CHECK — menjawab pertanyaan "ticker A ini
+// muncul di berapa sinyal?" dengan mengumpulkan ticker dari SEMUA sumber
+// sinyal yang datanya SEDANG ADA di state saat ini, lalu dihitung berapa
+// sumber berbeda yang sama-sama menunjuk ke ticker yang sama. Semakin
+// banyak sumber yang "setuju", semakin kuat conviction-nya.
+//
+// PENTING — keterbatasan by design: setiap sumber di bawah ini (kecuali
+// Screener) HANYA terisi kalau tab terkait sudah pernah di-render di sesi
+// ini (state.genericBacktestItems[ns] diisi oleh renderBacktestSaveBar()
+// yang dipanggil dari renderEntryPriceScanner/renderKrakenFlow/renderBsjp/
+// dst — lihat definisinya). Jadi kalau user belum pernah buka tab EPS
+// Scanner sama sekali hari ini, sinyal dari EPS Scanner TIDAK akan ikut
+// dihitung di sini walau sebenarnya ada emiten yang lolos di sana — bukan
+// bug, ini konsekuensi dari data tab lain yang memang dihitung on-demand
+// (lihat renderSignalRecap() untuk pesan pengingatnya ke user).
+// ==========================================
+function getSignalSourcesForRecap(){
+  const sources = [];
+
+  // 1) Screener — hasil filter yang SEDANG AKTIF di tab Screener (preset
+  // DSI / Rule Kustom / pencarian). Kalau tidak ada filter apa pun yang
+  // aktif, ini akan berisi seluruh universe screener — tetap dihitung
+  // sebagai satu sumber, tapi labelnya menyebutkan filter apa yang aktif
+  // supaya user sadar seberapa "ketat" sumber ini.
+  try{
+    const filtered = getFiltered();
+    if(filtered && filtered.length){
+      const ctx = getActiveScreenerContext();
+      sources.push({
+        key: "screener",
+        label: `Screener — ${ctx.label}`,
+        items: filtered.map(s => ({
+          ticker: s.ticker, price: s.cClose,
+          detail: `Harga: ${s.cekHarga||'-'}; RSI: ${s.cekRsi||'-'} (${s.statusRsi||'-'}); MACD: ${s.cekMacd||'-'}; Score: ${s.baggerScoreTotal??'-'}`
+        }))
+      });
+    }
+  }catch(e){ /* Screener belum sempat dihitung (mis. data live belum dimuat) — lewati saja */ }
+
+  // 2) Sumber generik yang snapshot item-nya sudah ditangkap
+  // renderBacktestSaveBar() tiap kali tab terkait dirender — lihat catatan
+  // di atas fungsi ini soal keterbatasannya.
+  const nsLabel = {
+    eps: "Entry Price Scanner",
+    orca: "Kraken Flow (ORCA)",
+    bsjp: "BSJP (Beli Sore, Jual Pagi)",
+    smartpick: `Smart Pick${state.spListOpenDefId ? ` — ${spTitleFor(state.spListOpenDefId)}` : ""}`,
+    targetbandar: "Target Bandar"
+  };
+  Object.keys(nsLabel).forEach(ns => {
+    const items = state.genericBacktestItems[ns];
+    if(items && items.length){
+      const valid = items.filter(it => it && it.ticker && it.price > 0);
+      if(valid.length){
+        sources.push({
+          key: ns, label: nsLabel[ns],
+          items: valid.map(it => ({ ticker: it.ticker, price: it.price, detail: it.keterangan || it.kriteria || nsLabel[ns] }))
+        });
+      }
+    }
+  });
+
+  return sources;
+}
+
+// Menghasilkan { byTicker: { TICKER: [{source, price, detail}, ...] },
+// sourceCount, sourceLabels }. Satu ticker bisa punya beberapa entri kalau
+// muncul di beberapa sumber. Ticker yang muncul BERULANG di dalam satu
+// sumber yang sama cuma dihitung SEKALI per sumber, supaya "jumlah sinyal"
+// benar-benar berarti "jumlah sumber berbeda", bukan jumlah baris mentah.
+function buildSignalRecap(){
+  const sources = getSignalSourcesForRecap();
+  const byTicker = {};
+  sources.forEach(src => {
+    const seenInSrc = new Set();
+    src.items.forEach(it => {
+      const t = String(it.ticker || "").trim().toUpperCase();
+      if(!t || seenInSrc.has(t)) return;
+      seenInSrc.add(t);
+      (byTicker[t] ||= []).push({ source: src.label, price: it.price, detail: it.detail });
+    });
+  });
+  return { byTicker, sourceCount: sources.length, sourceLabels: sources.map(s => s.label) };
+}
+
+// Tab 📡 Rekap Sinyal — tabel semua ticker yang MUNCUL DI SETIDAKNYA SATU
+// sumber sinyal, diurutkan dari yang paling banyak "disetujui" beberapa
+// sumber sekaligus (conviction tertinggi) ke yang paling sedikit. Klik ▼
+// di baris untuk lihat rincian tiap sumber (harga saat itu + catatan).
+function renderSignalRecap(){
+  const { byTicker, sourceCount, sourceLabels } = buildSignalRecap();
+  const allTickers = Object.keys(byTicker);
+
+  const nsTitles = { eps:"Entry Price Scanner", orca:"Kraken Flow (ORCA)", bsjp:"BSJP (Beli Sore, Jual Pagi)", smartpick:"Smart Pick", targetbandar:"Target Bandar" };
+  const missingNs = Object.keys(nsTitles).filter(ns => !(state.genericBacktestItems[ns] && state.genericBacktestItems[ns].length));
+  const hintMissing = missingNs.length
+    ? `<div class="empty-box" style="margin-bottom:14px;">ℹ️ Sumber berikut belum ikut dihitung karena tabnya belum dibuka di sesi ini: <strong>${missingNs.map(ns=>escapeHtml(nsTitles[ns])).join(", ")}</strong>. Buka tab-tab itu sebentar lalu kembali ke sini supaya rekap makin lengkap.</div>`
+    : "";
+
+  if(!allTickers.length){
+    return `<div class="panel">
+      <div class="panel-heading"><h3>📡 Rekap Sinyal (Conviction Check)</h3></div>
+      <div class="empty-box">Belum ada sinyal yang bisa direkap. Buka tab Screener (dengan filter aktif), Entry Price Scanner, Kraken Flow (ORCA), BSJP, Smart Pick, atau Target Bandar dulu — begitu tabnya dirender, hasilnya otomatis ikut dihitung di sini.</div>
+    </div>`;
+  }
+
+  const q = (state.signalRecapSearch || "").trim().toUpperCase();
+  const rows = allTickers
+    .map(t => ({ ticker: t, hits: byTicker[t] }))
+    .filter(r => !q || r.ticker.includes(q))
+    .sort((a, b) => b.hits.length - a.hits.length || a.ticker.localeCompare(b.ticker));
+
+  const rowHtml = rows.map(r => {
+    const expanded = state.signalRecapExpanded.has(r.ticker);
+    const convictionTone = r.hits.length >= 3 ? "pill-up" : r.hits.length === 2 ? "pill-gold" : "pill-muted";
+    const convictionColor = r.hits.length >= 3 ? "var(--up)" : r.hits.length === 2 ? "var(--gold)" : "var(--muted)";
+    const badges = r.hits.map(h => pillHtml(escapeHtml(h.source), "muted")).join(" ");
+    const detailRows = r.hits.map(h => `
+        <div style="display:flex;gap:10px;padding:6px 0;border-bottom:1px dashed rgba(255,255,255,0.08);font-size:11.5px;flex-wrap:wrap;">
+          <span style="min-width:180px;color:var(--teal);font-weight:600;">${escapeHtml(h.source)}</span>
+          <span class="mono" style="min-width:90px;">${h.price ? fmtNum(Math.round(h.price)) : "-"}</span>
+          <span style="color:var(--muted);flex:1;">${escapeHtml(h.detail || "-")}</span>
+        </div>`).join("");
+    return `
+        <tr>
+          <td><button class="ticker-link" data-detail="${escapeHtml(r.ticker)}">${escapeHtml(r.ticker)}</button></td>
+          <td class="mono" style="text-align:center;"><strong style="color:${convictionColor};font-size:14px;">${r.hits.length}</strong><span style="color:var(--muted);"> / ${sourceCount}</span></td>
+          <td>${badges}</td>
+          <td style="width:34px;"><button type="button" class="btn btn-outline" data-signal-expand="${escapeHtml(r.ticker)}" style="padding:2px 8px;font-size:11px;">${expanded ? "▲" : "▼"}</button></td>
+        </tr>
+        ${expanded ? `<tr><td colspan="4" style="background:rgba(255,255,255,0.02);">${detailRows}</td></tr>` : ""}`;
+  }).join("");
+
+  return `<div class="panel">
+    <div class="panel-heading">
+      <h3>📡 Rekap Sinyal (Conviction Check)</h3>
+      <span class="panel-heading-note">${sourceCount} sumber sinyal aktif saat ini: ${escapeHtml(sourceLabels.join(", "))}</span>
+    </div>
+    ${hintMissing}
+    <div style="margin:10px 0;">
+      <input type="text" id="signalRecapSearchInput" value="${escapeHtml(state.signalRecapSearch)}" placeholder="Cari ticker tertentu (mis. BBCA)…" style="width:260px;">
+    </div>
+    <div class="table-wrap">
+      <table class="data-table">
+        <thead><tr><th>Saham</th><th style="text-align:center;">Jumlah Sinyal</th><th>Muncul di</th><th></th></tr></thead>
+        <tbody>${rowHtml || `<tr><td colspan="4" class="empty-box" style="border:none;">Tidak ada ticker yang cocok dengan pencarian.</td></tr>`}</tbody>
+      </table>
+    </div>
+  </div>`;
+}
+
 // Versi single-item dari mekanisme "Simpan ke Backtest" generik, khusus
 // tab 🎯 Target Bandar — tab ini menganalisis SATU ticker pada satu waktu
 // (bukan tabel banyak baris seperti EPS/ORCA/BSJP/Smart Pick), jadi cukup
@@ -5623,6 +5780,7 @@ function render(){
     else if(state.tab==="eps") content.innerHTML = renderEntryPriceScanner();
     else if(state.tab==="kraken") content.innerHTML = renderKrakenFlow();
     else if(state.tab==="bsjp") content.innerHTML = renderBsjp();
+    else if(state.tab==="sinyal") content.innerHTML = renderSignalRecap();
     else if(state.tab==="about") content.innerHTML = renderPanduan(); // alias lama, redirect ke Panduan
     else if(state.tab==="panduan") content.innerHTML = renderPanduan();
     else if(state.tab==="quanthub"){ /* ditangani quant-hub.js (halaman #qhPage terpisah) */ }
@@ -12358,6 +12516,16 @@ function attachContentEvents(){
   });
 
   document.querySelectorAll("[data-detail]").forEach(b=> b.onclick=()=>openDetail(b.dataset.detail));
+
+  // --- Tab 📡 Rekap Sinyal (Conviction Check) ---
+  bindSearchInputPreservingCursor("signalRecapSearchInput", (val) => { state.signalRecapSearch = val; });
+  document.querySelectorAll("[data-signal-expand]").forEach(b => {
+    b.onclick = () => {
+      const t = b.dataset.signalExpand;
+      state.signalRecapExpanded.has(t) ? state.signalRecapExpanded.delete(t) : state.signalRecapExpanded.add(t);
+      render();
+    };
+  });
 
   // --- Tab BSJP (Beli Sore, Jual Pagi) ---
   bindSearchInputPreservingCursor("bsjpSearchInput", (val) => { state.bsjpSearch = val; });
