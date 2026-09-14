@@ -319,14 +319,17 @@ function tradingDaysInRange(fromDateStr, toDateStr){
 async function stockbitFetchMarketDetector(ticker, fromDate, toDate, days){
   if(!state.stockbitToken) return { error: 'Token Stockbit belum diisi. Buka "⚙️ Pengaturan" → Live Data Stockbit.' };
   if(!state.stockbitBrokerEndpoint) return { error: 'Endpoint Broker Summary belum diisi di Pengaturan.' };
-  // Endpoint /order-trade/broker/distribution dipanggil SATU tanggal per
-  // request ({date} di URL) — bukan rentang. Param toDate/days tidak dipakai
-  // lagi, dibiarkan demi kompatibilitas pemanggil lama. Kalau nanti Stockbit
-  // mengubah skemanya, sesuaikan URL default (STOCKBIT_DEFAULT_BROKER_EP)
-  // dan parser parseStockbitMarketDetector() di bawah.
+  // Dipanggil SATU tanggal per request (STOCKBIT_BROKER_CHUNK_DAYS=1, lihat
+  // catatan di dekat konstanta itu) — fromDate selalu == toDate di titik ini,
+  // jadi aman dipakai untuk mengisi SEMUA placeholder {date} di URL sekaligus
+  // (endpoint /marketdetectors butuh {date} DUA KALI, untuk from= dan to=).
+  // PENTING: pakai replaceAll, bukan replace() — replace() dengan argumen
+  // string cuma mengganti kemunculan PERTAMA, jadi kalau template-nya punya
+  // {date} lebih dari sekali (mis. "from={date}&to={date}"), yang kedua akan
+  // tertinggal literal "{date}" di URL dan request-nya gagal/salah tanggal.
   const url = state.stockbitBrokerEndpoint
-    .replace("{ticker}", encodeURIComponent(ticker))
-    .replace("{date}", fromDate);
+    .replaceAll("{ticker}", encodeURIComponent(ticker))
+    .replaceAll("{date}", fromDate);
 
   return stockbitRawRequest(url);
 }
@@ -359,7 +362,15 @@ function parseStockbitMarketDetector(raw, fetchDate){
   // Stockbit kadang membungkus payload beberapa tingkat (data.data,
   // data.result, result.data), jadi cari objek yang benar-benar memiliki
   // array distribution secara rekursif dangkal.
-  const candidates = [raw, raw.data, raw.result, raw.data?.data, raw.data?.result, raw.result?.data, raw.result?.result].filter(v => v && typeof v === "object");
+  let candidates = [raw, raw.data, raw.result, raw.data?.data, raw.data?.result, raw.result?.data, raw.result?.result].filter(v => v && typeof v === "object");
+  // Endpoint /marketdetectors (beda dari /order-trade/broker/distribution)
+  // membungkus SATU level lagi di ".broker_summary" — mis.
+  // raw.data.broker_summary.{brokers_buy,brokers_sell} — yang tidak
+  // tercakup kandidat di atas, jadi tanpa ini parser tidak pernah menemukan
+  // baris broker sama sekali untuk skema ini (bukan cuma lot/type null,
+  // TAPI seluruh baris gagal terbaca). Tambahkan varian ".broker_summary"
+  // dari tiap kandidat yang sudah ada.
+  candidates = candidates.concat(candidates.map(c => c.broker_summary).filter(v => v && typeof v === "object"));
 
   // --- Coba skema baru (by_value/by_volume.top_broker_buy/sell) dulu ---
   // PENTING: by_value (nilai transaksi) dan by_volume (jumlah lot) adalah DUA
@@ -420,10 +431,20 @@ function buildBrokerByDate(buyRows, sellRows, fetchDate){
   const dateStr = fetchDate || todayLocalISO();
   const pick = (r, keys) => { for(const k of keys){ if(r?.[k] != null && r[k] !== "") return r[k]; } return null; };
   const mapRows = (rows, side) => rows.forEach(r => {
-    const broker = pick(r, ["broker","broker_code","brokerCode","broker_id","brokerId","code","broker_name"]);
-    const lot = Number(pick(r, side === "buy" ? ["lot","blot","buy_lot","quantity","qty"] : ["lot","slot","sell_lot","quantity","qty"])) || null;
-    const value = Number(pick(r, side === "buy" ? ["value","bval","buy_value","value_idr","net_value","amount"] : ["value","sval","sell_value","value_idr","net_value","amount"])) || 0;
-    if(broker != null) ensure(dateStr)[side].push({ broker_code:String(broker).toUpperCase(), lot, value_idr:value });
+    // "netbs_broker_code" adalah nama field kode broker di skema
+    // /marketdetectors (brokers_buy/brokers_sell) — beda dari skema
+    // /order-trade/broker/distribution yang pakai "broker"/"broker_code" polos.
+    const broker = pick(r, ["broker","broker_code","brokerCode","broker_id","brokerId","code","broker_name","netbs_broker_code"]);
+    // Math.abs() karena skema /marketdetectors mengirim lot & value SISI JUAL
+    // dengan tanda negatif (mis. slot:"-387452", sval:"-2.44e+11") — tanda
+    // minusnya cuma penanda arah (jual), bukan nilai riil yang mau ditampilkan.
+    const lot = Math.abs(Number(pick(r, side === "buy" ? ["lot","blot","buy_lot","quantity","qty"] : ["lot","slot","sell_lot","quantity","qty"]))) || null;
+    const value = Math.abs(Number(pick(r, side === "buy" ? ["value","bval","buy_value","value_idr","net_value","amount"] : ["value","sval","sell_value","value_idr","net_value","amount"]))) || 0;
+    // Tipe investor per broker (Asing/Lokal/Pemerintah) — field "type" di
+    // skema /marketdetectors. Disimpan apa adanya (string dari Stockbit),
+    // null kalau memang tidak ada di skema yang sedang dibaca.
+    const investorType = pick(r, ["type", "investor_type", "investorType"]);
+    if(broker != null) ensure(dateStr)[side].push({ broker_code:String(broker).toUpperCase(), lot, value_idr:value, investor_type: investorType || null });
   });
   mapRows(buyRows, "buy"); mapRows(sellRows, "sell");
   Object.values(byDate).forEach(d => {
@@ -667,8 +688,8 @@ async function fetchAndSaveBrokerSummaryBulk(tickers, rangeFrom, rangeTo){
         datesToFetch.forEach(d => {
           const dd = byDate[d];
           if(!dd) return;
-          dd.buy.forEach(r => rows.push({ stock_code:ticker, trade_date:d, side:"buy", rank:r.rank, broker_code:r.broker_code, lot:r.lot, value_idr:r.value_idr }));
-          dd.sell.forEach(r => rows.push({ stock_code:ticker, trade_date:d, side:"sell", rank:r.rank, broker_code:r.broker_code, lot:r.lot, value_idr:r.value_idr }));
+          dd.buy.forEach(r => rows.push({ stock_code:ticker, trade_date:d, side:"buy", rank:r.rank, broker_code:r.broker_code, lot:r.lot, value_idr:r.value_idr, investor_type:r.investor_type ?? null }));
+          dd.sell.forEach(r => rows.push({ stock_code:ticker, trade_date:d, side:"sell", rank:r.rank, broker_code:r.broker_code, lot:r.lot, value_idr:r.value_idr, investor_type:r.investor_type ?? null }));
         });
         // "Hilang" di sini = hari yang sebelumnya belum ada di DB DAN gagal ditarik sekarang —
         // hari yang sudah ada di DB (di-skip) tidak dianggap hilang.
@@ -833,6 +854,41 @@ window.addEventListener("message", (event) => {
   if(event.source !== window || event.data?.type !== "STOCKBIT_TOKEN_UPDATED") return;
   applyExtensionStockbitToken(event.data.token, event.data.expiresAt);
 });
+
+// ==========================================================
+// 🧪 WS DEBUG — terima traffic WebSocket Stockbit yang diteruskan ekstensi
+// lewat window.postMessage (lihat content_screener.js: window.postMessage
+// ({type:'FROM_EXTENSION_WS_TRAFFIC', payload:{type,direction,url,data,ts}})).
+// HANYA disimpan ke buffer kalau user sedang aktif menekan "Mulai Rekam"
+// (state.wsDebugRecording) -- traffic WS bisa puluhan pesan/detik saat tab
+// Stockbit user terbuka, jadi kalau fitur ini tidak sedang dipakai, frame
+// yang lewat dibuang begitu saja (tidak numpuk di memori percuma).
+//
+// scheduleWsDebugRender() SENGAJA tidak langsung memanggil render() tiap
+// frame masuk -- render() di app ini mengganti innerHTML SELURUH tab aktif
+// (lihat function render()), dan WS bisa jauh lebih cepat dari kecepatan
+// re-render DOM yang wajar. Di-throttle maksimal 1x per 200ms, dan cuma
+// kalau tab #wsdebug sedang aktif (kalau user di tab lain, buffer tetap
+// terisi di state, tapi DOM tidak disentuh sampai user pindah ke tab ini).
+// ==========================================================
+window.addEventListener("message", (event) => {
+  if(event.source !== window || event.data?.type !== "FROM_EXTENSION_WS_TRAFFIC") return;
+  if(!state.wsDebugRecording) return;
+  const f = event.data.payload;
+  if(!f) return;
+  state.wsDebugFrames.push({ ts: f.ts || Date.now(), direction: f.direction || "?", url: f.url || "", data: f.data ?? "" });
+  if(state.wsDebugFrames.length > state.wsDebugMaxFrames){
+    state.wsDebugFrames.splice(0, state.wsDebugFrames.length - state.wsDebugMaxFrames);
+  }
+  scheduleWsDebugRender();
+});
+
+let wsDebugRenderPending = false;
+function scheduleWsDebugRender(){
+  if(state.tab !== "wsdebug" || wsDebugRenderPending) return;
+  wsDebugRenderPending = true;
+  setTimeout(() => { wsDebugRenderPending = false; if(state.tab === "wsdebug") render(); }, 200);
+}
 
 // Format selisih waktu jadi teks singkat berbahasa Indonesia, dipakai untuk
 // banner "terakhir berhasil ditarik" di bawah ini (dan bisa dipakai ulang di
@@ -1056,13 +1112,26 @@ async function testStockbitBrokerEndpoint(){
   const prevToken = state.stockbitToken;
   state.stockbitBrokerEndpoint = (epEl.value||"").trim() || STOCKBIT_DEFAULT_BROKER_EP;
   if(tokenEl && tokenEl.value.trim()) state.stockbitToken = tokenEl.value.trim();
+  // Simpan URL yang BENAR-BENAR ditembak (sesudah {ticker}/{date} diisi)
+  // supaya kalau gagal, bisa dicek persis apa yang salah dari URL-nya
+  // sendiri (placeholder ke-skip, salah taruh parameter, dll) — bukan cuma
+  // pesan error generik dari Stockbit.
+  const resolvedUrl = state.stockbitBrokerEndpoint
+    .replaceAll("{ticker}", encodeURIComponent(ticker))
+    .replaceAll("{date}", dateStr);
   resultEl.innerHTML = `<div style="font-size:11.5px;color:var(--muted);">Menguji ${escapeHtml(ticker)} tanggal ${escapeHtml(dateStr)}...</div>`;
   const res = await stockbitFetchMarketDetector(ticker, dateStr, dateStr, 1);
   state.stockbitBrokerEndpoint = prevEndpoint;
   state.stockbitToken = prevToken;
 
   if(res.error){
-    resultEl.innerHTML = `<div style="font-size:11.5px;color:var(--down);">⚠️ ${escapeHtml(res.error)}</div>`;
+    const rawPreview = res.raw != null ? (typeof res.raw === "string" ? res.raw : JSON.stringify(res.raw, null, 2)) : null;
+    resultEl.innerHTML = `
+      <div style="font-size:11.5px;color:var(--down);margin-bottom:6px;">⚠️ ${escapeHtml(res.error)}</div>
+      <div style="font-size:10.5px;color:var(--muted);margin-bottom:6px;word-break:break-all;">URL yang ditembak: ${escapeHtml(resolvedUrl)}</div>
+      ${rawPreview ? `<details open><summary style="cursor:pointer;font-size:11px;color:var(--teal);">Lihat respons error mentah</summary>
+        <pre style="font-size:10.5px;background:rgba(0,0,0,0.3);padding:8px;border-radius:6px;overflow-x:auto;max-height:200px;">${escapeHtml(rawPreview)}</pre>
+      </details>` : ""}`;
     return;
   }
   const byDate = parseStockbitMarketDetector(res.raw, dateStr);
@@ -1071,14 +1140,15 @@ async function testStockbitBrokerEndpoint(){
   const sell = dayRows?.sell || [];
   const allRows = [...buy, ...sell];
   const withLot = allRows.filter(r => r.lot != null && r.lot > 0);
+  const withType = allRows.filter(r => r.investor_type);
 
   let verdict;
   if(!allRows.length){
     verdict = `<span style="color:var(--down);">❌ Tidak ada baris Top Buy/Sell yang terbaca sama sekali untuk ${escapeHtml(dateStr)} — coba tanggal hari bursa lain (bukan Sabtu/Minggu/libur), atau kemungkinan skema respons berubah lagi. Cek JSON mentah di bawah.</span>`;
   } else if(withLot.length){
-    verdict = `<span style="color:var(--up);">✅ Terbaca ${buy.length} broker Top Buy, ${sell.length} Top Sell — dan ${withLot.length}/${allRows.length} baris PUNYA Lot terisi (contoh: ${escapeHtml(withLot[0].broker_code)} = ${withLot[0].lot} lot). Cabang by_volume ADA untuk kombinasi endpoint/tanggal ini — kalau ini didapat setelah ganti data_type ke ..._VOLUME, berarti solusinya adalah tarik dua kali (VALUE + VOLUME) lalu gabung, seperti yang sudah dibaca mergeByCode() di parser.</span>`;
+    verdict = `<span style="color:var(--up);">✅ Terbaca ${buy.length} broker Top Buy, ${sell.length} Top Sell — ${withLot.length}/${allRows.length} baris PUNYA Lot terisi (contoh: ${escapeHtml(withLot[0].broker_code)} = ${withLot[0].lot} lot), dan ${withType.length}/${allRows.length} baris PUNYA Tipe Investor terisi${withType.length ? ` (contoh: ${escapeHtml(withType[0].broker_code)} = ${escapeHtml(withType[0].investor_type)})` : ""}. Kalau salah satu dari dua ini masih 0/${allRows.length}, kemungkinan skema respons endpoint yang sedang dites ini memang tidak menyertakan field itu — cek JSON mentah di bawah untuk pastikan nama field aslinya.</span>`;
   } else {
-    verdict = `<span style="color:var(--gold);">⚠️ Terbaca ${buy.length} broker Top Buy, ${sell.length} Top Sell, TAPI semua baris Lot-nya kosong/null (cuma value_idr yang terisi). Ini mengonfirmasi cabang by_volume memang tidak dikirim Stockbit untuk data_type/endpoint yang sedang dites ini — bukan salah baca parser, datanya sendiri tidak ada di respons. Coba timpa data_type di kotak endpoint di atas jadi BROKER_DISTRIBUTION_DATA_TYPE_VOLUME lalu tes ulang.</span>`;
+    verdict = `<span style="color:var(--gold);">⚠️ Terbaca ${buy.length} broker Top Buy, ${sell.length} Top Sell, TAPI semua baris Lot-nya kosong/null (cuma value_idr yang terisi, tipe investor: ${withType.length}/${allRows.length} terisi). Untuk endpoint /order-trade/broker/distribution ini biasanya berarti cabang by_volume memang tidak dikirim Stockbit untuk data_type yang sedang dites — coba timpa data_type di kotak endpoint jadi BROKER_DISTRIBUTION_DATA_TYPE_VOLUME lalu tes ulang. Untuk endpoint /marketdetectors, cek JSON mentah untuk nama field lot yang sebenarnya (mis. blot/slot).</span>`;
   }
 
   resultEl.innerHTML = `
@@ -1683,6 +1753,18 @@ let state = {
   // menggantikan sementara centang baris/filter tabel. Dikosongkan lagi
   // lewat tombol "✕" di sebelah label jumlah ticker.
   uploadedBulkTickers: [], uploadedBulkTickersFileName: null,
+  // ==========================================
+  // 🧪 WS DEBUG — buffer traffic WebSocket Stockbit yang direkam ekstensi
+  // Chrome (inject.js -> content_stockbit.js -> background.js ->
+  // content_screener.js -> window.postMessage 'FROM_EXTENSION_WS_TRAFFIC').
+  // Lihat listener globalnya & renderWsDebug(). HANYA terisi kalau
+  // wsDebugRecording true -- lihat catatan lengkap di listenernya.
+  // ==========================================
+  wsDebugRecording: false,
+  wsDebugFrames: [], // {ts, direction:"send"|"recv", url, data}
+  wsDebugMaxFrames: 500,
+  wsDebugFilterDir: "all", // "all" | "send" | "recv"
+  wsDebugFilterUrl: "",
   // ==========================================
   // Notifikasi Telegram (tabel telegram_settings di Supabase, dieksekusi
   // oleh Edge Function `telegram-notifier` yang dijadwalkan Cron server —
@@ -3291,7 +3373,7 @@ function renderDetailBrokerSummarySingleBody(){
   const maxVal = Math.max(1, ...dRows.map(r=> Number(r.value_idr)||0));
   const barHtml = (r, cls) => `
     <div class="bs-bar-row">
-      <span class="bs-bar-broker mono">${escapeHtml(r.broker_code)}</span>
+      <span class="bs-bar-broker mono">${escapeHtml(r.broker_code)}${r.investor_type ? ` <span style="font-size:9px;color:var(--muted);font-weight:400;">(${escapeHtml(r.investor_type)})</span>` : ""}</span>
       <div class="bs-bar-track"><div class="bs-bar-fill ${cls}" style="width:${(Number(r.value_idr)/maxVal)*100}%"></div></div>
       <span class="bs-bar-value mono">${fmtNum(r.value_idr)}</span>
     </div>`;
@@ -3346,7 +3428,7 @@ function renderDetailBrokerSummaryRangeBody(){
   const maxVal = Math.max(1, ...allVals);
   const barHtml = (r, cls) => `
     <div class="bs-bar-row">
-      <span class="bs-bar-broker mono">${escapeHtml(r.broker_code)}</span>
+      <span class="bs-bar-broker mono">${escapeHtml(r.broker_code)}${r.investor_type ? ` <span style="font-size:9px;color:var(--muted);font-weight:400;">(${escapeHtml(r.investor_type)})</span>` : ""}</span>
       <div class="bs-bar-track"><div class="bs-bar-fill ${cls}" style="width:${(Number(r.value_idr)/maxVal)*100}%"></div></div>
       <span class="bs-bar-value mono">${fmtNum(r.value_idr)} <span style="color:var(--muted);font-size:10px;">· ${r.days}h</span></span>
     </div>`;
@@ -3435,10 +3517,11 @@ async function loadDetailBrokerSummaryRange(){
       const agg = {};
       rows.forEach(r=>{
         const key = r.side + "|" + r.broker_code;
-        if(!agg[key]) agg[key] = { side: r.side, broker_code: r.broker_code, lot: 0, value_idr: 0, days: 0 };
+        if(!agg[key]) agg[key] = { side: r.side, broker_code: r.broker_code, lot: 0, value_idr: 0, days: 0, investor_type: r.investor_type || null };
         agg[key].lot += Number(r.lot) || 0;
         agg[key].value_idr += Number(r.value_idr) || 0;
         agg[key].days += 1;
+        if(!agg[key].investor_type && r.investor_type) agg[key].investor_type = r.investor_type;
       });
       const aggArr = Object.values(agg);
       const buy = aggArr.filter(a=>a.side==="buy").sort((a,b)=>b.value_idr-a.value_idr).slice(0,5);
@@ -5540,6 +5623,86 @@ function exportSmartPickToExcel(){
   XLSX.writeFile(workbook, `Rekap_Signal_SmartPick_${dateStr}.xlsx`);
 }
 
+// 🧪 WS Debug -- tampilan buffer traffic WebSocket Stockbit (lihat listener
+// global 'FROM_EXTENSION_WS_TRAFFIC' & catatan lengkap di inject.js/
+// content_stockbit.js/background.js/content_screener.js ekstensi Chrome).
+function renderWsDebug(){
+  const frames = state.wsDebugFrames || [];
+  const dirFilter = state.wsDebugFilterDir || "all";
+  const urlFilter = (state.wsDebugFilterUrl || "").trim().toLowerCase();
+  const filtered = frames.filter(f => {
+    if(dirFilter !== "all" && f.direction !== dirFilter) return false;
+    if(urlFilter && !String(f.url||"").toLowerCase().includes(urlFilter)) return false;
+    return true;
+  });
+  const shown = [...filtered].reverse(); // terbaru di atas, lebih enak dipantau saat rekam
+
+  const rowsHtml = shown.length ? shown.map(f => {
+    const dirBadge = f.direction === "send"
+      ? `<span style="background:rgba(96,165,250,0.15);color:#60a5fa;border:1px solid rgba(96,165,250,0.3);border-radius:5px;padding:1px 6px;font-size:10.5px;white-space:nowrap;">📤 Kirim</span>`
+      : f.direction === "recv"
+        ? `<span style="background:rgba(52,211,153,0.15);color:#34d399;border:1px solid rgba(52,211,153,0.3);border-radius:5px;padding:1px 6px;font-size:10.5px;white-space:nowrap;">📥 Terima</span>`
+        : `<span style="background:rgba(148,163,184,0.15);color:var(--muted);border-radius:5px;padding:1px 6px;font-size:10.5px;">?</span>`;
+    const timeStr = f.ts
+      ? new Date(f.ts).toLocaleTimeString("id-ID", {hour:"2-digit",minute:"2-digit",second:"2-digit"}) + "." + String(f.ts % 1000).padStart(3,"0")
+      : "-";
+    const dataStr = typeof f.data === "string" ? f.data : JSON.stringify(f.data);
+    const isLong = dataStr.length > 200;
+    const preview = isLong ? dataStr.slice(0,200) + "…" : dataStr;
+    return `
+      <div style="border:1px solid var(--border);border-radius:8px;padding:8px 10px;margin-bottom:6px;background:rgba(255,255,255,0.02);">
+        <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px;flex-wrap:wrap;">
+          <span class="mono" style="font-size:10.5px;color:var(--muted);white-space:nowrap;">${escapeHtml(timeStr)}</span>
+          ${dirBadge}
+          <span class="mono" style="font-size:10.5px;color:var(--teal);word-break:break-all;">${escapeHtml(f.url||"")}</span>
+        </div>
+        <details ${isLong ? "" : "open"}>
+          ${isLong ? `<summary style="cursor:pointer;font-size:10.5px;color:var(--muted);">${escapeHtml(preview)}</summary>` : ""}
+          <pre class="mono" style="font-size:10.5px;background:rgba(0,0,0,0.25);padding:6px 8px;border-radius:6px;overflow-x:auto;white-space:pre-wrap;word-break:break-all;margin-top:4px;">${escapeHtml(dataStr)}</pre>
+        </details>
+      </div>`;
+  }).join("") : `<div class="empty-box">Belum ada frame ${frames.length ? "yang cocok filter di atas" : "yang terekam"}.</div>`;
+
+  return `
+    <div class="card">
+      <h3>🧪 WS Debug — Rekam Traffic WebSocket Stockbit</h3>
+      <div style="font-size:12px;color:var(--muted);margin-bottom:12px;line-height:1.6;">
+        Menangkap traffic WebSocket Stockbit (KEDUA arah: yang dikirim & diterima) lewat ekstensi
+        Chrome "Stockbit Token Syncer + WS Debug" -- tujuannya reverse-engineer format subscribe
+        Stockbit (misalnya: bagaimana cara "minta data tick BBCA"). <b>Tidak aktif otomatis</b> --
+        buffer di bawah cuma terisi kalau kamu tekan "Mulai Rekam".
+        <br><br>
+        <b>Cara pakai:</b> 1) Pastikan ekstensi terpasang & aktif (ada di chrome://extensions).
+        2) Klik "▶ Mulai Rekam" di bawah. 3) Buka tab baru ke stockbit.com, login kalau perlu, lalu
+        buka chart/orderbook 2-3 ticker BERBEDA satu-satu (mis. BBCA lalu ganti ke TLKM) supaya
+        pesan "subscribe ticker baru" ketangkap jelas (biasanya beda dari pesan "unsubscribe ticker
+        lama"). 4) Kembali ke tab ini, klik "⏸ Berhenti Rekam", lalu "📋 Salin" untuk ditempel &
+        dianalisis.
+      </div>
+
+      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:12px;">
+        <button type="button" class="btn ${state.wsDebugRecording ? "btn-outline" : "btn-primary"}" id="wsDebugToggleBtn"
+          style="${state.wsDebugRecording ? "color:#f87171;border-color:rgba(239,68,68,0.4);" : ""}white-space:nowrap;">
+          ${state.wsDebugRecording ? `⏸ Berhenti Rekam (${frames.length} frame)` : "▶ Mulai Rekam"}
+        </button>
+        <button type="button" class="btn btn-outline" id="wsDebugClearBtn" style="white-space:nowrap;" ${frames.length ? "" : "disabled"}>🗑 Bersihkan Buffer</button>
+        <button type="button" class="btn btn-outline" id="wsDebugCopyBtn" style="white-space:nowrap;" ${filtered.length ? "" : "disabled"}>📋 Salin (${filtered.length})</button>
+        <select id="wsDebugFilterDir" style="background:rgba(0,0,0,0.2);border:1px solid var(--border);color:var(--text);font-size:11.5px;border-radius:6px;padding:6px 8px;">
+          <option value="all" ${dirFilter==="all"?"selected":""}>Semua arah</option>
+          <option value="send" ${dirFilter==="send"?"selected":""}>📤 Kirim saja</option>
+          <option value="recv" ${dirFilter==="recv"?"selected":""}>📥 Terima saja</option>
+        </select>
+        <input type="text" id="wsDebugFilterUrl" placeholder="Filter URL berisi..." value="${escapeHtml(state.wsDebugFilterUrl||"")}"
+          style="background:rgba(0,0,0,0.2);border:1px solid var(--border);color:var(--text);font-size:11.5px;border-radius:6px;padding:6px 8px;min-width:160px;">
+        <span style="font-size:10.5px;color:var(--muted);white-space:nowrap;">Menyimpan maksimal ${state.wsDebugMaxFrames} frame terbaru (yang lebih lama otomatis dibuang).</span>
+      </div>
+
+      <div style="max-height:600px;overflow-y:auto;">
+        ${rowsHtml}
+      </div>
+    </div>`;
+}
+
 function render(){
   // Guard defensif: kalau index.html yang di-deploy ternyata beda versi
   // dengan app.js (elemen tertentu belum ada di HTML), JANGAN biarkan itu
@@ -5568,6 +5731,7 @@ function render(){
     else if(state.tab==="eps") content.innerHTML = renderEntryPriceScanner();
     else if(state.tab==="kraken") content.innerHTML = renderKrakenFlow();
     else if(state.tab==="bsjp") content.innerHTML = renderBsjp();
+    else if(state.tab==="wsdebug") content.innerHTML = renderWsDebug();
     else if(state.tab==="about") content.innerHTML = renderPanduan(); // alias lama, redirect ke Panduan
     else if(state.tab==="panduan") content.innerHTML = renderPanduan();
     else if(state.tab==="quanthub"){ /* ditangani quant-hub.js (halaman #qhPage terpisah) */ }
@@ -7862,7 +8026,7 @@ async function searchBrokerStalker(){
     const field = state.brokerStalkerMode==='stock' ? 'stock_code' : 'broker_code';
     const qs = new URLSearchParams();
     qs.append(field, `eq.${q}`);
-    qs.append('select', 'stock_code,trade_date,side,broker_code,lot,value_idr');
+    qs.append('select', 'stock_code,trade_date,side,broker_code,lot,value_idr,investor_type');
     const todayMode = state.brokerStalkerPeriod === 'today';
     if(todayMode){
       qs.append('order', 'trade_date.desc');
@@ -9490,7 +9654,7 @@ function renderBrokerSummary(){
   const maxVal = Math.max(1, ...dRows.map(r=> Number(r.value_idr)||0));
   const barHtml = (r, cls) => `
     <div class="bs-bar-row">
-      <span class="bs-bar-broker mono">${escapeHtml(r.broker_code)}</span>
+      <span class="bs-bar-broker mono">${escapeHtml(r.broker_code)}${r.investor_type ? ` <span style="font-size:9px;color:var(--muted);font-weight:400;">(${escapeHtml(r.investor_type)})</span>` : ""}</span>
       <div class="bs-bar-track"><div class="bs-bar-fill ${cls}" style="width:${(Number(r.value_idr)/maxVal)*100}%"></div></div>
       <span class="bs-bar-value mono">${fmtNum(r.value_idr)}</span>
     </div>`;
@@ -9621,7 +9785,7 @@ function renderBrokerSummaryRangeBody(){
   const maxVal = Math.max(1, ...allVals);
   const barHtml = (r, cls) => `
     <div class="bs-bar-row">
-      <span class="bs-bar-broker mono">${escapeHtml(r.broker_code)}</span>
+      <span class="bs-bar-broker mono">${escapeHtml(r.broker_code)}${r.investor_type ? ` <span style="font-size:9px;color:var(--muted);font-weight:400;">(${escapeHtml(r.investor_type)})</span>` : ""}</span>
       <div class="bs-bar-track"><div class="bs-bar-fill ${cls}" style="width:${(Number(r.value_idr)/maxVal)*100}%"></div></div>
       <span class="bs-bar-value mono">${fmtNum(r.value_idr)} <span style="color:var(--muted);font-size:10px;">· ${r.days}h</span></span>
     </div>`;
@@ -9709,10 +9873,11 @@ async function loadBrokerSummaryRange(){
       const agg = {};
       rows.forEach(r=>{
         const key = r.side + "|" + r.broker_code;
-        if(!agg[key]) agg[key] = { side: r.side, broker_code: r.broker_code, lot: 0, value_idr: 0, days: 0 };
+        if(!agg[key]) agg[key] = { side: r.side, broker_code: r.broker_code, lot: 0, value_idr: 0, days: 0, investor_type: r.investor_type || null };
         agg[key].lot += Number(r.lot) || 0;
         agg[key].value_idr += Number(r.value_idr) || 0;
         agg[key].days += 1;
+        if(!agg[key].investor_type && r.investor_type) agg[key].investor_type = r.investor_type;
       });
       const aggArr = Object.values(agg);
       const buy = aggArr.filter(a=>a.side==="buy").sort((a,b)=>b.value_idr-a.value_idr).slice(0,5);
@@ -12636,6 +12801,40 @@ function attachContentEvents(){
   // dan aman dipanggil tanpa syarat tab (querySelectorAll kosong kalau
   // sedang bukan di tab panduan).
   if(state.tab === "panduan") wirePanduanChecklist();
+
+  // --- 🧪 WS Debug: lihat renderWsDebug() & listener 'FROM_EXTENSION_WS_TRAFFIC'.
+  const wsDebugToggleBtn = document.getElementById("wsDebugToggleBtn");
+  if(wsDebugToggleBtn) wsDebugToggleBtn.onclick = () => {
+    state.wsDebugRecording = !state.wsDebugRecording;
+    render();
+  };
+  const wsDebugClearBtn = document.getElementById("wsDebugClearBtn");
+  if(wsDebugClearBtn) wsDebugClearBtn.onclick = () => {
+    state.wsDebugFrames = [];
+    render();
+  };
+  const wsDebugCopyBtn = document.getElementById("wsDebugCopyBtn");
+  if(wsDebugCopyBtn) wsDebugCopyBtn.onclick = () => {
+    const dirFilter = state.wsDebugFilterDir || "all";
+    const urlFilter = (state.wsDebugFilterUrl || "").trim().toLowerCase();
+    const filtered = state.wsDebugFrames.filter(f => {
+      if(dirFilter !== "all" && f.direction !== dirFilter) return false;
+      if(urlFilter && !String(f.url||"").toLowerCase().includes(urlFilter)) return false;
+      return true;
+    });
+    const text = filtered.map(f => {
+      const t = f.ts ? new Date(f.ts).toISOString() : "-";
+      const dataStr = typeof f.data === "string" ? f.data : JSON.stringify(f.data);
+      return `[${t}] ${String(f.direction||"?").toUpperCase()} ${f.url}\n${dataStr}\n---`;
+    }).join("\n");
+    navigator.clipboard.writeText(text).then(() => {
+      wsDebugCopyBtn.textContent = "✅ Tersalin!";
+      setTimeout(() => { if(state.tab==="wsdebug") render(); }, 1200);
+    }).catch(() => { alert("Gagal menyalin ke clipboard — coba salin manual, atau cek izin clipboard browser."); });
+  };
+  const wsDebugFilterDir = document.getElementById("wsDebugFilterDir");
+  if(wsDebugFilterDir) wsDebugFilterDir.onchange = (e) => { state.wsDebugFilterDir = e.target.value; render(); };
+  bindSearchInputPreservingCursor("wsDebugFilterUrl", (val) => { state.wsDebugFilterUrl = val; render(); });
 }
 
 document.addEventListener("click", (e) => {
