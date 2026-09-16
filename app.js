@@ -83,6 +83,23 @@ function brokerFullName(code){
   return BROKER_NAME_MAP[c] || (c ? `Sekuritas ${c}` : "-");
 }
 
+// ==========================================
+// calcAvgPrice — harga rata-rata per baris broker_summary.
+//
+// value_idr = total nilai transaksi (Rp), lot = jumlah lot (1 lot = 100
+// lembar di BEI). Kolom `avg_price` di tabel broker_summary sebelumnya
+// selalu NULL karena tidak ada bagian aplikasi manapun yang menghitung
+// & mengirimkannya saat insert — dipakai di 3 titik insert (bulk tarik
+// Broker Stalker, form manual "Simpan" di halaman utama & detail;
+// tempel CSV juga bermuara ke form manual yang sama jadi otomatis ikut
+// terhitung). null kalau lot tidak ada/0 (avg price tidak bisa dihitung).
+// ==========================================
+function calcAvgPrice(value_idr, lot){
+  const v = Number(value_idr), l = Number(lot);
+  if(!Number.isFinite(v) || !Number.isFinite(l) || l <= 0) return null;
+  return Math.round(v / (l * 100));
+}
+
 function escapeHtml(str){
   return String(str ?? "").replace(/[&<>"']/g, c => ({ "&":"&amp;", "<":"&lt;", ">":"&gt;", '"':"&quot;", "'":"&#39;" }[c]));
 }
@@ -688,8 +705,8 @@ async function fetchAndSaveBrokerSummaryBulk(tickers, rangeFrom, rangeTo){
         datesToFetch.forEach(d => {
           const dd = byDate[d];
           if(!dd) return;
-          dd.buy.forEach(r => rows.push({ stock_code:ticker, trade_date:d, side:"buy", rank:r.rank, broker_code:r.broker_code, lot:r.lot, value_idr:r.value_idr, investor_type:r.investor_type ?? null }));
-          dd.sell.forEach(r => rows.push({ stock_code:ticker, trade_date:d, side:"sell", rank:r.rank, broker_code:r.broker_code, lot:r.lot, value_idr:r.value_idr, investor_type:r.investor_type ?? null }));
+          dd.buy.forEach(r => rows.push({ stock_code:ticker, trade_date:d, side:"buy", rank:r.rank, broker_code:r.broker_code, lot:r.lot, value_idr:r.value_idr, avg_price:calcAvgPrice(r.value_idr, r.lot), investor_type:r.investor_type ?? null }));
+          dd.sell.forEach(r => rows.push({ stock_code:ticker, trade_date:d, side:"sell", rank:r.rank, broker_code:r.broker_code, lot:r.lot, value_idr:r.value_idr, avg_price:calcAvgPrice(r.value_idr, r.lot), investor_type:r.investor_type ?? null }));
         });
         // "Hilang" di sini = hari yang sebelumnya belum ada di DB DAN gagal ditarik sekarang —
         // hari yang sudah ada di DB (di-skip) tidak dianggap hilang.
@@ -726,23 +743,47 @@ async function fetchAndSaveBrokerSummaryBulk(tickers, rangeFrom, rangeTo){
   if(state.bsStockCode && state.bsDate) loadBrokerSummary();
 }
 
+// Pencarian field case/underscore-insensitive, MENELUSURI SELURUH kedalaman
+// objek respons (maks 5 level) — bukan cuma level teratas seperti versi lama.
+// Ini penting karena field ini sekarang juga dipakai untuk endpoint yang
+// TIDAK terjamin bentuknya rata (mis. kalau user mengarahkan "Endpoint
+// Quote/Orderbook" ke URL orderbook yang sama dengan kartu Orderbook Depth —
+// keduanya endpoint sah, tapi belum tentu sama-sama membawa field harga
+// Open/High/Low di lokasi yang sama).
+function deepPickQuoteField(node, keys, depth = 0, seen = new Set()){
+  if(node == null || depth > 5 || typeof node !== "object") return null;
+  if(seen.has(node)) return null;
+  seen.add(node);
+  if(!Array.isArray(node)){
+    for(const rk of Object.keys(node)){
+      const norm = rk.toLowerCase().replace(/_/g,"");
+      if(keys.includes(norm) && node[rk] != null && node[rk] !== "" && typeof node[rk] !== "object") return node[rk];
+    }
+  }
+  const children = Array.isArray(node) ? node.slice(0,10) : Object.values(node);
+  for(const child of children){
+    const found = deepPickQuoteField(child, keys, depth+1, seen);
+    if(found != null) return found;
+  }
+  return null;
+}
+
 function mapStockbitQuote(raw){
   if(!raw || typeof raw !== "object") return null;
-  const d = raw.data || raw.result || raw;
-  const pick = (...keys) => { for(const k of keys){ if(d && d[k]!=null && d[k]!=="") return d[k]; } return null; };
+  const pick = (...keys) => deepPickQuoteField(raw, keys);
   return {
-    last: pick("last","close","price","c"),
-    open: pick("open","open_price","previous_open","o"),
-    high: pick("high","high_price","h"),
-    low: pick("low","low_price","l"),
-    prevClose: pick("previous","prev_close","previousClose","yesterday_price","prevclose"),
+    last: pick("last","close","price","c","lasttradeprice","lastprice"),
+    open: pick("open","openprice","previousopen","o"),
+    high: pick("high","highprice","h"),
+    low: pick("low","lowprice","l"),
+    prevClose: pick("previous","prevclose","previousclose","yesterdayprice"),
     change: pick("change","chg"),
-    changePct: pick("change_percent","changePercent","percentage_change","pct"),
-    bid: pick("bid","best_bid","bid_price"),
-    offer: pick("offer","ask","best_offer","offer_price"),
+    changePct: pick("changepercent","percentagechange","pct"),
+    bid: pick("bid","bestbid","bidprice"),
+    offer: pick("offer","ask","bestoffer","offerprice","askprice"),
     volume: pick("volume","vol"),
     frequency: pick("frequency","freq"),
-    time: pick("timestamp","time","updated_at","last_update"),
+    time: pick("timestamp","time","updatedat","lastupdate"),
   };
 }
 // ==========================================================
@@ -768,6 +809,43 @@ function maybeResyncStockbitTokenFromSupabase(){
   if(now - lastStockbitAutoResyncAt < 10000) return;
   lastStockbitAutoResyncAt = now;
   syncStockbitTokenFromSupabase();
+}
+
+// Kebalikan dari syncStockbitTokenFromSupabase(): menulis token yang diisi
+// MANUAL di modal Pengaturan ke tabel stockbit_session, supaya browser/device
+// lain ikut dapat token yang sama. Sebelumnya jalur tulis ini TIDAK ADA —
+// token manual cuma mendarat di localStorage, jadi begitu dibuka di browser
+// lain, kolom token kosong lagi dan semua fitur live Stockbit mati.
+//
+// Dua pengaman penting:
+// 1. Token kosong TIDAK PERNAH ditulis — kalau tidak, membuka Pengaturan lalu
+//    klik Simpan (tanpa mengisi apa-apa) akan menghapus token yang sudah
+//    ditangkap extension untuk SEMUA device.
+// 2. Token yang sama persis dengan yang sudah ada di server juga dilewati,
+//    supaya updated_at tidak ikut berubah tanpa alasan dan tidak memicu
+//    syncStockbitTokenFromSupabase() di device lain secara sia-sia.
+async function saveStockbitTokenToSupabase(token){
+  if(!SUPABASE_URL || !SUPABASE_KEY) return;
+  const clean = sanitizeStockbitToken(token);
+  if(!clean) return; // pengaman 1
+  try{
+    const res = await fetch(`${SUPABASE_URL}/stockbit_session?id=eq.1&select=token`, { headers: getSupaHeaders(), cache: "no-store" });
+    if(res.ok){
+      const rows = await res.json();
+      const existing = Array.isArray(rows) ? rows[0] : null;
+      if(existing && sanitizeStockbitToken(existing.token) === clean) return; // pengaman 2
+    }
+    // Upsert (bukan PATCH): kalau baris id=1 belum pernah dibuat — mis. di
+    // project Supabase baru yang belum pernah dipakai extension — PATCH akan
+    // sukses tanpa menulis apa pun, dan tokennya hilang diam-diam.
+    await supaFetch(`${SUPABASE_URL}/stockbit_session`, {
+      method: "POST",
+      headers: { ...getSupaHeaders(), "Prefer": "resolution=merge-duplicates,return=minimal" },
+      body: JSON.stringify({ id: 1, token: clean, updated_at: new Date().toISOString() })
+    });
+  }catch(e){
+    showError("Token Stockbit tersimpan di browser ini, tapi GAGAL disimpan ke Supabase: " + e.message + " — jalankan sql/07_stockbit_session.sql supaya token ikut terbawa ke browser/device lain.");
+  }
 }
 
 async function syncStockbitTokenFromSupabase(){
@@ -986,6 +1064,142 @@ async function fetchStockbitLiveBulk(tickers){
   render();
 }
 
+// ==========================================================
+// ORDERBOOK DEPTH 10-LEVEL — endpoint terverifikasi dari katalog API
+// komunitas (lihat catatan di STOCKBIT_DEFAULT_ORDERBOOK_EP), TAPI skema
+// field respons JSON-nya BELUM diverifikasi langsung dari akun kita
+// (dokumentasi komunitas tidak menyertakan contoh body). Parser di bawah
+// karena itu mencoba BANYAK kemungkinan nama field sekaligus (pola sama
+// seperti mapStockbitBrokerSummary()), dan SELALU menyimpan raw JSON di
+// state supaya kalau semua percobaan gagal, kita masih bisa lihat bentuk
+// asli responsnya lewat tombol "Lihat JSON Mentah" di kartu — daripada
+// gagal diam-diam seperti yang sempat terjadi di endpoint Quote lama.
+// ==========================================================
+
+// Satu level di dalam array belum pasti nama field harga/lot-nya
+// (mis. "price" vs "px", "volume" vs "lot" vs "qty") — coba beberapa.
+function pickDepthLevel(row){
+  if(!row || typeof row !== "object") return null;
+  const pick = (...keys) => {
+    for(const k of keys){
+      // cocokkan case-insensitive + abaikan underscore, supaya "bidPrice",
+      // "BID_PRICE", dan "bid_price" sama-sama kena.
+      const hit = Object.keys(row).find(rk => rk.toLowerCase().replace(/_/g,"") === k);
+      if(hit && row[hit]!=null && row[hit]!=="") return row[hit];
+    }
+    return null;
+  };
+  const price  = Number(pick("price","px","bidprice","offerprice","askprice","p"));
+  const rawVol = Number(pick("volume","vol","lot","lots","qty","quantity","totalvolume","queuevolume","bidvolume","offervolume","askvolume","size","v"));
+  if(!price || isNaN(price)) return null;
+  // Beberapa API bursa mengirim volume dalam LEMBAR (butuh /100 jadi lot),
+  // sebagian sudah dalam LOT. Tidak ada cara pasti membedakan dari satu
+  // angka saja — disimpan APA ADANYA (rawVol), label unit sengaja netral.
+  return {
+    price,
+    rawVol: isNaN(rawVol) ? 0 : rawVol,
+    order: Number(pick("order","orders","numorder","totalorder","queue","freq")) || null
+  };
+}
+
+// Sebuah array dianggap "kandidat ladder" kalau isinya objek-objek yang
+// punya field harga yang bisa diparse. Ini yang bikin parser tahan banting:
+// kita tidak lagi menebak nama BUNGKUSnya, cuma mengenali BENTUK isinya.
+function looksLikeLadder(arr){
+  if(!Array.isArray(arr) || !arr.length) return false;
+  const ok = arr.filter(r => pickDepthLevel(r)).length;
+  return ok >= Math.max(1, Math.floor(arr.length * 0.5));
+}
+
+// Telusuri SELURUH objek respons (rekursif, maks kedalaman 6) dan kumpulkan
+// setiap array yang bentuknya seperti ladder, lengkap dengan jalur kuncinya
+// ("data.orderbook.bid"). Jalur inilah yang dipakai menebak sisi bid/offer.
+function collectDepthCandidates(node, path, out, depth){
+  if(depth > 6 || node == null) return out;
+  if(Array.isArray(node)){
+    if(looksLikeLadder(node)) out.push({ path, arr: node });
+    else node.slice(0,5).forEach((v,i)=> collectDepthCandidates(v, `${path}[${i}]`, out, depth+1));
+    return out;
+  }
+  if(typeof node === "object"){
+    for(const k of Object.keys(node)) collectDepthCandidates(node[k], path ? `${path}.${k}` : k, out, depth+1);
+  }
+  return out;
+}
+
+const DEPTH_BID_HINTS  = ["bid","buy","beli","demand"];
+const DEPTH_ASK_HINTS  = ["ask","offer","sell","jual","supply"];
+function depthSideFromPath(path){
+  const p = String(path).toLowerCase();
+  // cek ask dulu: "ask"/"offer" lebih spesifik dan tidak bertabrakan dengan "bid"
+  if(DEPTH_ASK_HINTS.some(h => p.includes(h))) return "ask";
+  if(DEPTH_BID_HINTS.some(h => p.includes(h))) return "bid";
+  return null;
+}
+
+function parseStockbitOrderbookDepth(raw){
+  const fail = (note) => ({ bids: [], asks: [], unrecognized: true, note, candidates: [], topKeys: [], raw });
+  if(raw == null) return fail("Respons kosong (tidak ada body sama sekali).");
+  if(typeof raw === "string") return fail("Respons bukan JSON — server mengirim teks/HTML. Biasanya tanda endpoint salah atau token ditolak sebelum sampai API.");
+  if(typeof raw !== "object") return fail("Respons bukan objek JSON.");
+
+  const cands = collectDepthCandidates(raw, "", [], 0);
+  // Daftar kunci di level atas — ditampilkan di kartu saat gagal, supaya kamu
+  // bisa lihat sekilas bentuk responsnya tanpa membuka JSON mentah.
+  const d = raw.data || raw.result || raw;
+  const topKeys = (d && typeof d === "object" && !Array.isArray(d)) ? Object.keys(d).slice(0,25) : [];
+
+  if(!cands.length){
+    return { ...fail("Tidak ada satupun array berisi field harga di dalam respons."), topKeys };
+  }
+
+  let bidsRaw = null, asksRaw = null;
+  for(const c of cands){
+    const side = depthSideFromPath(c.path);
+    if(side === "bid" && !bidsRaw) bidsRaw = c;
+    if(side === "ask" && !asksRaw) asksRaw = c;
+  }
+  // Fallback: tidak ada petunjuk nama sama sekali, tapi ketemu tepat 2 array
+  // ladder. Asumsi urutan konvensional bursa: yang pertama = bid.
+  if(!bidsRaw && !asksRaw && cands.length === 2){ bidsRaw = cands[0]; asksRaw = cands[1]; }
+
+  const bids = (bidsRaw?.arr || []).map(pickDepthLevel).filter(Boolean).sort((a,b)=>b.price-a.price);
+  const asks = (asksRaw?.arr || []).map(pickDepthLevel).filter(Boolean).sort((a,b)=>a.price-b.price);
+
+  const totalVol = [...bids, ...asks].reduce((a,l)=>a+l.rawVol, 0);
+  return {
+    bids, asks,
+    bidPath: bidsRaw?.path || null,
+    askPath: asksRaw?.path || null,
+    // "unrecognized" = struktur tidak terbaca sama sekali.
+    // "empty" = struktur TERBACA tapi antriannya nol (bursa tutup / pre-opening
+    // / saham suspend). Dua hal ini dulu tercampur jadi satu tampilan kosong
+    // tanpa penjelasan — itulah kenapa kelihatannya "datanya kosong".
+    unrecognized: bids.length === 0 && asks.length === 0,
+    empty: (bids.length || asks.length) > 0 && totalVol === 0,
+    note: (bids.length === 0 && asks.length === 0)
+      ? `Ketemu ${cands.length} array kandidat (${cands.map(c=>c.path||"(root)").slice(0,5).join(", ")}) tapi tidak ada yang bisa dipetakan ke sisi bid/offer.`
+      : null,
+    candidates: cands.map(c => ({ path: c.path || "(root)", n: c.arr.length })),
+    topKeys,
+    raw,
+  };
+}
+
+async function fetchStockbitOrderbookDepth(ticker){
+  state.stockbitOrderbook[ticker] = { ...(state.stockbitOrderbook[ticker]||{}), loading: true, error: null };
+  render();
+  const res = await stockbitFetch(state.stockbitOrderbookEndpoint, ticker);
+  const parsed = res.raw !== undefined ? parseStockbitOrderbookDepth(res.raw) : null;
+  state.stockbitOrderbook[ticker] = {
+    loading: false,
+    error: res.error || null,
+    parsed,
+    fetchedAt: Date.now(),
+  };
+  render();
+}
+
 async function supaFetch(url, options) {
   const res = await fetch(url, options);
   if (!res.ok) {
@@ -1050,7 +1264,7 @@ async function testStockbitQuoteEndpoint(){
   resultEl.innerHTML = `
     <div style="font-size:11.5px;margin-bottom:6px;">${verdict}</div>
     <details><summary style="cursor:pointer;font-size:11px;color:var(--teal);">Lihat JSON mentah</summary>
-      <pre style="font-size:10.5px;background:rgba(0,0,0,0.3);padding:8px;border-radius:6px;overflow-x:auto;max-height:200px;">${escapeHtml(JSON.stringify(res.raw, null, 2))}</pre>
+      <pre style="font-size:10.5px;background:color-mix(in srgb, currentColor 9%, transparent);padding:8px;border-radius:6px;overflow-x:auto;max-height:200px;">${escapeHtml(JSON.stringify(res.raw, null, 2))}</pre>
     </details>`;
 }
 
@@ -1085,7 +1299,7 @@ async function testStockbitHistoricalEndpoint(){
   resultEl.innerHTML = `
     <div style="font-size:11.5px;margin-bottom:6px;">${verdict}</div>
     <details><summary style="cursor:pointer;font-size:11px;color:var(--teal);">Lihat JSON mentah</summary>
-      <pre style="font-size:10.5px;background:rgba(0,0,0,0.3);padding:8px;border-radius:6px;overflow-x:auto;max-height:200px;">${escapeHtml(JSON.stringify(res.raw, null, 2))}</pre>
+      <pre style="font-size:10.5px;background:color-mix(in srgb, currentColor 9%, transparent);padding:8px;border-radius:6px;overflow-x:auto;max-height:200px;">${escapeHtml(JSON.stringify(res.raw, null, 2))}</pre>
     </details>`;
 }
 
@@ -1130,7 +1344,7 @@ async function testStockbitBrokerEndpoint(){
       <div style="font-size:11.5px;color:var(--down);margin-bottom:6px;">⚠️ ${escapeHtml(res.error)}</div>
       <div style="font-size:10.5px;color:var(--muted);margin-bottom:6px;word-break:break-all;">URL yang ditembak: ${escapeHtml(resolvedUrl)}</div>
       ${rawPreview ? `<details open><summary style="cursor:pointer;font-size:11px;color:var(--teal);">Lihat respons error mentah</summary>
-        <pre style="font-size:10.5px;background:rgba(0,0,0,0.3);padding:8px;border-radius:6px;overflow-x:auto;max-height:200px;">${escapeHtml(rawPreview)}</pre>
+        <pre style="font-size:10.5px;background:color-mix(in srgb, currentColor 9%, transparent);padding:8px;border-radius:6px;overflow-x:auto;max-height:200px;">${escapeHtml(rawPreview)}</pre>
       </details>` : ""}`;
     return;
   }
@@ -1154,7 +1368,7 @@ async function testStockbitBrokerEndpoint(){
   resultEl.innerHTML = `
     <div style="font-size:11.5px;margin-bottom:6px;">${verdict}</div>
     <details><summary style="cursor:pointer;font-size:11px;color:var(--teal);">Lihat JSON mentah</summary>
-      <pre style="font-size:10.5px;background:rgba(0,0,0,0.3);padding:8px;border-radius:6px;overflow-x:auto;max-height:200px;">${escapeHtml(JSON.stringify(res.raw, null, 2))}</pre>
+      <pre style="font-size:10.5px;background:color-mix(in srgb, currentColor 9%, transparent);padding:8px;border-radius:6px;overflow-x:auto;max-height:200px;">${escapeHtml(JSON.stringify(res.raw, null, 2))}</pre>
     </details>`;
 }
 
@@ -1176,6 +1390,8 @@ async function openSettings() {
   if(stbBroker) stbBroker.value = state.stockbitBrokerEndpoint || STOCKBIT_DEFAULT_BROKER_EP;
   const stbHistorical = document.getElementById("setStockbitHistoricalEndpoint");
   if(stbHistorical) stbHistorical.value = state.stockbitHistoricalEndpoint || STOCKBIT_DEFAULT_HISTORICAL_EP;
+  const stbOrderbook = document.getElementById("setStockbitOrderbookEndpoint");
+  if(stbOrderbook) stbOrderbook.value = state.stockbitOrderbookEndpoint || STOCKBIT_DEFAULT_ORDERBOOK_EP;
   const stbProxy = document.getElementById("setStockbitProxyUrl");
   if(stbProxy) stbProxy.value = state.stockbitProxyUrl || "";
   const geminiKeyEl = document.getElementById("setGeminiApiKey");
@@ -1257,11 +1473,13 @@ function saveSettings() {
   state.stockbitQuoteEndpoint = (document.getElementById("setStockbitQuoteEndpoint")?.value || "").trim() || STOCKBIT_DEFAULT_QUOTE_EP;
   state.stockbitBrokerEndpoint = (document.getElementById("setStockbitBrokerEndpoint")?.value || "").trim() || STOCKBIT_DEFAULT_BROKER_EP;
   state.stockbitHistoricalEndpoint = (document.getElementById("setStockbitHistoricalEndpoint")?.value || "").trim() || STOCKBIT_DEFAULT_HISTORICAL_EP;
+  state.stockbitOrderbookEndpoint = (document.getElementById("setStockbitOrderbookEndpoint")?.value || "").trim() || STOCKBIT_DEFAULT_ORDERBOOK_EP;
   state.stockbitProxyUrl = (document.getElementById("setStockbitProxyUrl")?.value || "").trim();
   localStorage.setItem(LS_STOCKBIT_TOKEN, state.stockbitToken);
   localStorage.setItem(LS_STOCKBIT_QUOTE_EP, state.stockbitQuoteEndpoint);
   localStorage.setItem(LS_STOCKBIT_BROKER_EP, state.stockbitBrokerEndpoint);
   localStorage.setItem(LS_STOCKBIT_HISTORICAL_EP, state.stockbitHistoricalEndpoint);
+  localStorage.setItem(LS_STOCKBIT_ORDERBOOK_EP, state.stockbitOrderbookEndpoint);
   localStorage.setItem(LS_STOCKBIT_PROXY, state.stockbitProxyUrl);
 
   state.geminiApiKey = (document.getElementById("setGeminiApiKey")?.value || "").trim();
@@ -1276,6 +1494,9 @@ function saveSettings() {
   state.telegramEnabled = !!document.getElementById("setTelegramEnabled")?.checked;
   state.telegramOnlyMarketHours = !!document.getElementById("setTelegramOnlyMarketHours")?.checked;
   saveTelegramSettingsToSupabase();
+  // Token Stockbit TIDAK ikut di telegram_settings — tabelnya sendiri
+  // (stockbit_session) yang juga dipakai extension. Lihat catatan di sana.
+  saveStockbitTokenToSupabase(state.stockbitToken);
 
   closeSettings();
   
@@ -1327,6 +1548,38 @@ async function loadTelegramSettingsFromSupabase(){
       state.telegramFunctionUrl = row.function_url;
       try{ localStorage.setItem(LS_TELEGRAM_FUNCTION_URL, state.telegramFunctionUrl); }catch(e){}
     }
+    // --- Field tambahan (sebelumnya CUMA localStorage, jadi hilang tiap
+    // ganti device/browser): kolom Frequency Analyzer, 3 endpoint Stockbit,
+    // dan proxy URL Stockbit. Sama seperti gemini_api_key/function_url di
+    // atas: kalau kolomnya null (migration belum dijalankan / belum pernah
+    // disimpan dari device manapun), biarkan nilai localStorage lama dipakai.
+    if(row.freq_analyzer_col){
+      state.freqAnalyzerCol = row.freq_analyzer_col;
+      try{ localStorage.setItem(LS_FREQ_ANALYZER_COL, state.freqAnalyzerCol); }catch(e){}
+    }
+    if(row.stockbit_quote_ep){
+      state.stockbitQuoteEndpoint = row.stockbit_quote_ep;
+      try{ localStorage.setItem(LS_STOCKBIT_QUOTE_EP, state.stockbitQuoteEndpoint); }catch(e){}
+    }
+    if(row.stockbit_broker_ep){
+      state.stockbitBrokerEndpoint = row.stockbit_broker_ep;
+      try{ localStorage.setItem(LS_STOCKBIT_BROKER_EP, state.stockbitBrokerEndpoint); }catch(e){}
+    }
+    if(row.stockbit_historical_ep){
+      state.stockbitHistoricalEndpoint = row.stockbit_historical_ep;
+      try{ localStorage.setItem(LS_STOCKBIT_HISTORICAL_EP, state.stockbitHistoricalEndpoint); }catch(e){}
+    }
+    if(row.stockbit_orderbook_ep){
+      state.stockbitOrderbookEndpoint = row.stockbit_orderbook_ep;
+      try{ localStorage.setItem(LS_STOCKBIT_ORDERBOOK_EP, state.stockbitOrderbookEndpoint); }catch(e){}
+    }
+    // Proxy URL boleh sengaja dikosongkan (mis. user hapus proxy), jadi cek
+    // key-nya ada di row (bukan cuma truthy) supaya string kosong dari
+    // Supabase tetap menimpa nilai localStorage lama, bukan diabaikan.
+    if(Object.prototype.hasOwnProperty.call(row, "stockbit_proxy_url") && row.stockbit_proxy_url !== null){
+      state.stockbitProxyUrl = row.stockbit_proxy_url;
+      try{ localStorage.setItem(LS_STOCKBIT_PROXY, state.stockbitProxyUrl); }catch(e){}
+    }
   }catch(e){ /* offline / tabel belum ada — abaikan, form tetap terisi default */ }
 }
 
@@ -1345,6 +1598,16 @@ async function saveTelegramSettingsToSupabase(){
         function_url: state.telegramFunctionUrl,
         gemini_api_key: state.geminiApiKey,
         gemini_model: state.geminiModel,
+        // Field tambahan supaya ikut tersimpan di Supabase (lihat catatan
+        // di loadTelegramSettingsFromSupabase() di atas) — tanpa ini,
+        // 4 field berikut cuma hidup di localStorage dan hilang tiap
+        // pindah device/browser.
+        freq_analyzer_col: state.freqAnalyzerCol,
+        stockbit_quote_ep: state.stockbitQuoteEndpoint,
+        stockbit_broker_ep: state.stockbitBrokerEndpoint,
+        stockbit_historical_ep: state.stockbitHistoricalEndpoint,
+        stockbit_orderbook_ep: state.stockbitOrderbookEndpoint,
+        stockbit_proxy_url: state.stockbitProxyUrl,
         updated_at: new Date().toISOString()
       })
     });
@@ -1437,7 +1700,8 @@ const LS_FREQ_ANALYZER_COL = "ihsg_freq_analyzer_col";
 const LS_CUSTOM_RULES = "ihsg_custom_rules_v1";
 const LS_STOCKBIT_TOKEN = "ihsg_stockbit_token", LS_STOCKBIT_QUOTE_EP = "ihsg_stockbit_quote_ep",
       LS_STOCKBIT_BROKER_EP = "ihsg_stockbit_broker_ep", LS_STOCKBIT_PROXY = "ihsg_stockbit_proxy",
-      LS_STOCKBIT_HISTORICAL_EP = "ihsg_stockbit_historical_ep";
+      LS_STOCKBIT_HISTORICAL_EP = "ihsg_stockbit_historical_ep",
+      LS_STOCKBIT_ORDERBOOK_EP = "ihsg_stockbit_orderbook_ep";
 // Menyimpan SUMBER token (bukan cuma token-nya sendiri) supaya label status
 // ("🧩 Auto dari extension" vs "✍️ Diisi manual") tetap akurat setelah
 // halaman di-reload — bukan cuma benar selama tab masih terbuka.
@@ -1467,6 +1731,21 @@ const STOCKBIT_DEFAULT_QUOTE_EP = "https://exodus.stockbit.com/stream/v3/symbol/
 // dipakai ganti-ganti ticker cepat). Dibiarkan seperti ini dulu — field
 // "Endpoint Quote/Orderbook" di Pengaturan tetap bisa ditimpa manual kalau
 // endpoint yang benar sudah ketemu.
+
+// NOTE (16 Sep 2026): endpoint ORDERBOOK DEPTH (beda dari quote di atas)
+// ditemukan dari katalog API komunitas (proyek open-source pihak ketiga
+// "mcp-stockbit" yang mendokumentasikan API internal Stockbit Desktop —
+// docs/API_CATALOG.md, bagian "3.1 Market Depth & Tape Reading"). Endpoint
+// ini SAMA PERSIS dengan yang sudah disebut di komentar Panel Live Data
+// (lihat fetchStockbitLive), path-nya sudah benar dari awal — yang salah
+// cuma dugaan skema field responsnya, yang MASIH BELUM DIVERIFIKASI dari
+// akun kita sendiri (dokumentasi komunitas tidak menyertakan contoh JSON
+// body). parseStockbitOrderbookDepth() di bawah karena itu ditulis DEFENSIF
+// (coba banyak kemungkinan nama field, mirip mapStockbitBrokerSummary) DAN
+// selalu menyimpan raw JSON supaya kalau parsing meleset, kamu bisa lihat
+// field aslinya lewat tombol "🔍 Lihat JSON Mentah" di kartu dan laporkan
+// balik supaya pemetaannya diperbaiki.
+const STOCKBIT_DEFAULT_ORDERBOOK_EP = "https://exodus.stockbit.com/company-price-feed/v2/orderbook/companies/{ticker}";
 const STOCKBIT_DEFAULT_BROKER_EP = "https://exodus.stockbit.com/order-trade/broker/distribution?date={date}&symbol={ticker}&investor_type=INVESTOR_TYPE_ALL&market_board=MARKET_TYPE_REGULER&data_type=BROKER_DISTRIBUTION_DATA_TYPE_VALUE&period=TB_PERIOD_LAST_1_DAY";// Endpoint Historical Data (tabel Date/Close/Change/Value/Volume di halaman
 // detail saham Stockbit — toggle Daily/Weekly/Monthly). Sudah diverifikasi
 // dari traffic asli lewat DevTools (30 Agu 2026) — beda dengan marketdetectors,
@@ -1516,6 +1795,13 @@ let state = {
   colPickerOpen: false,
   filters: {sektor:[], syariahLabel:[], cekHarga:[], cekRsi:[], statusRsi:[], cekMacd:[], band:[], sinyalVolume:[], sinyalFrekuensi:[], keyakinanNaik:[], trendHarga:[], polaCandle:[], uangGedeMasuk:[], isBBSqueeze:[], valuasi:[], capTier:[], lq45:[]},
   showAdvancedFilters: false,
+  // Collapsible untuk 3 blok filter utama (Klasifikasi Emiten / Trend & Sinyal
+  // Teknikal / Momentum, Volume & Keyakinan) — pola sama seperti "Filter
+  // Lanjutan" (adv-toggle/adv-body), default terbuka supaya tidak mengubah
+  // tampilan yang sudah ada; wiring klik ada di attachContentEvents.
+  showFilterKlasifikasi: true,
+  showFilterTrend: true,
+  showFilterMomentum: true,
   rangeFilters: {
     bbWidth:{min:"",max:""},
     atr14:{min:"",max:""},
@@ -1707,6 +1993,12 @@ let state = {
   // tidak menghabiskan rate limit/kena banned dari akun Stockbit sendiri.
   // ==========================================
   stockbitToken: "", stockbitQuoteEndpoint: STOCKBIT_DEFAULT_QUOTE_EP,
+  // Endpoint terpisah dari Quote di atas — lihat STOCKBIT_DEFAULT_ORDERBOOK_EP.
+  // Tidak dihubungkan ke sinkronisasi Supabase Pengaturan (belum, supaya
+  // perubahan ini tidak menyentuh kode load/save Pengaturan yang sudah ada)
+  // — kalau field responsnya sudah terverifikasi stabil, ini bisa
+  // ditambahkan ke situ menyusul.
+  stockbitOrderbookEndpoint: STOCKBIT_DEFAULT_ORDERBOOK_EP,
   stockbitBrokerEndpoint: STOCKBIT_DEFAULT_BROKER_EP, stockbitProxyUrl: "",
   stockbitHistoricalEndpoint: STOCKBIT_DEFAULT_HISTORICAL_EP,
   detailHistoricalPeriod: "daily", detailHistoricalRows: [],
@@ -1722,6 +2014,11 @@ let state = {
   // tanpa harus buka console. null = belum pernah berhasil sama sekali.
   stockbitLastSuccessAt: null,
   stockbitLive: {}, stockbitBulkLoading: false, stockbitBulkProgress: null,
+  // Cache per-ticker untuk kartu Orderbook Depth 10-level (lihat
+  // fetchStockbitOrderbookDepth) — pola identik dengan stockbitLive, TAPI
+  // sengaja dipisah state-nya karena datanya beda endpoint & beda bentuk
+  // (array 10-20 level, bukan satu snapshot harga).
+  stockbitOrderbook: {},
   stockbitAutoRefresh: false, stockbitAutoRefreshIntervalSec: 60,
   // Riwayat Value (Rp) harian dari Stockbit per ticker, dipakai Smart Pick —
   // lihat catatan lengkap di loadLive() dan spStockbitValueRatio().
@@ -1868,7 +2165,7 @@ function rsiGaugeHtml(value){
   const cx=15+11*Math.sin(angle*Math.PI/180), cy=16-11*Math.cos(angle*Math.PI/180);
   return `<div class="gauge-wrap">
     <svg width="30" height="18" viewBox="0 0 30 18">
-      <path d="M2,16 A13,13 0 0 1 28,16" fill="none" stroke="rgba(255,255,255,0.1)" stroke-width="3" stroke-linecap="round"/>
+      <path d="M2,16 A13,13 0 0 1 28,16" fill="none" stroke="color-mix(in srgb, currentColor 8%, transparent)" stroke-width="3" stroke-linecap="round"/>
       <path d="M2,16 A13,13 0 0 1 28,16" fill="none" stroke="${color}" stroke-width="3" stroke-linecap="round" stroke-dasharray="${(pct/100)*40.8} 40.8"/>
       <circle cx="${cx}" cy="${cy}" r="1.6" fill="${color}" style="filter: drop-shadow(0 0 2px ${color});"/>
     </svg>
@@ -1895,6 +2192,7 @@ function loadSettings(){
     const savedBrokerEp = localStorage.getItem(LS_STOCKBIT_BROKER_EP) || "";
     state.stockbitBrokerEndpoint = (savedBrokerEp && savedBrokerEp.includes("{date}")) ? savedBrokerEp : STOCKBIT_DEFAULT_BROKER_EP;
     state.stockbitHistoricalEndpoint = localStorage.getItem(LS_STOCKBIT_HISTORICAL_EP) || STOCKBIT_DEFAULT_HISTORICAL_EP;
+    state.stockbitOrderbookEndpoint = localStorage.getItem(LS_STOCKBIT_ORDERBOOK_EP) || STOCKBIT_DEFAULT_ORDERBOOK_EP;
     state.stockbitProxyUrl = localStorage.getItem(LS_STOCKBIT_PROXY) || "";
     const savedSrc = localStorage.getItem(LS_STOCKBIT_TOKEN_SOURCE);
     if(savedSrc === "extension" || savedSrc === "manual") state.stockbitTokenSource = savedSrc;
@@ -2692,7 +2990,7 @@ function renderImbalanceBar(bidVol, offerVol) {
     const bidPct = (tb / total) * 100;
     const offerPct = 100 - bidPct;
     return `
-    <div style="margin-top:12px; margin-bottom:12px; padding: 12px; background: rgba(0,0,0,0.2); border-radius: 8px; border: 1px solid var(--border);">
+    <div style="margin-top:12px; margin-bottom:12px; padding: 12px; background: color-mix(in srgb, currentColor 6%, transparent); border-radius: 8px; border: 1px solid var(--border);">
         <div style="font-size:11px; color:var(--muted); text-transform:uppercase; margin-bottom:8px; text-align:center;">⚖️ Tekanan Orderbook (Bid vs Offer)</div>
         <div style="display:flex; justify-content:space-between; font-size:11px; margin-bottom:4px; font-weight:bold;">
             <span style="color:var(--up);">Bid Power: ${bidPct.toFixed(1)}%</span>
@@ -2702,6 +3000,119 @@ function renderImbalanceBar(bidVol, offerVol) {
             <div style="width:${bidPct}%; background:var(--up); height:100%;"></div>
         </div>
     </div>`;
+}
+
+// ==========================================================
+// KARTU ORDERBOOK DEPTH 10-LEVEL (live, Stockbit) — beda dari
+// renderImbalanceBar() di atas: itu snapshot EOD dari tabel `stocks`
+// (top-of-book saja), ini live 10-20 level bid/offer ditarik manual per
+// klik dari Stockbit (lihat fetchStockbitOrderbookDepth). Skema field
+// respons Stockbit-nya masih dugaan (lihat catatan di
+// parseStockbitOrderbookDepth) — makanya selalu ada tombol "Lihat JSON
+// Mentah" supaya kalau tampilannya kosong/aneh, kamu bisa cek & laporkan
+// bentuk asli datanya.
+// ==========================================================
+function renderOrderbookDepthCard(ticker){
+  const st = state.stockbitOrderbook[ticker];
+
+  // Semua permukaan kartu memakai turunan currentColor (color-mix), BUKAN
+  // rgba hitam/putih tetap — supaya kontrasnya benar di mode terang MAUPUN
+  // gelap tanpa perlu tahu palet mana yang sedang aktif.
+  const shell = (accent, body) => `<div style="margin:12px 0; padding:14px; background:${accent || "color-mix(in srgb, currentColor 5%, transparent)"}; border-radius:10px; border:1px solid color-mix(in srgb, currentColor 16%, transparent);">${body}</div>`;
+  const header = `<div style="font-size:12px; font-weight:700; letter-spacing:.03em; margin-bottom:10px; text-align:center;">📶 ORDERBOOK DEPTH 10-LEVEL <span style="font-weight:500; color:var(--muted);">· Live Stockbit</span></div>`;
+  const btn = `<button class="btn btn-outline" data-stockbit-depth-btn="${ticker}" ${st?.loading?"disabled":""} style="width:100%;">${st?.loading?"⏳ Menarik...":"🔴 Tarik Orderbook Depth Live"}</button>`;
+  const rawBlock = (raw, label) => `<details style="margin-top:10px;">
+      <summary style="cursor:pointer;font-size:11px;color:var(--teal);font-weight:600;">🔍 ${label}</summary>
+      <pre style="margin-top:6px;max-height:260px;overflow:auto;font-size:11px;line-height:1.5;background:color-mix(in srgb, currentColor 8%, transparent);padding:10px;border-radius:6px;white-space:pre-wrap;word-break:break-all;">${escapeHtml(JSON.stringify(raw, null, 2).slice(0, 6000))}</pre>
+    </details>`;
+
+  if(!st || (!st.loading && !st.parsed && !st.error)){
+    return shell(null, `${header}${btn}
+      <div style="margin-top:10px;font-size:12px;color:var(--muted);text-align:center;line-height:1.5;">Belum ditarik — data live, tidak disimpan ke histori.<br>Butuh Token Stockbit terisi di ⚙️ Pengaturan.</div>`);
+  }
+  if(st.loading) return shell(null, `${header}${btn}`);
+
+  if(st.error){
+    return shell("color-mix(in srgb, var(--down) 12%, transparent)", `${header}${btn}
+      <div style="margin-top:10px;font-size:12px;color:var(--down);font-weight:600;line-height:1.5;">⚠️ ${escapeHtml(st.error)}</div>
+      ${st.parsed?.raw != null ? rawBlock(st.parsed.raw, "Lihat body respons server") : ""}`);
+  }
+
+  const { bids, asks, unrecognized, empty, note, candidates, topKeys, bidPath, askPath, raw } = st.parsed;
+  const rel = fmtRelativeTimeID(st.fetchedAt);
+
+  // Struktur JSON tidak terbaca sama sekali.
+  if(unrecognized){
+    const hint = [
+      note ? `<div style="margin-top:6px;">${escapeHtml(note)}</div>` : "",
+      topKeys?.length ? `<div style="margin-top:6px;">Kunci yang ada di respons: <span class="mono">${escapeHtml(topKeys.join(", "))}</span></div>` : "",
+      candidates?.length ? `<div style="margin-top:6px;">Array kandidat: <span class="mono">${escapeHtml(candidates.map(c=>`${c.path} (${c.n})`).join(", "))}</span></div>` : "",
+    ].join("");
+    return shell("color-mix(in srgb, var(--gold) 12%, transparent)", `${header}${btn}
+      <div style="margin-top:10px;font-size:12px;color:var(--gold);font-weight:600;line-height:1.5;">⚠️ Respons diterima (${rel}) tapi ladder bid/offer tidak ditemukan.</div>
+      <div style="font-size:11.5px;color:var(--muted);line-height:1.6;">${hint}</div>
+      ${rawBlock(raw, "Lihat JSON Mentah — kirim isinya ke saya untuk dipetakan")}`);
+  }
+
+  const sumBid = bids.reduce((a,l)=>a+l.rawVol,0);
+  const sumAsk = asks.reduce((a,l)=>a+l.rawVol,0);
+
+  // Struktur terbaca tapi antrian nol — ini BUKAN bug, dibedakan supaya tidak
+  // terlihat seperti tampilan gagal yang kosong melompong.
+  if(empty){
+    return shell("color-mix(in srgb, var(--gold) 10%, transparent)", `${header}${btn}
+      <div style="margin-top:10px;font-size:12px;color:var(--gold);font-weight:600;line-height:1.5;">Struktur data terbaca (${bids.length} level bid, ${asks.length} level offer) tapi semua volumenya 0.</div>
+      <div style="margin-top:4px;font-size:11.5px;color:var(--muted);line-height:1.6;">Normal kalau bursa sedang tutup, pre-opening, atau saham disuspend. Coba lagi saat jam bursa (09:00–15:50 WIB).</div>
+      ${rawBlock(raw, "Lihat JSON Mentah")}`);
+  }
+
+  const maxVol = Math.max(1, ...bids.map(b=>b.rawVol), ...asks.map(a=>a.rawVol));
+  const cell = (lvl, side) => {
+    const align = side === "bid" ? "right" : "left";
+    if(!lvl) return `<div style="height:22px;"></div>`;
+    const pct = Math.max(3, (lvl.rawVol / maxVol) * 100);
+    const tone = side === "bid" ? "var(--up)" : "var(--down)";
+    // Bar dijadikan LATAR baris (di belakang teks) supaya angka tetap
+    // terbaca penuh — versi sebelumnya menaruh bar di kolom terpisah
+    // sehingga harga & volume terjepit sempit.
+    const fill = `background:linear-gradient(to ${side==="bid"?"left":"right"}, color-mix(in srgb, ${tone} 30%, transparent) ${pct}%, transparent ${pct}%);`;
+    return `<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;height:22px;padding:0 8px;border-radius:4px;${fill}${side==="bid"?"flex-direction:row-reverse;":""}">
+      <span style="font-weight:700;font-size:12.5px;color:${tone};font-variant-numeric:tabular-nums;">${fmtNum(lvl.price)}</span>
+      <span style="font-size:11.5px;color:var(--muted);font-variant-numeric:tabular-nums;text-align:${align};">${fmtNum(lvl.rawVol)}${lvl.order?` <span style="opacity:.65;">·${lvl.order}</span>`:""}</span>
+    </div>`;
+  };
+  let ladder = "";
+  for(let i=0;i<Math.min(Math.max(bids.length, asks.length), 10);i++){
+    ladder += `<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:3px;">${cell(bids[i],"bid")}${cell(asks[i],"offer")}</div>`;
+  }
+
+  const total = sumBid + sumAsk;
+  const bidPct = total ? (sumBid/total)*100 : 50;
+  const ratio = sumAsk ? (sumBid/sumAsk) : null;
+  const verdict = ratio == null ? "-" : ratio >= 1.5 ? "Tekanan BELI dominan" : ratio <= 0.67 ? "Tekanan JUAL dominan" : "Relatif seimbang";
+  const verdictTone = ratio == null ? "var(--muted)" : ratio >= 1.5 ? "var(--up)" : ratio <= 0.67 ? "var(--down)" : "var(--gold)";
+
+  return shell(null, `${header}${btn}
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin:12px 0 6px;font-size:11px;font-weight:800;letter-spacing:.06em;">
+      <div style="text-align:right;color:var(--up);">BID ◀</div><div style="color:var(--down);">▶ OFFER</div>
+    </div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:6px;font-size:10px;color:var(--muted);">
+      <div style="display:flex;justify-content:space-between;flex-direction:row-reverse;padding:0 8px;"><span>Harga</span><span>Volume</span></div>
+      <div style="display:flex;justify-content:space-between;padding:0 8px;"><span>Harga</span><span>Volume</span></div>
+    </div>
+    ${ladder}
+    <div style="margin-top:12px;padding-top:10px;border-top:1px solid color-mix(in srgb, currentColor 16%, transparent);">
+      <div style="display:flex;justify-content:space-between;font-size:11.5px;font-weight:700;margin-bottom:6px;">
+        <span style="color:var(--up);">Total Bid ${fmtNum(sumBid)}</span>
+        <span style="color:var(--down);">${fmtNum(sumAsk)} Total Offer</span>
+      </div>
+      <div style="height:8px;border-radius:4px;overflow:hidden;display:flex;background:color-mix(in srgb, currentColor 12%, transparent);">
+        <div style="width:${bidPct}%;background:var(--up);"></div><div style="flex:1;background:var(--down);"></div>
+      </div>
+      <div style="margin-top:6px;font-size:11.5px;text-align:center;color:${verdictTone};font-weight:700;">${verdict}${ratio!=null?` · rasio ${ratio.toFixed(2)}x`:""}</div>
+    </div>
+    <div style="margin-top:10px;font-size:10.5px;color:var(--muted);text-align:center;line-height:1.5;">Ditarik ${rel} · sumber field: <span class="mono">${escapeHtml(bidPath||"?")}</span> / <span class="mono">${escapeHtml(askPath||"?")}</span> · satuan volume (lot vs lembar) belum dipastikan</div>
+    ${rawBlock(raw, "Lihat JSON Mentah")}`);
 }
 
 function renderDetailTeknikal(s){
@@ -2728,6 +3139,7 @@ function renderDetailTeknikal(s){
       ${dItem("Offer Vol (Lot)", dNum(s.offerVolume ? s.offerVolume / 100 : 0))}
     </div>
     ${renderImbalanceBar(s.bidVolume, s.offerVolume)}
+    ${renderOrderbookDepthCard(s.ticker)}
 
     <div class="detail-subtitle">Hari Sebelumnya (Pembanding)</div>
     <div class="detail-grid">
@@ -2960,14 +3372,14 @@ function renderStockbitPanel(s){
       <div style="font-size:10.5px;color:var(--muted);margin-bottom:8px;">Ditarik ${secAgo} detik lalu · field yang tidak muncul berarti nama field-nya belum cocok dengan skema respons Stockbit (lihat JSON mentah).</div>
       <details style="margin-bottom:8px;">
         <summary style="cursor:pointer;font-size:11px;color:var(--teal);">Lihat JSON mentah</summary>
-        <pre style="font-size:10.5px;background:rgba(0,0,0,0.3);padding:8px;border-radius:6px;overflow-x:auto;max-height:200px;">${escapeHtml(JSON.stringify(live.raw, null, 2))}</pre>
+        <pre style="font-size:10.5px;background:color-mix(in srgb, currentColor 9%, transparent);padding:8px;border-radius:6px;overflow-x:auto;max-height:200px;">${escapeHtml(JSON.stringify(live.raw, null, 2))}</pre>
       </details>
       <button type="button" class="btn btn-outline" data-stockbit-live="${s.ticker}" style="font-size:11px;color:#f87171;border-color:rgba(239,68,68,0.4);">↻ Refresh</button>
     `;
   }
   const liveStatus = stockbitLiveDataStatus();
   return `
-    <div style="background: linear-gradient(135deg, rgba(30,41,59,0.9), rgba(15,23,42,0.95)); border: 1px solid rgba(239,68,68,0.35); border-radius: 12px; padding: 16px; margin-bottom: 16px;">
+    <div style="background: linear-gradient(135deg, color-mix(in srgb, currentColor 7%, transparent), color-mix(in srgb, currentColor 12%, transparent)); border: 1px solid rgba(239,68,68,0.35); border-radius: 12px; padding: 16px; margin-bottom: 16px;">
       <div style="display:flex; align-items:center; gap: 8px; margin-bottom: 4px;">
         <span style="font-size: 18px;">🔴</span>
         <div style="font-size: 12.5px; font-weight: 700; color: var(--text);">Live Data Stockbit <span style="font-weight:400;color:var(--muted);font-size:10.5px;">(tidak resmi — pakai token akunmu sendiri)</span></div>
@@ -3102,7 +3514,7 @@ function renderDetailAnalisa(s){
     ${renderStockbitPanel(s)}
 
     <!-- SKOR BAGGER — formula_screening_saham_bagger.md -->
-    <div style="background: linear-gradient(135deg, rgba(30,41,59,0.9), rgba(15,23,42,0.95)); border: 1px solid var(--${s.bagger.tone}); border-radius: 12px; padding: 16px; margin-bottom: 16px; box-shadow: 0 4px 15px rgba(0,0,0,0.2);">
+    <div style="background: linear-gradient(135deg, color-mix(in srgb, currentColor 7%, transparent), color-mix(in srgb, currentColor 12%, transparent)); border: 1px solid var(--${s.bagger.tone}); border-radius: 12px; padding: 16px; margin-bottom: 16px; box-shadow: 0 4px 15px rgba(0,0,0,0.2);">
       <div style="display:flex; align-items:center; gap: 8px; margin-bottom: 12px; border-bottom: 1px dashed var(--border); padding-bottom: 12px;">
         <span style="font-size: 20px;">🎯</span>
         <div>
@@ -3135,7 +3547,7 @@ function renderDetailAnalisa(s){
     </div>
 
     <!-- SKOR GABUNGAN ala screener publik: Fundamental 0–60 + Teknikal 0–40 -->
-    <div style="background: linear-gradient(135deg, rgba(30,41,59,0.9), rgba(15,23,42,0.95)); border: 1px solid var(--${ft.tone}); border-radius: 12px; padding: 16px; margin-bottom: 16px; box-shadow: 0 4px 15px rgba(0,0,0,0.2);">
+    <div style="background: linear-gradient(135deg, color-mix(in srgb, currentColor 7%, transparent), color-mix(in srgb, currentColor 12%, transparent)); border: 1px solid var(--${ft.tone}); border-radius: 12px; padding: 16px; margin-bottom: 16px; box-shadow: 0 4px 15px rgba(0,0,0,0.2);">
       <div style="display:flex; align-items:center; gap: 8px; margin-bottom: 12px; border-bottom: 1px dashed var(--border); padding-bottom: 12px;">
         <span style="font-size: 20px;">🧮</span>
         <div>
@@ -3159,7 +3571,7 @@ function renderDetailAnalisa(s){
     </div>
 
     <!-- PANEL AI BARU -->
-    <div style="background: linear-gradient(135deg, rgba(30,41,59,0.9), rgba(15,23,42,0.95)); border: 1px solid var(--${aiTone}); border-radius: 12px; padding: 16px; margin-bottom: 24px; box-shadow: 0 4px 15px rgba(0,0,0,0.2);">
+    <div style="background: linear-gradient(135deg, color-mix(in srgb, currentColor 7%, transparent), color-mix(in srgb, currentColor 12%, transparent)); border: 1px solid var(--${aiTone}); border-radius: 12px; padding: 16px; margin-bottom: 24px; box-shadow: 0 4px 15px rgba(0,0,0,0.2);">
       <div style="display:flex; align-items:center; gap: 8px; margin-bottom: 12px; border-bottom: 1px dashed var(--border); padding-bottom: 12px;">
         <span style="font-size: 20px;">🤖</span>
         <div>
@@ -3550,10 +3962,12 @@ function readDbsEditorRows(side, code, date){
     const broker_code = (brokerEl?.value||"").trim().toUpperCase();
     const value_idr = valEl?.value;
     if(!broker_code || !value_idr) continue;
+    const lot = lotEl?.value ? Number(lotEl.value) : null;
     rows.push({
       stock_code: code, trade_date: date, side, rank: i+1,
-      broker_code, lot: lotEl?.value ? Number(lotEl.value) : null,
-      value_idr: Number(value_idr)
+      broker_code, lot,
+      value_idr: Number(value_idr),
+      avg_price: calcAvgPrice(value_idr, lot)
     });
   }
   return rows;
@@ -5650,7 +6064,7 @@ function renderWsDebug(){
     const isLong = dataStr.length > 200;
     const preview = isLong ? dataStr.slice(0,200) + "…" : dataStr;
     return `
-      <div style="border:1px solid var(--border);border-radius:8px;padding:8px 10px;margin-bottom:6px;background:rgba(255,255,255,0.02);">
+      <div style="border:1px solid var(--border);border-radius:8px;padding:8px 10px;margin-bottom:6px;background:color-mix(in srgb, currentColor 2%, transparent);">
         <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px;flex-wrap:wrap;">
           <span class="mono" style="font-size:10.5px;color:var(--muted);white-space:nowrap;">${escapeHtml(timeStr)}</span>
           ${dirBadge}
@@ -5658,7 +6072,7 @@ function renderWsDebug(){
         </div>
         <details ${isLong ? "" : "open"}>
           ${isLong ? `<summary style="cursor:pointer;font-size:10.5px;color:var(--muted);">${escapeHtml(preview)}</summary>` : ""}
-          <pre class="mono" style="font-size:10.5px;background:rgba(0,0,0,0.25);padding:6px 8px;border-radius:6px;overflow-x:auto;white-space:pre-wrap;word-break:break-all;margin-top:4px;">${escapeHtml(dataStr)}</pre>
+          <pre class="mono" style="font-size:10.5px;background:color-mix(in srgb, currentColor 7%, transparent);padding:6px 8px;border-radius:6px;overflow-x:auto;white-space:pre-wrap;word-break:break-all;margin-top:4px;">${escapeHtml(dataStr)}</pre>
         </details>
       </div>`;
   }).join("") : `<div class="empty-box">Belum ada frame ${frames.length ? "yang cocok filter di atas" : "yang terekam"}.</div>`;
@@ -5687,13 +6101,13 @@ function renderWsDebug(){
         </button>
         <button type="button" class="btn btn-outline" id="wsDebugClearBtn" style="white-space:nowrap;" ${frames.length ? "" : "disabled"}>🗑 Bersihkan Buffer</button>
         <button type="button" class="btn btn-outline" id="wsDebugCopyBtn" style="white-space:nowrap;" ${filtered.length ? "" : "disabled"}>📋 Salin (${filtered.length})</button>
-        <select id="wsDebugFilterDir" style="background:rgba(0,0,0,0.2);border:1px solid var(--border);color:var(--text);font-size:11.5px;border-radius:6px;padding:6px 8px;">
+        <select id="wsDebugFilterDir" style="background:color-mix(in srgb, currentColor 6%, transparent);border:1px solid var(--border);color:var(--text);font-size:11.5px;border-radius:6px;padding:6px 8px;">
           <option value="all" ${dirFilter==="all"?"selected":""}>Semua arah</option>
           <option value="send" ${dirFilter==="send"?"selected":""}>📤 Kirim saja</option>
           <option value="recv" ${dirFilter==="recv"?"selected":""}>📥 Terima saja</option>
         </select>
         <input type="text" id="wsDebugFilterUrl" placeholder="Filter URL berisi..." value="${escapeHtml(state.wsDebugFilterUrl||"")}"
-          style="background:rgba(0,0,0,0.2);border:1px solid var(--border);color:var(--text);font-size:11.5px;border-radius:6px;padding:6px 8px;min-width:160px;">
+          style="background:color-mix(in srgb, currentColor 6%, transparent);border:1px solid var(--border);color:var(--text);font-size:11.5px;border-radius:6px;padding:6px 8px;min-width:160px;">
         <span style="font-size:10.5px;color:var(--muted);white-space:nowrap;">Menyimpan maksimal ${state.wsDebugMaxFrames} frame terbaru (yang lebih lama otomatis dibuang).</span>
       </div>
 
@@ -5765,6 +6179,26 @@ function render(){
       btn.onclick = () => runGeminiAnalysis(btn.dataset.geminiRun);
     });
     document.querySelectorAll("#detailModalContent [data-chart]").forEach(b=> bindInternalLink(b, ()=>{ closeDetail(); loadChart(b.dataset.chart); }));
+
+    // Orderbook Depth 10-level (lihat renderOrderbookDepthCard) -- HARUS
+    // di-wire DI SINI (setelah detailModalContent.innerHTML diisi), BUKAN
+    // di attachContentEvents() yang jalan lebih dulu -- kalau di sana,
+    // querySelectorAll tidak menemukan apa-apa karena tombolnya belum ada
+    // di DOM sama sekali saat itu.
+    document.querySelectorAll("#detailModalContent [data-stockbit-depth-btn]").forEach(btn=>{
+      btn.onclick = (e) => { e.stopPropagation(); fetchStockbitOrderbookDepth(btn.dataset.stockbitDepthBtn); };
+    });
+    // BUG LAMA (sudah ada sebelum perubahan Orderbook Depth) — tombol
+    // "🔴 Tarik Live Sekarang" (renderStockbitPanel, dipakai di tab
+    // Analisa modal) juga cuma di-wire lewat attachContentEvents() yang
+    // jalan SEBELUM detailModalContent diisi, jadi tidak pernah ke-attach
+    // sama sekali untuk instance di dalam modal ini. Wiring global di
+    // attachContentEvents() dibiarkan (masih dipakai tombol yang sama di
+    // tabel Screener, area itu memang di-render sebelum attachContentEvents
+    // jadi wiring-nya valid di sana) -- ini tambahan KHUSUS scope modal.
+    document.querySelectorAll("#detailModalContent [data-stockbit-live]").forEach(btn=>{
+      btn.onclick = (e) => { e.stopPropagation(); fetchStockbitLive(btn.dataset.stockbitLive); };
+    });
 
     // --- Broker Summary di dalam modal Detail Emiten ---
     const dbsDateInput = document.getElementById("dbsDate");
@@ -5929,8 +6363,8 @@ function renderRangeFilter(key, label, opts){
     <div class="field">
       <label>${label}</label>
       <div style="display:flex;gap:4px;">
-        <input type="number" step="${step}" class="range-filter-input mono" data-range="${key}" data-bound="min" placeholder="Min" value="${rf.min}" style="width:64px;background:rgba(0,0,0,0.2);border:1px solid var(--border);color:var(--text);font-size:12px;border-radius:6px;padding:8px 6px;">
-        <input type="number" step="${step}" class="range-filter-input mono" data-range="${key}" data-bound="max" placeholder="Max" value="${rf.max}" style="width:64px;background:rgba(0,0,0,0.2);border:1px solid var(--border);color:var(--text);font-size:12px;border-radius:6px;padding:8px 6px;">
+        <input type="number" step="${step}" class="range-filter-input mono" data-range="${key}" data-bound="min" placeholder="Min" value="${rf.min}" style="width:64px;background:color-mix(in srgb, currentColor 6%, transparent);border:1px solid var(--border);color:var(--text);font-size:12px;border-radius:6px;padding:8px 6px;">
+        <input type="number" step="${step}" class="range-filter-input mono" data-range="${key}" data-bound="max" placeholder="Max" value="${rf.max}" style="width:64px;background:color-mix(in srgb, currentColor 6%, transparent);border:1px solid var(--border);color:var(--text);font-size:12px;border-radius:6px;padding:8px 6px;">
       </div>
     </div>`;
 }
@@ -6072,6 +6506,26 @@ const SCREENER_COLUMNS = [
       if(live.error) return `<td><span style="font-size:10.5px;color:var(--down);" title="${escapeHtml(live.error)}">⚠️ Error</span> <button type="button" class="btn btn-outline" data-stockbit-live="${s.ticker}" style="font-size:10px;padding:2px 6px;margin-left:4px;">↻</button></td>`;
       const m = live.mapped || {};
       const secAgo = Math.max(0, Math.round((Date.now()-live.fetchedAt)/1000));
+      const hasAnyField = m.last!=null || m.open!=null || m.high!=null || m.low!=null || m.bid!=null || m.offer!=null;
+      // Sebelumnya kalau SEMUA field gagal terpetakan, sel ini cuma menampilkan
+      // "-" telanjang, seakan-akan datanya memang kosong — padahal request-nya
+      // BERHASIL (bukan error), cuma parser tidak menemukan field harga yang
+      // dikenalinya di JSON yang dikembalikan endpoint yang sedang dipakai.
+      // Endpoint Orderbook Depth, misalnya, bisa saja hanya membawa ladder
+      // bid/offer tanpa field Open/High/Low/Last sama sekali — itu bukan bug,
+      // tapi keterbatasan data endpoint tsb, dan sekarang dijelaskan eksplisit.
+      if(!hasAnyField){
+        return `<td><div style="font-size:10.5px;line-height:1.5;">
+          <span style="color:var(--gold);">⚠️ Respons OK, tapi field harga tidak ditemukan.</span>
+          <br><span style="color:var(--muted);">Cek endpoint di Pengaturan — mungkin endpoint ini cuma berisi orderbook, bukan harga.</span>
+          <br><span style="color:var(--muted);font-size:10px;">${secAgo}s lalu</span>
+          <button type="button" class="btn btn-outline" data-stockbit-live="${s.ticker}" style="font-size:10px;padding:1px 5px;margin-top:2px;">↻</button>
+          <details style="margin-top:4px;">
+            <summary style="cursor:pointer;color:var(--teal);font-size:10px;">🔍 JSON Mentah</summary>
+            <pre style="margin-top:4px;max-height:180px;overflow:auto;font-size:9.5px;background:color-mix(in srgb, currentColor 8%, transparent);padding:6px;border-radius:6px;white-space:pre-wrap;word-break:break-all;">${escapeHtml(JSON.stringify(live.raw, null, 2).slice(0,3000))}</pre>
+          </details>
+        </div></td>`;
+      }
       return `<td><div class="mono" style="font-size:11.5px;line-height:1.5;">
         ${m.last!=null ? `Last: <b>${fmtNum(m.last)}</b>` : "-"}
         ${(m.open!=null||m.high!=null||m.low!=null) ? `<br>O/H/L: ${fmtNum(m.open)}/${fmtNum(m.high)}/${fmtNum(m.low)}` : ""}
@@ -6823,7 +7277,7 @@ function renderRuleBuilder(){
       </div>` : ""}
       <div style="display:flex;align-items:center;gap:10px;margin-top:14px;flex-wrap:wrap;padding-top:12px;border-top:1px solid var(--border);">
         <label style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;flex:1 1 100%;">Sortir Hasil (opsional)</label>
-        <input type="text" id="ruleSortInput" list="metricDatalistSort" autocomplete="off" placeholder="Cari metrik untuk sortir, mis. Turnover..." value="${escapeHtml(currentSortLabel)}" style="flex:1 1 220px;min-width:0;background:rgba(0,0,0,0.2);border:1px solid var(--border);color:var(--text);font-size:12.5px;border-radius:7px;padding:8px 9px;">
+        <input type="text" id="ruleSortInput" list="metricDatalistSort" autocomplete="off" placeholder="Cari metrik untuk sortir, mis. Turnover..." value="${escapeHtml(currentSortLabel)}" style="flex:1 1 220px;min-width:0;background:color-mix(in srgb, currentColor 6%, transparent);border:1px solid var(--border);color:var(--text);font-size:12.5px;border-radius:7px;padding:8px 9px;">
         <div style="display:flex;gap:6px;flex-wrap:wrap;">
           <button type="button" class="btn btn-outline" id="ruleSortAscBtn" ${!state.sort.col ? "disabled" : ""} ${state.sort.col && state.sort.asc ? 'style="color:#34d399;border-color:rgba(16,185,129,0.5);"' : ""} title="Urutkan naik (kecil→besar / A→Z)">▲ Naik</button>
           <button type="button" class="btn btn-outline" id="ruleSortDescBtn" ${!state.sort.col ? "disabled" : ""} ${state.sort.col && !state.sort.asc ? 'style="color:#34d399;border-color:rgba(16,185,129,0.5);"' : ""} title="Urutkan turun (besar→kecil / Z→A)">▼ Turun</button>
@@ -6834,7 +7288,7 @@ function renderRuleBuilder(){
         <label style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;flex:1 1 100%;">Preset Tersimpan</label>
         
         <!-- PERBAIKAN DI SINI: min-width:0 dan flex:1 1 100% agar responsif -->
-        <select id="presetSelect" style="background:rgba(0,0,0,0.2);border:1px solid var(--border);color:var(--text);font-size:12.5px;border-radius:7px;padding:8px 9px;min-width:0;flex:1 1 100%;width:100%;max-width:100%;">
+        <select id="presetSelect" style="background:color-mix(in srgb, currentColor 6%, transparent);border:1px solid var(--border);color:var(--text);font-size:12.5px;border-radius:7px;padding:8px 9px;min-width:0;flex:1 1 100%;width:100%;max-width:100%;">
           <option value="">${state.customPresets.length ? '— pilih preset —' : 'Belum ada preset tersimpan'}</option>
           ${presetOptions}
         </select>
@@ -6995,7 +7449,7 @@ function renderScreener(){
         </div>
         <div class="field">
           <label>Baris / Hal</label>
-          <select id="pageSizeSelect" style="background:rgba(0,0,0,0.2);border:1px solid var(--border);color:var(--text);font-size:13px;border-radius:8px;padding:9.5px 12px; transition:0.2s;">
+          <select id="pageSizeSelect" style="background:color-mix(in srgb, currentColor 6%, transparent);border:1px solid var(--border);color:var(--text);font-size:13px;border-radius:8px;padding:9.5px 12px; transition:0.2s;">
             ${PAGE_SIZE_OPTIONS.map(n=>`<option value="${n}" ${String(state.limit)===String(n)?'selected':''}>${n}</option>`).join("")}
             <option value="all" ${state.limit==="all"?'selected':''}>Semua</option>
           </select>
@@ -7032,7 +7486,7 @@ function renderScreener(){
               <input type="checkbox" id="stockbitAutoRefreshChk" class="custom-checkbox" style="margin:0;" ${state.stockbitAutoRefresh ? "checked" : ""}>
               🔄 Auto-refresh
             </label>
-            <select id="stockbitAutoRefreshSec" style="background:rgba(0,0,0,0.2);border:1px solid var(--border);color:var(--text);font-size:11.5px;border-radius:6px;padding:4px 6px;">
+            <select id="stockbitAutoRefreshSec" style="background:color-mix(in srgb, currentColor 6%, transparent);border:1px solid var(--border);color:var(--text);font-size:11.5px;border-radius:6px;padding:4px 6px;">
               ${[30,60,120,300].map(s=>`<option value="${s}" ${String(state.stockbitAutoRefreshIntervalSec)===String(s)?'selected':''}>${s<60?s+'d':(s/60)+'m'}</option>`).join("")}
             </select>
           </div>
@@ -7049,12 +7503,12 @@ function renderScreener(){
             <input type="date" id="screenerBsFromInput"
               value="${state.bsAutoBulkFrom||""}"
               ${state.stockbitBrokerBulkLoading ? "disabled" : ""}
-              style="padding:9.5px 8px; border-radius:8px; border:1px solid var(--border); background:rgba(0,0,0,0.2); color:var(--text); font-size:12px;">
+              style="padding:9.5px 8px; border-radius:8px; border:1px solid var(--border); background:color-mix(in srgb, currentColor 6%, transparent); color:var(--text); font-size:12px;">
             <span style="color:var(--muted); font-size:11px;">&ndash;</span>
             <input type="date" id="screenerBsToInput"
               value="${state.bsAutoBulkTo||""}"
               ${state.stockbitBrokerBulkLoading ? "disabled" : ""}
-              style="padding:9.5px 8px; border-radius:8px; border:1px solid var(--border); background:rgba(0,0,0,0.2); color:var(--text); font-size:12px;">
+              style="padding:9.5px 8px; border-radius:8px; border:1px solid var(--border); background:color-mix(in srgb, currentColor 6%, transparent); color:var(--text); font-size:12px;">
             <button type="button" class="btn btn-outline" id="screenerBsBulkBtn"
               ${state.stockbitBrokerBulkLoading ? "disabled" : ""}
               style="color:#f87171;border-color:rgba(239,68,68,0.4);white-space:nowrap;"
@@ -7071,12 +7525,12 @@ function renderScreener(){
             <input type="date" id="screenerHdFromInput"
               value="${state.hdAutoBulkFrom||""}"
               ${state.stockbitHistoricalBulkLoading ? "disabled" : ""}
-              style="padding:9.5px 8px; border-radius:8px; border:1px solid var(--border); background:rgba(0,0,0,0.2); color:var(--text); font-size:12px;">
+              style="padding:9.5px 8px; border-radius:8px; border:1px solid var(--border); background:color-mix(in srgb, currentColor 6%, transparent); color:var(--text); font-size:12px;">
             <span style="color:var(--muted); font-size:11px;">&ndash;</span>
             <input type="date" id="screenerHdToInput"
               value="${state.hdAutoBulkTo||""}"
               ${state.stockbitHistoricalBulkLoading ? "disabled" : ""}
-              style="padding:9.5px 8px; border-radius:8px; border:1px solid var(--border); background:rgba(0,0,0,0.2); color:var(--text); font-size:12px;">
+              style="padding:9.5px 8px; border-radius:8px; border:1px solid var(--border); background:color-mix(in srgb, currentColor 6%, transparent); color:var(--text); font-size:12px;">
             <button type="button" class="btn btn-outline" id="screenerHdBulkBtn"
               ${state.stockbitHistoricalBulkLoading ? "disabled" : ""}
               style="color:#a78bfa;border-color:rgba(167,139,250,0.4);white-space:nowrap;"
@@ -7105,38 +7559,50 @@ function renderScreener(){
         </div>` : ""}
 
       <div class="filter-section">
-        <div class="filter-section-title">Klasifikasi Emiten<span class="line"></span></div>
-        <div class="filter-grid">
-          ${renderMultiSelect("sektor", "Sektor", getOpts("sektor"))}
-          ${renderMultiSelect("syariahLabel", "Syariah", getOpts("syariahLabel"))}
-          ${renderMultiSelect("capTier", "Market Cap", ["Mega", "Big", "Mid", "Small", "Micro", "Tidak tersedia"])}
-          ${renderMultiSelect("lq45", "LQ45", ["Ya", "Tidak", "Tidak tersedia"])}
-        </div>
-        <div style="font-size:10.5px;color:var(--muted);margin-top:6px;line-height:1.5;" title="Mega >100T · Big 10–100T · Mid 1–10T · Small 100M–1T · Micro <100M">
-          📐 Kategori Cap: Mega &gt;100T · Big 10–100T · Mid 1–10T · Small 100M–1T · Micro &lt;100M (Rp). Kolom "Tidak tersedia" muncul kalau market_cap belum ada di DB — saat itu filter Cap tidak bisa memilah.
-        </div>
-      </div>
-
-      <div class="filter-section">
-        <div class="filter-section-title">Trend & Sinyal Teknikal<span class="line"></span></div>
-        <div class="filter-grid">
-          ${renderMultiSelect("trendHarga", "Trend Harga (MA)", getOpts("trendHarga"))}
-          ${renderMultiSelect("cekMacd", "Sinyal MACD", getOpts("cekMacd"))}
-          ${renderMultiSelect("cekHarga", "Sinyal Harga (EMA)", getOpts("cekHarga"))}
-          ${renderMultiSelect("cekRsi", "Sinyal RSI", getOpts("cekRsi"))}
-          ${renderMultiSelect("statusRsi", "Status RSI", getOpts("statusRsi"))}
-          ${renderMultiSelect("polaCandle", "Pola Candle", getOpts("polaCandle"))}
+        <button type="button" class="adv-toggle ${state.showFilterKlasifikasi ? 'open' : ''}" id="filterKlasifikasiToggleBtn">
+          <span class="chev">▶</span> Klasifikasi Emiten
+        </button>
+        <div class="adv-body ${state.showFilterKlasifikasi ? 'open' : ''}">
+          <div class="filter-grid">
+            ${renderMultiSelect("sektor", "Sektor", getOpts("sektor"))}
+            ${renderMultiSelect("syariahLabel", "Syariah", getOpts("syariahLabel"))}
+            ${renderMultiSelect("capTier", "Market Cap", ["Mega", "Big", "Mid", "Small", "Micro", "Tidak tersedia"])}
+            ${renderMultiSelect("lq45", "LQ45", ["Ya", "Tidak", "Tidak tersedia"])}
+          </div>
+          <div style="font-size:10.5px;color:var(--muted);margin-top:6px;line-height:1.5;" title="Mega >100T · Big 10–100T · Mid 1–10T · Small 100M–1T · Micro <100M">
+            📐 Kategori Cap: Mega &gt;100T · Big 10–100T · Mid 1–10T · Small 100M–1T · Micro &lt;100M (Rp). Kolom "Tidak tersedia" muncul kalau market_cap belum ada di DB — saat itu filter Cap tidak bisa memilah.
+          </div>
         </div>
       </div>
 
       <div class="filter-section">
-        <div class="filter-section-title">Momentum, Volume & Keyakinan<span class="line"></span></div>
-        <div class="filter-grid">
-          ${renderMultiSelect("sinyalVolume", "Sinyal Volume", getOpts("sinyalVolume"))}
-          ${renderMultiSelect("sinyalFrekuensi", "Sinyal Frekuensi", getOpts("sinyalFrekuensi"))}
-          ${renderMultiSelect("keyakinanNaik", "Keyakinan Naik", getOpts("keyakinanNaik"))}
-          ${renderMultiSelect("band", "Bandarmologi", getOpts("band"))}
-          ${renderMultiSelect("uangGedeMasuk", "Uang Gede Masuk", getOpts("uangGedeMasuk"))}
+        <button type="button" class="adv-toggle ${state.showFilterTrend ? 'open' : ''}" id="filterTrendToggleBtn">
+          <span class="chev">▶</span> Trend & Sinyal Teknikal
+        </button>
+        <div class="adv-body ${state.showFilterTrend ? 'open' : ''}">
+          <div class="filter-grid">
+            ${renderMultiSelect("trendHarga", "Trend Harga (MA)", getOpts("trendHarga"))}
+            ${renderMultiSelect("cekMacd", "Sinyal MACD", getOpts("cekMacd"))}
+            ${renderMultiSelect("cekHarga", "Sinyal Harga (EMA)", getOpts("cekHarga"))}
+            ${renderMultiSelect("cekRsi", "Sinyal RSI", getOpts("cekRsi"))}
+            ${renderMultiSelect("statusRsi", "Status RSI", getOpts("statusRsi"))}
+            ${renderMultiSelect("polaCandle", "Pola Candle", getOpts("polaCandle"))}
+          </div>
+        </div>
+      </div>
+
+      <div class="filter-section">
+        <button type="button" class="adv-toggle ${state.showFilterMomentum ? 'open' : ''}" id="filterMomentumToggleBtn">
+          <span class="chev">▶</span> Momentum, Volume & Keyakinan
+        </button>
+        <div class="adv-body ${state.showFilterMomentum ? 'open' : ''}">
+          <div class="filter-grid">
+            ${renderMultiSelect("sinyalVolume", "Sinyal Volume", getOpts("sinyalVolume"))}
+            ${renderMultiSelect("sinyalFrekuensi", "Sinyal Frekuensi", getOpts("sinyalFrekuensi"))}
+            ${renderMultiSelect("keyakinanNaik", "Keyakinan Naik", getOpts("keyakinanNaik"))}
+            ${renderMultiSelect("band", "Bandarmologi", getOpts("band"))}
+            ${renderMultiSelect("uangGedeMasuk", "Uang Gede Masuk", getOpts("uangGedeMasuk"))}
+          </div>
         </div>
       </div>
 
@@ -7362,21 +7828,21 @@ function renderBacktest(){
 
     const sessionSummary = `
       <div style="display:grid; grid-template-columns:repeat(auto-fit,minmax(120px,1fr)); gap:12px; margin-bottom:16px;">
-        <div style="background:rgba(0,0,0,0.2); border:1px solid var(--border); border-radius:8px; padding:12px; border-top: 3px solid var(--${winTone});">
+        <div style="background:color-mix(in srgb, currentColor 6%, transparent); border:1px solid var(--border); border-radius:8px; padding:12px; border-top: 3px solid var(--${winTone});">
           <div style="font-size:10.5px; color:var(--muted); text-transform:uppercase; font-weight:600; margin-bottom:4px;">Win Rate</div>
           <div style="font-size:18px; font-weight:700; font-family:'JetBrains Mono',monospace; color:var(--text);">${winRate}%</div>
           <div style="font-size:11px; margin-top:4px; font-family:'JetBrains Mono',monospace;"><span style="color:var(--up);">${winCount} menang</span> <span style="color:var(--muted);">/</span> <span style="color:var(--down);">${lossCount} kalah</span></div>
         </div>
-        <div style="background:rgba(0,0,0,0.2); border:1px solid var(--border); border-radius:8px; padding:12px; border-top: 3px solid var(--${avgTone});">
+        <div style="background:color-mix(in srgb, currentColor 6%, transparent); border:1px solid var(--border); border-radius:8px; padding:12px; border-top: 3px solid var(--${avgTone});">
           <div style="font-size:10.5px; color:var(--muted); text-transform:uppercase; font-weight:600; margin-bottom:4px;">Rata-rata P/L</div>
           <div style="font-size:18px; font-weight:700; font-family:'JetBrains Mono',monospace; color:var(--${avgTone});">${avgPL > 0 ? '+' : ''}${avgPL}%</div>
         </div>
-        <div style="background:rgba(0,0,0,0.2); border:1px solid var(--border); border-radius:8px; padding:12px; border-top: 3px solid var(--up);">
+        <div style="background:color-mix(in srgb, currentColor 6%, transparent); border:1px solid var(--border); border-radius:8px; padding:12px; border-top: 3px solid var(--up);">
           <div style="font-size:10.5px; color:var(--muted); text-transform:uppercase; font-weight:600; margin-bottom:4px;">P/L Tertinggi</div>
           <div style="font-size:18px; font-weight:700; font-family:'JetBrains Mono',monospace; color:var(--up);">${bestPL > 0 ? '+' : ''}${bestPL}%</div>
           <div style="font-size:11px; margin-top:4px; font-family:'JetBrains Mono',monospace;"><span style="color:var(--up);">${winCountMax} menang</span> <span style="color:var(--muted);">/</span> <span style="color:var(--down);">${lossCountMax} kalah</span></div>
         </div>
-        <div style="background:rgba(0,0,0,0.2); border:1px solid var(--border); border-radius:8px; padding:12px; border-top: 3px solid var(--down);">
+        <div style="background:color-mix(in srgb, currentColor 6%, transparent); border:1px solid var(--border); border-radius:8px; padding:12px; border-top: 3px solid var(--down);">
           <div style="font-size:10.5px; color:var(--muted); text-transform:uppercase; font-weight:600; margin-bottom:4px;">P/L Terendah</div>
           <div style="font-size:18px; font-weight:700; font-family:'JetBrains Mono',monospace; color:var(--down);">${worstPL > 0 ? '+' : ''}${worstPL}%</div>
         </div>
@@ -7682,11 +8148,11 @@ function renderDashMetricModal(){
     extraHtml = `
       <div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:14px;">
         ${[["Skor < 35",buckets[0],"var(--down)"],["35–49",buckets[1],"var(--muted)"],["50–74",buckets[2],"var(--gold)"],["≥ 75",buckets[3],"var(--up)"]].map(([l,v,c])=>`
-          <div style="flex:1;min-width:110px;background:rgba(0,0,0,.2);border:1px solid var(--border);border-radius:10px;padding:10px 12px;">
+          <div style="flex:1;min-width:110px;background:color-mix(in srgb, currentColor 6%, transparent);border:1px solid var(--border);border-radius:10px;padding:10px 12px;">
             <div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;">${l}</div>
             <div style="font-size:20px;font-weight:800;color:${c};font-family:'JetBrains Mono',monospace;">${v}</div>
           </div>`).join("")}
-        <div style="flex:1;min-width:110px;background:rgba(0,0,0,.2);border:1px solid var(--border);border-radius:10px;padding:10px 12px;">
+        <div style="flex:1;min-width:110px;background:color-mix(in srgb, currentColor 6%, transparent);border:1px solid var(--border);border-radius:10px;padding:10px 12px;">
           <div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;">Rata-rata</div>
           <div style="font-size:20px;font-weight:800;font-family:'JetBrains Mono',monospace;">${avg.toFixed(1)}</div>
         </div>
@@ -7696,11 +8162,11 @@ function renderDashMetricModal(){
     const top5 = all.slice(0,5).reduce((a,s)=>a+(Number(s.turnover ?? s.valueTraded ?? 0)||0),0);
     extraHtml = `
       <div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:14px;">
-        <div style="flex:1;min-width:140px;background:rgba(0,0,0,.2);border:1px solid var(--border);border-radius:10px;padding:10px 12px;">
+        <div style="flex:1;min-width:140px;background:color-mix(in srgb, currentColor 6%, transparent);border:1px solid var(--border);border-radius:10px;padding:10px 12px;">
           <div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;">Total Pasar</div>
           <div style="font-size:20px;font-weight:800;color:var(--teal);font-family:'JetBrains Mono',monospace;">${fmtCap(tot)}</div>
         </div>
-        <div style="flex:1;min-width:140px;background:rgba(0,0,0,.2);border:1px solid var(--border);border-radius:10px;padding:10px 12px;">
+        <div style="flex:1;min-width:140px;background:color-mix(in srgb, currentColor 6%, transparent);border:1px solid var(--border);border-radius:10px;padding:10px 12px;">
           <div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;">Konsentrasi Top 5</div>
           <div style="font-size:20px;font-weight:800;font-family:'JetBrains Mono',monospace;">${tot>0?Math.round(top5/tot*100):0}%</div>
         </div>
@@ -7859,21 +8325,21 @@ function renderBrokerStalker(){
       .broker-stalker-page .bs2-tabs{display:flex;gap:8px;margin:10px 0 16px;}
       .broker-stalker-page .bs2-tab{padding:8px 16px;border-radius:8px;border:1px solid var(--border);background:transparent;color:var(--muted);font-weight:700;font-size:12px;cursor:pointer;letter-spacing:.03em;}
       .broker-stalker-page .bs2-tab.active{background:linear-gradient(90deg,#7c5cff,#5b8cff);border-color:transparent;color:#fff;}
-      .broker-stalker-page .bs2-card{background:rgba(255,255,255,0.02);border:1px solid var(--border);border-radius:12px;padding:16px;margin-bottom:16px;}
+      .broker-stalker-page .bs2-card{background:color-mix(in srgb, currentColor 2%, transparent);border:1px solid var(--border);border-radius:12px;padding:16px;margin-bottom:16px;}
       .broker-stalker-page .bs2-card-title{display:flex;align-items:center;gap:8px;font-weight:800;letter-spacing:.03em;font-size:13px;margin-bottom:14px;}
       .broker-stalker-page .bs2-label{font-size:11px;color:var(--muted);font-weight:700;letter-spacing:.04em;display:block;margin-bottom:6px;}
-      .broker-stalker-page .bs2-input-big{width:100%;background:rgba(255,255,255,0.03);border:1px solid var(--border);border-radius:8px;padding:12px 14px;color:var(--text);font-weight:800;font-size:15px;letter-spacing:.03em;text-transform:uppercase;box-sizing:border-box;}
+      .broker-stalker-page .bs2-input-big{width:100%;background:color-mix(in srgb, currentColor 3%, transparent);border:1px solid var(--border);border-radius:8px;padding:12px 14px;color:var(--text);font-weight:800;font-size:15px;letter-spacing:.03em;text-transform:uppercase;box-sizing:border-box;}
       .broker-stalker-page .bs2-row{display:flex;gap:24px;flex-wrap:wrap;margin-top:16px;}
       .broker-stalker-page .bs2-chipset{display:flex;gap:6px;flex-wrap:wrap;}
       .broker-stalker-page .bs2-chip{padding:6px 12px;border-radius:6px;border:1px solid var(--border);background:transparent;color:var(--muted);font-size:11px;font-weight:700;cursor:pointer;}
       .broker-stalker-page .bs2-chip.active{background:#7c5cff;border-color:#7c5cff;color:#fff;}
       .broker-stalker-page .bs2-range{display:flex;gap:8px;align-items:center;margin-top:8px;}
-      .broker-stalker-page .bs2-range input{background:rgba(255,255,255,0.03);border:1px solid var(--border);border-radius:6px;padding:6px 8px;color:var(--text);font-size:12px;}
-      .broker-stalker-page .bs2-select{background:rgba(255,255,255,0.03);border:1px solid var(--border);border-radius:6px;padding:8px 10px;color:var(--muted);font-size:12px;}
+      .broker-stalker-page .bs2-range input{background:color-mix(in srgb, currentColor 3%, transparent);border:1px solid var(--border);border-radius:6px;padding:6px 8px;color:var(--text);font-size:12px;}
+      .broker-stalker-page .bs2-select{background:color-mix(in srgb, currentColor 3%, transparent);border:1px solid var(--border);border-radius:6px;padding:8px 10px;color:var(--muted);font-size:12px;}
       .broker-stalker-page .bs2-cta{margin-top:18px;width:100%;padding:14px;border:none;border-radius:8px;background:linear-gradient(90deg,#22d3ee,#34d399);color:#04211c;font-weight:800;font-size:13px;letter-spacing:.05em;cursor:pointer;}
       .broker-stalker-page .bs2-cta:disabled{opacity:.6;cursor:wait;}
       .broker-stalker-page .bs2-head{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;}
-      .broker-stalker-page .bs2-results-search{background:rgba(255,255,255,0.03);border:1px solid var(--border);border-radius:6px;padding:6px 10px;color:var(--text);font-size:12px;width:160px;}
+      .broker-stalker-page .bs2-results-search{background:color-mix(in srgb, currentColor 3%, transparent);border:1px solid var(--border);border-radius:6px;padding:6px 10px;color:var(--text);font-size:12px;width:160px;}
       .broker-stalker-page .bs2-summary-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin:14px 0;}
       .broker-stalker-page .bs2-summary-card{border:1px solid var(--border);border-radius:8px;padding:10px 12px;text-align:center;}
       .broker-stalker-page .bs2-summary-card .lab{font-size:10px;color:var(--muted);font-weight:700;letter-spacing:.04em;}
@@ -7882,7 +8348,7 @@ function renderBrokerStalker(){
       .broker-stalker-page .bs2-domsplit-bar{flex:1;height:8px;border-radius:4px;overflow:hidden;display:flex;background:var(--border);}
       .broker-stalker-page .bs2-chart-toggle{width:100%;text-align:center;padding:8px;border-radius:6px;border:1px solid var(--border);background:transparent;color:var(--teal);font-size:11px;font-weight:700;cursor:pointer;margin:10px 0;}
       .broker-stalker-page .bs2-chart{display:flex;align-items:flex-end;gap:3px;height:90px;margin:6px 0 16px;}
-      .broker-stalker-page .bs2-chart-bar{flex:1;height:100%;display:flex;align-items:flex-end;background:rgba(255,255,255,0.03);border-radius:2px;}
+      .broker-stalker-page .bs2-chart-bar{flex:1;height:100%;display:flex;align-items:flex-end;background:color-mix(in srgb, currentColor 3%, transparent);border-radius:2px;}
       .broker-stalker-page .bs2-chart-bar-fill{width:100%;border-radius:2px;}
       .broker-stalker-page .bs2-broker-row{display:flex;align-items:center;gap:12px;padding:12px 4px;border-bottom:1px solid var(--border);}
       .broker-stalker-page .bs2-broker-row:last-child{border-bottom:none;}
@@ -8125,7 +8591,7 @@ function renderSektoral(){
         </div>
         <div class="field">
           <label>Urutkan Saham</label>
-          <select id="sektorSortSelect" style="background:rgba(0,0,0,0.2);border:1px solid var(--border);color:var(--text);padding:10px 12px;border-radius:8px;font-size:12.5px;">
+          <select id="sektorSortSelect" style="background:color-mix(in srgb, currentColor 6%, transparent);border:1px solid var(--border);color:var(--text);padding:10px 12px;border-radius:8px;font-size:12.5px;">
             <option value="changeDesc" ${state.sektorSort==='changeDesc'?'selected':''}>%Perubahan: Tertinggi</option>
             <option value="changeAsc" ${state.sektorSort==='changeAsc'?'selected':''}>%Perubahan: Terendah</option>
             <option value="turnoverDesc" ${state.sektorSort==='turnoverDesc'?'selected':''}>Turnover Terbesar</option>
@@ -8718,7 +9184,7 @@ function drawChartSVG(){
   const yScale=v=>T+mainH-((v-yMin)/(yMax-yMin))*mainH;
   const linePath=(arr,value)=>arr.map((d,i)=>`${i?'L':'M'}${xScale(i).toFixed(1)},${yScale(value(d,i)).toFixed(1)}`).join(' ');
   let html='';
-  for(let i=0;i<=5;i++){ const y=T+i*mainH/5, val=yMax-i*(yMax-yMin)/5; html+=`<line x1="${L}" y1="${y}" x2="${W-R}" y2="${y}" stroke="rgba(255,255,255,.06)" stroke-dasharray="4,4"/><text x="5" y="${y+4}" fill="var(--muted)" font-size="${fs(11)}" font-family="JetBrains Mono,monospace">${fmtNum(Math.round(val))}</text>`; }
+  for(let i=0;i<=5;i++){ const y=T+i*mainH/5, val=yMax-i*(yMax-yMin)/5; html+=`<line x1="${L}" y1="${y}" x2="${W-R}" y2="${y}" stroke="color-mix(in srgb, currentColor 5%, transparent)" stroke-dasharray="4,4"/><text x="5" y="${y+4}" fill="var(--muted)" font-size="${fs(11)}" font-family="JetBrains Mono,monospace">${fmtNum(Math.round(val))}</text>`; }
   const drawLevel=(val,color,label,dashed,visible)=>{ if(!visible||val==null||isNaN(val))return; const y=yScale(val); html+=`<line x1="${L}" y1="${y}" x2="${W-R}" y2="${y}" stroke="${color}" stroke-width="1.7" ${dashed?'stroke-dasharray="6,5"':''} opacity=".85"/><text x="${W-R+7}" y="${(y+4).toFixed(1)}" fill="${color}" font-size="${fs(10.5)}" font-family="JetBrains Mono,monospace" font-weight="600">${label}</text>`; };
   if(lv){ drawLevel(lv.support,'var(--down)',fmtNum(Math.round(lv.support)),false,on('support')); drawLevel(lv.resistance,'var(--up)',fmtNum(Math.round(lv.resistance)),false,on('resistance')); if(lv.fib){drawLevel(lv.fib.f382,'#94a3b8','Fib38',true,on('fib'));drawLevel(lv.fib.f50,'#94a3b8','Fib50',true,on('fib'));drawLevel(lv.fib.f618,'#94a3b8','Fib61',true,on('fib'));}}
 
@@ -8779,13 +9245,13 @@ function drawChartSVG(){
   let sTop=T+mainH+gap;
   subKeys.forEach(k=>{
     const h=subH[k];
-    html+=`<line x1="${L}" y1="${sTop+h}" x2="${W-R}" y2="${sTop+h}" stroke="rgba(255,255,255,.10)"/>`;
+    html+=`<line x1="${L}" y1="${sTop+h}" x2="${W-R}" y2="${sTop+h}" stroke="color-mix(in srgb, currentColor 8%, transparent)"/>`;
     if(k==='bandar'){
       const vals=bandar.filter(v=>v!=null&&!isNaN(v));
       const vmax=Math.max(...vals.map(v=>Math.abs(v)))||1;
       const yB=v=>sTop+h/2-(v/vmax)*(h/2-8);
       const bw=Math.max(1.2,plotW/plotted.length*0.6);
-      html+=`<line x1="${L}" y1="${sTop+h/2}" x2="${W-R}" y2="${sTop+h/2}" stroke="rgba(255,255,255,.12)"/>`;
+      html+=`<line x1="${L}" y1="${sTop+h/2}" x2="${W-R}" y2="${sTop+h/2}" stroke="color-mix(in srgb, currentColor 10%, transparent)"/>`;
       bandar.forEach((v,i)=>{ if(v==null)return; const y0=yB(0),y1=yB(v); html+=`<rect x="${(xScale(i)-bw/2).toFixed(1)}" y="${Math.min(y0,y1).toFixed(1)}" width="${bw.toFixed(1)}" height="${Math.max(1,Math.abs(y1-y0)).toFixed(1)}" fill="${v>=0?'rgba(16,185,129,.6)':'rgba(239,68,68,.6)'}"/>`; });
       html+=`<text x="5" y="${sTop+12}" fill="#22c55e" font-size="${fs(10)}" font-family="JetBrains Mono,monospace" font-weight="700">BANDAR VOLUME</text>`;
       const lb=lastVal(bandar); if(lb!=null)html+=`<text x="${W-R+7}" y="${sTop+12}" fill="${lb>=0?'#22c55e':'#ef4444'}" font-size="${fs(10)}" font-family="JetBrains Mono,monospace">${fmtNum(Math.round(lb))}</text>`;
@@ -8804,7 +9270,7 @@ function drawChartSVG(){
     }
     if(k==='stochrsi'){
       const yR=v=>sTop+h-((v-0)/100)*h;
-      [20,50,80].forEach(g=>{const y=yR(g);html+=`<line x1="${L}" y1="${y}" x2="${W-R}" y2="${y}" stroke="${g===50?'rgba(255,255,255,.06)':'rgba(239,68,68,.25)'}" stroke-dasharray="3,4"/>`;});
+      [20,50,80].forEach(g=>{const y=yR(g);html+=`<line x1="${L}" y1="${y}" x2="${W-R}" y2="${y}" stroke="${g===50?'color-mix(in srgb, currentColor 5%, transparent)':'rgba(239,68,68,.25)'}" stroke-dasharray="3,4"/>`;});
       const linePts=arr=>arr.map((v,i)=>v==null?'':`${i?'L':'M'}${xScale(i).toFixed(1)},${yR(v).toFixed(1)}`).filter(Boolean).join(' ');
       html+=`<path d="${linePts(stochD)}" fill="none" stroke="#ef4444" stroke-width="1.6"/>`;
       html+=`<path d="${linePts(stochK)}" fill="none" stroke="#22c55e" stroke-width="1.6"/>`;
@@ -8815,7 +9281,7 @@ function drawChartSVG(){
     }
     if(k==='rsi721'){
       const yR=v=>sTop+h-((v-0)/100)*h;
-      [30,50,70].forEach(g=>{const y=yR(g);html+=`<line x1="${L}" y1="${y}" x2="${W-R}" y2="${y}" stroke="${g===50?'rgba(255,255,255,.06)':'rgba(244,114,182,.25)'}" stroke-dasharray="3,4"/>`;});
+      [30,50,70].forEach(g=>{const y=yR(g);html+=`<line x1="${L}" y1="${y}" x2="${W-R}" y2="${y}" stroke="${g===50?'color-mix(in srgb, currentColor 5%, transparent)':'rgba(244,114,182,.25)'}" stroke-dasharray="3,4"/>`;});
       const linePts=arr=>arr.map((v,i)=>v==null?'':`${i?'L':'M'}${xScale(i).toFixed(1)},${yR(v).toFixed(1)}`).filter(Boolean).join(' ');
       html+=`<path d="${linePts(rsi21)}" fill="none" stroke="#60a5fa" stroke-width="1.6"/>`;
       html+=`<path d="${linePts(rsi7)}" fill="none" stroke="#22c55e" stroke-width="1.8"/>`;
@@ -8840,7 +9306,7 @@ function drawChartSVG(){
       const bw=Math.max(1.2,plotW/plotted.length*0.6);
       macd.forEach((m2,i)=>{const hv=m2-macdSig[i];if(m2==null||isNaN(m2)||macdSig[i]==null)return;const y0=yM(0),y1=yM(hv);html+=`<rect x="${(xScale(i)-bw/2).toFixed(1)}" y="${Math.min(y0,y1).toFixed(1)}" width="${bw.toFixed(1)}" height="${Math.max(1,Math.abs(y1-y0)).toFixed(1)}" fill="${hv>=0?'rgba(16,185,129,.5)':'rgba(239,68,68,.5)'}"/>`;});
       const lp=arr=>arr.map((v,i)=>v==null||isNaN(v)?'':`${i?'L':'M'}${xScale(i).toFixed(1)},${yM(v).toFixed(1)}`).filter(Boolean).join(' ');
-      html+=`<line x1="${L}" y1="${yM(0)}" x2="${W-R}" y2="${yM(0)}" stroke="rgba(255,255,255,.12)"/>`;
+      html+=`<line x1="${L}" y1="${yM(0)}" x2="${W-R}" y2="${yM(0)}" stroke="color-mix(in srgb, currentColor 10%, transparent)"/>`;
       html+=`<path d="${lp(macd)}" fill="none" stroke="#60a5fa" stroke-width="1.7"/>`;
       html+=`<path d="${lp(macdSig)}" fill="none" stroke="#fbbf24" stroke-width="1.4"/>`;
       html+=`<text x="5" y="${sTop+12}" fill="#60a5fa" font-size="${fs(10)}" font-family="JetBrains Mono,monospace" font-weight="700">MACD 12/26/9</text>`;
@@ -8853,7 +9319,7 @@ function drawChartSVG(){
       const vmax=Math.max(...vals.map(v=>Math.abs(v)))||1;
       const yN=v=>sTop+h/2-(v/vmax)*(h/2-8);
       const bw=Math.max(1.2,plotW/plotted.length*0.6);
-      html+=`<line x1="${L}" y1="${sTop+h/2}" x2="${W-R}" y2="${sTop+h/2}" stroke="rgba(255,255,255,.12)"/>`;
+      html+=`<line x1="${L}" y1="${sTop+h/2}" x2="${W-R}" y2="${sTop+h/2}" stroke="color-mix(in srgb, currentColor 10%, transparent)"/>`;
       netForeign.forEach((v,i)=>{ if(v==null)return; const y0=yN(0),y1=yN(v); html+=`<rect x="${(xScale(i)-bw/2).toFixed(1)}" y="${Math.min(y0,y1).toFixed(1)}" width="${bw.toFixed(1)}" height="${Math.max(1,Math.abs(y1-y0)).toFixed(1)}" fill="${v>=0?'rgba(16,185,129,.6)':'rgba(239,68,68,.6)'}"/>`; });
       html+=`<text x="5" y="${sTop+12}" fill="#22c55e" font-size="${fs(10)}" font-family="JetBrains Mono,monospace" font-weight="700">NET FOREIGN BUY/SELL</text>`;
       const ln=lastVal(netForeign); if(ln!=null)html+=`<text x="${W-R+7}" y="${sTop+12}" fill="${ln>=0?'#22c55e':'#ef4444'}" font-size="${fs(10)}" font-family="JetBrains Mono,monospace">${fmtRp(ln)}</text>`;
@@ -8865,7 +9331,7 @@ function drawChartSVG(){
   [0,Math.floor((plotted.length-1)/2),plotted.length-1].forEach(i=>{ if(plotted[i]) html+=`<text x="${xScale(i)}" y="${Htot-8}" text-anchor="middle" fill="var(--muted)" font-size="${fs(10)}" font-family="JetBrains Mono,monospace">${fmtDateID(plotted[i].date)}</text>`; });
 
   // Crosshair + titik harga saat hover
-  html += `<line id="chartCrossV" x1="0" y1="${T}" x2="0" y2="${T+mainH+(subKeys.length?gap+subKeys.reduce((a,k)=>a+subH[k],0):0)}" stroke="rgba(255,255,255,.25)" stroke-dasharray="3,3" style="display:none"/><circle id="chartCrossDot" r="4" fill="var(--gold)" stroke="#0f172a" stroke-width="1.5" style="display:none"/>`;
+  html += `<line id="chartCrossV" x1="0" y1="${T}" x2="0" y2="${T+mainH+(subKeys.length?gap+subKeys.reduce((a,k)=>a+subH[k],0):0)}" stroke="color-mix(in srgb, currentColor 22%, transparent)" stroke-dasharray="3,3" style="display:none"/><circle id="chartCrossDot" r="4" fill="var(--gold)" stroke="#0f172a" stroke-width="1.5" style="display:none"/>`;
 
   svg.setAttribute('viewBox',`0 0 ${W} ${Htot}`);
   svg.innerHTML=html;
@@ -9210,7 +9676,7 @@ function wirePanduanChecklist(){
 const PANDUAN_STYLES = `
 <style>
 .pnd-wrap{ display:flex; flex-direction:column; }
-.pnd-wrap details.pnd-acc{ border:1px solid var(--border); border-radius:10px; margin-bottom:12px; overflow:hidden; background:rgba(255,255,255,0.02); }
+.pnd-wrap details.pnd-acc{ border:1px solid var(--border); border-radius:10px; margin-bottom:12px; overflow:hidden; background:color-mix(in srgb, currentColor 2%, transparent); }
 .pnd-acc-summary{ list-style:none; cursor:pointer; display:flex; align-items:center; gap:10px; padding:13px 16px; user-select:none; }
 .pnd-acc-summary::-webkit-details-marker{ display:none; }
 .pnd-acc-summary::marker{ content:""; }
@@ -9221,7 +9687,7 @@ const PANDUAN_STYLES = `
 .pnd-acc-chev{ margin-left:auto; color:var(--muted); font-size:12px; transition:transform .18s ease; }
 details.pnd-acc[open] > .pnd-acc-summary .pnd-acc-chev{ transform:rotate(180deg); }
 .pnd-acc-body{ padding:2px 16px 16px; display:flex; flex-direction:column; gap:10px; border-top:1px solid var(--border); padding-top:14px; }
-.pnd-card{ border:1px solid var(--border); border-radius:8px; padding:12px 14px; background:rgba(255,255,255,0.015); }
+.pnd-card{ border:1px solid var(--border); border-radius:8px; padding:12px 14px; background:color-mix(in srgb, currentColor 2%, transparent); }
 .pnd-card-head{ display:flex; align-items:center; justify-content:space-between; gap:10px; margin-bottom:7px; flex-wrap:wrap; }
 .pnd-card-title{ font-weight:700; font-size:13px; color:var(--text); }
 .pnd-tag{ font-size:9px; font-weight:700; letter-spacing:.04em; text-transform:uppercase; padding:3px 8px; border-radius:20px; border:1px solid currentColor; white-space:nowrap; }
@@ -9253,7 +9719,7 @@ details.pnd-acc[open] > .pnd-acc-summary .pnd-acc-chev{ transform:rotate(180deg)
 .pnd-check:last-child{ border-bottom:none; }
 .pnd-check input{ width:15px; height:15px; accent-color:var(--teal); flex:0 0 auto; }
 .pnd-jump{ display:flex; flex-wrap:wrap; gap:6px; margin-bottom:18px; }
-.pnd-jump a{ font-size:11px; padding:5px 10px; border-radius:20px; border:1px solid var(--border); color:var(--muted); text-decoration:none; background:rgba(255,255,255,0.02); }
+.pnd-jump a{ font-size:11px; padding:5px 10px; border-radius:20px; border:1px solid var(--border); color:var(--muted); text-decoration:none; background:color-mix(in srgb, currentColor 2%, transparent); }
 .pnd-jump a:hover{ color:var(--teal); border-color:var(--teal); }
 @media (max-width:640px){ .pnd-kv-term{ flex-basis:100%; } }
 </style>`;
@@ -9906,10 +10372,12 @@ function readBsEditorRows(side, code, date){
     const broker_code = (brokerEl?.value||"").trim().toUpperCase();
     const value_idr = valEl?.value;
     if(!broker_code || !value_idr) continue; // lewati baris kosong
+    const lot = lotEl?.value ? Number(lotEl.value) : null;
     rows.push({
       stock_code: code, trade_date: date, side, rank: i+1,
-      broker_code, lot: lotEl?.value ? Number(lotEl.value) : null,
-      value_idr: Number(value_idr)
+      broker_code, lot,
+      value_idr: Number(value_idr),
+      avg_price: calcAvgPrice(value_idr, lot)
     });
   }
   return rows;
@@ -10379,7 +10847,7 @@ function renderTargetBandar(){
     <div class="panel">
       <div class="filter-section-title">📈 Summary & Performance<span class="line"></span></div>
       <div class="bs-toolbar" style="margin-bottom:14px;">
-        <select id="tbScopeSelect" style="background:rgba(0,0,0,0.2);border:1px solid var(--border);color:var(--text);font-size:13px;border-radius:8px;padding:9.5px 12px;">
+        <select id="tbScopeSelect" style="background:color-mix(in srgb, currentColor 6%, transparent);border:1px solid var(--border);color:var(--text);font-size:13px;border-radius:8px;padding:9.5px 12px;">
           <option value="ticker" ${state.targetSummaryScope==="ticker"?"selected":""}>Emiten ini (${escapeHtml(state.targetStockCode||"-")})</option>
           <option value="all" ${state.targetSummaryScope==="all"?"selected":""}>Semua Emiten</option>
         </select>
@@ -11298,7 +11766,7 @@ function renderEntryPriceScanner(){
         </div>
           <div class="field" style="max-width:150px;">
             <label style="font-size:10px;">Min Mutu</label>
-            <select id="epsMinMutu" style="background:rgba(0,0,0,0.2);border:1px solid var(--border);color:var(--text);font-size:12.5px;border-radius:8px;padding:8px 10px;">
+            <select id="epsMinMutu" style="background:color-mix(in srgb, currentColor 6%, transparent);border:1px solid var(--border);color:var(--text);font-size:12.5px;border-radius:8px;padding:8px 10px;">
               <option value="0" ${f.minMutu===0?"selected":""}>Semua</option>
               <option value="64" ${f.minMutu===64?"selected":""}>≥ 64</option>
               <option value="72" ${f.minMutu===72?"selected":""}>≥ 72</option>
@@ -11307,7 +11775,7 @@ function renderEntryPriceScanner(){
           </div>
           <div class="field" style="max-width:150px;">
             <label style="font-size:10px;">Min Akumulasi</label>
-            <select id="epsMinAkum" style="background:rgba(0,0,0,0.2);border:1px solid var(--border);color:var(--text);font-size:12.5px;border-radius:8px;padding:8px 10px;">
+            <select id="epsMinAkum" style="background:color-mix(in srgb, currentColor 6%, transparent);border:1px solid var(--border);color:var(--text);font-size:12.5px;border-radius:8px;padding:8px 10px;">
               <option value="0" ${f.minAkum===0?"selected":""}>Semua</option>
               <option value="100000000" ${f.minAkum===100000000?"selected":""}>≥ 100 Jt</option>
               <option value="500000000" ${f.minAkum===500000000?"selected":""}>≥ 500 Jt</option>
@@ -11317,7 +11785,7 @@ function renderEntryPriceScanner(){
           </div>
           <div class="field" style="max-width:170px;">
             <label style="font-size:10px;">Min Gap (maks diskon)</label>
-            <select id="epsMinGap" style="background:rgba(0,0,0,0.2);border:1px solid var(--border);color:var(--text);font-size:12.5px;border-radius:8px;padding:8px 10px;">
+            <select id="epsMinGap" style="background:color-mix(in srgb, currentColor 6%, transparent);border:1px solid var(--border);color:var(--text);font-size:12.5px;border-radius:8px;padding:8px 10px;">
               <option value="all" ${f.minGap==="all"?"selected":""}>Semua</option>
               <option value="minus2" ${f.minGap==="minus2"?"selected":""}>≤ −2%</option>
               <option value="minus5" ${f.minGap==="minus5"?"selected":""}>≤ −5%</option>
@@ -11756,7 +12224,7 @@ function renderKrakenFlow(){
     <div class="panel" style="flex-direction:column;align-items:stretch;">
       <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;margin-bottom:14px;">
         <div class="filter-section-title" style="margin:0;">⬢ Filter Order Flow — Bandarmology<span class="line"></span></div>
-        <input id="orcaSearchInput" type="text" placeholder="Cari emiten (mis. IATA)" value="${escapeHtml(state.orcaSearch)}" style="background:rgba(0,0,0,0.2);border:1px solid var(--border);color:var(--text);font-size:12.5px;border-radius:8px;padding:8px 12px;width:180px;">
+        <input id="orcaSearchInput" type="text" placeholder="Cari emiten (mis. IATA)" value="${escapeHtml(state.orcaSearch)}" style="background:color-mix(in srgb, currentColor 6%, transparent);border:1px solid var(--border);color:var(--text);font-size:12.5px;border-radius:8px;padding:8px 12px;width:180px;">
       </div>
       <div style="font-size:10px;color:var(--muted);text-transform:uppercase;font-weight:700;margin-bottom:8px;">Parameter · bisa dikombinasikan · Top ${ORCA_TOP_N} hasil</div>
       ${bidOfferDataMissing ? `<div style="margin-bottom:10px;background:rgba(239,68,68,0.08);border:1px solid rgba(239,68,68,0.3);border-radius:8px;padding:10px 12px;font-size:12px;color:#f87171;">⚠️ <b>Snapshot antrian Bid/Offer kosong</b> untuk semua emiten — filter <b>High Bid/Offer</b>, <b>No Sell</b>, dan <b>Offer's Slender</b> tidak akan menghasilkan apa pun sampai data order book tersinkron ulang. Jalankan <code>node sync-idx-full.mjs</code> (TANPA <code>--skip-fetch</code>) dari jaringan rumah, lalu muat ulang halaman. Filter lain (ATS, Non-Regular, Close High, Top Volume, Frequency, Foreign+) tetap bisa dipakai.</div>` : ""}
@@ -11771,7 +12239,7 @@ function renderKrakenFlow(){
           <div style="font-size:10px;color:var(--muted);text-transform:uppercase;font-weight:700;margin-bottom:8px;">Market Cap · maksimal ${escapeHtml(capLabel)}</div>
           <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;">
             ${capBtns}
-            ${state.orcaMarketCap==="custom" ? `<input id="orcaCustomCapInput" type="number" min="0" step="0.1" placeholder="mis. 25" value="${escapeHtml(state.orcaCustomCapT)}" style="background:rgba(0,0,0,0.2);border:1px solid var(--border);color:var(--text);font-size:12px;border-radius:8px;padding:7px 10px;width:90px;"> <span style="font-size:11px;color:var(--muted);">Triliun Rp</span>` : ""}
+            ${state.orcaMarketCap==="custom" ? `<input id="orcaCustomCapInput" type="number" min="0" step="0.1" placeholder="mis. 25" value="${escapeHtml(state.orcaCustomCapT)}" style="background:color-mix(in srgb, currentColor 6%, transparent);border:1px solid var(--border);color:var(--text);font-size:12px;border-radius:8px;padding:7px 10px;width:90px;"> <span style="font-size:11px;color:var(--muted);">Triliun Rp</span>` : ""}
           </div>
         </div>
         <div style="margin-left:auto;display:flex;align-items:flex-end;">
@@ -11871,7 +12339,7 @@ function bsjpTradePlanCard(s){
   const tp = s.bsjp.tradePlan;
   const row = (label, val, tone) => `<div style="display:flex;justify-content:space-between;padding:5px 0;border-bottom:1px dashed var(--border);"><span style="color:var(--muted);font-size:12px;">${label}</span><span class="mono" style="font-weight:700;color:${tone||'var(--text)'};">${val}</span></div>`;
   return `
-    <div style="background:rgba(0,0,0,0.15);border:1px solid var(--border);border-radius:10px;padding:14px;margin-top:10px;">
+    <div style="background:color-mix(in srgb, currentColor 5%, transparent);border:1px solid var(--border);border-radius:10px;padding:14px;margin-top:10px;">
       <div style="font-size:11px;text-transform:uppercase;letter-spacing:.05em;color:var(--muted);font-weight:700;margin-bottom:8px;">📋 Trade Plan Otomatis · Entry Pre-Closing (15:50–16:15 WIB) → Exit Sesi Pagi (09:00–09:30 WIB)</div>
       ${row("Entry (closing auction)", tp.entry!=null ? "Rp "+fmtNum(Math.round(tp.entry)) : "-")}
       ${row("Target Profit 1 ("+state.bsjpParams.tp1Pct+"%)", tp.tp1!=null ? "Rp "+fmtNum(Math.round(tp.tp1)) : "-", "var(--up)")}
@@ -11985,7 +12453,7 @@ function renderBsjp(){
     <div class="panel" style="flex-wrap:wrap;gap:10px;align-items:center;">
       <span class="pill pill-up" style="display:inline-flex;align-items:center;gap:6px;">🗄️ Data Riil BEI (${fmtNum(list.length)})</span>
       <span class="pill" style="background:rgba(6,182,212,0.12);color:var(--teal);border:1px solid rgba(6,182,212,0.3);">${phase.isLateSession?"🌆 ":""}${phase.label}${phase.closingInMin!=null?` · tutup ${phase.closingInMin} mnt lagi`:""}</span>
-      <span class="pill" style="background:rgba(255,255,255,0.05);color:var(--muted);border:1px solid var(--border);">🕐 ${phase.clock} WIB</span>
+      <span class="pill" style="background:color-mix(in srgb, currentColor 5%, transparent);color:var(--muted);border:1px solid var(--border);">🕐 ${phase.clock} WIB</span>
       <div style="margin-left:auto;display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
         <label style="display:flex;align-items:center;gap:6px;font-size:11.5px;color:var(--muted);cursor:pointer;" title="Mode Simulator: ubah parameter tanpa menimpa Pengaturan tersimpan">
           <input type="checkbox" id="bsjpSimulatorChk" ${state.bsjpSimulator?"checked":""}> Simulator${state.bsjpSimulator?" (aktif)":""}
@@ -12007,16 +12475,25 @@ function renderBsjp(){
       ${statCard("Kandidat BSJP", `${fmtNum(rows.length)}`, "var(--gold)")}
     </div>`;
 
+  // Tombol preset dibungkus container-nya sendiri (.bsjp-preset-list) supaya
+  // bisa dipaksa satu baris horizontal lewat CSS di ensureAppStyles(). Sebelumnya
+  // tombol-tombol ini anak langsung .panel, sehingga ikut aturan
+  // "flex-direction:column + width:100%" dari mobile-responsive-fix.css dan
+  // menumpuk vertikal memakan tinggi layar di desktop.
   const presetsBar = `
-    <div class="panel" style="flex-wrap:wrap;gap:8px;align-items:center;">
-      <span style="font-size:10.5px;color:var(--muted);text-transform:uppercase;font-weight:700;">Radar Presets:</span>
-      ${BSJP_PRESETS.map(pr => {
-        const cnt = list.filter(pr.filter).length;
-        const active = state.bsjpPreset === pr.key;
-        return `<button class="btn ${active?'btn-primary':'btn-outline'}" data-bsjp-preset="${pr.key}" title="${escapeHtml(pr.desc)}">${pr.label} <span class="count-badge" style="margin-left:4px;">${cnt}</span></button>`;
-      }).join("")}
-      <span style="margin-left:auto;font-size:12px;color:var(--muted);">Menampilkan <b style="color:var(--text);">${fmtNum(rows.length)}</b> kandidat</span>
-      ${strongBuyCount ? `<span class="pill pill-up">⭐ ${strongBuyCount} STRONG_BUY</span>` : ""}
+    <div class="panel bsjp-presets-bar">
+      <span style="font-size:10.5px;color:var(--muted);text-transform:uppercase;font-weight:700;white-space:nowrap;">Radar Presets:</span>
+      <div class="bsjp-preset-list">
+        ${BSJP_PRESETS.map(pr => {
+          const cnt = list.filter(pr.filter).length;
+          const active = state.bsjpPreset === pr.key;
+          return `<button class="btn ${active?'btn-primary':'btn-outline'}" data-bsjp-preset="${pr.key}" title="${escapeHtml(pr.desc)}">${pr.label} <span class="count-badge" style="margin-left:4px;">${cnt}</span></button>`;
+        }).join("")}
+      </div>
+      <div class="bsjp-presets-meta">
+        <span style="font-size:12px;color:var(--muted);white-space:nowrap;">Menampilkan <b style="color:var(--text);">${fmtNum(rows.length)}</b> kandidat</span>
+        ${strongBuyCount ? `<span class="pill pill-up" style="white-space:nowrap;">⭐ ${strongBuyCount} STRONG_BUY</span>` : ""}
+      </div>
     </div>`;
 
   const infoPanel = `
@@ -12051,8 +12528,8 @@ function renderBsjp(){
 
   const toolbar = `
     <div class="panel" style="flex-wrap:wrap;gap:10px;align-items:center;">
-      <input id="bsjpSearchInput" type="text" placeholder="Cari kode saham" value="${escapeHtml(state.bsjpSearch)}" style="background:rgba(0,0,0,0.2);border:1px solid var(--border);color:var(--text);font-size:12.5px;border-radius:8px;padding:8px 12px;width:160px;">
-      <select id="bsjpSortSelect" style="background:rgba(0,0,0,0.2);border:1px solid var(--border);color:var(--text);font-size:12px;border-radius:8px;padding:7px 10px;">
+      <input id="bsjpSearchInput" type="text" placeholder="Cari kode saham" value="${escapeHtml(state.bsjpSearch)}" style="background:color-mix(in srgb, currentColor 6%, transparent);border:1px solid var(--border);color:var(--text);font-size:12.5px;border-radius:8px;padding:8px 12px;width:160px;">
+      <select id="bsjpSortSelect" style="background:color-mix(in srgb, currentColor 6%, transparent);border:1px solid var(--border);color:var(--text);font-size:12px;border-radius:8px;padding:7px 10px;">
         <option value="score" ${state.bsjpSort==="score"?"selected":""}>Urutkan: Skor BSJP</option>
         <option value="changePct" ${state.bsjpSort==="changePct"?"selected":""}>Urutkan: Perubahan %</option>
         <option value="turnover" ${state.bsjpSort==="turnover"?"selected":""}>Urutkan: Turnover</option>
@@ -12064,7 +12541,7 @@ function renderBsjp(){
       <div style="display:flex;gap:8px;margin-bottom:10px;">
         ${["stockbit","mirae","mandiri"].map(f=>`<button class="btn ${state.bsjpExportFormat===f?'btn-primary':'btn-outline'}" data-bsjp-export-fmt="${f}">${f==="stockbit"?"Stockbit":f==="mirae"?"Mirae HOTS":"Mandiri MOST"}</button>`).join("")}
       </div>
-      <textarea readonly style="width:100%;min-height:100px;background:rgba(0,0,0,0.25);border:1px solid var(--border);color:var(--text);border-radius:8px;padding:10px;font-family:'JetBrains Mono',monospace;font-size:12px;" id="bsjpExportText">${escapeHtml(formatBsjpExport(passedTickers, state.bsjpExportFormat))}</textarea>
+      <textarea readonly style="width:100%;min-height:100px;background:color-mix(in srgb, currentColor 7%, transparent);border:1px solid var(--border);color:var(--text);border-radius:8px;padding:10px;font-family:'JetBrains Mono',monospace;font-size:12px;" id="bsjpExportText">${escapeHtml(formatBsjpExport(passedTickers, state.bsjpExportFormat))}</textarea>
       <div style="margin-top:8px;"><button class="btn btn-outline" id="bsjpCopyExportBtn">📋 Salin ke Clipboard</button></div>
     </div>` : "";
 
@@ -12081,7 +12558,7 @@ function renderBsjp(){
       <td>${bsjpSignalPill(s.bsjp.signal, s.bsjp.signalTone)}</td>
       <td><button class="btn btn-outline" data-bsjp-expand="${s.ticker}" style="padding:4px 10px;font-size:11px;">${state.bsjpExpanded===s.ticker?"Tutup":"Trade Plan"}</button></td>
     </tr>
-    ${state.bsjpExpanded===s.ticker ? `<tr><td colspan="10" style="background:rgba(0,0,0,0.1);">${bsjpTradePlanCard(s)}</td></tr>` : ""}
+    ${state.bsjpExpanded===s.ticker ? `<tr><td colspan="10" style="background:color-mix(in srgb, currentColor 4%, transparent);">${bsjpTradePlanCard(s)}</td></tr>` : ""}
   `).join("");
 
   const resultsPanel = `
@@ -12176,6 +12653,12 @@ function bindSearchInputPreservingCursor(id, onValueChange, delay = 200){
 function attachContentEvents(){
   const advToggleBtn = document.getElementById("advToggleBtn");
   if(advToggleBtn) advToggleBtn.onclick = () => { state.showAdvancedFilters = !state.showAdvancedFilters; render(); };
+  const filterKlasifikasiToggleBtn = document.getElementById("filterKlasifikasiToggleBtn");
+  if(filterKlasifikasiToggleBtn) filterKlasifikasiToggleBtn.onclick = () => { state.showFilterKlasifikasi = !state.showFilterKlasifikasi; render(); };
+  const filterTrendToggleBtn = document.getElementById("filterTrendToggleBtn");
+  if(filterTrendToggleBtn) filterTrendToggleBtn.onclick = () => { state.showFilterTrend = !state.showFilterTrend; render(); };
+  const filterMomentumToggleBtn = document.getElementById("filterMomentumToggleBtn");
+  if(filterMomentumToggleBtn) filterMomentumToggleBtn.onclick = () => { state.showFilterMomentum = !state.showFilterMomentum; render(); };
 
   const addRuleBtn = document.getElementById("addRuleBtn");
   if(addRuleBtn) addRuleBtn.onclick = addCustomRule;
@@ -12967,7 +13450,141 @@ document.getElementById("detailModalOverlay").onclick = (e)=>{ if(e.target.id===
 document.getElementById("spListModalClose").onclick = ()=> closeSmartPickList();
 document.getElementById("spListModalOverlay").onclick = (e)=>{ if(e.target.id==="spListModalOverlay") closeSmartPickList(); };
 
+// ==========================================================
+// STYLE TAMBAHAN YANG DISUNTIK DARI app.js
+//
+// Disuntik di sini (bukan ditulis ke styles.css) supaya aturannya masuk
+// PALING AKHIR di <head> — dengan begitu ia menang atas styles.css,
+// quant-hub.css, dan mobile-responsive-fix.css pada spesifisitas yang sama,
+// tanpa perlu mengubah file CSS yang tidak terlihat dari sini. !important
+// dipakai seperlunya karena mobile-responsive-fix.css memaksa .panel jadi
+// kolom dan .btn jadi lebar penuh di lebar layar tertentu.
+// ==========================================================
+function ensureAppStyles(){
+  if(document.getElementById("appInjectedStyles")) return;
+  const el = document.createElement("style");
+  el.id = "appInjectedStyles";
+  el.textContent = `
+    .bsjp-presets-bar{
+      display:flex !important;
+      flex-direction:row !important;
+      flex-wrap:wrap;
+      align-items:center;
+      gap:10px;
+    }
+    .bsjp-preset-list{
+      display:flex !important;
+      flex-direction:row !important;
+      flex-wrap:wrap;
+      align-items:center;
+      gap:8px;
+      flex:1 1 auto;
+      min-width:0;
+    }
+    /* Tombol preset: lebar mengikuti isi, jangan melar penuh & jangan
+       terpotong jadi dua baris teks. */
+    .bsjp-preset-list > .btn{
+      width:auto !important;
+      flex:0 0 auto !important;
+      white-space:nowrap;
+    }
+    .bsjp-presets-meta{
+      display:flex;
+      align-items:center;
+      gap:8px;
+      margin-left:auto;
+      flex:0 0 auto;
+    }
+    /* Layar sempit: tetap HORIZONTAL (sesuai permintaan), tapi digeser jadi
+       satu strip yang bisa di-scroll ke samping daripada dipaksa wrap dan
+       kembali memakan tinggi layar. */
+    @media (max-width: 860px){
+      .bsjp-preset-list{
+        flex-wrap:nowrap;
+        overflow-x:auto;
+        overflow-y:hidden;
+        scrollbar-width:thin;
+        padding-bottom:4px;
+        -webkit-overflow-scrolling:touch;
+      }
+      .bsjp-presets-meta{
+        margin-left:0;
+        width:100%;
+      }
+    }
+  `;
+  document.head.appendChild(el);
+}
+ensureAppStyles();
+
+// ==========================================================
+// TOGGLE MODE TERANG/GELAP
+//
+// index.html sudah punya (a) tombol #themeToggleBtn dan (b) skrip inline di
+// <head> yang memasang data-theme="dark" saat boot untuk mencegah FOUC.
+// Yang TIDAK PERNAH ADA adalah penghubung keduanya: tidak ada satu pun
+// listener klik untuk tombol itu — itulah sebabnya tombolnya terlihat normal
+// tapi tidak melakukan apa-apa. Blok di bawah ini yang melengkapinya.
+//
+// Kunci localStorage HARUS sama persis dengan yang dibaca skrip inline di
+// <head> ("ihsg_theme"), kalau tidak pilihan user akan benar saat diklik tapi
+// balik lagi ke default begitu halaman di-reload.
+// ==========================================================
+const LS_THEME = "ihsg_theme";
+
+function currentTheme(){
+  return document.documentElement.getAttribute("data-theme") === "dark" ? "dark" : "light";
+}
+
+// persist=false dipakai saat sinkronisasi awal / mengikuti tema OS. Tanpa
+// pembeda ini, sekadar membuka halaman sudah menulis pilihan ke localStorage,
+// sehingga mode "ikut OS" langsung mati sebelum user menyentuh tombolnya.
+function applyTheme(theme, persist = true){
+  const isDark = theme === "dark";
+  if(isDark) document.documentElement.setAttribute("data-theme", "dark");
+  else document.documentElement.removeAttribute("data-theme");
+  if(persist){ try{ localStorage.setItem(LS_THEME, isDark ? "dark" : "light"); }catch(e){} }
+
+  // Label tombol menunjukkan mode TUJUAN (apa yang terjadi kalau diklik),
+  // bukan mode yang sedang aktif — konsisten dengan teks awal di index.html
+  // ("🌙 Gelap" saat sedang mode terang).
+  const icon = document.getElementById("themeToggleIcon");
+  const label = document.getElementById("themeToggleLabel");
+  if(icon) icon.textContent = isDark ? "☀️" : "🌙";
+  if(label) label.textContent = isDark ? "Terang" : "Gelap";
+  const btn = document.getElementById("themeToggleBtn");
+  if(btn){
+    btn.setAttribute("aria-pressed", String(isDark));
+    btn.title = isDark ? "Ganti ke mode terang" : "Ganti ke mode gelap";
+  }
+}
+
+function initThemeToggle(){
+  // Sinkronkan label dengan tema yang SUDAH dipasang skrip inline di <head>,
+  // supaya saat halaman dibuka dalam mode gelap tombolnya tidak terlanjur
+  // menulis "🌙 Gelap" (yang berarti kebalikannya).
+  applyTheme(currentTheme(), false);
+  const btn = document.getElementById("themeToggleBtn");
+  if(btn) btn.addEventListener("click", () => applyTheme(currentTheme() === "dark" ? "light" : "dark"));
+
+  // Ikuti tema OS HANYA selama user belum pernah memilih sendiri — begitu
+  // tombol diklik sekali, pilihan manual itu yang menang selamanya.
+  try{
+    if(!localStorage.getItem(LS_THEME) && window.matchMedia){
+      window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", (e) => {
+        if(!localStorage.getItem(LS_THEME)) applyTheme(e.matches ? "dark" : "light", false);
+      });
+    }
+  }catch(e){}
+}
+initThemeToggle();
+
 loadSettings();
+// Tarik pengaturan yang disinkron lintas-device (lihat catatan di
+// loadTelegramSettingsFromSupabase()) SEBELUM loadLive() jalan — supaya
+// device/browser baru langsung dapat freqAnalyzerCol & endpoint Stockbit
+// yang benar tanpa harus buka modal Pengaturan dulu.
+loadTelegramSettingsFromSupabase();
 syncStockbitTokenFromSupabase();
 pollExtensionStockbitToken();
 setInterval(pollExtensionStockbitToken, 3000); // lihat catatan di pollExtensionStockbitToken() kenapa harus di-poll, bukan cukup event 'storage'

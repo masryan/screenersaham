@@ -4,6 +4,19 @@
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>IHSG Screener Pro</title>
+<!-- Set tema SEBELUM CSS/body dirender, supaya tidak ada "kedipan" balik
+     ke tema terang sekilas saat halaman dibuka dalam mode gelap (FOUC).
+     Baris ini sengaja inline & sinkron, bukan ditaruh di app.js yang baru
+     jalan belakangan setelah DOM ke-render. */
+<script>
+  (function(){
+    try {
+      var saved = localStorage.getItem("ihsg_theme");
+      var theme = saved || (window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");
+      if (theme === "dark") document.documentElement.setAttribute("data-theme", "dark");
+    } catch(e) {}
+  })();
+</script>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Sora:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
 
@@ -30,6 +43,12 @@
       <div class="subtitle">Teknikal · Fundamental · Watchlist · Portofolio · Backtest · Bandarmologi (data resmi IDX) · BSJP</div>
     </div>
     <div class="header-actions" style="display:flex;gap:12px;">
+      <button class="btn btn-outline" id="onboardingBtn" onclick="openOnboarding()" title="Buka panduan cepat mulai pakai aplikasi ini">
+        <span aria-hidden="true">❓</span> Panduan Cepat
+      </button>
+      <button class="btn btn-outline" id="themeToggleBtn" title="Ganti mode terang/gelap" aria-label="Ganti mode terang/gelap">
+        <span id="themeToggleIcon" aria-hidden="true">🌙</span> <span id="themeToggleLabel">Gelap</span>
+      </button>
       <button class="btn btn-outline" id="refreshBtn">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" aria-hidden="true" focusable="false"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0114.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0020.49 15"/></svg>
         Refresh Data
@@ -63,7 +82,7 @@
       <a class="tab-btn" href="#/brokerstalker" data-tab="brokerstalker" title="Broker Stalker" aria-label="Broker Stalker"><span class="tab-icon" aria-hidden="true">🛰️</span><span class="tab-label">Broker Stalker</span></a>
       <a class="tab-btn" href="#/kraken" data-tab="kraken" title="Kraken Flow (ORCA)" aria-label="Kraken Flow (ORCA)"><span class="tab-icon" aria-hidden="true">⬢</span><span class="tab-label">Kraken Flow (ORCA)</span></a>
       <a class="tab-btn" href="#/bsjp" data-tab="bsjp" title="BSJP (Beli Sore, Jual Pagi)" aria-label="BSJP (Beli Sore, Jual Pagi)"><span class="tab-icon" aria-hidden="true">🌆</span><span class="tab-label">BSJP (Beli Sore, Jual Pagi)</span></a>
-      <a class="tab-btn" href="#/sinyal" data-tab="sinyal" title="Rekap Sinyal" aria-label="Rekap Sinyal"><span class="tab-icon" aria-hidden="true">📡</span><span class="tab-label">Rekap Sinyal</span></a>
+      <a class="tab-btn" href="#/wsdebug" data-tab="wsdebug" title="WS Debug" aria-label="WS Debug"><span class="tab-icon" aria-hidden="true">🧪</span><span class="tab-label">WS Debug</span></a>
       <a class="tab-btn" href="#/about" data-tab="about" title="Info" aria-label="Info"><span class="tab-icon" aria-hidden="true">ℹ️</span><span class="tab-label">Info</span></a>
     </div>
   </aside>
@@ -112,13 +131,19 @@
     <div id="stockbitTokenStatus" style="font-size:11px;color:var(--muted);margin:-8px 0 4px;">Belum ada token.</div>
     <div id="stockbitLastSuccessStatus" style="font-size:11px;color:var(--muted);margin:-4px 0 12px;">Belum pernah berhasil menarik data live dari Stockbit.</div>
     <div class="field">
-      <label>Endpoint Quote/Orderbook (pakai {ticker} sebagai placeholder)</label>
+      <label>Endpoint Quote (harga Open/High/Low/Last/Bid/Offer per ticker — WAJIB pakai {ticker}, jangan diganti kode saham tertentu)</label>
       <input id="setStockbitQuoteEndpoint" type="text" placeholder="https://exodus.stockbit.com/stream/v3/symbol/{ticker}">
     </div>
-    <div style="margin:-8px 0 14px; font-size: 11.5px; color: var(--gold); background: rgba(234,179,8,0.08); padding: 10px; border-radius: 8px; border: 1px solid rgba(234,179,8,0.2);">
+    <div style="margin:-8px 0 14px; font-size: 11.5px; color: var(--gold); background: color-mix(in srgb, var(--gold) 14%, transparent); padding: 10px; border-radius: 8px; border: 1px solid color-mix(in srgb, var(--gold) 38%, transparent);">
       ⚠️ Endpoint default TERBUKTI SALAH (itu API "Stream"/linimasa komentar, bukan API harga) — Open/High/Low/Last
       tidak akan pernah muncul benar selama field ini masih kosong/default. Pakai kotak uji di bawah untuk mencari
       & memverifikasi endpoint yang benar lewat DevTools browser (Network tab) di stockbit.com, sebelum disimpan.
+      <br><br>
+      Beda dari field <b>"Endpoint Orderbook Depth 10-Level"</b> di bawah ini — field itu khusus tangga bid/offer
+      dan sudah terbukti berfungsi. Kalau mau mencoba endpoint yang sama untuk field ini juga, tempel URL yang
+      SAMA PERSIS tapi tetap dengan placeholder <code>{ticker}</code> (bukan kode saham tertentu seperti
+      <code>BIPI</code> — kalau di-hardcode begitu, aplikasi cuma akan menarik data BIPI untuk semua saham).
+      Perlu diuji dulu: endpoint orderbook belum tentu membawa field Open/High/Low/Last, mungkin cuma bid/offer saja.
       <div style="display:flex;gap:8px;align-items:center;margin-top:10px;flex-wrap:wrap;">
         <input id="testStockbitTicker" type="text" placeholder="Ticker uji, mis. BBCA" maxlength="6" style="text-transform:uppercase;max-width:140px;">
         <button type="button" class="btn btn-outline" onclick="testStockbitQuoteEndpoint()" style="font-size:11.5px;padding:6px 10px;">🧪 Uji Endpoint Ini</button>
@@ -126,10 +151,15 @@
       <div id="testStockbitQuoteResult" style="margin-top:8px;"></div>
     </div>
     <div class="field">
+      <label>Endpoint Orderbook Depth 10-Level (pakai {ticker} sebagai placeholder)</label>
+      <input id="setStockbitOrderbookEndpoint" type="text" placeholder="https://exodus.stockbit.com/company-price-feed/v2/orderbook/companies/{ticker}">
+      <div style="font-size:11px;color:var(--muted);margin-top:4px;">✅ Sudah terverifikasi berfungsi. Beda dari "Endpoint Quote/Orderbook" di atas — yang ini khusus tangga bid/offer 10 level di panel Detail Emiten, dan nilainya ikut tersimpan ke Supabase supaya tidak hilang saat dibuka di browser lain.</div>
+    </div>
+    <div class="field">
       <label>Endpoint Broker Summary (sudah terisi default — timpa hanya kalau Stockbit ganti skemanya)</label>
       <input id="setStockbitBrokerEndpoint" type="text" placeholder="https://exodus.stockbit.com/marketdetectors/{ticker}?from={from}&to={to}&transaction_type=TRANSACTION_TYPE_NET&market_board=MARKET_BOARD_REGULER&investor_type=INVESTOR_TYPE_ALL&limit={limit}">
       <div style="font-size:11px;color:var(--muted);margin-top:4px;">⚠️ Kalau diisi manual, pastikan bagian akhir tetap <code>&limit={limit}</code> (placeholder, bukan angka mati) — kalau ditimpa jadi angka tetap seperti <code>&limit=200</code>, data hari-hari yang lebih lama bisa kepotong dan cuma 1 hari terakhir yang kesimpan.</div>
-      <div style="margin-top:10px; font-size: 11.5px; color: var(--gold); background: rgba(234,179,8,0.08); padding: 10px; border-radius: 8px; border: 1px solid rgba(234,179,8,0.2);">
+      <div style="margin-top:10px; font-size: 11.5px; color: var(--gold); background: color-mix(in srgb, var(--gold) 14%, transparent); padding: 10px; border-radius: 8px; border: 1px solid color-mix(in srgb, var(--gold) 38%, transparent);">
         ⚠️ Endpoint default memaksa <code>data_type=BROKER_DISTRIBUTION_DATA_TYPE_VALUE</code> — ini kemungkinan
         alasan kolom <b>Lot</b> selalu kosong (server cuma diminta kirim data Nilai, bukan Volume/Lot). Coba
         ganti jadi <code>BROKER_DISTRIBUTION_DATA_TYPE_VOLUME</code> di kotak endpoint di atas lalu tes lagi
@@ -137,7 +167,7 @@
         request VALUE+VOLUME). Tes ini baca langsung dari kotak endpoint di atas (belum perlu disimpan dulu).
         <div style="display:flex;gap:8px;align-items:center;margin-top:10px;flex-wrap:wrap;">
           <input id="testStockbitBrokerTicker" type="text" placeholder="Ticker uji, mis. BBCA" maxlength="6" style="text-transform:uppercase;max-width:140px;">
-          <input id="testStockbitBrokerDate" type="date" style="background:rgba(0,0,0,0.2);border:1px solid var(--border);color:var(--text);font-size:11.5px;border-radius:6px;padding:6px;">
+          <input id="testStockbitBrokerDate" type="date" style="background:color-mix(in srgb, currentColor 6%, transparent);border:1px solid var(--border);color:var(--text);font-size:11.5px;border-radius:6px;padding:6px;">
           <button type="button" class="btn btn-outline" onclick="testStockbitBrokerEndpoint()" style="font-size:11.5px;padding:6px 10px;">🧪 Uji Endpoint Ini</button>
         </div>
         <div style="font-size:10.5px;color:var(--muted);margin-top:4px;">Kosongkan tanggal untuk pakai hari ini. Pilih hari bursa (bukan Sabtu/Minggu/libur) supaya ada data.</div>
@@ -150,7 +180,7 @@
       <div style="font-size:11px;color:var(--muted);margin-top:4px;">✅ Endpoint sudah dicek manual lewat DevTools (mode Daily). Mode Weekly/Monthly baru tebakan pola nama parameter — kalau ternyata salah/data janggal, kabari supaya bisa dikoreksi.</div>
       <div style="display:flex;gap:8px;align-items:center;margin-top:8px;flex-wrap:wrap;">
         <input id="testStockbitHistTicker" type="text" placeholder="Ticker uji" maxlength="6" style="text-transform:uppercase;max-width:120px;">
-        <select id="testStockbitHistPeriod" style="background:rgba(0,0,0,0.2);border:1px solid var(--border);color:var(--text);font-size:11.5px;border-radius:6px;padding:6px;">
+        <select id="testStockbitHistPeriod" style="background:color-mix(in srgb, currentColor 6%, transparent);border:1px solid var(--border);color:var(--text);font-size:11.5px;border-radius:6px;padding:6px;">
           <option value="daily">Daily</option>
           <option value="weekly">Weekly</option>
           <option value="monthly">Monthly</option>
@@ -163,7 +193,7 @@
       <label>Proxy URL (opsional — isi kalau permintaan langsung gagal karena CORS)</label>
       <input id="setStockbitProxyUrl" type="text" placeholder="https://xxxx.supabase.co/functions/v1/stockbit-proxy">
     </div>
-    <div style="margin-bottom:12px; font-size: 11.5px; color: var(--gold); background: rgba(234,179,8,0.08); padding: 10px; border-radius: 8px; border: 1px solid rgba(234,179,8,0.2);">
+    <div style="margin-bottom:12px; font-size: 11.5px; color: var(--gold); background: color-mix(in srgb, var(--gold) 14%, transparent); padding: 10px; border-radius: 8px; border: 1px solid color-mix(in srgb, var(--gold) 38%, transparent);">
       ⚠️ Endpoint di atas belum terverifikasi 100% (hasil pengamatan komunitas, bukan dokumentasi resmi
       Stockbit) dan browser <b>kemungkinan besar akan memblokirnya karena CORS</b> kalau dipanggil langsung
       dari halaman ini. Kalau muncul error CORS, isi "Proxy URL" dengan Supabase Edge Function kecil yang
@@ -194,7 +224,7 @@
       <label>Model (opsional — default alias resmi Google, otomatis ke Flash stabil terbaru)</label>
       <input id="setGeminiModel" type="text" placeholder="gemini-flash-latest">
     </div>
-    <div style="margin-bottom:16px; font-size: 11.5px; color: var(--gold); background: rgba(234,179,8,0.08); padding: 10px; border-radius: 8px; border: 1px solid rgba(234,179,8,0.2);">
+    <div style="margin-bottom:16px; font-size: 11.5px; color: var(--gold); background: color-mix(in srgb, var(--gold) 14%, transparent); padding: 10px; border-radius: 8px; border: 1px solid color-mix(in srgb, var(--gold) 38%, transparent);">
       ⚠️ API key disimpan HANYA di Local Storage browser ini (sama seperti Token Stockbit di atas) — jangan
       pakai perangkat/browser publik. Hasil analisis AI bersifat ringkasan otomatis dari data yang tersedia,
       <b>BUKAN rekomendasi/nasihat investasi</b> — selalu lakukan riset mandiri sebelum mengambil keputusan.
@@ -241,7 +271,7 @@
     </label>
     <div class="field">
       <label>Preset yang dipantau (Rules Kustom tersimpan)</label>
-      <div id="telegramPresetChecklist" style="background:rgba(255,255,255,0.03);border:1px solid var(--border);border-radius:8px;padding:8px 12px;max-height:160px;overflow-y:auto;">
+      <div id="telegramPresetChecklist" style="background:color-mix(in srgb, currentColor 3%, transparent);border:1px solid var(--border);border-radius:8px;padding:8px 12px;max-height:160px;overflow-y:auto;">
         <div style="font-size:12px;color:var(--muted);">Memuat preset...</div>
       </div>
     </div>
@@ -250,6 +280,15 @@
       <span id="telegramTestStatus" style="font-size:11.5px;color:var(--muted);"></span>
     </div>
     <div id="telegramLastRunStatus" style="font-size:11px;color:var(--muted);margin-bottom:14px;"></div>
+
+    <div style="border-top:1px solid var(--border); padding-top:14px; margin-bottom:8px;">
+      <h3 style="font-size:14px; margin:0 0 4px;">🧭 Tampilan</h3>
+    </div>
+    <label style="display:grid;grid-template-columns:16px 1fr;align-items:center;gap:8px;font-size:12.5px;padding:6px 0 4px;cursor:pointer;">
+      <input type="checkbox" id="setAdvancedMode" class="custom-checkbox" style="margin:0;justify-self:start;" onchange="setAdvancedMode(this.checked)">
+      <span style="text-align:left;">Mode Lanjutan — tampilkan tab developer/eksperimental (🧪 WS Debug) di menu</span>
+    </label>
+    <div style="font-size:11px;color:var(--muted);margin:0 0 14px;">Berlaku langsung, tidak perlu "Simpan & Reload".</div>
 
     <div class="modal-actions">
       <button class="btn btn-primary" onclick="saveSettings()">Simpan & Reload</button>
@@ -299,6 +338,38 @@
       <button class="close-btn" id="dashMetricModalClose" aria-label="Tutup detail metrik">✕</button>
     </div>
     <div id="dashMetricModalContent"></div>
+  </div>
+</div>
+
+<!-- Modal Panduan Cepat (Onboarding) — muncul otomatis sekali untuk user
+     baru (lihat maybeShowOnboarding()), atau kapan saja lewat tombol
+     "❓ Panduan Cepat" di header. Sengaja singkat (checklist, bukan
+     dokumentasi lengkap) — untuk detail per fitur arahkan ke tab 📖 Panduan. -->
+<div class="modal-overlay" id="onboardingModalOverlay">
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="onboardingModalTitle" tabindex="-1" style="max-width:480px;">
+    <div class="modal-top">
+      <h3 id="onboardingModalTitle">👋 Selamat Datang di IHSG Screener Pro</h3>
+      <button class="close-btn" onclick="closeOnboarding()" aria-label="Tutup panduan cepat">✕</button>
+    </div>
+    <div style="font-size:12.5px;color:var(--muted);line-height:1.6;margin-bottom:14px;">
+      Aplikasi screener saham IHSG — teknikal, fundamental, dan Bandarmologi dalam satu tempat.
+      Berikut cara mulai paling cepat:
+    </div>
+    <ol style="font-size:13px;line-height:1.9;padding-left:20px;margin:0 0 16px;color:var(--text);">
+      <li>Buka <b>⚙️ Pengaturan</b> → isi Supabase URL &amp; Key supaya data bisa dimuat (sekali saja, tersimpan di browser ini).</li>
+      <li>Klik <b>🔄 Refresh Data</b> di header untuk memuat data terbaru.</li>
+      <li>Pakai <b>📋 Screener</b> untuk filter cepat (preset siap pakai) atau cari ticker/nama emiten langsung.</li>
+      <li>Mau kriteria sendiri? Buka panel <b>Rules Kustom</b> di Screener — bisa disimpan jadi preset.</li>
+      <li>Simpan saham menarik ke <b>⭐ Watchlist</b>, atau uji strategi di <b>🔬 Backtest</b>.</li>
+    </ol>
+    <div style="font-size:11.5px;color:var(--muted);margin-bottom:16px;">
+      Butuh detail tiap fitur, atau fitur developer (WS Debug dll.)? Buka tab <b>📖 Panduan</b> — toggle
+      "Mode Lanjutan" untuk menampilkannya ada di <b>⚙️ Pengaturan</b>.
+    </div>
+    <div class="modal-actions">
+      <button class="btn btn-primary" onclick="closeOnboarding(); selectMainTab('panduan');">📖 Buka Panduan Lengkap</button>
+      <button class="btn btn-outline" onclick="closeOnboarding()">Mulai Pakai</button>
+    </div>
   </div>
 </div>
 
