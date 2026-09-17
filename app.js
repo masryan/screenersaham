@@ -8937,6 +8937,8 @@ function renderScreener(){
      <div class="toolbar-footer">
         <div style="display:flex; align-items:center; gap:12px; flex-wrap:wrap;">
           <span class="count-badge" style="margin:0;">${filtered.length} emiten sesuai filter &middot; ${state.selectedForBacktest.size} dipilih</span>
+          <button type="button" class="link-btn" id="selectPageOnlyBtn" title="Centang hanya ${pagedData.length} baris yang tampil di halaman ini (tidak menyentuh halaman lain)">☑️ Pilih Halaman Ini (${pagedData.length})</button>
+          <button type="button" class="link-btn" id="clearSelectionBtn" title="Hapus semua centang, termasuk dari halaman lain" ${state.selectedForBacktest.size===0?'disabled':''}>✕ Kosongkan Pilihan</button>
           <label style="display:flex;align-items:center;gap:6px;font-size:12px;cursor:pointer; background:rgba(34,211,238,0.06); border:1px solid rgba(34,211,238,0.3); padding:4px 10px; border-radius:6px; color:var(--teal); font-weight:bold;">
             <input type="checkbox" id="hideGocapChk" class="custom-checkbox" onchange="render()" ${document.getElementById("hideGocapChk")?.checked ? "checked" : ""}>
             🛡️ Sembunyikan Gocap & Suspend
@@ -14581,6 +14583,32 @@ function attachContentEvents(){
         filtered.forEach(s => state.selectedForBacktest.delete(s.ticker));
       }
       render(); 
+    };
+  }
+
+  // "Pilih Halaman Ini" — cuma centang baris yang sedang tampil di halaman
+  // aktif (effectiveLimit/state.page), tidak menyentuh centangan yang sudah
+  // ada di halaman lain. Beda dengan checkbox header "chkSelectAll" yang
+  // langsung mencentang SEMUA hasil filter di semua halaman.
+  const selectPageOnlyBtn = document.getElementById("selectPageOnlyBtn");
+  if(selectPageOnlyBtn) {
+    selectPageOnlyBtn.onclick = () => {
+      const sortedNow = getSorted(getFiltered());
+      const limitNow = state.limit === "all" ? Math.max(sortedNow.length, 1) : state.limit;
+      const startNow = (state.page - 1) * limitNow;
+      const pageRows = sortedNow.slice(startNow, startNow + limitNow);
+      pageRows.forEach(s => state.selectedForBacktest.add(s.ticker));
+      render();
+    };
+  }
+
+  // "Kosongkan Pilihan" — hapus semua centang (semua halaman), beda dengan
+  // uncheck header yang cuma menghapus centang untuk hasil filter saat ini.
+  const clearSelectionBtn = document.getElementById("clearSelectionBtn");
+  if(clearSelectionBtn) {
+    clearSelectionBtn.onclick = () => {
+      state.selectedForBacktest.clear();
+      render();
     };
   }
 
