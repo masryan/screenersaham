@@ -1910,6 +1910,10 @@ let state = {
   page: 1, limit: 10,
   expanded: new Set(),
   selectedTicker: null, chartData: [], chartLoading: false, selectedLevels: null, loading:false, chartSearch: "",
+  // Tab mandiri "🔎 Cari Ticker" — kotak pencarian independen (beda dari
+  // chartSearch milik tab Chart & state.search milik tab Screener) supaya
+  // pindah-pindah tab tidak saling menimpa nilai pencarian satu sama lain.
+  cariTickerSearch: "",
   chartRange: "all", chartSeries: { close:true, support:true, resistance:true, fib:true, bb:false, emaHL:false, ema89:false, sar:false, supertrend:false, pc:false, bandar:false, vol:false, stochrsi:false, rsi721:false, foreignflow:false, macd:false, netforeign:false },
   detailTicker: null, detailTab: "teknikal",
   // Modal "detail metrik Dashboard": dibuka saat kartu ringkasan (Total
@@ -7387,6 +7391,7 @@ function render(){
   const content = document.getElementById("content");
   try{
     if(state.tab==="dashboard") content.innerHTML = renderDashboard();
+    else if(state.tab==="cariticker") content.innerHTML = renderCariTicker();
     else if(state.tab==="screener") content.innerHTML = renderScreener();
     else if(state.tab==="bagger") content.innerHTML = renderSkorBagger();
     else if(state.tab==="smartpick") content.innerHTML = renderSmartPick();
@@ -10526,6 +10531,90 @@ function tvEmbedUrl(ticker){
 }
 function tvChartPageUrl(ticker){ return `https://www.tradingview.com/chart/?symbol=${encodeURIComponent(tvSymbol(ticker))}`; }
 function stockbitUrl(ticker){ return `https://stockbit.com/symbol/${encodeURIComponent(ticker)}`; }
+
+// ==========================================================
+// TAB "🔎 Cari Ticker" — pencarian cepat lintas seluruh universe saham
+// (by kode ticker ATAU nama emiten), independen dari filter/preset milik
+// tab Screener. Hasil klik "Detail"/ticker langsung membuka modal Detail
+// Emiten yang sama dipakai di tab lain (openDetail, wiring [data-detail]
+// sudah global di attachContentEvents), dan "Chart" membuka tab Chart
+// (wiring [data-chart] juga sudah global). Tombol bintang pakai [data-fav]
+// yang juga sudah global (toggleFav) — jadi tidak perlu wiring baru di
+// attachContentEvents KECUALI untuk kotak input pencariannya sendiri.
+// ==========================================================
+function renderCariTicker(){
+  const list = enriched();
+  const qRaw = (state.cariTickerSearch || "").trim();
+  const q = qRaw.toUpperCase();
+  const tickerOptions = list.map(s=>`<option value="${s.ticker}">`).join("");
+
+  const searchBox = `
+    <div class="panel" style="flex-direction:column;align-items:stretch;">
+      <div class="filter-section-title"><span>🔎 Cari Ticker</span><span class="line"></span></div>
+      <div class="field" style="max-width:320px;margin-top:12px;">
+        <label>Kode Ticker / Nama Emiten</label>
+        <div class="search-wrap">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--muted)" stroke-width="2.5"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+          <input id="cariTickerInput" value="${escapeHtml(qRaw)}" placeholder="Ketik BBCA atau nama emiten..." list="cariTickerDatalist" autocomplete="off" style="width:100%;max-width:280px;">
+        </div>
+        <datalist id="cariTickerDatalist">${tickerOptions}</datalist>
+      </div>
+      <div style="font-size:11.5px;color:var(--muted);margin-top:2px;">Ketik minimal 1 huruf untuk mencari dari seluruh universe (${list.length} saham) — cocok di kode ticker maupun nama emiten. Tekan Enter untuk langsung membuka Detail Emiten kalau kode ticker-nya cocok pas.</div>
+    </div>`;
+
+  let resultsHtml;
+  if(!q){
+    resultsHtml = `<div class="empty-box" style="margin-top:16px;">Ketik kode ticker (mis. BBCA) atau nama emiten di kotak pencarian di atas untuk mulai mencari.</div>`;
+  } else {
+    const results = list
+      .filter(s => String(s.ticker||"").toUpperCase().includes(q) || String(s.name||"").toUpperCase().includes(q))
+      .sort((a,b)=>{
+        // Kecocokan tepat/awalan di kode ticker diprioritaskan di atas,
+        // baru kecocokan di nama emiten — supaya ketik "BBCA" tidak
+        // ketimpa hasil nama emiten lain yang juga mengandung "BBCA".
+        const at = String(a.ticker||"").toUpperCase(), bt = String(b.ticker||"").toUpperCase();
+        const aExact = at===q?0:at.startsWith(q)?1:2;
+        const bExact = bt===q?0:bt.startsWith(q)?1:2;
+        return aExact - bExact || at.localeCompare(bt);
+      })
+      .slice(0,50);
+    if(!results.length){
+      resultsHtml = `<div class="empty-box" style="margin-top:16px;">Tidak ada emiten yang cocok dengan "${escapeHtml(qRaw)}".</div>`;
+    } else {
+      const rows = results.map(s=>{
+        const changeTone = (s.changePct||0) > 0 ? "up" : (s.changePct||0) < 0 ? "down" : "muted";
+        return `
+        <tr>
+          <td><button class="ticker-link" data-detail="${escapeHtml(s.ticker)}" title="Lihat detail ${escapeHtml(s.ticker)}">${escapeHtml(s.ticker)}</button>${s.syariahLabel==="Ya" ? ' <span class="pill pill-teal" style="padding:1px 6px;font-size:9px;vertical-align:middle;">S</span>' : ''}</td>
+          <td style="white-space:normal;max-width:220px;font-family:'Sora',sans-serif;">${escapeHtml(s.name||"-")}</td>
+          <td style="white-space:normal;max-width:150px;font-family:'Sora',sans-serif;">${escapeHtml(s.sektor||"-")}</td>
+          <td class="mono">${dNum(s.cClose)}</td>
+          <td class="mono" style="color:var(--${changeTone})">${s.changePct!=null?dNum(s.changePct,{plusSign:true,decimals:2,suffix:'%'}):'-'}</td>
+          <td style="white-space:nowrap;">
+            <button class="btn btn-outline" data-detail="${escapeHtml(s.ticker)}" style="padding:5px 10px;font-size:11.5px;">Detail</button>
+            <a class="btn btn-outline" href="#/chart/${encodeURIComponent(s.ticker)}" data-chart="${escapeHtml(s.ticker)}" style="padding:5px 10px;font-size:11.5px;">Chart</a>
+          </td>
+          <td>
+            <button class="star-btn" data-fav="${escapeHtml(s.ticker)}" title="${state.watchlist.has(s.ticker)?'Hapus dari watchlist':'Tambah ke watchlist'}">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="${state.watchlist.has(s.ticker)?'var(--gold)':'none'}" stroke="${state.watchlist.has(s.ticker)?'var(--gold)':'var(--muted)'}" stroke-width="2.5"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>
+            </button>
+          </td>
+        </tr>`;
+      }).join("");
+      resultsHtml = `
+      <div class="panel" style="flex-direction:column;align-items:stretch;margin-top:16px;">
+        <div class="filter-section-title"><span>Hasil Pencarian</span><span class="count-badge">${results.length}</span><span class="line"></span></div>
+        <div class="table-wrap">
+          <table class="mono">
+            <thead><tr><th>Ticker</th><th>Nama</th><th>Sektor</th><th>Harga</th><th>%Chg</th><th></th><th></th></tr></thead>
+            <tbody>${rows}</tbody>
+          </table>
+        </div>
+      </div>`;
+    }
+  }
+  return searchBox + resultsHtml;
+}
 
 function renderTickerPicker(){
   const list = enriched();
@@ -14515,6 +14604,22 @@ function attachContentEvents(){
         const val = (e.target.value||"").trim().toUpperCase();
         const exists = state.stocks.some(st => st.ticker === val);
         if(exists) loadChart(val);
+        else if(val) alert(`Ticker "${val}" tidak ditemukan di data screener.`);
+      }
+    });
+  }
+
+  // Kotak pencarian tab "🔎 Cari Ticker" — sama polanya dengan chartSearchInput
+  // di atas (debounce + jaga posisi kursor), tapi Enter langsung membuka
+  // modal Detail Emiten (bukan tab Chart) kalau kode ticker cocok pas.
+  const cariTickerInput = document.getElementById("cariTickerInput");
+  if(cariTickerInput){
+    bindSearchInputPreservingCursor("cariTickerInput", (val) => { state.cariTickerSearch = val; });
+    cariTickerInput.addEventListener("keydown", (e) => {
+      if(e.key === "Enter"){
+        const val = (e.target.value||"").trim().toUpperCase();
+        const exists = state.stocks.some(st => st.ticker === val);
+        if(exists) openDetail(val);
         else if(val) alert(`Ticker "${val}" tidak ditemukan di data screener.`);
       }
     });

@@ -366,10 +366,10 @@ body, .header, .sidebar, .card, .modal { transition: background-color .2s ease, 
     display:flex; align-items:center; gap:10px; justify-content:flex-start;
     width:100%; padding:10px 12px; border-radius:10px;
     font-size:13px; font-weight:600; border:1px solid transparent;
-    background: transparent; color: var(--muted); transition: all .2s;
+    background: rgba(217, 119, 6, 0.08); color: var(--gold); border-color: rgba(217, 119, 6, 0.2); transition: all .2s;
   }
-  .sidebar .tab-btn:hover { color: var(--text); background: rgba(15,23,42,0.072); }
-  .sidebar .tab-btn.active { background: rgba(245, 158, 11, 0.15); color: var(--gold); border-color: rgba(245, 158, 11, 0.3); box-shadow: inset 0 0 10px rgba(245,158,11,0.05); }
+  .sidebar .tab-btn:hover { color: var(--goldDim); background: rgba(217, 119, 6, 0.15); }
+  .sidebar .tab-btn.active { background: rgba(5, 150, 105, 0.15); color: var(--up); border-color: rgba(5, 150, 105, 0.35); box-shadow: inset 0 0 10px rgba(5,150,105,0.08); }
   .sidebar .tab-icon { font-size:15px; flex-shrink:0; width:18px; text-align:center; }
   .sidebar .tab-label { overflow:hidden; text-overflow:ellipsis; }
 
@@ -608,11 +608,11 @@ body, .header, .sidebar, .card, .modal { transition: background-color .2s ease, 
   .mover-tabs{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:16px;}
   .mover-tab-btn{
     font-size:12px; font-weight:600; padding:8px 14px; border-radius:20px;
-    border:1px solid var(--border); background: rgba(15,23,42,0.061); color:var(--muted);
+    border:1px solid rgba(217, 119, 6, 0.25); background: rgba(217, 119, 6, 0.08); color:var(--gold);
     cursor:pointer; transition:0.2s; white-space:nowrap;
   }
-  .mover-tab-btn:hover{background: rgba(15,23,42,0.107); color:var(--text);}
-  .mover-tab-btn.active{background: var(--gold-grad); border-color:transparent; color:#fff; box-shadow: 0 4px 10px rgba(245,158,11,0.3);}
+  .mover-tab-btn:hover{background: rgba(217, 119, 6, 0.16); color:var(--goldDim);}
+  .mover-tab-btn.active{background: var(--up-grad); border-color:transparent; color:#fff; box-shadow: 0 4px 10px rgba(5,150,105,0.3);}
   .mover-list{display:flex; flex-direction:column; gap:4px;}
   .mover-row{
     display:grid; grid-template-columns: 28px 100px 1.6fr 1fr 90px 90px 120px 30px;
@@ -826,9 +826,9 @@ body, .header, .sidebar, .card, .modal { transition: background-color .2s ease, 
   .detail-head-sub{color:var(--muted);font-size:13px;margin-top:4px; font-weight: 500;}
   
   .detail-tabs{display:flex;gap:8px;border-bottom:1px solid var(--border);margin-bottom:20px; padding-bottom: 4px;}
-  .detail-tab-btn{background:none;border:none;padding:8px 16px;font-size:13px;font-weight:600;color:var(--muted);border-radius: 6px; display:flex;align-items:center;gap:6px; cursor: pointer; transition: 0.2s;}
-  .detail-tab-btn.active{background: rgba(245,158,11,0.15); color:var(--gold); box-shadow: inset 0 0 0 1px rgba(245,158,11,0.3);}
-  .detail-tab-btn:hover:not(.active){color:var(--text); background: rgba(15,23,42,0.072);}
+  .detail-tab-btn{background: rgba(217, 119, 6, 0.08);border:1px solid rgba(217, 119, 6, 0.2);padding:8px 16px;font-size:13px;font-weight:600;color:var(--gold);border-radius: 6px; display:flex;align-items:center;gap:6px; cursor: pointer; transition: 0.2s;}
+  .detail-tab-btn.active{background: rgba(5,150,105,0.15); color:var(--up); box-shadow: inset 0 0 0 1px rgba(5,150,105,0.35);}
+  .detail-tab-btn:hover:not(.active){color:var(--goldDim); background: rgba(217, 119, 6, 0.16);}
   
   .detail-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:12px;}
   .detail-item{background: rgba(0,0,0,0.2); border:1px solid var(--border);border-radius:10px;padding:12px 14px; box-shadow: inset 0 2px 4px rgba(0,0,0,0.1);}
