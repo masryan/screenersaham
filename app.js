@@ -3044,6 +3044,7 @@ async function loadLive(){
       beta: numOrNull(r.beta), der: numOrNull(r.der), currentRatio: numOrNull(r.current_ratio),
       support: r.support, resistance: r.resistance, high52w: r.week52_high, low52w: r.week52_low,
       week52ChangePct: numOrNull(r.week52_change_pct),
+      weekChangePct: numOrNull(r.week_change_pct), monthChangePct: numOrNull(r.month_change_pct),
       // Field tambahan untuk paritas screener publik: beberapa deployment
       // memakai nama kolom berbeda, jadi normalisasi dilakukan dengan fallback.
       ytdPct: numOrNull(r.ytd_pct ?? r.ytd_change_pct ?? r.ytd),
@@ -4827,6 +4828,7 @@ async function fetchAndSaveHistoricalBulk(tickers, rangeFrom, rangeTo){
     const res = await stockbitFetchHistorical(ticker, "daily", { startDate: fromDate, endDate: toDate, limit: Math.max(tradingDates.length + 5, 30), page: 1 });
     if(res.error){
       state.stockbitHistoricalBulkResults.push({ ticker, date: `${fromDate}..${toDate}`, ok:false, msg: res.error });
+      console.log(`Stockbit historical ERROR (${ticker}):`, res.error, "raw:", res.raw);
     } else {
       const parsed = parseStockbitHistorical(res.raw);
       if(!parsed){
@@ -5314,6 +5316,14 @@ function ti_buildStockRowFromBars(ticker, bars, listedShares) {
   const low52w = has52w ? ti_round2(Math.min(...window52wL)) : null;
   const closeAYearAgo = n > 252 ? closes[n - 252] : null;
   const week52ChangePct = closeAYearAgo ? ti_round2(((cClose - closeAYearAgo) / closeAYearAgo) * 100) : null;
+  // "1 Week Price Returns (%)" & "1 Month Price Returns (%)" — sama pola dengan
+  // week52ChangePct di atas, tapi mundur 5 bar (~1 minggu bursa) dan 20 bar
+  // (~1 bulan bursa) dari harga penutupan terakhir. Dipakai di RULE_METRICS
+  // (rule builder) seperti contoh Stockbit "1 Month Price Returns ≤ -10".
+  const close1WAgo = n > 5 ? closes[n - 5] : null;
+  const weekChangePct = close1WAgo ? ti_round2(((cClose - close1WAgo) / close1WAgo) * 100) : null;
+  const close1MAgo = n > 20 ? closes[n - 20] : null;
+  const monthChangePct = close1MAgo ? ti_round2(((cClose - close1MAgo) / close1MAgo) * 100) : null;
 
   const window20H = highsFilled.slice(-20), window20L = lowsFilled.slice(-20);
   const support = ti_round2(Math.min(...window20L));
@@ -5414,7 +5424,7 @@ function ti_buildStockRowFromBars(ticker, bars, listedShares) {
     c_open: cOpen, day_high: cHigh, day_low: cLow, price: cClose,
     prev_close: prevClose, change_abs: changeAbs, change_pct: changePct,
     week52_high: high52w, week52_low: low52w, week52_change_pct: week52ChangePct,
-    ytd_pct: ytdPct,
+    ytd_pct: ytdPct, week_change_pct: weekChangePct, month_change_pct: monthChangePct,
     support, resistance, fibonacci: fib,
     swing_high: swingHigh, swing_low: swingLow,
     ema21h: ti_round2(ema21H), ema21l: ti_round2(ema21L), ema89: ti_round2(ema89),
@@ -7796,6 +7806,8 @@ const SCREENER_COLUMNS = [
 const RULE_METRICS = [
   { key:"cClose", label:"Price" },
   { key:"changePct", label:"1 Day Price Returns (%)" },
+  { key:"weekChangePct", label:"1 Week Price Returns (%)" },
+  { key:"monthChangePct", label:"1 Month Price Returns (%)" },
   { key:"cVol", label:"Volume" },
   { key:"prevVol", label:"Previous Volume" },
   { key:"volChangePct", label:"1 Day Volume Change (%)" },
