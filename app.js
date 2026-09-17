@@ -1915,6 +1915,12 @@ let state = {
   // pindah-pindah tab tidak saling menimpa nilai pencarian satu sama lain.
   cariTickerSearch: "",
   chartRange: "all", chartSeries: { close:true, support:true, resistance:true, fib:true, bb:false, emaHL:false, ema89:false, sar:false, supertrend:false, pc:false, bandar:false, vol:false, stochrsi:false, rsi721:false, foreignflow:false, macd:false, netforeign:false },
+  // Interval bar ("D" harian / "W" mingguan — agregasi dari data harian di
+  // chartAggregateWeekly), level zoom (1 = 100%, >1 memperbesar/bar makin
+  // sedikit & lebar, <1 memperkecil/bar makin banyak — lihat drawChartSVG),
+  // status minimize (sembunyikan kontrol & area chart, sisakan toolbar) dan
+  // fullscreen (chart tampil menutupi layar penuh) — lihat renderChart().
+  chartInterval: "D", chartZoomLevel: 1, chartMinimized: false, chartFullscreen: false,
   detailTicker: null, detailTab: "teknikal",
   // Modal "detail metrik Dashboard": dibuka saat kartu ringkasan (Total
   // Saham, Undervalued, dst) diklik. key = metrik, lihat DASH_METRIC_DEFS.
@@ -5891,6 +5897,7 @@ async function loadChart(ticker){
   // MACD, Net Foreign Buy/Sell) aktif. User tetap bisa toggle manual
   // sesudahnya lewat checkbox — ini cuma titik awal tiap ganti ticker.
   state.chartRange = "1m";
+  state.chartInterval = "D"; state.chartZoomLevel = 1; state.chartMinimized = false; state.chartFullscreen = false;
   state.chartSeries = {
     close:true, support:true, resistance:true, fib:false, bb:false,
     emaHL:true, ema89:true, sar:false, supertrend:false, pc:false,
@@ -10667,17 +10674,43 @@ function renderChart(){
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 13v6a2 2 0 01-2 2H5a2 2 0 01-2-2V8a2 2 0 012-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
           Stockbit
         </a>
+        <button type="button" class="btn btn-outline chart-icon-btn" data-chart-minimize-toggle title="${state.chartMinimized?'Tampilkan chart':'Sembunyikan chart (minimize)'}">
+          ${state.chartMinimized ? '🔽 Tampilkan' : '🔼 Minimize'}
+        </button>
+        ${!state.chartMinimized ? `<button type="button" class="btn btn-outline chart-icon-btn" data-chart-fullscreen-toggle title="${state.chartFullscreen?'Keluar dari layar penuh':'Perbesar ke layar penuh'}">
+          ${state.chartFullscreen ? '⛶ Keluar Layar Penuh' : '⛶ Layar Penuh'}
+        </button>` : ''}
       </div>
     </div>`;
+
+  // Minimize: sisakan cuma toolbar (ticker + link eksternal + tombol
+  // minimize/fullscreen) supaya user bisa "melipat" chart tanpa kehilangan
+  // ticker & pengaturan yang sudah dipilih (chartRange/chartSeries/dst tetap
+  // tersimpan di state, cuma tidak dirender sampai di-"Tampilkan" lagi).
+  if(state.chartMinimized){
+    return `${picker}${chartToolbar}`;
+  }
 
   // Toolbar interaktif ala TradingView: rentang waktu + toggle tiap seri.
   // State-nya disimpan di state.chartRange / state.chartSeries supaya nilai
   // dan checkbox tetap konsisten saat seluruh tab dirender ulang.
   const ranges = [['1m','1B'],['3m','3B'],['6m','6B'],['1y','1T'],['all','Semua']];
+  const intervals = [['D','Harian'],['W','Mingguan']];
+  const zoomPct = Math.round((state.chartZoomLevel||1)*100);
   const controls = `<div class="chart-controls">
     <div class="chart-control-group">
       <span class="chart-control-label">Rentang</span>
       ${ranges.map(([v,l])=>`<button class="chart-range-btn ${state.chartRange===v?'active':''}" data-chart-range="${v}">${l}</button>`).join('')}
+    </div>
+    <div class="chart-control-group">
+      <span class="chart-control-label">Interval</span>
+      ${intervals.map(([v,l])=>`<button class="chart-range-btn ${(state.chartInterval||'D')===v?'active':''}" data-chart-interval="${v}">${l}</button>`).join('')}
+    </div>
+    <div class="chart-control-group">
+      <span class="chart-control-label">Zoom</span>
+      <button type="button" class="chart-range-btn chart-zoom-btn" data-chart-zoom="out" title="Zoom out (lihat lebih banyak bar)">−</button>
+      <button type="button" class="chart-range-btn chart-zoom-btn" data-chart-zoom="reset" title="Reset zoom ke 100%">${zoomPct}%</button>
+      <button type="button" class="chart-range-btn chart-zoom-btn" data-chart-zoom="in" title="Zoom in (lihat lebih sedikit bar, lebih detail)">+</button>
     </div>
     <div class="chart-control-group chart-series-group">
       <span class="chart-control-label">Overlay Harga</span>
@@ -10711,10 +10744,12 @@ function renderChart(){
         : `<div class="chart-svg-wrap"><svg id="chartSvg" width="100%" height="100%" style="display:block" preserveAspectRatio="none"></svg><div id="chartTooltip" class="chart-tooltip"></div></div>`);
 
   return `${picker}
-    ${chartToolbar}
-    <div class="chart-section-title">Chart &amp; Indikator (dihitung dari harga close/OHLC asli tabel flows)</div>
-    ${controls}
-    <div class="chart-box chart-box-expanded">${chartBoxInner}</div>`;
+    <div id="chartTabWrap" class="${state.chartFullscreen ? 'chart-fullscreen' : ''}">
+      ${chartToolbar}
+      <div class="chart-section-title">Chart &amp; Indikator (dihitung dari harga close/OHLC asli tabel flows)</div>
+      ${controls}
+      <div class="chart-box chart-box-expanded">${chartBoxInner}</div>
+    </div>`;
 }
 
 function chartSMA(values, period){ return values.map((_,i)=>i+1<period?null:values.slice(i+1-period,i+1).reduce((a,b)=>a+b,0)/period); }
@@ -10811,14 +10846,76 @@ function chartStochRSI(rsiValues, stochPeriod=14, kSmooth=3, dSmooth=3){
   return { k, d };
 }
 
+// Agregasi data harian (state.chartData, urut tanggal naik) jadi bar
+// mingguan -- dipakai saat state.chartInterval === "W". Satu minggu
+// dikelompokkan berdasar tahun+nomor minggu ISO (Senin sebagai awal minggu)
+// supaya konsisten dengan konvensi kalender bursa; open = open hari
+// pertama minggu itu, high/low = max/min sepekan, close = close hari
+// terakhir, volume/foreignBuy/foreignSell dijumlah sepekan, date = tanggal
+// hari terakhir minggu itu (dipakai untuk sumbu-X & filter Rentang).
+function chartISOWeekKey(dateStr){
+  const d = new Date(dateStr + "T00:00:00Z");
+  const day = (d.getUTCDay() + 6) % 7; // 0=Senin..6=Minggu
+  d.setUTCDate(d.getUTCDate() - day + 3); // geser ke Kamis minggu yang sama
+  const firstThursday = new Date(Date.UTC(d.getUTCFullYear(), 0, 4));
+  const weekNo = 1 + Math.round(((d - firstThursday) / 86400000 - 3 + ((firstThursday.getUTCDay() + 6) % 7)) / 7);
+  return `${d.getUTCFullYear()}-W${String(weekNo).padStart(2, "0")}`;
+}
+function chartAggregateWeekly(rows){
+  if(!rows || !rows.length) return [];
+  const groups = new Map();
+  for(const r of rows){
+    const key = chartISOWeekKey(r.date);
+    if(!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(r);
+  }
+  const out = [];
+  for(const bars of groups.values()){
+    const last = bars[bars.length - 1], first = bars[0];
+    const highs = bars.map(b => b.high != null ? b.high : b.close);
+    const lows = bars.map(b => b.low != null ? b.low : b.close);
+    const sumOrNull = key => {
+      const vals = bars.map(b => b[key]).filter(v => v != null);
+      return vals.length ? vals.reduce((a, b2) => a + b2, 0) : null;
+    };
+    out.push({
+      date: last.date,
+      open: first.open,
+      high: Math.max(...highs),
+      low: Math.min(...lows),
+      close: last.close,
+      volume: sumOrNull("volume"),
+      foreignBuy: sumOrNull("foreignBuy"),
+      foreignSell: sumOrNull("foreignSell"),
+    });
+  }
+  return out;
+}
+
 function drawChartSVG(){
   const svg = document.getElementById("chartSvg");
   if(!svg || !state.chartData.length) return;
   const lv = state.selectedLevels, series = state.chartSeries || {};
-  const allData = state.chartData.slice();
+  // Interval Harian/Mingguan: agregasi ke bar mingguan dulu SEBELUM semua
+  // perhitungan indikator di bawah, supaya EMA/RSI/MACD/dst semuanya
+  // dihitung dari deret mingguan (bukan dihitung harian lalu di-downsample).
+  const allData = state.chartInterval === "W" ? chartAggregateWeekly(state.chartData) : state.chartData.slice();
   const now = new Date();
   const days = {"1m":31,"3m":92,"6m":183,"1y":365}[state.chartRange];
-  const data = days ? allData.filter(d => (now - new Date(d.date)) <= days*86400000) : allData;
+  let data = days ? allData.filter(d => (now - new Date(d.date)) <= days*86400000) : allData;
+  if(!data.length) data = allData;
+  // Zoom: geser jumlah bar yang ditampilkan relatif terhadap jumlah bar
+  // hasil filter Rentang di atas -- >100% memperbesar (bar makin sedikit,
+  // diambil dari yang PALING BARU), <100% memperkecil (bar makin banyak,
+  // menarik histori lebih jauh dari allData kalau perlu, dibatasi total
+  // data yang tersedia). Sumbernya selalu allData penuh supaya zoom out
+  // bisa menembus batas Rentang yang sedang dipilih.
+  const zoom = state.chartZoomLevel || 1;
+  if(zoom !== 1 && allData.length){
+    let visibleCount = Math.round(data.length / zoom);
+    visibleCount = Math.max(10, Math.min(allData.length, visibleCount));
+    data = allData.slice(-visibleCount);
+  }
   const plotted = data.length ? data : allData;
   const closes = plotted.map(d=>d.close);
   const on = k => series[k] !== false;
@@ -14586,8 +14683,25 @@ function attachContentEvents(){
 
   // --- Kontrol chart interaktif (rentang waktu + toggle indikator) ---
   document.querySelectorAll("[data-chart-range]").forEach(btn=>{
-    btn.onclick = () => { state.chartRange = btn.dataset.chartRange; render(); };
+    btn.onclick = () => { state.chartRange = btn.dataset.chartRange; state.chartZoomLevel = 1; render(); };
   });
+  document.querySelectorAll("[data-chart-interval]").forEach(btn=>{
+    btn.onclick = () => { state.chartInterval = btn.dataset.chartInterval; state.chartZoomLevel = 1; render(); };
+  });
+  document.querySelectorAll("[data-chart-zoom]").forEach(btn=>{
+    btn.onclick = () => {
+      const action = btn.dataset.chartZoom;
+      const cur = state.chartZoomLevel || 1;
+      if(action === "in") state.chartZoomLevel = Math.min(5, +(cur * 1.25).toFixed(3));
+      else if(action === "out") state.chartZoomLevel = Math.max(0.2, +(cur / 1.25).toFixed(3));
+      else state.chartZoomLevel = 1;
+      render();
+    };
+  });
+  const chartMinimizeBtn = document.querySelector("[data-chart-minimize-toggle]");
+  if(chartMinimizeBtn) chartMinimizeBtn.onclick = () => { state.chartMinimized = !state.chartMinimized; if(state.chartMinimized) state.chartFullscreen = false; render(); };
+  const chartFullscreenBtn = document.querySelector("[data-chart-fullscreen-toggle]");
+  if(chartFullscreenBtn) chartFullscreenBtn.onclick = () => { state.chartFullscreen = !state.chartFullscreen; render(); };
   document.querySelectorAll("[data-chart-series]").forEach(chk=>{
     chk.onchange = () => {
       state.chartSeries = state.chartSeries || {};
