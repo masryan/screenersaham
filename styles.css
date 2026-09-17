@@ -686,6 +686,17 @@ body, .header, .sidebar, .card, .modal { transition: background-color .2s ease, 
     .chart-fullscreen{padding:10px;}
     .chart-icon-btn{font-size:11px !important;padding:5px 8px !important;}
   }
+  /* Status aktif tombol icon (dipakai tombol Fullscreen saat sedang aktif) --
+     visualnya sama seperti .chart-range-btn.active supaya konsisten. */
+  .chart-icon-btn.active{background:var(--gold-grad);border-color:transparent;color:#fff;box-shadow:0 3px 10px rgba(245,158,11,0.3);}
+  /* Bar ringkas pengganti kotak chart + semua kontrolnya saat di-minimize
+     (lihat data-chart-minimize-toggle di app.js / renderChart()). */
+  .chart-minimized-bar{
+    display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;
+    margin-top:20px;padding:14px 16px;border:1px solid var(--border);border-radius:12px;
+    background:rgba(15,23,42,0.04);box-shadow:var(--shadow-sm);
+  }
+  .chart-minimized-bar span{font-size:13px;color:var(--muted);}
 
   .about-row{max-width:680px;background: var(--surface); backdrop-filter: var(--glass-blur); border:1px solid var(--border);border-radius:12px;padding:20px;margin-bottom:16px; box-shadow: var(--shadow-md);}
   .about-row p{color:var(--text);font-size:13px;line-height:1.7;margin:8px 0 0; opacity: 0.9;}
