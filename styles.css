@@ -1,4 +1,16 @@
 :root {
+  /* color-scheme TIDAK PERNAH dideklarasikan di file ini sebelumnya. Tanpa
+     ini, browser memutuskan sendiri apakah widget bawaan (kalender di
+     <input type="date">, scrollbar, dst) dirender terang/gelap berdasarkan
+     preferensi OS (prefers-color-scheme) -- BUKAN berdasarkan toggle
+     tema situs ini. Efeknya: kalau OS/browser user diset dark tapi situs
+     lagi mode TERANG (data-theme belum "dark"), input tanggal kembali
+     dipaksa render dark oleh browser -> jadi kotak gelap tak terbaca di
+     atas halaman terang (persis laporan bug "filter tanggal tidak
+     nampak" di mode terang). Baris ini mengunci widget bawaan supaya
+     SELALU ikut toggle tema situs, bukan ikut OS.
+  */
+  color-scheme: light;
   /* ==========================================
      TERANG / PROFESIONAL — "trading floor" bukan "SaaS card kit": dasar
      abu-kebiruan terang (bukan putih polos, biar tidak silau/steril),
@@ -34,6 +46,7 @@
   --violet-grad: linear-gradient(135deg, #a78bfa 0%, #7c3aed 100%);
   --glass-blur: blur(12px);
   --shadow-md: 0 4px 10px -2px rgba(15, 23, 42, 0.10), 0 2px 4px -2px rgba(15, 23, 42, 0.06);
+  --shadow-sm: 0 1px 3px rgba(15, 23, 42, 0.08), 0 1px 2px rgba(15, 23, 42, 0.05);
   --shadow-glow: 0 0 18px rgba(217, 119, 6, 0.18);
 
   /* Panel "kaca" (header, sidebar, dropdown, modal, dll) — dipisah jadi
@@ -59,6 +72,7 @@
    style baru yang ditambah pakai var(--...) yang sudah ada, otomatis
    ikut berubah tanpa perlu disentuh lagi di sini. */
 [data-theme="dark"] {
+  color-scheme: dark;
   --bg-main: #0f1b20;
   --bg-grad: linear-gradient(135deg, #0f172a 0%, #1e1b4b 100%);
   --surface: rgba(30, 41, 59, 0.65);
@@ -74,6 +88,7 @@
   --down: #f87171;
   --teal: #22d3ee;
   --shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.2), 0 2px 4px -1px rgba(0, 0, 0, 0.1);
+  --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.25), 0 1px 2px rgba(0, 0, 0, 0.15);
   --shadow-glow: 0 0 15px rgba(245, 158, 11, 0.15);
 
   --glass-header: rgba(15, 23, 42, 0.75);
@@ -361,6 +376,31 @@ body, .header, .sidebar, .card, .modal { transition: background-color .2s ease, 
   .sidebar.collapsed { width:60px; flex-basis:60px; padding:14px 8px; }
   .sidebar.collapsed .tab-label { display:none; }
   .sidebar.collapsed .tab-btn { justify-content:center; padding:10px 0; }
+
+  /* Grup menu per kategori — header-nya bisa diklik untuk ciutkan/lebarkan
+     isi grup. Status ciutan per grup disimpan di localStorage (lihat
+     initSidebarGroups() di app.js) supaya konsisten walau halaman di-reload. */
+  .tab-group { display:flex; flex-direction:column; gap:4px; margin-bottom:6px; }
+  .tab-group-header {
+    display:flex; align-items:center; justify-content:space-between; gap:8px;
+    width:100%; background:none; border:none; cursor:pointer;
+    padding:6px 10px; margin-top:4px;
+    font-size:10.5px; font-weight:700; letter-spacing:0.04em; text-transform:uppercase;
+    color: var(--muted); border-radius:8px; transition: 0.15s;
+  }
+  .tab-group-header:hover { color: var(--text); background: rgba(15,23,42,0.05); }
+  .tab-group-title { display:flex; align-items:center; gap:6px; }
+  .tab-group-chevron { flex-shrink:0; transition: transform .18s ease; }
+  .tab-group.collapsed .tab-group-chevron { transform: rotate(-90deg); }
+  .tab-group-items { display:flex; flex-direction:column; gap:4px; }
+  .tab-group.collapsed .tab-group-items { display:none; }
+
+  /* Mode sidebar diciutkan jadi ikon saja (desktop): grup diratakan jadi
+     daftar ikon flat — header kategori & status ciutan per grup diabaikan
+     karena tidak ada ruang untuk label kategori. */
+  .sidebar.collapsed .tab-group-header { display:none; }
+  .sidebar.collapsed .tab-group-items { display:flex !important; }
+  .sidebar.collapsed .tab-group { margin-bottom:0; }
 
   /* TOMBOL HAMBURGER (mobile) — di desktop disembunyikan; di HP muncul di
      kiri judul untuk membuka panel menu navigasi. */
@@ -857,6 +897,11 @@ body, .header, .sidebar, .card, .modal { transition: background-color .2s ease, 
     .sidebar .tab-btn{ flex-shrink:0; width:100%; padding:11px 14px; font-size:13px; border-radius:10px; justify-content:flex-start; }
     .sidebar.collapsed .tab-label{ display:inline; }
     .sidebar.collapsed .tab-btn{ justify-content:flex-start; padding:11px 14px; }
+    /* Di HP, grup kategori tetap tampil normal (header + ciutan per-grup)
+       walau class .collapsed (mode ikon desktop) kebawa dari localStorage. */
+    .sidebar.collapsed .tab-group-header{ display:flex !important; }
+    .sidebar.collapsed .tab-group-items{ display:flex; }
+    .sidebar.collapsed .tab-group.collapsed .tab-group-items{ display:none; }
     /* Header HP: hamburger di kiri, aksi lain tetap wrap di bawah */
     .header-row{ position:relative; padding-left:46px; }
     .hamburger-btn{ position:absolute; left:0; top:4px; }

@@ -617,7 +617,7 @@ function computeExtendedIndicators(bars) {
     // label kolom "vwap" jadi menyesatkan di screener/rule builder.
     // Sekarang VWAP20 sungguhan (volume-weighted, 20 bar terakhir).
     vwap: round2(calcVWAP(closes, highs, lows, volumes, 20)),
-    ema5: round2(calcEMA(closes, 5)), ema10: round2(calcEMA(closes, 10)), ema20: round2(calcEMA(closes, 20)),
+    ema5: round2(calcEMA(closes, 5)), ema9: round2(calcEMA(closes, 9)), ema10: round2(calcEMA(closes, 10)), ema20: round2(calcEMA(closes, 20)),
     ema50: round2(calcEMA(closes, 50)), ema100: round2(calcEMA(closes, 100)), ema200: round2(calcEMA(closes, 200)),
     fibP: fib.p, fibR1: fib.r1, fibR2: fib.r2, fibR3: fib.r3, fibS1: fib.s1, fibS2: fib.s2, fibS3: fib.s3,
   };
@@ -1423,7 +1423,7 @@ try {
           bb_upper: ext.bbUpper, bb_lower: ext.bbLower,
           adr14: ext.adr14, prev_atr14: prevExt.atr14 ?? null, prev_adr14: prevExt.adr14 ?? null,
           vwap: ext.vwap,
-          ema5: ext.ema5, ema10: ext.ema10, ema20: ext.ema20, ema50: ext.ema50, ema100: ext.ema100, ema200: ext.ema200,
+          ema5: ext.ema5, ema9: ext.ema9, ema10: ext.ema10, ema20: ext.ema20, ema50: ext.ema50, ema100: ext.ema100, ema200: ext.ema200,
           prev_ema200: prevExt.ema200 ?? null,
           fib_p: ext.fibP, fib_r1: ext.fibR1, fib_r2: ext.fibR2, fib_r3: ext.fibR3,
           fib_s1: ext.fibS1, fib_s2: ext.fibS2, fib_s3: ext.fibS3,
