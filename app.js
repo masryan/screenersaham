@@ -1884,11 +1884,11 @@ let state = {
   showAdvancedFilters: false,
   // Collapsible untuk 3 blok filter utama (Klasifikasi Emiten / Trend & Sinyal
   // Teknikal / Momentum, Volume & Keyakinan) — pola sama seperti "Filter
-  // Lanjutan" (adv-toggle/adv-body), default terbuka supaya tidak mengubah
-  // tampilan yang sudah ada; wiring klik ada di attachContentEvents.
-  showFilterKlasifikasi: true,
-  showFilterTrend: true,
-  showFilterMomentum: true,
+  // Lanjutan" (adv-toggle/adv-body); default MINIMIZE (tertutup) — wiring
+  // klik ada di attachContentEvents.
+  showFilterKlasifikasi: false,
+  showFilterTrend: false,
+  showFilterMomentum: false,
   showFilterKustomBagger: true, // dipindah ke tab mandiri "🎯 Skor Bagger" (bukan lagi nested di Filter & Screener) — default terbuka karena sekarang itulah isi utama halamannya
   // Tab mandiri "🎯 Skor Bagger" — search/filter tier & pagination-nya sendiri,
   // terpisah dari state.search/state.page milik tab Screener supaya kedua
