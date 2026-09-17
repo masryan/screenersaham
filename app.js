@@ -10663,17 +10663,12 @@ function renderChart(){
   const series = state.chartSeries || {};
   const toggle = (key, label, color) => `<label class="chart-toggle"><input type="checkbox" data-chart-series="${key}" ${series[key]!==false?'checked':''}><span class="chart-swatch" style="background:${color}"></span>${label}</label>`;
   const zoom = state.chartZoom || 1;
-
-  // Bar ringkas saat chart di-minimize -- kotak chart & semua kontrolnya
-  // disembunyikan, cuma sisa satu baris tombol "Perbesar" biar hemat
-  // ruang layar (berguna di HP saat scroll ke bagian lain halaman).
-  if(state.chartMinimized){
-    return `${picker}
-      <div class="chart-minimized-bar">
-        <span>Chart <b class="mono" style="color:var(--text);">${t}</b> diminimalkan.</span>
-        <button class="btn btn-outline chart-icon-btn" data-chart-minimize-toggle>⤢ Perbesar Chart</button>
-      </div>`;
-  }
+  // "Minimize" HANYA menyembunyikan blok judul+kontrol (Rentang/Timeframe/
+  // Zoom/Overlay Harga/Panel Bawah) -- toolbar (nama ticker, link TV/
+  // Stockbit, tombol Minimize/Fullscreen) & kotak chart-nya TETAP tampil,
+  // malah kotak chart dilebarkan (class chart-box-tall) mengisi ruang
+  // vertikal yang kebebas dari blok kontrol yang disembunyikan.
+  const controlsHidden = !!state.chartMinimized;
 
   const chartToolbar = `
     <div class="chart-toolbar" style="margin-top: 24px;">
@@ -10687,7 +10682,7 @@ function renderChart(){
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 13v6a2 2 0 01-2 2H5a2 2 0 01-2-2V8a2 2 0 012-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
           Stockbit
         </a>
-        <button class="btn btn-outline chart-icon-btn" data-chart-minimize-toggle title="Minimize chart">➖ Minimize</button>
+        <button class="btn btn-outline chart-icon-btn ${controlsHidden?'active':''}" data-chart-minimize-toggle title="${controlsHidden?'Tampilkan blok Chart & Indikator':'Sembunyikan blok Chart & Indikator biar chart tampil penuh vertikal'}">${controlsHidden?'🔽 Tampilkan Kontrol':'➖ Minimize'}</button>
         <button class="btn btn-outline chart-icon-btn ${state.chartExpanded?'active':''}" data-chart-fullscreen-toggle title="${state.chartExpanded?'Keluar dari layar penuh':'Perbesar ke layar penuh'}">⛶ ${state.chartExpanded?'Keluar Fullscreen':'Fullscreen'}</button>
       </div>
     </div>`;
@@ -10744,15 +10739,26 @@ function renderChart(){
         ? `<div class="empty-box" style="height:100%;display:flex;align-items:center;justify-content:center;">Belum ada histori harga untuk ${t} di tabel <code>flows</code> — jalankan <code>sync-flow.mjs</code> dulu.</div>`
         : `<div class="chart-svg-wrap"><svg id="chartSvg" width="100%" height="100%" style="display:block" preserveAspectRatio="none"></svg><div id="chartTooltip" class="chart-tooltip"></div></div>`);
 
+  // Blok judul + kontrol disembunyikan total dari DOM saat controlsHidden
+  // (bukan cuma display:none) supaya checkbox/tombol di dalamnya tidak ikut
+  // "kepencet" tanpa sengaja lewat elemen tersembunyi.
+  const sectionAndControls = controlsHidden ? "" : `
+    <div class="chart-section-title">Chart &amp; Indikator (dihitung dari harga close/OHLC asli tabel flows)</div>
+    ${controls}`;
+  // chart-box-tall menambah tinggi kotak chart mengisi ruang yang kebebas
+  // dari blok kontrol yang disembunyikan -- tetap dipasang walau lagi
+  // fullscreen juga (lihat aturan `.chart-fullscreen .chart-box-tall` di
+  // styles.css yang menaikkan lagi batas tingginya saat keduanya aktif).
+  const boxTallClass = controlsHidden ? " chart-box-tall" : "";
+
   // #chartTabWrap + class chart-fullscreen (lihat styles.css) menangani
   // mode layar-penuh; dipicu lewat tombol [data-chart-fullscreen-toggle]
   // di attachContentEvents().
   return `<div id="chartTabWrap" class="${state.chartExpanded?'chart-fullscreen':''}">
     ${picker}
     ${chartToolbar}
-    <div class="chart-section-title">Chart &amp; Indikator (dihitung dari harga close/OHLC asli tabel flows)</div>
-    ${controls}
-    <div class="chart-box chart-box-expanded">${chartBoxInner}</div>
+    ${sectionAndControls}
+    <div class="chart-box chart-box-expanded${boxTallClass}">${chartBoxInner}</div>
   </div>`;
 }
 
@@ -14712,16 +14718,11 @@ function attachContentEvents(){
     };
   });
   document.querySelectorAll("[data-chart-minimize-toggle]").forEach(btn=>{
-    btn.onclick = () => {
-      state.chartMinimized = !state.chartMinimized;
-      if(state.chartMinimized) state.chartExpanded = false;
-      render();
-    };
+    btn.onclick = () => { state.chartMinimized = !state.chartMinimized; render(); };
   });
   document.querySelectorAll("[data-chart-fullscreen-toggle]").forEach(btn=>{
     btn.onclick = () => {
       state.chartExpanded = !state.chartExpanded;
-      if(state.chartExpanded) state.chartMinimized = false;
       render();
       // Ukuran kontainer .chart-box baru pasti (fullscreen atau normal)
       // setelah layout sempat reflow -- gambar ulang sekali lagi supaya

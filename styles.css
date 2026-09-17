@@ -682,21 +682,23 @@ body, .header, .sidebar, .card, .modal { transition: background-color .2s ease, 
     box-shadow:0 0 0 9999px rgba(0,0,0,0.55);
   }
   .chart-fullscreen .chart-box-expanded{--main-h:min(70vh,620px);flex:1 1 auto;}
+  /* Kalau blok kontrol JUGA disembunyikan sewaktu fullscreen, naikkan lagi
+     batas tingginya (menang atas aturan di atas karena taruh belakangan &
+     specificity-nya sama). */
+  .chart-fullscreen .chart-box-tall{--main-h:min(85vh,760px);}
   @media (max-width:768px){
     .chart-fullscreen{padding:10px;}
     .chart-icon-btn{font-size:11px !important;padding:5px 8px !important;}
   }
-  /* Status aktif tombol icon (dipakai tombol Fullscreen saat sedang aktif) --
-     visualnya sama seperti .chart-range-btn.active supaya konsisten. */
+  /* Status aktif tombol icon (dipakai tombol Minimize/Fullscreen saat
+     sedang aktif) -- visualnya sama seperti .chart-range-btn.active supaya
+     konsisten. */
   .chart-icon-btn.active{background:var(--gold-grad);border-color:transparent;color:#fff;box-shadow:0 3px 10px rgba(245,158,11,0.3);}
-  /* Bar ringkas pengganti kotak chart + semua kontrolnya saat di-minimize
-     (lihat data-chart-minimize-toggle di app.js / renderChart()). */
-  .chart-minimized-bar{
-    display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;
-    margin-top:20px;padding:14px 16px;border:1px solid var(--border);border-radius:12px;
-    background:rgba(15,23,42,0.04);box-shadow:var(--shadow-sm);
-  }
-  .chart-minimized-bar span{font-size:13px;color:var(--muted);}
+  /* Dipakai saat blok judul+kontrol (Rentang/Timeframe/Zoom/Overlay/Panel
+     Bawah) disembunyikan lewat tombol Minimize -- kotak chart melebar
+     mengisi ruang vertikal yang kebebas (lihat controlsHidden di
+     renderChart(), app.js). */
+  .chart-box-tall{--main-h:min(65vh,560px);}
 
   .about-row{max-width:680px;background: var(--surface); backdrop-filter: var(--glass-blur); border:1px solid var(--border);border-radius:12px;padding:20px;margin-bottom:16px; box-shadow: var(--shadow-md);}
   .about-row p{color:var(--text);font-size:13px;line-height:1.7;margin:8px 0 0; opacity: 0.9;}
@@ -1049,6 +1051,7 @@ body, .header, .sidebar, .card, .modal { transition: background-color .2s ease, 
     /* CHART */
     .chart-box{height:200px;padding:14px;}
     .chart-box-expanded{--main-h:340px;padding:10px 8px 4px 10px;}
+    .chart-box-tall{--main-h:min(60vh,480px);}
     .chart-controls{gap:8px;margin-bottom:10px;}
     .chart-control-group{gap:4px;width:100%;}
     .chart-control-label{width:100%;margin-bottom:2px;}
