@@ -1914,7 +1914,7 @@ let state = {
   // chartSearch milik tab Chart & state.search milik tab Screener) supaya
   // pindah-pindah tab tidak saling menimpa nilai pencarian satu sama lain.
   cariTickerSearch: "",
-  chartRange: "all", chartSeries: { close:true, support:true, resistance:true, fib:true, bb:false, emaHL:false, ema89:false, sar:false, supertrend:false, pc:false, bandar:false, vol:false, stochrsi:false, rsi721:false, foreignflow:false, macd:false, netforeign:false },
+  chartRange: "all", chartSeries: { close:true, support:true, resistance:true, fib:true, bb:false, emaHL:false, ema89:false, ema921:false, sar:false, supertrend:false, pc:false, bandar:false, vol:false, stochrsi:false, rsi721:false, foreignflow:false, macd:false, netforeign:false },
   // Timeframe candle (harian/mingguan), level zoom (1 = tampilkan semua bar
   // hasil filter Rentang; <1 = perbesar/tampilkan N bar terakhir saja),
   // serta status minimize/fullscreen kotak chart. Lihat drawChartSVG() &
@@ -3097,6 +3097,7 @@ async function loadLive(){
       adr14: numOrNull(r.adr14), prevAtr14: numOrNull(r.prev_atr14), prevAdr14: numOrNull(r.prev_adr14),
       vwap: numOrNull(r.vwap),
       ema5: numOrNull(r.ema5), ema9: numOrNull(r.ema9), ema10: numOrNull(r.ema10), ema20: numOrNull(r.ema20),
+      ema21: numOrNull(r.ema21), prevEma9: numOrNull(r.prev_ema9), prevEma21: numOrNull(r.prev_ema21),
       ema50: numOrNull(r.ema50), ema100: numOrNull(r.ema100), ema200: numOrNull(r.ema200),
       prevEma200: numOrNull(r.prev_ema200),
       fibP: numOrNull(r.fib_p), fibR1: numOrNull(r.fib_r1), fibR2: numOrNull(r.fib_r2), fibR3: numOrNull(r.fib_r3),
@@ -5240,6 +5241,13 @@ function ti_computeExtendedIndicators(bars) {
     adr14: ti_round2(ti_average(ranges)),
     vwap: ti_round2(ti_calcVWAP(closes, highs, lows, volumes, 20)),
     ema5: ti_round2(ti_calcEMA(closes, 5)), ema9: ti_round2(ti_calcEMA(closes, 9)), ema10: ti_round2(ti_calcEMA(closes, 10)), ema20: ti_round2(ti_calcEMA(closes, 20)),
+    // ema21 basis CLOSE (beda dari ema21h/ema21l di tabel `stocks` yang basis
+    // High/Low) -- ditambahkan khusus buat sinyal screener "EMA9×EMA21
+    // Golden Cross". prev_ema9/prev_ema21 (buat deteksi fresh-cross) TIDAK
+    // dihitung di sini -- diambil dari ti_computeExtendedIndicators(bars
+    // MINUS bar terakhir) yang sudah dipanggil terpisah sebagai `prevExt`
+    // di updateTechnicalIndicatorsBulk(), lihat extRow di sana.
+    ema21: ti_round2(ti_calcEMA(closes, 21)),
     ema50: ti_round2(ti_calcEMA(closes, 50)), ema100: ti_round2(ti_calcEMA(closes, 100)), ema200: ti_round2(ti_calcEMA(closes, 200)),
     fibP: fib.p, fibR1: fib.r1, fibR2: fib.r2, fibR3: fib.r3, fibS1: fib.s1, fibS2: fib.s2, fibS3: fib.s3,
   };
@@ -5577,6 +5585,7 @@ async function updateTechnicalIndicatorsBulk(tickers, opts) {
           adr14: ext.adr14, prev_atr14: prevExt.atr14 ?? null, prev_adr14: prevExt.adr14 ?? null,
           vwap: ext.vwap,
           ema5: ext.ema5, ema9: ext.ema9, ema10: ext.ema10, ema20: ext.ema20, ema50: ext.ema50, ema100: ext.ema100, ema200: ext.ema200,
+          ema21: ext.ema21, prev_ema9: prevExt.ema9 ?? null, prev_ema21: prevExt.ema21 ?? null,
           prev_ema200: prevExt.ema200 ?? null,
           fib_p: ext.fibP, fib_r1: ext.fibR1, fib_r2: ext.fibR2, fib_r3: ext.fibR3,
           fib_s1: ext.fibS1, fib_s2: ext.fibS2, fib_s3: ext.fibS3,
@@ -5900,7 +5909,7 @@ async function loadChart(ticker){
   state.chartZoom = 1;
   state.chartSeries = {
     close:true, support:true, resistance:true, fib:false, bb:false,
-    emaHL:true, ema89:true, sar:false, supertrend:false, pc:false,
+    emaHL:true, ema89:true, ema921:false, sar:false, supertrend:false, pc:false,
     bandar:true, vol:true, stochrsi:true, rsi721:true, foreignflow:true, macd:true, netforeign:true
   };
   const stock = enriched().find(s=>s.ticker===ticker);
@@ -6696,6 +6705,28 @@ function enrichOne(s){
     // detail emiten memakai angka yang sama tanpa menghitung ulang berbeda.
     const fundTech = computeFundTekScore({ ...s, volRatio: ratio });
 
+    // --- Sinyal EMA9×EMA21 Golden Cross (screener-wide) ---
+    // Butuh kolom ema21/prev_ema9/prev_ema21 di stock_indicators_ext (lihat
+    // migrasi SQL) -- kalau belum dijalankan, s.ema21/prevEma9/prevEma21
+    // semuanya null dan ema921Status jatuh ke "Data Belum Lengkap" (bukan
+    // error), jadi fitur lain tetap aman jalan seperti biasa.
+    const ema921BullishNow = (s.ema9!=null && s.ema21!=null) ? s.ema9 > s.ema21 : null;
+    const ema921FreshCross = ema921BullishNow===true && s.prevEma9!=null && s.prevEma21!=null && s.prevEma9<=s.prevEma21;
+    let ema921Status = "Data Belum Lengkap", ema921Tone = "muted";
+    if(ema921BullishNow != null){
+      if(ema921FreshCross){ ema921Status = "🟢 Fresh Cross"; ema921Tone = "up"; }
+      else if(ema921BullishNow){ ema921Status = "🟡 Bullish (Lanjutan)"; ema921Tone = "gold"; }
+      else { ema921Status = "🔴 Belum Cross"; ema921Tone = "down"; }
+    }
+    // Checklist konfirmasi (formula yang sama dipakai di panel sinyal tab
+    // Chart) -- pakai field yang SUDAH ada di `s`/enrichOne, tidak ada
+    // hitungan baru: Close>EMA89 (tren), Volume>1.3x rata2 (volRatio),
+    // RSI7>50 (momentum).
+    const ema921TrendOk = s.cClose!=null && s.ema89!=null && s.cClose > s.ema89;
+    const ema921VolOk = ratio!=null && ratio >= 1.3;
+    const ema921RsiOk = s.rsi7!=null && s.rsi7 > 50;
+    const ema921ConfirmedCount = [ema921TrendOk, ema921VolOk, ema921RsiOk].filter(Boolean).length;
+
     const merged = {
       ...s, band, volRatio: ratio, sinyalVolume, volTone: vol.tone,
       freqRatio, sinyalFrekuensi, freqTone: freq.tone, volChangePct,
@@ -6704,7 +6735,9 @@ function enrichOne(s){
       rekomendasi, rekTone,
       bagger, baggerScoreTotal: bagger.total, baggerScoreMax: bagger.maxTotal, baggerTier: bagger.tier, baggerTone: bagger.tone,
       capTier: marketCapTier(s.marketCap),
-      fundTech, fundScore60: fundTech.fund, techScore40: fundTech.tech, fundTechScore: fundTech.total
+      fundTech, fundScore60: fundTech.fund, techScore40: fundTech.tech, fundTechScore: fundTech.total,
+      ema921BullishNow, ema921FreshCross, ema921Status, ema921Tone,
+      ema921TrendOk, ema921VolOk, ema921RsiOk, ema921ConfirmedCount
     };
     // BSJP butuh band.tone (dihitung di atas), makanya dihitung terakhir
     // dari objek `merged`, bukan `s` mentah.
@@ -6739,6 +6772,12 @@ function getFiltered(){
     } else if(state.activePreset === 'golden') {
       if (!(s.histPrev <= 0 && s.hist > 0)) return false;
       if (!(s.prevStochK < s.prevStochD && s.stochK > s.stochD)) return false;
+    } else if(state.activePreset === 'ema921cross') {
+      // Fresh cross EMA9xEMA21 hari ini -- butuh kolom ema21/prev_ema9/
+      // prev_ema21 di stock_indicators_ext (lihat migrasi SQL). Kalau
+      // belum dijalankan, ema921FreshCross selalu false/undefined dan
+      // preset ini tidak pernah menampilkan hasil (bukan error).
+      if (!s.ema921FreshCross) return false;
     } else if (state.activePreset === 'uptrend') {
       if (!(s.cClose > s.ma21 && s.ma21 > s.ma50 && s.ma50 > s.ma100 && s.ma100 > s.ma200)) return false;
     } else if (state.activePreset === 'breakout') {
@@ -7727,6 +7766,7 @@ const SCREENER_COLUMNS = [
   { key:"ema21H", label:"EMA21 H", group:"Teknikal", cell:s=>`<td class="mono">${fmtNum(s.ema21H)}</td>` },
   { key:"ema21L", label:"EMA21 L", group:"Teknikal", cell:s=>`<td class="mono">${fmtNum(s.ema21L)}</td>` },
   { key:"ema89", label:"EMA 89", group:"Teknikal", cell:s=>`<td class="mono">${fmtNum(s.ema89)}</td>` },
+  { key:"ema921Status", label:"EMA9×21 Cross", group:"Teknikal", cell:s=>`<td>${pillHtml(s.ema921Status, s.ema921Tone)}${s.ema921Status!=="Data Belum Lengkap"?`<div style="font-size:10px;color:var(--muted);margin-top:2px;">Konfirmasi ${s.ema921ConfirmedCount}/3</div>`:''}</td>` },
   { key:"ma21", label:"MA21", group:"Teknikal", cell:s=>`<td class="mono">${fmtNum(s.ma21)}</td>` },
   { key:"ma50", label:"MA50", group:"Teknikal", cell:s=>`<td class="mono">${fmtNum(s.ma50)}</td>` },
   { key:"ma100", label:"MA100", group:"Teknikal", cell:s=>`<td class="mono">${fmtNum(s.ma100)}</td>` },
@@ -7896,6 +7936,7 @@ const RULE_METRICS = [
 
   // --- EMA/MACD tambahan ---
   { key:"ema21H", label:"EMA 21 (High)" }, { key:"ema21L", label:"EMA 21 (Low)" }, { key:"ema89", label:"EMA 89" },
+  { key:"ema9", label:"EMA 9 (Close)" }, { key:"ema21", label:"EMA 21 (Close)" }, { key:"ema921ConfirmedCount", label:"EMA9×21 Konfirmasi (0-3)" },
   { key:"hist", label:"MACD Histogram" }, { key:"histPrev", label:"MACD Histogram (Prev)" },
   { key:"signal", label:"MACD Signal" }, { key:"prevSignal", label:"Previous MACD Signal" },
   { key:"prevMacdHist", label:"Previous MACD Histogram" },
@@ -8701,6 +8742,7 @@ function renderScreener(){
             <button class="pill ${state.activePreset === 'eri' ? 'pill-gold' : 'pill-muted'}" onclick="state.activePreset = state.activePreset === 'eri' ? null : 'eri'; state.page=1; render();">Eri Ginanjar</button>
             <button class="pill ${state.activePreset === 'rsicross' ? 'pill-gold' : 'pill-muted'}" onclick="state.activePreset = state.activePreset === 'rsicross' ? null : 'rsicross'; state.page=1; render();">RSI & Harga Cross</button>
             <button class="pill ${state.activePreset === 'golden' ? 'pill-gold' : 'pill-muted'}" onclick="state.activePreset = state.activePreset === 'golden' ? null : 'golden'; state.page=1; render();">Golden Cross DSI</button>
+            <button class="pill ${state.activePreset === 'ema921cross' ? 'pill-up' : 'pill-muted'}" onclick="state.activePreset = state.activePreset === 'ema921cross' ? null : 'ema921cross'; state.page=1; render();" title="EMA9 baru saja crossup EMA21 hari ini (butuh kolom ema21/prev_ema9/prev_ema21 di stock_indicators_ext -- jalankan migrasi SQL & 'Hitung Ulang Indikator' dulu kalau kosong)">🟢 EMA9×21 Golden Cross</button>
             <button class="pill ${state.activePreset === 'uptrend' ? 'pill-gold' : 'pill-muted'}" onclick="state.activePreset = state.activePreset === 'uptrend' ? null : 'uptrend'; state.page=1; render();">Super Uptrend</button>
             <button class="pill ${state.activePreset === 'breakout' ? 'pill-up' : 'pill-muted'}" onclick="state.activePreset = state.activePreset === 'breakout' ? null : 'breakout'; state.page=1; render();">🚀 Volatility Breakout</button>
             <button class="pill ${state.activePreset === 'pullback' ? 'pill-teal' : 'pill-muted'}" onclick="state.activePreset = state.activePreset === 'pullback' ? null : 'pullback'; state.page=1; render();">🧲 Pullback Uptrend</button>
@@ -10717,6 +10759,7 @@ function renderChart(){
       ${toggle('bb','Bollinger Bands','#c084fc')}
       ${toggle('emaHL','EMA21 High/Low','#2dd4bf')}
       ${toggle('ema89','EMA89 Close','#f472b6')}
+      ${toggle('ema921','EMA9×EMA21 Cross','#fbbf24')}
       ${toggle('sar','SAR (0.02,0.02,0.2)','#ef4444')}
       ${toggle('supertrend','SuperTrend (10,3)','#a855f7')}
       ${toggle('pc','Price Channel (20)','#e879f9')}
@@ -10759,6 +10802,7 @@ function renderChart(){
     ${chartToolbar}
     ${sectionAndControls}
     <div class="chart-box chart-box-expanded${boxTallClass}">${chartBoxInner}</div>
+    <div id="chartEma921Badge" class="chart-ema921-badge" style="display:none;margin-top:14px;padding:12px 14px;border:1px solid var(--border);border-radius:10px;background:rgba(251,191,36,0.05);"></div>
   </div>`;
 }
 
@@ -10903,6 +10947,31 @@ function chartAggregateWeekly(rows){
   return out;
 }
 
+// Satu seksi status cross (dipakai berulang untuk EMA9×21, RSI7×21, MACD,
+// Stoch RSI) di panel gabungan #chartEma921Badge -- hijau=fresh cross,
+// kuning=bullish tapi bukan cross baru, merah=belum cross/bearish. Kalau
+// `sig` punya field checklist (cuma EMA9×21 yang punya), checklist-nya ikut
+// ditampilkan; indikator lain cukup status cross-nya saja.
+function renderCrossSignalSection(title, sig, subtitle){
+  const statusPill = sig.freshCross
+    ? pillHtml('🟢 Fresh Cross', 'up')
+    : (sig.bullishNow ? pillHtml('🟡 Bullish (bukan cross baru)', 'gold') : pillHtml('🔴 Belum cross / bearish', 'down'));
+  const crossItem = (ok, label) => `<span class="pill pill-${ok?'up':'muted'}" style="margin:2px 6px 2px 0;">${ok?'✅':'▫️'} ${label}</span>`;
+  const checklist = ('trendOk' in sig) ? `
+    <div style="margin-top:4px;">
+      ${crossItem(sig.trendOk, 'Close &gt; EMA89 (filter tren)')}
+      ${crossItem(sig.volOk, 'Volume &gt; 1.3x MA20 / Bandar Volume +')}
+      ${crossItem(sig.rsiOk, 'RSI7 &gt; 50 (momentum)')}
+    </div>
+    <div style="font-size:11px;color:var(--muted);margin-top:6px;">${sig.freshCross ? (sig.confirmedCount===3 ? 'Konfirmasi penuh (3/3) — setup terkuat.' : `Konfirmasi ${sig.confirmedCount}/3 — makin banyak checklist yang ✅ makin kuat.`) : 'Checklist tetap dihitung dari kondisi bar terakhir walau belum ada fresh cross hari ini.'}</div>
+  ` : '';
+  return `
+    <div style="font-size:12px;color:var(--muted);margin-bottom:6px;font-weight:600;">${title}${subtitle?` &middot; ${subtitle}`:''}</div>
+    <div style="margin-bottom:4px;">${statusPill}</div>
+    ${checklist}
+  `;
+}
+
 function drawChartSVG(){
   const svg = document.getElementById("chartSvg");
   if(!svg || !state.chartData.length) return;
@@ -10924,7 +10993,7 @@ function drawChartSVG(){
   const closes = plotted.map(d=>d.close);
   const on = k => series[k] !== false;
   const showBB=on('bb'), showMACD=on('macd'), showVol=on('vol');
-  const showEmaHL=on('emaHL'), showEma89=on('ema89'), showSar=on('sar'), showSuperTrend=on('supertrend'), showPC=on('pc');
+  const showEmaHL=on('emaHL'), showEma89=on('ema89'), showEma921=on('ema921'), showSar=on('sar'), showSuperTrend=on('supertrend'), showPC=on('pc');
   const showBandar=on('bandar'), showStochRsi=on('stochrsi'), showRsi721=on('rsi721'), showForeignFlow=on('foreignflow'), showNetForeign=on('netforeign');
   const fullCloses=allData.map(d=>d.close);
   // High/Low dipakai banyak indikator (SAR, SuperTrend, PC) -- kalau baris
@@ -10937,6 +11006,9 @@ function drawChartSVG(){
   const rsi14All=chartRSI(fullCloses,14), ema12=chartEMA(fullCloses,12), ema26=chartEMA(fullCloses,26), macdAll=ema12.map((v,i)=>v-ema26[i]), macdSigAll=chartEMA(macdAll,9);
   // --- Overlay harga baru ---
   const emaHAll=chartEMA(fullHighs,21), emaLAll=chartEMA(fullLows,21), ema89All=chartEMA(fullCloses,89);
+  // EMA9 & EMA21 (basis Close, BEDA dari emaHAll/emaLAll di atas yang basis
+  // High/Low) -- dipakai overlay "EMA9×EMA21 Cross" & panel sinyalnya.
+  const emaFastAll=chartEMA(fullCloses,9), emaSlowAll=chartEMA(fullCloses,21);
   const sarAll=chartSAR(fullHighs,fullLows,0.02,0.2);
   const stAll=chartSuperTrend(fullHighs,fullLows,fullCloses,10,3);
   const pcHiAll=fullHighs.map((_,i)=>chartHighest(fullHighs,20,i)), pcLoAll=fullLows.map((_,i)=>chartLowest(fullLows,20,i));
@@ -10964,9 +11036,67 @@ function drawChartSVG(){
   });
   const foreignFlowAll=(()=>{ let acc=0; return netForeignAll.map(v=>{ acc += (v||0); return acc; }); })();
 
+  // --- Sinyal cross + checklist konfirmasi, untuk beberapa indikator yang
+  // sama-sama punya konsep "golden/dead cross" -- EMA9xEMA21, RSI7xRSI21,
+  // MACD (garis x signal), dan Stoch RSI (%K x %D). SEMUA dihitung dari bar
+  // TERAKHIR (bukan `plotted` yang kepotong Rentang/Zoom), jadi statusnya
+  // selalu soal kondisi TERKINI apapun tampilan Rentang/Zoom yang aktif.
+  // Helper generik: cross-up/cross-down + status hijau/kuning/merah, dipakai
+  // ulang buat RSI7xRSI21/MACD/StochRSI (yang tidak butuh checklist
+  // konfirmasi tambahan seperti EMA9x21, cukup status cross-nya saja).
+  const simpleCrossSignal = (fastAll, slowAll, n) => {
+    if(n < 2) return null;
+    const fNow=fastAll[n-1], sNow=slowAll[n-1], fPrev=fastAll[n-2], sPrev=slowAll[n-2];
+    if(fNow==null||sNow==null) return null;
+    const bullishNow = fNow>sNow;
+    const freshCross = bullishNow && fPrev!=null && sPrev!=null && fPrev<=sPrev;
+    const freshDeadCross = !bullishNow && fPrev!=null && sPrev!=null && fPrev>=sPrev;
+    return { bullishNow, freshCross, freshDeadCross };
+  };
+  const ema921N = fullCloses.length;
+  // EMA9xEMA21: SATU-SATUNYA yang pakai checklist konfirmasi lengkap (tren/
+  // volume/momentum) sesuai formula yang sudah didiskusikan -- biar win
+  // rate cross polosan tidak kebanyakan sinyal palsu:
+  // 1) Fresh cross hari ini (EMA9 baru saja crossup EMA21)
+  // 2) Filter tren: Close > EMA89
+  // 3) Konfirmasi volume: Volume > 1.3x MA20 ATAU Bandar Volume positif
+  // 4) Konfirmasi momentum: RSI7 > 50
+  const ema921Signal = ema921N < 22 ? null : (()=>{
+    const base = simpleCrossSignal(emaFastAll, emaSlowAll, ema921N);
+    if(!base) return null;
+    const closeNow=fullCloses[ema921N-1], ema89Now=ema89All[ema921N-1];
+    const trendOk = closeNow!=null && ema89Now!=null && closeNow>ema89Now;
+    const volNow=fullVols[ema921N-1], volMA20Now=volMA20All[ema921N-1], bandarNow=bandarAll[ema921N-1];
+    const volOk = (volMA20Now ? volNow > volMA20Now*1.3 : false) || (bandarNow!=null && bandarNow>0);
+    const rsi7Now=rsi7All[ema921N-1];
+    const rsiOk = rsi7Now!=null && rsi7Now>50;
+    const confirmedCount=[trendOk,volOk,rsiOk].filter(Boolean).length;
+    return { ...base, trendOk, volOk, rsiOk, confirmedCount, date: allData[ema921N-1]?.date };
+  })();
+  // RSI7xRSI21, MACD (garis x signal), Stoch RSI (%K x %D) -- status cross
+  // saja (tanpa checklist tambahan), dari deret yang SAMA persis dengan yang
+  // digambar di sub-panelnya masing2 (rsi7All/rsi21All, macdAll/macdSigAll,
+  // stochRsiAll.k/d) supaya selalu konsisten dengan yang terlihat di chart.
+  const rsi721Signal = simpleCrossSignal(rsi7All, rsi21All, ema921N);
+  const macdSignal = simpleCrossSignal(macdAll, macdSigAll, ema921N);
+  const stochrsiSignal = simpleCrossSignal(stochRsiAll.k, stochRsiAll.d, ema921N);
+
+  const ema921BadgeEl = document.getElementById('chartEma921Badge');
+  if(ema921BadgeEl){
+    const sections = [
+      showEma921 && ema921Signal ? renderCrossSignalSection('📐 EMA9×EMA21', ema921Signal, `per ${fmtDateID(ema921Signal.date)}`) : '',
+      showRsi721 && rsi721Signal ? renderCrossSignalSection('📈 RSI7×RSI21', rsi721Signal) : '',
+      showMACD && macdSignal ? renderCrossSignalSection('📊 MACD (12,26,9)', macdSignal) : '',
+      showStochRsi && stochrsiSignal ? renderCrossSignalSection('🎯 Stoch RSI (%K×%D)', stochrsiSignal) : '',
+    ].filter(Boolean);
+    if(sections.length){ ema921BadgeEl.style.display=''; ema921BadgeEl.innerHTML=sections.join('<hr style="border:none;border-top:1px solid var(--border);margin:10px 0;">'); }
+    else { ema921BadgeEl.style.display='none'; ema921BadgeEl.innerHTML=''; }
+  }
+
   const pick=arr=>arr.slice(off,off+plotted.length);
   const bbUp=pick(bbUpAll), bbMid=pick(bbMidAll), bbLo=pick(bbLoAll), macd=pick(macdAll), macdSig=pick(macdSigAll);
   const emaH=pick(emaHAll), emaL=pick(emaLAll), ema89=pick(ema89All), sar=pick(sarAll), stLine=pick(stAll.line), stDir=pick(stAll.dir);
+  const emaFast=pick(emaFastAll), emaSlow=pick(emaSlowAll);
   const pcHi=pick(pcHiAll), pcLo=pick(pcLoAll), pcCenter=pick(pcCenterAll), pcAvg=pick(pcAvgAll);
   const bandar=pick(bandarAll), volMA20=pick(volMA20All), stochK=pick(stochRsiAll.k), stochD=pick(stochRsiAll.d);
   const rsi7=pick(rsi7All), rsi21=pick(rsi21All), foreignFlow=pick(foreignFlowAll), netForeign=pick(netForeignAll);
@@ -10975,6 +11105,7 @@ function drawChartSVG(){
   const priceExtras = [
     showBB ? bbUp.concat(bbLo) : [],
     showEmaHL ? emaH.concat(emaL) : [], showEma89 ? ema89 : [],
+    showEma921 ? emaFast.concat(emaSlow) : [],
     showSar ? sar : [], showSuperTrend ? stLine : [],
     showPC ? pcHi.concat(pcLo) : [],
   ].flat().filter(v=>v!=null);
@@ -11038,6 +11169,21 @@ function drawChartSVG(){
     labelRight(lastVal(emaH),'#2dd4bf','EMA21H'); labelRight(lastVal(emaL),'#2dd4bf','EMA21L');
   }
   if(showEma89){ html += `<path d="${segPath(ema89)}" fill="none" stroke="#f472b6" stroke-width="1.6" opacity=".9"/>`; labelRight(lastVal(ema89),'#f472b6','EMA89'); }
+  if(showEma921){
+    html += `<path d="${segPath(emaFast)}" fill="none" stroke="#fbbf24" stroke-width="1.5" opacity=".9"/>`;
+    html += `<path d="${segPath(emaSlow)}" fill="none" stroke="#38bdf8" stroke-width="1.5" opacity=".9"/>`;
+    labelRight(lastVal(emaFast),'#fbbf24','EMA9'); labelRight(lastVal(emaSlow),'#38bdf8','EMA21');
+    // Marker segitiga di titik cross (dalam window yang sedang ditampilkan
+    // saja -- bukan sinyal di panel bawah chart yang dihitung dari bar
+    // TERAKHIR fullCloses, lihat ema921Signal di atas).
+    for(let i=1;i<emaFast.length;i++){
+      const f0=emaFast[i-1],f1=emaFast[i],s0=emaSlow[i-1],s1=emaSlow[i];
+      if(f0==null||f1==null||s0==null||s1==null) continue;
+      const x=xScale(i);
+      if(f0<=s0 && f1>s1){ const y=yScale(f1); html+=`<path d="M${x.toFixed(1)},${(y-9).toFixed(1)} L${(x-6).toFixed(1)},${(y+4).toFixed(1)} L${(x+6).toFixed(1)},${(y+4).toFixed(1)} Z" fill="#22c55e" stroke="#0f172a" stroke-width="0.8"/>`; }
+      else if(f0>=s0 && f1<s1){ const y=yScale(f1); html+=`<path d="M${x.toFixed(1)},${(y+9).toFixed(1)} L${(x-6).toFixed(1)},${(y-4).toFixed(1)} L${(x+6).toFixed(1)},${(y-4).toFixed(1)} Z" fill="#ef4444" stroke="#0f172a" stroke-width="0.8"/>`; }
+    }
+  }
   if(showPC){
     html += `<path d="${segPath(pcHi)}" fill="none" stroke="#e879f9" stroke-width="1.2" opacity=".7"/>`;
     html += `<path d="${segPath(pcLo)}" fill="none" stroke="#e879f9" stroke-width="1.2" opacity=".7"/>`;
