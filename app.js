@@ -1875,6 +1875,24 @@ let state = {
   backtestTargetTpPct: 5,
   backtestTpMode: "percent", // "percent" | "auto" (TP1 per saham) — lihat LS_BACKTEST_TP_MODE
   backtestRekapExpanded: new Set(),
+  // Sama seperti backtestRekapExpanded tapi buat sub-tab "Rekap per Sumber
+  // Screener" (lihat renderBacktestScreenerRekap()) -- expand state
+  // terpisah supaya buka/tutup detail di satu tab tidak ikut kebuka di
+  // tab lain kalau user pindah-pindah.
+  backtestScreenerExpanded: new Set(),
+  // Fallback histori harga dari tabel `flows` (IDX, via sync-idx-full.mjs)
+  // untuk ticker yang BELUM PERNAH ditarik lewat "📅 Historical" Stockbit
+  // (state.stockbitPriceHistory kosong untuknya) — dipakai backtestPeriodMetrics()
+  // & targetTpAchievement() supaya "Harga Tertinggi"/"Capai P/L" tidak selalu
+  // "-" cuma karena histori Stockbit belum pernah ditarik manual. Diisi oleh
+  // ensureFlowsHistoryForBacktest() saat tab Backtest dibuka (lihat definisinya).
+  // { [TICKER]: Array<{date, high, close}> }
+  flowsPriceHistory: {},
+  flowsHistoryLoading: false,
+  // Ticker yang SUDAH dicoba di-fetch dari flows (berhasil ada isi ATAU
+  // ternyata kosong juga) -- supaya tidak fetch ulang tiap render kalau
+  // ticker itu memang tidak punya baris flows sama sekali.
+  flowsHistoryAttempted: new Set(),
 
   portfolio: [], portoEditId: null, portoModalOpen: false, portoPrefill: null, selectedPorto: new Set(),
   tab: "screener", search: "", activePreset: null,
@@ -1920,7 +1938,7 @@ let state = {
   // serta status minimize/fullscreen kotak chart. Lihat drawChartSVG() &
   // renderChart() untuk pemakaiannya.
   chartTimeframe: "daily", chartZoom: 1, chartMinimized: false, chartExpanded: false,
-  detailTicker: null, detailTab: "teknikal",
+  detailTicker: null, detailTab: "teknikal", detailNavList: null, // detailNavList = urutan ticker hasil screener saat modal dibuka (untuk tombol Sebelumnya/Berikutnya)
   // Modal "detail metrik Dashboard": dibuka saat kartu ringkasan (Total
   // Saham, Undervalued, dst) diklik. key = metrik, lihat DASH_METRIC_DEFS.
   dashMetricKey: null, dashMetricSort: {key:"score", asc:false}, dashMetricSearch: "",
@@ -1934,7 +1952,7 @@ let state = {
   // saat init), ticker yang expanded untuk lihat Trade Plan, panel info,
   // dan state export watchlist ke format broker.
   bsjpParams: null, bsjpExpanded: null, bsjpInfoOpen: false,
-  bsjpSearch: "", bsjpOnlyLolos: true, bsjpSort: "score",
+  bsjpSearch: "", bsjpOnlyLolos: true, bsjpSort: "score", bsjpPosisi: "all",
   bsjpExportOpen: false, bsjpExportFormat: "stockbit",
   bsjpPreset: "strict", bsjpParamsOpen: false, bsjpSimulator: false,
   baggerParams: null, baggerParamsOpen: false,
@@ -1958,6 +1976,12 @@ let state = {
   customPresets: [],
   selectedPresetId: "",
   presetsLoading: false,
+  // Harga IHSG live dari tabel market_index (diisi Edge Function
+  // fetch-ihsg-index yang dijadwalkan cron -- lihat supabase/functions/
+  // fetch-ihsg-index/). null kalau tabel belum dibuat/kosong/gagal fetch;
+  // dipakai renderMarketRegimeChecklist() sebagai pengganti IHSG Estimasi
+  // (fallback otomatis ke estimasi kalau ini null).
+  ihsgIndexLive: null,
   // Data Top 3 Broker Beli/Jual per saham (dari broker_summary, hari
   // trading terakhir yang tercatat) — dipakai rule kustom "Top 3 Broker
   // (Beli/Jual) contains <kode>" untuk cari saham yang didominasi broker
@@ -2043,6 +2067,7 @@ let state = {
     broker: "both",         // "asing" | "lokal" | "both"
     konvergensi: "all",     // "all" | "menyatu" | "diam" | "menjauh"
     tanjakan: "all",        // "all" | "menanjak" | "menyalip"
+    posisi: "all",          // "all" | "NYANGKUT" | "DI AREA" | "UNTUNG" (sesuai row.areaLabel)
     minMutu: 0,             // 0 = semua; situs: 64 | 72 | 80
     minAkum: 0,             // Rp, 0 = semua; hanya net buy positif
     minGap: "all",          // "all" | "minus2" | "minus5" | "minus10" | "minus15"
@@ -2773,7 +2798,10 @@ const BSJP_DEFAULT_PARAMS = {
   maxChangePct: 15.0,      // Kriteria 3: kenaikan harian maksimum (hindari ARA)
   closeProximity: 0.25,    // Kriteria 4: Close harus di top X% dari range hari itu
   minBidAskRatio: 1.10,    // Kriteria 7: rasio antrian bid/offer minimum
-  tp1Pct: 2.0, tp2Pct: 3.4, slPct: 2.5 // Trade plan default (%)
+  tp1Pct: 2.0, tp2Pct: 3.4, slPct: 2.5, // Trade plan default (%)
+  feePct: 0.4,             // Estimasi fee beli+jual (bolak-balik, %) — sesuaikan dengan broker Anda
+  modal: 0,                // Modal (Rp) untuk hitung ukuran posisi; 0 = tidak dihitung
+  riskPct: 1.0             // Risiko maksimum per trade (% dari modal)
 };
 const LS_BSJP_PARAMS = "ihsg_bsjp_params_v1";
 
@@ -2914,12 +2942,40 @@ function computeBsjpEngine(s, params){
   const sl = entry != null ? entry * (1 - p.slPct/100) : null;
   const rr = (entry != null && sl != null && tp1 != null && (entry - sl) > 0) ? (tp1 - entry) / (entry - sl) : null;
 
+  // --- Fee bolak-balik, ukuran posisi, dan flag distribusi ---
+  // Ketiganya SENGAJA tidak mengubah `score`/`lolos`/`signal` di atas —
+  // hanya informasi tambahan di Trade Plan dan tabel.
+  const feePctNum = Math.max(0, Number(p.feePct) || 0);
+  const feeCost = entry != null ? entry * feePctNum / 100 : null;
+  const netRr = (entry != null && sl != null && tp1 != null && feeCost != null && ((entry - sl) + feeCost) > 0)
+    ? ((tp1 - entry) - feeCost) / ((entry - sl) + feeCost) : null;
+  const tp1NetPct = p.tp1Pct - feePctNum;
+  let lots = null, lotCost = null, riskRp = null;
+  if (entry != null && sl != null && entry > 0 && Number(p.modal) > 0 && Number(p.riskPct) > 0) {
+    riskRp = Number(p.modal) * Number(p.riskPct) / 100;
+    const perShareRisk = (entry - sl) + feeCost; // rugi per lembar kalau kena SL, termasuk fee
+    if (perShareRisk > 0) {
+      const byRisk = Math.floor(riskRp / perShareRisk / 100);
+      const byCapital = Math.floor(Number(p.modal) / (entry * 100));
+      lots = Math.max(0, Math.min(byRisk, byCapital));
+      lotCost = lots * 100 * entry;
+    }
+  }
+  // Effort vs result versi data harian: volume jauh di atas normal tapi harga
+  // tidak maju (gain < 1%) atau close lemah (di bawah tengah range) —
+  // ciri klasik distribusi. Bukan pengganti membaca tape langsung.
+  const flags = [];
+  if (volRatio != null && volRatio >= 2 && ((changePct != null && changePct < 1) || (proximity != null && proximity < 0.5))) {
+    flags.push("Volume besar tapi harga tidak maju / close lemah — kemungkinan distribusi");
+  }
+
   return {
+    flags,
     checks, passedCount, naCount, totalChecks: checks.length, lolos,
     score: Math.max(0, Math.min(100, score)),
     breakdown: { volSurgeScore, priceStructScore, bandarScore, orderbookScore, trendTurnoverScore },
     signal, signalTone,
-    tradePlan: { entry, tp1, tp2, sl, rr },
+    tradePlan: { entry, tp1, tp2, sl, rr, netRr, tp1NetPct, lots, lotCost, riskRp },
     // Angka mentah di balik tiap skor breakdown, dipakai kartu Trade Plan
     // untuk anotasi kecil (mis. "(3.07x)", "(81%)") tanpa parsing ulang.
     metrics: { volRatio, proximity, bidAskRatio: hasOrderbook ? bidAskRatio : null, foreignNet1D: num(s.foreignNet1D), turnover }
@@ -2957,7 +3013,7 @@ async function loadLive(){
 
   state.loading = true; showError(""); render();
   try {
-    const [stocksRes, portoRes, backtestRes, wlRes, presetsRes, stockbitHistRes, orcaSnapshotRes] = await Promise.all([
+    const [stocksRes, portoRes, backtestRes, wlRes, presetsRes, stockbitHistRes, orcaSnapshotRes, marketIndexRes] = await Promise.all([
       // Ambil dari VIEW gabungan, bukan tabel stocks mentah: stocks_screener
       // sudah menggabungkan fundamental+teknikal (tabel stocks) dengan
       // bandarmologi asli dari IDX (view flow_summary), lewat left join.
@@ -2987,6 +3043,14 @@ async function loadLive(){
       // tersedia. .catch(()=>[]) supaya kalau tabel flows kosong/belum ada,
       // loadLive() tidak ikut gagal.
       fetch(`${SUPABASE_URL}/flows?select=ticker,value,frequency,nonreg_value,foreign_buy,foreign_sell,close&order=date.desc&limit=1200`, { headers: getSupaHeaders(), cache: "no-store" })
+        .then(r => r.ok ? r.json() : [])
+        .catch(() => []),
+      // Harga IHSG live/EOD dari tabel market_index, diisi Edge Function
+      // fetch-ihsg-index (cron, lihat supabase/functions/fetch-ihsg-index/).
+      // .catch(()=>[]) supaya kalau tabelnya belum dibuat (migration belum
+      // dijalankan) atau Edge Function belum di-deploy, loadLive() tetap
+      // jalan normal -- checklist otomatis fallback ke IHSG Estimasi.
+      fetch(`${SUPABASE_URL}/market_index?select=*&symbol=eq.IHSG&limit=1`, { headers: getSupaHeaders(), cache: "no-store" })
         .then(r => r.ok ? r.json() : [])
         .catch(() => [])
     ]);
@@ -3185,6 +3249,12 @@ async function loadLive(){
        warnings.push("Preset screener gagal dimuat" + (presetsRes && presetsRes.message ? ` (${presetsRes.message})` : ""));
     }
 
+    // market_index: diam-diam null kalau tabel belum ada/kosong -- BUKAN
+    // error, karena fitur ini opsional (fallback ke IHSG Estimasi). Tidak
+    // ditambahkan ke `warnings` supaya tidak memunculkan notifikasi error
+    // ke user yang belum setup Edge Function fetch-ihsg-index.
+    state.ihsgIndexLive = (Array.isArray(marketIndexRes) && marketIndexRes[0]) ? marketIndexRes[0] : null;
+
     if (warnings.length) showError(warnings.join(" · "));
 
     // Susun state.stockbitValueHistory: { TICKER: [{date, value_idr}, ...] }
@@ -3213,6 +3283,9 @@ async function loadLive(){
       state.stockbitValueHistory = {};
       state.stockbitPriceHistory = {};
     }
+    // loadLive() menimpa state.stockbitPriceHistory dari query global; pulihkan
+    // riwayat khusus ticker Backtest (lihat loadBacktestPriceHistory).
+    applyBacktestPriceHistoryCache();
 
   } catch (e) {
     showError("Gagal terhubung ke Database Supabase: " + e.message);
@@ -3223,6 +3296,78 @@ async function loadLive(){
   // atas) supaya screener utama tetap cepat tampil — begitu selesai, dia
   // render() ulang sendiri untuk mengisi filter "Top 3 Broker".
   loadTop3BrokerData();
+  loadBacktestPriceHistory();
+}
+
+// ------------------------------------------------------------------
+// Riwayat harga (high & close) KHUSUS ticker yang ada di Backtest, sejak
+// tanggal entry paling awal. Sebelumnya kolom "Harga Tertinggi"/"Capai P/L"
+// hanya memakai query global loadLive() — "baris terbaru 4000 (di server
+// Supabase biasanya terpotong jadi 1000) untuk SEMUA ticker" — sehingga
+// ticker/tanggal yang lebih lama ikut terpotong dan kolomnya kosong ("-")
+// walau datanya sebenarnya ada di database. Di sini datanya diambil per
+// ticker Backtest, dipaginasi per 1000 baris, lalu menimpa hasil query global.
+// Di-cache 5 menit (loadLive jalan tiap 45 detik) kecuali dipaksa
+// (_btHistMeta.at = 0), mis. setelah tombol 📅 Historical selesai.
+// ------------------------------------------------------------------
+let _btHistMeta = { key: null, at: 0 };
+let _btHistData = {}; // hasil terakhir, dipertahankan karena loadLive() menimpa state.stockbitPriceHistory tiap 45 detik
+function applyBacktestPriceHistoryCache(){
+  Object.keys(_btHistData).forEach(t => { state.stockbitPriceHistory[t] = _btHistData[t]; });
+}
+async function loadBacktestPriceHistory(){
+  if(!SUPABASE_URL || !SUPABASE_KEY) return;
+  try{
+    const tickers = new Set();
+    let minDate = null;
+    for(const sess of (state.backtests || [])){
+      for(const it of (sess.items || [])){
+        const t = String(it.ticker || "").trim().toUpperCase();
+        if(!t) continue;
+        tickers.add(t);
+        const d = String(it.entryDate || "").slice(0, 10);
+        if(d && (!minDate || d < minDate)) minDate = d;
+      }
+    }
+    if(!tickers.size) return;
+    const list = [...tickers].sort();
+    const key = list.join(",") + "|" + (minDate || "");
+    if(_btHistMeta.key === key && (Date.now() - _btHistMeta.at) < 5 * 60 * 1000) return;
+
+    const PAGE = 1000;
+    const rows = [];
+    for(const chunk of chunkArray(list, 60)){
+      for(let page = 0; page < 60; page++){
+        const qs = new URLSearchParams({
+          period: "eq.daily",
+          stock_code: `in.(${chunk.join(",")})`,
+          select: "stock_code,trade_date,high,close",
+          order: "trade_date.asc,stock_code.asc",
+          limit: String(PAGE), offset: String(page * PAGE)
+        });
+        if(minDate) qs.set("trade_date", `gte.${minDate}`);
+        const res = await fetch(`${SUPABASE_URL}/price_history_stockbit?${qs}`, { headers: getSupaHeaders(), cache: "no-store" });
+        if(!res.ok) throw new Error(`HTTP ${res.status} saat baca price_history_stockbit`);
+        const part = await res.json();
+        if(!Array.isArray(part)) break;
+        rows.push(...part);
+        if(part.length < PAGE) break;
+      }
+    }
+
+    const grouped = {};
+    rows.forEach(r => {
+      const t = String(r.stock_code || "").trim().toUpperCase();
+      if(!t || (r.high == null && r.close == null)) return;
+      (grouped[t] ||= []).push({ date: r.trade_date, high: numOrNull(r.high), close: numOrNull(r.close) });
+    });
+    _btHistData = grouped;
+    applyBacktestPriceHistoryCache();
+    _btHistMeta = { key, at: Date.now() };
+    if(!shouldSkipAutoRefreshLive()) render(); // kalau sedang mengetik, biarkan render berikutnya yang memakai datanya
+  }catch(e){
+    console.warn("Gagal memuat riwayat harga Backtest:", e.message);
+  }
 }
 
 // Ambil top 3 broker BELI dan top 3 broker JUAL per saham, dari trade_date
@@ -3299,9 +3444,45 @@ async function toggleFav(ticker){
   }
 }
 
-function openDetail(ticker){
+// render() mengganti seluruh innerHTML modal, sehingga posisi geser baris tab
+// selalu kembali ke kiri — pulihkan di sini, lalu pastikan tab aktif terlihat.
+function restoreDetailTabsScroll(prevLeft){
+  const bar = document.querySelector("#detailModalContent .detail-tabs");
+  if(!bar) return;
+  bar.scrollLeft = prevLeft || 0;
+  const act = bar.querySelector(".detail-tab-btn.active");
+  if(act){
+    const l = act.offsetLeft, r = l + act.offsetWidth;
+    if(l < bar.scrollLeft || r > bar.scrollLeft + bar.clientWidth){
+      bar.scrollLeft = Math.max(0, l - (bar.clientWidth - act.offsetWidth) / 2);
+    }
+  }
+  // Roda mouse vertikal di atas baris tab → geser ke samping (kecuali sudah
+  // mentok di ujung, supaya scroll halaman tidak "terkunci").
+  bar.onwheel = (e) => {
+    if(bar.scrollWidth <= bar.clientWidth || Math.abs(e.deltaY) <= Math.abs(e.deltaX)) return;
+    const atStart = bar.scrollLeft <= 0 && e.deltaY < 0;
+    const atEnd = bar.scrollLeft + bar.clientWidth >= bar.scrollWidth - 1 && e.deltaY > 0;
+    if(atStart || atEnd) return;
+    bar.scrollLeft += e.deltaY;
+    e.preventDefault();
+  };
+}
+
+function openDetail(ticker, opts){
+  const keepTab = !!(opts && opts.keepTab);
+  const keepNav = !!(opts && opts.keepNav);
   state.detailTicker = ticker;
-  state.detailTab = "teknikal";
+  if(!keepTab) state.detailTab = "teknikal";
+  // Daftar navigasi Sebelumnya/Berikutnya: hanya kalau modal dibuka dari tab
+  // Screener — pakai daftar hasil filter+urut yang sama persis dengan tabel
+  // (seluruh halaman, bukan cuma halaman yang sedang tampil), dibekukan saat
+  // dibuka supaya urutannya tidak melompat kena auto-refresh 45 detik.
+  if(!keepNav){
+    try{
+      state.detailNavList = state.tab === "screener" ? getSorted(getFiltered()).map(x => x.ticker) : null;
+    }catch(e){ state.detailNavList = null; }
+  }
   state.detailBsRows = []; state.detailBsEditRows = [];
   state.detailBsMsg = ""; state.detailBsMsgError = false;
   state.detailBsEditorOpen = false; state.detailBsCsvText = "";
@@ -3313,7 +3494,27 @@ function openDetail(ticker){
 }
 function closeDetail(){
   state.detailTicker = null;
+  state.detailNavList = null;
   render();
+}
+// Pindah ke saham sebelumnya (-1) / berikutnya (+1) di hasil screener.
+// Tab yang sedang dibuka (Teknikal/Broker Summary/dst) dipertahankan.
+function navigateDetail(delta){
+  const list = state.detailNavList;
+  if(!list || !list.length) return;
+  const i = list.indexOf(state.detailTicker);
+  if(i < 0) return;
+  const next = list[i + delta];
+  if(!next) return;
+  const tab = state.detailTab;
+  openDetail(next, { keepTab: true, keepNav: true });
+  // Tab Historical Data memuat dari database otomatis (sama seperti saat tab dibuka)
+  if(tab === "historical") loadDetailHistoricalFromDb();
+  // Kembali ke atas supaya langsung melihat header saham baru
+  ["detailModalContent","detailModalOverlay"].forEach(id => {
+    const el = document.getElementById(id);
+    if(el){ el.scrollTop = 0; if(el.parentElement) el.parentElement.scrollTop = 0; }
+  });
 }
 function setDetailTab(tab){
   state.detailTab = tab;
@@ -4878,6 +5079,8 @@ async function fetchAndSaveHistoricalBulk(tickers, rangeFrom, rangeTo){
 
   state.stockbitHistoricalBulkLoading = false;
   render();
+  _btHistMeta.at = 0; // data historical baru saja masuk — jangan pakai cache riwayat Backtest
+  Promise.resolve(loadLive()).catch(() => {});
 }
 
 // ==========================================
@@ -5467,14 +5670,18 @@ async function ti_fetchBarsFromDb(ticker) {
   const qs = new URLSearchParams({
     stock_code: `eq.${ticker}`, period: "eq.daily",
     select: "trade_date,open,high,low,close,volume,value_idr,frequency",
-    order: "trade_date.asc", limit: "400",
+    // PENTING: urut DESC + limit = ambil 400 bar TERBARU. Sebelumnya asc + limit
+    // mengambil 400 bar TERLAMA, sehingga untuk saham dengan riwayat > 400 hari
+    // indikator dihitung dari data lama dan tidak pernah ikut bar terbaru.
+    order: "trade_date.desc", limit: "400",
   });
   const res = await fetch(`${SUPABASE_URL}/price_history_stockbit?${qs}`, { headers: getSupaHeaders(), cache: "no-store" });
   if (!res.ok) throw new Error(`HTTP ${res.status} saat baca price_history_stockbit`);
   const rows = await res.json();
   return rows
     .filter(r => r.close != null)
-    .map(r => ({ date: r.trade_date, open: r.open, high: r.high, low: r.low, close: r.close, volume: r.volume, value: r.value_idr, frequency: r.frequency }));
+    .map(r => ({ date: r.trade_date, open: r.open, high: r.high, low: r.low, close: r.close, volume: r.volume, value: r.value_idr, frequency: r.frequency }))
+    .reverse(); // kembali urut lama -> baru, seperti yang diharapkan kalkulator indikator
 }
 
 // listed_shares tidak tersedia dari Stockbit — pakai shares_outstanding
@@ -5613,6 +5820,10 @@ async function updateTechnicalIndicatorsBulk(tickers, opts) {
 
   state.tiBulkLoading = false;
   render();
+  // Run manual: muat ulang data screener dari Supabase sekarang juga supaya
+  // hasil tulisan ke `stocks` langsung tampil (auto-refresh 45 dtk bisa
+  // tertunda kalau fokus sedang di input/select). Siklus live tidak perlu.
+  if (!live) Promise.resolve(loadLive()).catch(() => {});
 }
 
 function renderDetailVsSektor(s){
@@ -5876,7 +6087,16 @@ function renderDetailModalContent(){
   const liveBadge = liveResolved
     ? `<span style="font-size:10px;font-weight:700;color:#f87171;margin-left:8px;vertical-align:middle;border:1px solid rgba(239,68,68,0.4);border-radius:5px;padding:1px 6px;" title="Harga & seluruh perhitungan teknikal di tab ini sudah memakai data Live Stockbit (ditarik ${Math.max(0,Math.round((Date.now()-liveResolved.fetchedAt)/1000))} detik lalu), bukan harga EOD">🔴 LIVE</span>`
     : "";
+  const navList = state.detailNavList;
+  const navIdx = navList ? navList.indexOf(state.detailTicker) : -1;
+  const navRow = navIdx >= 0 ? `
+    <div class="detail-nav" style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:10px;">
+      <button type="button" class="btn btn-outline" data-detail-nav="-1" ${navIdx<=0?"disabled":""} title="Saham sebelumnya di hasil screener" style="padding:6px 12px;font-size:12px;">‹ ${navIdx>0 ? escapeHtml(navList[navIdx-1]) : "Sebelumnya"}</button>
+      <span class="mono" style="font-size:12px;color:var(--muted);text-align:center;">${navIdx+1} / ${navList.length} di hasil screener</span>
+      <button type="button" class="btn btn-outline" data-detail-nav="1" ${navIdx>=navList.length-1?"disabled":""} title="Saham berikutnya di hasil screener" style="padding:6px 12px;font-size:12px;">${navIdx<navList.length-1 ? escapeHtml(navList[navIdx+1]) : "Berikutnya"} ›</button>
+    </div>` : "";
   return `
+    ${navRow}
     <div class="detail-head">
       <div>
         <div class="detail-head-price">${dNum(s.cClose)} <span style="font-size:15px;font-weight:600;color:${(s.changePct??0)>=0?'var(--up)':'var(--down)'}">${s.changePct!=null?dNum(s.changePct,{plusSign:true,decimals:2,suffix:'%'}):''}</span>${liveBadge}</div>
@@ -6447,6 +6667,118 @@ function exportAllBacktestToExcel() {
   XLSX.writeFile(workbook, `Semua_Backtest_IHSG_${dateStr}.xlsx`);
 }
 
+// exportBacktestRekapToExcel — ekspor tab "Rekap per Saham" (agregasi
+// lintas sesi per ticker, lihat computeTickerRekap()/renderBacktestRekap()).
+// Beda dari exportAllBacktestToExcel(): itu 1 baris per KEMUNCULAN (per
+// item per sesi), ini 1 baris per TICKER (sudah diagregasi) — angkanya
+// SELALU mengikuti mode target TP (% Tetap / Auto per saham) yang lagi
+// aktif di layar saat tombol diklik, sama seperti yang tampil di tabel.
+function exportBacktestRekapToExcel(){
+  if (!state.backtests || !state.backtests.length){
+    return alert("Belum ada sesi backtest yang disimpan.");
+  }
+  const tpPct = Number(state.backtestTargetTpPct) > 0 ? Number(state.backtestTargetTpPct) : 5;
+  const mode = state.backtestTpMode === "auto" ? "auto" : "percent";
+  const rekap = computeTickerRekap(tpPct, mode);
+  if (!rekap.length){
+    return alert("Belum ada item tersimpan di sesi manapun.");
+  }
+  const tpLabel = mode === "auto" ? "Auto (TP1/saham)" : `${tpPct}%`;
+  const targetCol = `Target TP Tercapai (${tpLabel})`;
+
+  const data = rekap.map(r => ({
+    "Ticker": r.ticker,
+    "Muncul di Screener": r.screenerSet.join(" | "),
+    "Jumlah Kemunculan": r.occurrenceCount,
+    "Menang": r.winCount,
+    "Kalah": r.lossCount,
+    "Total P/L Closing (%)": r.totalPL != null ? parseFloat(r.totalPL.toFixed(2)) : "-",
+    "P/L Tertinggi (%)": r.bestPL != null ? parseFloat(r.bestPL.toFixed(2)) : "-",
+    [targetCol]: r.trackedCount === 0 ? "-" : `${r.achievedCount}/${r.trackedCount}`,
+    "Tercepat (Hari)": r.fastestDays ?? "-",
+    "Rata-rata (Hari)": r.avgDays != null ? parseFloat(r.avgDays.toFixed(1)) : "-",
+  }));
+
+  const worksheet = XLSX.utils.json_to_sheet(data);
+  const workbook = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(workbook, worksheet, "Rekap per Saham");
+
+  const wscols = [
+    {wch: 10}, // Ticker
+    {wch: 55}, // Muncul di Screener
+    {wch: 14}, // Jumlah Kemunculan
+    {wch: 8},  // Menang
+    {wch: 8},  // Kalah
+    {wch: 18}, // Total P/L Closing (%)
+    {wch: 16}, // P/L Tertinggi (%)
+    {wch: 24}, // Target TP Tercapai
+    {wch: 12}, // Tercepat (Hari)
+    {wch: 12}, // Rata-rata (Hari)
+  ];
+  worksheet['!cols'] = wscols;
+
+  const dateStr = todayLocalISO();
+  XLSX.writeFile(workbook, `Rekap_Per_Saham_IHSG_${dateStr}.xlsx`);
+}
+
+// exportBacktestScreenerRekapToExcel — ekspor tab "Rekap per Sumber
+// Screener" (lihat computeScreenerRekap()/renderBacktestScreenerRekap()).
+// 1 baris per sumber/kriteria screener, bukan per ticker -- metrik
+// utamanya rata-rata P/L (bukan total), sama seperti yang tampil di UI.
+function exportBacktestScreenerRekapToExcel(){
+  if (!state.backtests || !state.backtests.length){
+    return alert("Belum ada sesi backtest yang disimpan.");
+  }
+  const tpPct = Number(state.backtestTargetTpPct) > 0 ? Number(state.backtestTargetTpPct) : 5;
+  const mode = state.backtestTpMode === "auto" ? "auto" : "percent";
+  const rekap = computeScreenerRekap(tpPct, mode);
+  if (!rekap.length){
+    return alert("Belum ada item tersimpan di sesi manapun.");
+  }
+  const tpLabel = mode === "auto" ? "Auto (TP1/saham)" : `${tpPct}%`;
+  const targetCol = `Target TP Tercapai (${tpLabel})`;
+
+  const data = rekap.map(r => ({
+    "Sumber / Kriteria Screener": r.label,
+    "Jumlah Kemunculan": r.occurrenceCount,
+    "Ticker Unik": r.tickerCount,
+    "Menang": r.winCount,
+    "Kalah": r.lossCount,
+    "Win Rate (%)": r.winRate != null ? parseFloat(r.winRate.toFixed(1)) : "-",
+    "Rata-rata P/L Closing (%)": r.avgPL != null ? parseFloat(r.avgPL.toFixed(2)) : "-",
+    "Total P/L Closing (%)": r.totalPL != null ? parseFloat(r.totalPL.toFixed(2)) : "-",
+    "P/L Tertinggi (%)": r.bestPL != null ? parseFloat(r.bestPL.toFixed(2)) : "-",
+    "Rata-rata P/L Tertinggi (%)": r.avgBestPL != null ? parseFloat(r.avgBestPL.toFixed(2)) : "-",
+    [targetCol]: r.trackedCount === 0 ? "-" : `${r.achievedCount}/${r.trackedCount} (${r.achievedRate.toFixed(0)}%)`,
+    "Tercepat (Hari)": r.fastestDays ?? "-",
+    "Rata-rata (Hari)": r.avgDays != null ? parseFloat(r.avgDays.toFixed(1)) : "-",
+  }));
+
+  const worksheet = XLSX.utils.json_to_sheet(data);
+  const workbook = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(workbook, worksheet, "Rekap per Sumber");
+
+  const wscols = [
+    {wch: 55}, // Sumber / Kriteria Screener
+    {wch: 14}, // Jumlah Kemunculan
+    {wch: 10}, // Ticker Unik
+    {wch: 8},  // Menang
+    {wch: 8},  // Kalah
+    {wch: 12}, // Win Rate (%)
+    {wch: 20}, // Rata-rata P/L Closing (%)
+    {wch: 18}, // Total P/L Closing (%)
+    {wch: 16}, // P/L Tertinggi (%)
+    {wch: 22}, // Rata-rata P/L Tertinggi (%)
+    {wch: 26}, // Target TP Tercapai
+    {wch: 12}, // Tercepat (Hari)
+    {wch: 12}, // Rata-rata (Hari)
+  ];
+  worksheet['!cols'] = wscols;
+
+  const dateStr = todayLocalISO();
+  XLSX.writeFile(workbook, `Rekap_Per_Sumber_Screener_IHSG_${dateStr}.xlsx`);
+}
+
 async function syncPortoToServer_(record) {
   const payload = {
     id: record.id, ticker: record.ticker, status: record.status,
@@ -6770,7 +7102,7 @@ function getFiltered(){
       if (!(s.cLow < s.ema21L && s.cClose > s.ema21H && s.cClose > s.cOpen)) return false;
       if (!(s.cClose >= (s.cHigh + s.cLow)/2 && s.turnover > 200000000 && s.cClose > s.ma100)) return false;
     } else if(state.activePreset === 'golden') {
-      if (!(s.histPrev <= 0 && s.hist > 0)) return false;
+      if (!(s.prevMacdHist <= 0 && s.hist > 0)) return false;
       if (!(s.prevStochK < s.prevStochD && s.stochK > s.stochD)) return false;
     } else if(state.activePreset === 'ema921cross') {
       // Fresh cross EMA9xEMA21 hari ini -- butuh kolom ema21/prev_ema9/
@@ -7443,7 +7775,7 @@ function render(){
     else if(state.tab==="smartpick") content.innerHTML = renderSmartPick();
     else if(state.tab==="sektoral") content.innerHTML = renderSektoral();
     else if(state.tab==="watchlist") content.innerHTML = renderWatchlist();
-    else if(state.tab==="backtest") content.innerHTML = renderBacktest();
+    else if(state.tab==="backtest"){ content.innerHTML = renderBacktest(); ensureFlowsHistoryForBacktest(); }
     else if(state.tab==="portfolio") content.innerHTML = renderPortfolio();
     else if(state.tab==="chart") content.innerHTML = renderChart();
     else if(state.tab==="brokersum") content.innerHTML = renderBrokerSummary();
@@ -7478,9 +7810,15 @@ function render(){
   document.getElementById("detailModalOverlay").classList.toggle("open", !!state.detailTicker);
   if(state.detailTicker){
     document.getElementById("detailModalTitle").textContent = `Detail Emiten · ${state.detailTicker}`;
+    const _prevTabsBar = document.querySelector("#detailModalContent .detail-tabs");
+    const _prevTabsLeft = _prevTabsBar ? _prevTabsBar.scrollLeft : 0;
     document.getElementById("detailModalContent").innerHTML = renderDetailModalContent();
+    restoreDetailTabsScroll(_prevTabsLeft);
     document.querySelectorAll("[data-detail-tab]").forEach(btn=>{
       btn.onclick = () => setDetailTab(btn.dataset.detailTab);
+    });
+    document.querySelectorAll("[data-detail-nav]").forEach(btn=>{
+      btn.onclick = () => navigateDetail(parseInt(btn.dataset.detailNav, 10));
     });
     document.querySelectorAll("[data-gemini-run]").forEach(btn=>{
       btn.onclick = () => runGeminiAnalysis(btn.dataset.geminiRun);
@@ -7937,7 +8275,7 @@ const RULE_METRICS = [
   // --- EMA/MACD tambahan ---
   { key:"ema21H", label:"EMA 21 (High)" }, { key:"ema21L", label:"EMA 21 (Low)" }, { key:"ema89", label:"EMA 89" },
   { key:"ema9", label:"EMA 9 (Close)" }, { key:"ema21", label:"EMA 21 (Close)" }, { key:"ema921ConfirmedCount", label:"EMA9×21 Konfirmasi (0-3)" },
-  { key:"hist", label:"MACD Histogram" }, { key:"histPrev", label:"MACD Histogram (Prev)" },
+  { key:"hist", label:"MACD Histogram" },
   { key:"signal", label:"MACD Signal" }, { key:"prevSignal", label:"Previous MACD Signal" },
   { key:"prevMacdHist", label:"Previous MACD Histogram" },
 
@@ -8385,6 +8723,58 @@ function addCustomRule(){
   state.ruleBuilderOpen = true; // biar baris baru langsung kelihatan kalau panel lagi collapsed
   render();
 }
+// ------------------------------------------------------------------
+// TEMPLATE RULE — kumpulan rule siap pakai untuk panel Rules Kustom.
+// Semua rule di-AND (sama seperti rule buatan sendiri) dan bisa diubah/
+// dihapus setelah dimuat. Angkanya titik awal, bukan hasil backtest.
+//
+// BSJP (Beli Sore, Jual Pagi): dijalankan menjelang penutupan (~15:30–15:50).
+// Padanan filter deterministik tab BSJP (turnover, volume ratio, gain 2–15%,
+// close di 25% teratas range hari ini = CLV >= 0.5, tren di atas EMA20 & EMA50).
+//
+// BPJS (Beli Pagi, Jual Sore): dijalankan pagi (~09:15–10:00) saat harga sudah
+// bergerak. Volume pagi baru sebagian dari hari penuh, jadi Volume Ratio
+// dilonggarkan dan likuiditas diukur dari rata-rata nilai transaksi 20 hari.
+// Butuh harga intraday yang segar di database (Auto Teknikal (Live)); kalau
+// hanya data EOD kemarin, hasilnya = kondisi kemarin, bukan pagi ini.
+// ------------------------------------------------------------------
+const RULE_TEMPLATES = [
+  { key:"bsjp", label:"🌆 Template BSJP",
+    desc:"Beli Sore Jual Pagi — jalankan ±15:30–15:50. Turnover ≥ Rp 5 M, Volume Ratio > 1.5x, gain 2–15%, close di 25% teratas range hari ini, harga di atas EMA 20 & EMA 50.",
+    rules:[
+      { aKey:"turnover", op:">=", bType:"const", bConst:"5000000000" },
+      { aKey:"volRatio", op:">", bType:"const", bConst:"1.5" },
+      { aKey:"changePct", op:"between", bType:"const", bConstMin:"2", bConstMax:"15" },
+      { aKey:"clv", op:">=", bType:"const", bConst:"0.5" },
+      { aKey:"cClose", op:">", bType:"metric", bKey:"ema20", mult:"1" },
+      { aKey:"cClose", op:">", bType:"metric", bKey:"ema50", mult:"1" }
+    ] },
+  { key:"bpjs", label:"🌅 Template BPJS",
+    desc:"Beli Pagi Jual Sore — jalankan ±09:15–10:00. Nilai transaksi rata-rata 20 hari ≥ Rp 5 M, gain 1–8%, Volume Ratio ≥ 0.5x, harga di atas EMA 20, RSI 7 antara 50–75, harga menembus High kemarin.",
+    rules:[
+      { aKey:"valueMa20", op:">=", bType:"const", bConst:"5000000000" },
+      { aKey:"changePct", op:"between", bType:"const", bConstMin:"1", bConstMax:"8" },
+      { aKey:"volRatio", op:">=", bType:"const", bConst:"0.5" },
+      { aKey:"cClose", op:">", bType:"metric", bKey:"ema20", mult:"1" },
+      { aKey:"rsi7", op:"between", bType:"const", bConstMin:"50", bConstMax:"75" },
+      { aKey:"cClose", op:">", bType:"metric", bKey:"prevHigh", mult:"1" }
+    ] }
+];
+function applyRuleTemplate(key){
+  const t = RULE_TEMPLATES.find(x => x.key === key);
+  if(!t) return;
+  if(state.customRules.length && !confirm(`Ganti ${state.customRules.length} rule kustom yang aktif dengan ${t.label}? Preset yang sudah tersimpan tidak ikut terhapus.`)) return;
+  state.customRules = t.rules.map(r => ({
+    mult:"1", bKey:"", bConst:"",
+    ...r,
+    id: "r" + Date.now() + "_" + (ruleIdCounter++)
+  }));
+  state.selectedPresetId = ""; // rule sekarang bukan lagi isi preset yang sempat dipilih
+  saveCustomRules();
+  state.page = 1;
+  state.ruleBuilderOpen = true;
+  render();
+}
 function updateCustomRule(id, field, value){
   const rule = state.customRules.find(r=>r.id===id);
   if(!rule) return;
@@ -8579,9 +8969,10 @@ function renderRuleBuilder(){
         ${state.customRules.length ? `<span style="font-size:11.5px;color:var(--muted);font-weight:400;text-transform:none;letter-spacing:0;white-space:nowrap;">${state.customRules.length} rule aktif</span>` : ""}
       </div>
       ${state.ruleBuilderOpen ? `
-      <div class="rule-list">${rows || '<div style="color:var(--muted);font-size:13px;padding:6px 0 2px;">Belum ada rule kustom. Klik "+ Tambah Rule" untuk mulai — misalnya "Frequency &gt; 5 × Frequency Analyzer".</div>'}</div>
+      <div class="rule-list">${rows || '<div style="color:var(--muted);font-size:13px;padding:6px 0 2px;">Belum ada rule kustom. Klik "+ Tambah Rule" untuk mulai — misalnya "Frequency &gt; 5 × Frequency Analyzer" — atau pakai Template BSJP / BPJS di bawah.</div>'}</div>
       <div style="display:flex;align-items:center;gap:12px;margin-top:12px;flex-wrap:wrap;">
         <button type="button" class="btn btn-outline" id="addRuleBtn">+ Tambah Rule</button>
+        ${RULE_TEMPLATES.map(t => `<button type="button" class="btn btn-outline" data-rule-template="${t.key}" title="${escapeHtml(t.desc)}">${t.label}</button>`).join("")}
         <button type="button" class="btn btn-outline" id="savePresetBtn" ${state.presetsLoading?'disabled':''}>💾 Simpan sebagai Preset...</button>
         ${state.customRules.length ? `<button type="button" class="btn btn-outline" id="resetRulesBtn" title="Kosongkan semua rule kustom" style="color:#f87171;border-color:rgba(239,68,68,0.3);">↺ Reset</button>` : ""}
         ${state.customRules.length ? `<span style="font-size:12px;color:var(--muted);">${state.customRules.length} rule aktif — otomatis diterapkan ke tabel di bawah (AND, semua harus terpenuhi).</span>` : ""}
@@ -9060,11 +9451,18 @@ function renderScreener(){
 // METRIK PERIODE BACKTEST — dipakai kolom "Harga Tertinggi", "Capai P/L"
 // dan "Profit / Loss" di tab Backtest.
 //
-// Sumber data: state.stockbitPriceHistory (daily OHLC dari tabel
-// price_history_stockbit, ditarik lewat tombol "📅 Historical" di Screener
-// atau tab Historical Data di modal Detail Emiten). Baris yang dihitung
-// HANYA yang trade_date-nya >= tanggal entry, jadi harga tertinggi & P/L
-// benar-benar mencerminkan periode sejak emiten masuk backtest.
+// Sumber data (dicoba berurutan, ticker per ticker):
+// 1. state.stockbitPriceHistory (daily OHLC dari tabel price_history_stockbit,
+//    ditarik MANUAL lewat tombol "📅 Historical" di Screener atau tab
+//    Historical Data di modal Detail Emiten).
+// 2. state.flowsPriceHistory (daily high/close dari tabel `flows`, sumber
+//    IDX resmi lewat sync-idx-full.mjs — sama seperti data Chart) — dicoba
+//    HANYA kalau sumber #1 kosong untuk ticker itu. Diisi otomatis (tanpa
+//    perlu ditarik manual) oleh ensureFlowsHistoryForBacktest() saat tab
+//    Backtest dibuka.
+// Baris yang dihitung HANYA yang date/trade_date-nya >= tanggal entry, jadi
+// harga tertinggi & P/L benar-benar mencerminkan periode sejak emiten masuk
+// backtest.
 //
 // - highPeriod : harga tertinggi (max of high) sejak tanggal entry.
 // - maxPL      : P/L maksimum = (highPeriod − entry) / entry × 100 —
@@ -9073,23 +9471,112 @@ function renderScreener(){
 // - endPL      : P/L berdasarkan close TERAKHIR dalam data historical
 //                (bukan harga live) — kondisi paling akhir periode.
 // - fallbackPrice dipakai kalau ticker sama sekali tidak punya data
-//                historical: P/L jatuh ke harga live seperti perilaku lama.
-// Kalau entry <= 0 atau tidak ada data, hasilnya null dan UI menampilkan
-// "-" (bukan 0) supaya tidak menyesatkan.
+//                historical di KEDUA sumber: P/L jatuh ke harga live
+//                seperti perilaku lama.
+// - historySource : "stockbit" | "flows" | null — dipakai UI buat kasih
+//                tahu dari mana angkanya berasal (lihat tooltip di render).
+// Kalau entry <= 0 atau tidak ada data sama sekali, hasilnya null dan UI
+// menampilkan "-" (bukan 0) supaya tidak menyesatkan.
 // ==========================================
+function backtestHistoryRowsForTicker(ticker, entryDate){
+  const t = String(ticker || "").toUpperCase();
+  const stockbitRows = state.stockbitPriceHistory?.[t] || [];
+  if (stockbitRows.length){
+    return {
+      source: "stockbit",
+      rows: stockbitRows
+        .filter(r => r.date && (!entryDate || String(r.date).slice(0,10) >= entryDate))
+        .sort((a,b) => String(a.date).localeCompare(String(b.date))),
+    };
+  }
+  const flowsRows = state.flowsPriceHistory?.[t] || [];
+  if (flowsRows.length){
+    return {
+      source: "flows",
+      rows: flowsRows
+        .filter(r => r.date && (!entryDate || String(r.date).slice(0,10) >= entryDate))
+        .sort((a,b) => String(a.date).localeCompare(String(b.date))),
+    };
+  }
+  return { source: null, rows: [] };
+}
 function backtestPeriodMetrics(item, fallbackPrice){
   const entry = Number(item.entryPrice);
   const entryDate = String(item.entryDate || "").slice(0, 10);
-  const rows = (state.stockbitPriceHistory?.[String(item.ticker || "").toUpperCase()] || [])
-    .filter(r => r.date && (!entryDate || String(r.date).slice(0,10) >= entryDate))
-    .sort((a,b) => String(a.date).localeCompare(String(b.date)));
+  const { source, rows } = backtestHistoryRowsForTicker(item.ticker, entryDate);
   const highs = rows.map(r => Number(r.high)).filter(Number.isFinite);
   const closes = rows.map(r => Number(r.close)).filter(Number.isFinite);
   const highPeriod = highs.length ? Math.max(...highs) : null;
   const periodEnd = closes.length ? closes[closes.length - 1] : numOrNull(fallbackPrice);
   const maxPL = entry > 0 && highPeriod != null ? ((highPeriod - entry) / entry) * 100 : null;
   const endPL = entry > 0 && periodEnd != null ? ((periodEnd - entry) / entry) * 100 : null;
-  return { highPeriod, periodEnd, maxPL, endPL, hasHistory: rows.length > 0 };
+  return { highPeriod, periodEnd, maxPL, endPL, hasHistory: rows.length > 0, historySource: source };
+}
+
+// ensureFlowsHistoryForBacktest — fallback OTOMATIS (tidak perlu diklik
+// manual seperti tombol "📅 Historical" Stockbit): dipanggil tiap render()
+// menampilkan tab Backtest (lihat pemanggilnya), mengumpulkan ticker yang
+// BELUM punya state.stockbitPriceHistory DAN belum pernah dicoba di-fetch
+// dari flows (state.flowsHistoryAttempted), lalu tarik sekaligus dalam SATU
+// request PostgREST `ticker=in.(...)` (bukan 1 request per ticker) supaya
+// hemat.
+//
+// Guard state.flowsHistoryLoading mencegah request dobel kalau render()
+// terpanggil lagi sebelum fetch sebelumnya selesai (render() sinkron,
+// fungsi ini async & memanggil render() ulang sendiri setelah selesai —
+// pola sama seperti loadChartData()/openDetail()).
+async function ensureFlowsHistoryForBacktest(){
+  if (state.flowsHistoryLoading) return;
+  if (!state.backtests || !state.backtests.length) return;
+
+  const allTickers = new Set();
+  state.backtests.forEach(session => (session.items||[]).forEach(item => {
+    if (item.ticker) allTickers.add(String(item.ticker).toUpperCase());
+  }));
+
+  const needed = [...allTickers].filter(t =>
+    !(state.stockbitPriceHistory?.[t]?.length) &&
+    !state.flowsHistoryAttempted.has(t)
+  );
+  if (!needed.length) return;
+
+  state.flowsHistoryLoading = true;
+  // Tidak render() di sini (tidak ada perubahan visual yang perlu buru-buru
+  // ditampilkan cuma karena mulai loading) — cukup render() setelah selesai.
+  try {
+    // PostgREST `in.(...)` bisa kena limit panjang URL kalau ticker-nya
+    // ratusan sekaligus (jarang terjadi untuk backtest pribadi, tapi jaga-
+    // jaga) — pecah per 80 ticker per request.
+    const CHUNK = 80;
+    for (let i = 0; i < needed.length; i += CHUNK) {
+      const chunk = needed.slice(i, i + CHUNK);
+      const inList = chunk.map(t => encodeURIComponent(t)).join(",");
+      const rows = await fetch(
+        `${SUPABASE_URL}/flows?ticker=in.(${inList})&select=ticker,date,high,close&order=date.asc`,
+        { headers: getSupaHeaders(), cache: "no-store" }
+      ).then(r => r.ok ? r.json() : []).catch(() => []);
+
+      // Kelompokkan per ticker. Ticker yang tetap tidak punya baris SAMA
+      // SEKALI (delisting/baru IPO/belum pernah disync) ikut ditandai
+      // "attempted" supaya tidak fetch ulang tiap kali tab Backtest dibuka.
+      chunk.forEach(t => state.flowsHistoryAttempted.add(t));
+      if (Array.isArray(rows)){
+        rows.forEach(r => {
+          if (r.close == null) return;
+          const t = String(r.ticker || "").toUpperCase();
+          if (!state.flowsPriceHistory[t]) state.flowsPriceHistory[t] = [];
+          state.flowsPriceHistory[t].push({
+            date: r.date,
+            high: r.high == null ? null : Number(r.high),
+            close: Number(r.close),
+          });
+        });
+      }
+    }
+  } finally {
+    state.flowsHistoryLoading = false;
+    render();
+  }
 }
 function plText(value){
   return value == null || !Number.isFinite(value) ? "-" : `${value > 0 ? "+" : ""}${value.toFixed(2)}%`;
@@ -9149,21 +9636,18 @@ function resolveAutoTpTarget(item){
 
 // targetTpAchievement — cek apakah & di hari ke berapa (sejak entryDate)
 // harga TERTINGGI harian pernah menembus `targetPrice`. Sumber data sama
-// dengan backtestPeriodMetrics(): state.stockbitPriceHistory, difilter ke
-// baris >= entryDate, diurutkan naik berdasarkan tanggal — baris PERTAMA
-// yang high-nya >= target itulah hari tercapainya. `targetPrice` sudah
-// berupa harga absolut di sini — resolusinya (dari % tetap atau dari
-// resolveAutoTpTarget) dilakukan oleh pemanggil (computeTickerRekap),
-// supaya fungsi ini tetap sama untuk kedua mode.
+// dengan backtestPeriodMetrics() (lihat backtestHistoryRowsForTicker():
+// stockbitPriceHistory dulu, fallback flowsPriceHistory kalau kosong).
+// `targetPrice` sudah berupa harga absolut di sini — resolusinya (dari %
+// tetap atau dari resolveAutoTpTarget) dilakukan oleh pemanggil
+// (computeTickerRekap), supaya fungsi ini tetap sama untuk kedua mode.
 function targetTpAchievement(item, targetPrice){
   const entry = Number(item.entryPrice);
   const entryDate = String(item.entryDate || "").slice(0, 10);
   if (!(entry > 0) || !entryDate || !(Number(targetPrice) > 0)) {
     return { hasHistory: false, achieved: false, days: null, targetPrice: numOrNull(targetPrice) };
   }
-  const rows = (state.stockbitPriceHistory?.[String(item.ticker || "").toUpperCase()] || [])
-    .filter(r => r.date && String(r.date).slice(0,10) >= entryDate)
-    .sort((a,b) => String(a.date).localeCompare(String(b.date)));
+  const { rows } = backtestHistoryRowsForTicker(item.ticker, entryDate);
   if (!rows.length) return { hasHistory: false, achieved: false, days: null, targetPrice };
   const hit = rows.find(r => Number(r.high) >= targetPrice);
   if (!hit) return { hasHistory: true, achieved: false, days: null, targetPrice };
@@ -9184,7 +9668,7 @@ function computeTickerRekap(tpPct, mode){
       const liveData = state.stocks.find(s => s.ticker === item.ticker);
       const currentPrice = liveData ? liveData.cClose : item.entryPrice;
       const period = backtestPeriodMetrics(item, currentPrice);
-      const pl = period.endPL ?? (item.entryPrice ? ((currentPrice - item.entryPrice) / item.entryPrice) * 100 : null);
+      const pl = (!liveData && !period.hasHistory) ? null : (period.endPL ?? (item.entryPrice ? ((currentPrice - item.entryPrice) / item.entryPrice) * 100 : null));
 
       const targetPrice = isAuto
         ? resolveAutoTpTarget(item)
@@ -9246,6 +9730,135 @@ function computeTickerRekap(tpPct, mode){
   return rows;
 }
 
+// ==========================================
+// computeScreenerRekap — kebalikan pengelompokan dari computeTickerRekap():
+// di situ per TICKER (lintas screener), di sini per SUMBER/KRITERIA
+// SCREENER (lintas ticker) -- jadi kelihatan formula/preset mana yang
+// hasil backtest-nya paling konsisten bagus, bukan cuma saham mana yang
+// pernah cuan.
+//
+// Label pengelompokan = item.kriteria (teks lengkap preset/rules yang
+// aktif saat disimpan ke backtest -- lihat ctx.criteria di saveToBacktest()),
+// fallback ke item.sumber kalau kriteria kosong ("-"). Ini teks RAW, sama
+// persis dengan yang dipakai screenerSet di computeTickerRekap() -- dua
+// entry cuma digabung kalau kriterianya BENAR-BENAR identik (preset yang
+// sama + rules yang sama persis), supaya perbandingannya adil (bukan
+// menyamaratakan preset berbeda yang kebetulan mirip namanya).
+//
+// Beda lain dari computeTickerRekap(): urutan default & angka utamanya
+// pakai RATA-RATA (avgPL), bukan TOTAL -- karena jumlah kemunculan antar
+// screener bisa jomplang jauh (preset yang sering lolos vs preset ketat
+// yang jarang lolos), total P/L akan bias ke yang paling sering muncul,
+// bukan yang paling "jitu".
+// ==========================================
+function computeScreenerRekap(tpPct, mode){
+  const byScreener = new Map();
+  const isAuto = mode === "auto";
+
+  for (const session of state.backtests) {
+    for (const item of session.items) {
+      const liveData = state.stocks.find(s => s.ticker === item.ticker);
+      const currentPrice = liveData ? liveData.cClose : item.entryPrice;
+      const period = backtestPeriodMetrics(item, currentPrice);
+      const pl = (!liveData && !period.hasHistory) ? null : (period.endPL ?? (item.entryPrice ? ((currentPrice - item.entryPrice) / item.entryPrice) * 100 : null));
+
+      const targetPrice = isAuto
+        ? resolveAutoTpTarget(item)
+        : (Number(item.entryPrice) > 0 ? Number(item.entryPrice) * (1 + tpPct / 100) : null);
+      const target = targetTpAchievement(item, targetPrice);
+      target.noAutoPlan = isAuto && targetPrice == null;
+
+      const label = (item.kriteria && item.kriteria !== "-") ? item.kriteria : (item.sumber || "Screener");
+
+      const occurrence = {
+        sessionId: session.id, sessionDate: session.date,
+        ticker: item.ticker, entryDate: item.entryDate, entryPrice: item.entryPrice,
+        currentPrice, sumber: item.sumber || "Screener", kriteria: item.kriteria || "-",
+        pl, periodMaxPL: period.maxPL, target,
+      };
+
+      if (!byScreener.has(label)) byScreener.set(label, []);
+      byScreener.get(label).push(occurrence);
+    }
+  }
+
+  const rows = [...byScreener.entries()].map(([label, occurrences]) => {
+    const tickerCount = new Set(occurrences.map(o => o.ticker)).size;
+
+    const withPl = occurrences.filter(o => o.pl != null);
+    const winCount = withPl.filter(o => o.pl > 0).length;
+    const lossCount = withPl.filter(o => o.pl < 0).length;
+    const totalPL = withPl.reduce((a,o) => a + o.pl, 0);
+    const avgPL = withPl.length ? totalPL / withPl.length : null;
+    const winRate = withPl.length ? (winCount / withPl.length * 100) : null;
+
+    const withMaxPl = occurrences.filter(o => o.periodMaxPL != null);
+    const bestPL = withMaxPl.length ? Math.max(...withMaxPl.map(o => o.periodMaxPL)) : null;
+    const avgBestPL = withMaxPl.length ? withMaxPl.reduce((a,o) => a + o.periodMaxPL, 0) / withMaxPl.length : null;
+
+    const withHistory = occurrences.filter(o => o.target.hasHistory);
+    const achievedList = occurrences.filter(o => o.target.achieved);
+    const achievedRate = withHistory.length ? (achievedList.length / withHistory.length * 100) : null;
+    const avgDays = achievedList.length
+      ? achievedList.reduce((a,o) => a + (o.target.days||0), 0) / achievedList.length
+      : null;
+    const fastestDays = achievedList.length ? Math.min(...achievedList.map(o => o.target.days)) : null;
+
+    return {
+      label, occurrences,
+      occurrenceCount: occurrences.length,
+      tickerCount,
+      winCount, lossCount, winRate,
+      totalPL, avgPL,
+      bestPL, avgBestPL,
+      achievedCount: achievedList.length,
+      trackedCount: withHistory.length,
+      achievedRate,
+      avgDays, fastestDays,
+    };
+  });
+
+  // Urutan default: rata-rata P/L closing tertinggi dulu (lihat catatan di
+  // kepala fungsi soal kenapa rata-rata, bukan total).
+  rows.sort((a,b) => (b.avgPL ?? -Infinity) - (a.avgPL ?? -Infinity));
+  return rows;
+}
+
+// ------------------------------------------------------------------
+// Label "Muncul di Screener" pada Rekap per Saham. Teks kriteria aslinya bisa
+// sangat panjang (nama preset + seluruh daftar rule), dan .pill/td di
+// styles.css bersifat nowrap sehingga meluber menimpa kolom di sebelahnya.
+// Di sini teksnya diringkas jadi label pendek; teks lengkap ada di tooltip.
+// Semua gaya dibuat inline supaya tidak bergantung pada styles.css.
+// ------------------------------------------------------------------
+function compactScreenerLabel(full){
+  const text = String(full == null ? "" : full).trim();
+  if(!text) return "-";
+  if(/^Tanpa filter\/preset aktif/i.test(text)) return "Tanpa filter";
+  return text.split(" | ").map(part => {
+    let m;
+    if((m = part.match(/^Preset Kustom "([^"]+)"/))) return `Preset: ${m[1]}`;
+    if((m = part.match(/^Preset DSI "([^"]+)"/))) return `DSI: ${m[1]}`;
+    if(/^Rules Kustom:/.test(part)){
+      const n = part.replace(/^Rules Kustom:\s*/, "").split("; ").filter(Boolean).length;
+      return `Rules Kustom (${n} rule)`;
+    }
+    return part;
+  }).join(" + ");
+}
+function rekapScreenerCell(labels){
+  const MAX = 3;
+  const tip = (t) => escapeHtml(t).replace(/; /g, "&#10;");
+  const pillStyle = "display:block;box-sizing:border-box;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;";
+  const badge = (full) => `<span class="pill pill-muted" style="${pillStyle}" title="${tip(full)}">${escapeHtml(compactScreenerLabel(full))}</span>`;
+  const shown = labels.slice(0, MAX);
+  const hidden = labels.slice(MAX);
+  const more = hidden.length
+    ? `<span class="pill pill-muted" style="${pillStyle}" title="${tip(hidden.join("\n"))}">+${hidden.length} lainnya</span>`
+    : "";
+  return `<div style="display:flex;flex-direction:column;align-items:flex-start;gap:4px;width:260px;max-width:260px;">${shown.map(badge).join("")}${more}</div>`;
+}
+
 function renderBacktestRekap(){
   if (state.backtests.length === 0){
     return `<div class="empty-box">Belum ada sesi backtest yang disimpan.</div>`;
@@ -9255,6 +9868,14 @@ function renderBacktestRekap(){
   const mode = state.backtestTpMode === "auto" ? "auto" : "percent";
   const rekap = computeTickerRekap(tpPct, mode);
   const tpLabel = mode === "auto" ? "Auto (TP1/saham)" : `${tpPct}%`;
+
+  const exportRow = `
+    <div style="display:flex; justify-content:flex-end; margin-bottom:12px;">
+      <button class="btn btn-primary" id="exportRekapBtnv2" style="background:var(--teal-grad); box-shadow:0 4px 12px rgba(6,182,212,0.3); border:none;">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" style="margin-right:4px;"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
+        Ekspor Rekap per Saham ke Excel
+      </button>
+    </div>`;
 
   const controls = `
     <div class="panel" style="align-items:center; gap:14px; margin-bottom:16px; flex-wrap:wrap;">
@@ -9279,14 +9900,14 @@ function renderBacktestRekap(){
     </div>`;
 
   if (!rekap.length){
-    return controls + `<div class="empty-box">Belum ada item tersimpan di sesi manapun.</div>`;
+    return exportRow + controls + `<div class="empty-box">Belum ada item tersimpan di sesi manapun.</div>`;
   }
 
   const rows = rekap.map(r => {
     const isOpen = state.backtestRekapExpanded.has(r.ticker);
     const plTone = r.totalPL > 0 ? "up" : r.totalPL < 0 ? "down" : "muted";
     const bestTone = (r.bestPL ?? 0) > 0 ? "up" : (r.bestPL ?? 0) < 0 ? "down" : "muted";
-    const screenerBadges = r.screenerSet.map(s => pillHtml(escapeHtml(s), "muted")).join(" ");
+    const screenerBadges = rekapScreenerCell(r.screenerSet);
 
     const notAvailableLabel = mode === "auto" ? "- (target otomatis tidak tersedia)" : "- (belum ada data historical)";
     const tpSummary = r.trackedCount === 0
@@ -9303,7 +9924,7 @@ function renderBacktestRekap(){
           <button class="ticker-link" data-detail="${escapeHtml(r.ticker)}">${escapeHtml(r.ticker)}</button>
           <button type="button" class="link-btn" data-rekap-expand="${escapeHtml(r.ticker)}">${isOpen ? "Tutup" : `Detail (${r.occurrenceCount}x)`}</button>
         </td>
-        <td style="white-space:normal; max-width:280px;">${screenerBadges}</td>
+        <td style="vertical-align:middle;">${screenerBadges}</td>
         <td class="mono" style="color:var(--up); font-weight:700;">${r.winCount}</td>
         <td class="mono" style="color:var(--down); font-weight:700;">${r.lossCount}</td>
         <td class="mono" style="color:var(--${plTone}); font-weight:700; font-size:14px;" title="Jumlah (bukan rata-rata) P/L closing dari semua kemunculan ticker ini">${plText(r.totalPL)}</td>
@@ -9313,7 +9934,7 @@ function renderBacktestRekap(){
       ${detailRows}`;
   }).join("");
 
-  return controls + `
+  return exportRow + controls + `
     <div class="panel" style="flex-direction:column; align-items:stretch;">
       <div class="table-wrap">
         <table class="mono">
@@ -9324,6 +9945,111 @@ function renderBacktestRekap(){
               <th title="Jumlah kemunculan dengan P/L closing positif">Menang</th>
               <th title="Jumlah kemunculan dengan P/L closing negatif">Kalah</th>
               <th title="Jumlah P/L closing dari SEMUA kemunculan ticker ini (bukan rata-rata)">Total P/L (Closing)</th>
+              <th title="P/L tertinggi yang pernah dicapai dari kemunculan manapun">P/L Tertinggi</th>
+              <th title="Berapa kali & dalam berapa hari harga menembus target TP-nya (mode aktif: ${mode === 'auto' ? 'Auto, TP1 per saham' : tpPct + '% tetap'})">Target TP (${tpLabel})</th>
+            </tr>
+          </thead>
+          <tbody>${rows}</tbody>
+        </table>
+      </div>
+    </div>`;
+}
+
+// ==========================================
+// RENDER "Rekap per Sumber Screener" — sub-tab ketiga di tab 🔬 Backtest,
+// di samping "Per Sesi" & "Rekap per Saham". Sama-sama pakai state
+// backtestTpMode/backtestTargetTpPct (mode target TP dibagi lintas ketiga
+// tab, konsisten dengan "Rekap per Saham"). Data dari computeScreenerRekap()
+// -- lihat catatan di kepala fungsi itu soal kenapa diurutkan pakai
+// rata-rata P/L, bukan total.
+// ==========================================
+function renderBacktestScreenerRekap(){
+  if (state.backtests.length === 0){
+    return `<div class="empty-box">Belum ada sesi backtest yang disimpan.</div>`;
+  }
+
+  const tpPct = Number(state.backtestTargetTpPct) > 0 ? Number(state.backtestTargetTpPct) : 5;
+  const mode = state.backtestTpMode === "auto" ? "auto" : "percent";
+  const rekap = computeScreenerRekap(tpPct, mode);
+  const tpLabel = mode === "auto" ? "Auto (TP1/saham)" : `${tpPct}%`;
+
+  const exportRow = `
+    <div style="display:flex; justify-content:flex-end; margin-bottom:12px;">
+      <button class="btn btn-primary" id="exportScreenerRekapBtn" style="background:var(--teal-grad); box-shadow:0 4px 12px rgba(6,182,212,0.3); border:none;">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" style="margin-right:4px;"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
+        Ekspor Rekap per Sumber ke Excel
+      </button>
+    </div>`;
+
+  const controls = `
+    <div class="panel" style="align-items:center; gap:14px; margin-bottom:16px; flex-wrap:wrap;">
+      <div style="font-size:12.5px; color:var(--muted); max-width:420px; line-height:1.5;">
+        Rekap ${rekap.length} sumber/kriteria screener dari ${state.backtests.length} sesi backtest yang tersimpan. Diurutkan dari <b>rata-rata</b> P/L closing tertinggi (bukan total) supaya screener yang jarang lolos tidak kalah cuma karena kemunculannya sedikit.
+      </div>
+      <div class="field" style="margin-left:auto; min-width:160px;">
+        <label style="font-size:10.5px;">Mode target TP</label>
+        <div style="display:flex; gap:6px;">
+          <button type="button" class="btn ${mode==='percent' ? 'btn-primary' : 'btn-outline'}" data-backtest-tp-mode="percent" style="font-size:11.5px; padding:5px 10px;">% Tetap</button>
+          <button type="button" class="btn ${mode==='auto' ? 'btn-primary' : 'btn-outline'}" data-backtest-tp-mode="auto" style="font-size:11.5px; padding:5px 10px;" title="TP1 dari trade plan otomatis, dihitung per saham (beda-beda tiap ticker), bukan satu % yang sama untuk semua">📊 Auto (per saham)</button>
+        </div>
+      </div>
+      ${mode === "percent" ? `
+      <div class="field" style="min-width:140px;">
+        <label style="font-size:10.5px;">Target TP untuk cek pencapaian (%)</label>
+        <input id="backtestRekapTpPct" type="number" min="0.1" step="0.1" value="${tpPct}" style="width:100px;">
+      </div>` : `
+      <div style="font-size:11px; color:var(--muted); max-width:320px; line-height:1.5;">
+        Target dihitung dari TP1 trade plan (support/resistance/ATR14 <b>live hari ini</b>, bukan histori saat entry) memakai harga entry masing-masing kemunculan.
+      </div>`}
+    </div>`;
+
+  if (!rekap.length){
+    return exportRow + controls + `<div class="empty-box">Belum ada item tersimpan di sesi manapun.</div>`;
+  }
+
+  const rows = rekap.map(r => {
+    const isOpen = state.backtestScreenerExpanded.has(r.label);
+    const avgTone = (r.avgPL ?? 0) > 0 ? "up" : (r.avgPL ?? 0) < 0 ? "down" : "muted";
+    const bestTone = (r.bestPL ?? 0) > 0 ? "up" : (r.bestPL ?? 0) < 0 ? "down" : "muted";
+    const labelTip = escapeHtml(r.label).replace(/ \| /g, "&#10;");
+    const labelBadge = `<span class="pill pill-muted" style="display:block;box-sizing:border-box;max-width:280px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${labelTip}">${escapeHtml(compactScreenerLabel(r.label))}</span>`;
+
+    const notAvailableLabel = mode === "auto" ? "- (target otomatis tidak tersedia)" : "- (belum ada data historical)";
+    const tpSummary = r.trackedCount === 0
+      ? `<span style="color:var(--muted);">${notAvailableLabel}</span>`
+      : `<span style="color:${r.achievedCount>0 ? 'var(--up)' : 'var(--down)'};font-weight:700;">${r.achievedCount}/${r.trackedCount}</span> tercapai (${r.achievedRate.toFixed(0)}%)`
+        + (r.achievedCount > 0
+          ? `<div style="font-size:11px;color:var(--muted);margin-top:2px;">tercepat ${r.fastestDays}h &middot; rata-rata ${r.avgDays.toFixed(1)}h</div>`
+          : "");
+
+    const detailRows = isOpen ? occurrenceDetailRows(r.occurrences, mode) : "";
+
+    return `<tr>
+        <td style="vertical-align:middle;">
+          ${labelBadge}
+          <button type="button" class="link-btn" data-screener-rekap-expand="${escapeHtml(r.label)}">${isOpen ? "Tutup" : `Detail (${r.occurrenceCount}x, ${r.tickerCount} ticker)`}</button>
+        </td>
+        <td class="mono" style="color:var(--up); font-weight:700;">${r.winCount}</td>
+        <td class="mono" style="color:var(--down); font-weight:700;">${r.lossCount}</td>
+        <td class="mono" style="font-weight:700;">${r.winRate != null ? r.winRate.toFixed(0)+"%" : "-"}</td>
+        <td class="mono" style="color:var(--${avgTone}); font-weight:700; font-size:14px;" title="Rata-rata (bukan total) P/L closing dari semua kemunculan yang punya P/L">${plText(r.avgPL)}</td>
+        <td class="mono" style="color:var(--${bestTone}); font-weight:700; font-size:14px;" title="P/L tertinggi yang PERNAH dicapai dari kemunculan manapun di bawah screener ini">${plText(r.bestPL)}</td>
+        <td style="font-size:12.5px;">${tpSummary}</td>
+      </tr>
+      ${detailRows}`;
+  }).join("");
+
+  return exportRow + controls + `
+    <div class="panel" style="flex-direction:column; align-items:stretch;">
+      <div class="table-wrap">
+        <table class="mono">
+          <thead>
+            <tr>
+              <th>Sumber / Kriteria Screener</th>
+              <th title="Jumlah kemunculan dengan P/L closing positif">Menang</th>
+              <th title="Jumlah kemunculan dengan P/L closing negatif">Kalah</th>
+              <th title="Menang ÷ (Menang+Kalah)">Win Rate</th>
+              <th title="Rata-rata P/L closing dari SEMUA kemunculan screener ini (bukan total) -- metrik utama buat bandingkan antar screener">Rata-rata P/L (Closing)</th>
               <th title="P/L tertinggi yang pernah dicapai dari kemunculan manapun">P/L Tertinggi</th>
               <th title="Berapa kali & dalam berapa hari harga menembus target TP-nya (mode aktif: ${mode === 'auto' ? 'Auto, TP1 per saham' : tpPct + '% tetap'})">Target TP (${tpLabel})</th>
             </tr>
@@ -9353,7 +10079,7 @@ function occurrenceDetailRows(occurrences, mode){
       : "";
     return `<tr style="background:color-mix(in srgb, currentColor 4%, transparent);">
       <td class="mono" style="padding-left:24px; font-size:11.5px;">${fmtDateID(o.entryDate)}</td>
-      <td style="font-size:11.5px; color:var(--gold); opacity:0.9;">${escapeHtml(o.kriteria)}</td>
+      <td style="font-size:11.5px; color:var(--gold); opacity:0.9; white-space:normal; min-width:220px; max-width:420px; line-height:1.45; word-break:break-word;">${escapeHtml(o.kriteria)}</td>
       <td class="mono" style="font-size:11.5px;">${fmtNum(o.entryPrice)}</td>
       <td class="mono" style="font-size:11.5px;">${fmtNum(o.currentPrice)}</td>
       <td class="mono" style="font-size:11.5px; color:var(--${plTone}); font-weight:700;">${plText(o.pl)}</td>
@@ -9403,16 +10129,22 @@ function renderBacktest(){
 
   // Sub-tab: "Per Sesi" (tampilan lama, satu blok per sesi backtest) vs
   // "Rekap per Saham" (agregasi lintas sesi per ticker — lihat
-  // renderBacktestRekap()). State-nya standalone (state.backtestView),
-  // tidak memengaruhi tab besar lain di aplikasi.
+  // renderBacktestRekap()) & "Rekap per Sumber" (agregasi lintas sesi per
+  // sumber/kriteria screener — lihat renderBacktestScreenerRekap()).
+  // State-nya standalone (state.backtestView), tidak memengaruhi tab besar
+  // lain di aplikasi.
   const viewToggle = `
-    <div style="display:flex; gap:8px; margin-bottom:16px;">
+    <div style="display:flex; gap:8px; margin-bottom:16px; flex-wrap:wrap;">
       <button type="button" class="btn ${state.backtestView==='sesi' ? 'btn-primary' : 'btn-outline'}" data-backtest-view="sesi">📋 Per Sesi</button>
       <button type="button" class="btn ${state.backtestView==='rekap' ? 'btn-primary' : 'btn-outline'}" data-backtest-view="rekap">📊 Rekap per Saham</button>
+      <button type="button" class="btn ${state.backtestView==='sumber' ? 'btn-primary' : 'btn-outline'}" data-backtest-view="sumber" title="Rekap performa per preset/rules screener -- formula mana yang hasil backtest-nya paling konsisten bagus">🧮 Rekap per Sumber</button>
     </div>`;
 
   if (state.backtestView === "rekap"){
     return manualForm + viewToggle + renderBacktestRekap();
+  }
+  if (state.backtestView === "sumber"){
+    return manualForm + viewToggle + renderBacktestScreenerRekap();
   }
 
   if(state.backtests.length === 0){
@@ -9426,8 +10158,22 @@ function renderBacktest(){
       const liveData = state.stocks.find(s => s.ticker === item.ticker);
       const currentPrice = liveData ? liveData.cClose : item.entryPrice;
       const period = backtestPeriodMetrics(item, currentPrice);
-      const pl = period.endPL ?? (item.entryPrice ? ((currentPrice - item.entryPrice) / item.entryPrice) * 100 : null);
+      // Tanpa harga live (ticker tidak ada di screener) DAN tanpa data historical,
+      // currentPrice jatuh ke harga entry → P/L 0.00% palsu yang ikut mengotori
+      // win rate/rata-rata. Tampilkan "-" dan keluarkan dari statistik.
+      const pl = (!liveData && !period.hasHistory) ? null : (period.endPL ?? (item.entryPrice ? ((currentPrice - item.entryPrice) / item.entryPrice) * 100 : null));
       const periodMaxPL = period.maxPL;
+      // Alasan kolom Harga Tertinggi / Capai P/L kosong, ditampilkan sebagai tooltip.
+      // Kalau ternyata TERISI dari fallback flows (bukan Stockbit), kasih
+      // tahu sumbernya juga -- supaya tidak dikira selalu dari Stockbit.
+      const noHistTip = period.hasHistory ? "" : (state.flowsHistoryLoading
+        ? `Mengecek histori fallback dari tabel flows untuk ${item.ticker}...`
+        : liveData
+          ? `Belum ada data historical ${item.ticker} sejak tanggal entry (${fmtDateID(item.entryDate)}), baik dari Stockbit maupun tabel flows (IDX). Tarik lewat tombol Historical di Screener dengan rentang dari tanggal entry sampai hari ini, lalu refresh.`
+          : `${item.ticker} tidak ditemukan di data screener saat ini dan belum punya data historical di Stockbit maupun flows — cek kode ticker, atau tarik data Historical-nya.`);
+      const historyTip = period.historySource === "flows"
+        ? " (sumber: flows/IDX, fallback otomatis — histori Stockbit belum pernah ditarik untuk ticker ini)"
+        : period.historySource === "stockbit" ? " (sumber: price_history_stockbit)" : "";
       const plTone = (pl ?? 0) > 0 ? "up" : (pl ?? 0) < 0 ? "down" : "muted";
       const maxTone = (periodMaxPL ?? 0) > 0 ? "up" : (periodMaxPL ?? 0) < 0 ? "down" : "muted";
 
@@ -9467,8 +10213,8 @@ function renderBacktest(){
         <td class="mono" title="Harga entry terkunci sejak disimpan">${fmtNum(item.entryPrice)}</td>
         <td class="mono" title="Harga terakhir di data historical (fallback: harga live)">${fmtNum(currentPrice)}</td>
         <td class="mono" style="color:var(--${tone}); font-weight:700; font-size:14px;" title="P/L berdasarkan harga terakhir periode (close terakhir historical, fallback harga live)">${plStr}</td>
-        <td class="mono" title="Harga tertinggi sejak tanggal entry (dari data historical harian)">${fmtNum(period.highPeriod)}</td>
-        <td class="mono" style="color:var(--${maxTone}); font-weight:700; font-size:14px;" title="P/L maksimum: (Harga Tertinggi periode − Harga Entry) ÷ Harga Entry">${plText(periodMaxPL)}</td>
+        <td class="mono" title="${escapeHtml(noHistTip) || `Harga tertinggi sejak tanggal entry (dari data historical harian)${historyTip}`}">${fmtNum(period.highPeriod)}</td>
+        <td class="mono" style="color:var(--${maxTone}); font-weight:700; font-size:14px;" title="${escapeHtml(noHistTip) || `P/L maksimum: (Harga Tertinggi periode − Harga Entry) ÷ Harga Entry${historyTip}`}">${plText(periodMaxPL)}</td>
         <td class="mono">${hariStr}</td>
         <td><a class="link-btn" href="#/chart/${encodeURIComponent(item.ticker)}" data-chart="${item.ticker}">Chart</a></td>
         <td><button class="link-btn" style="color:#f87171;" data-del-bt-item="${session.id}|${item.ticker}">Hapus</button></td>
@@ -9687,6 +10433,121 @@ function sektorGroups(){
     .sort((a,b)=> (b.avgChange ?? -999) - (a.avgChange ?? -999));
 }
 
+// ==========================================
+// CEKLIST KONDISI MARKET — IHSG Bearish vs Bullish
+//
+// Kriteria #2 (perubahan IHSG) pakai harga LIVE dari tabel market_index
+// kalau tersedia (diisi Edge Function fetch-ihsg-index terjadwal cron —
+// lihat supabase/functions/fetch-ihsg-index/). Kalau belum di-setup atau
+// datanya kosong/basi, otomatis fallback ke estimasi tertimbang Market Cap
+// dari universe screener (perilaku lama, tetap dilabeli "estimasi").
+// Kriteria lain (breadth, tren MA, net asing, momentum RSI, partisipasi
+// volume) selalu dihitung dari agregat universe screener yang aktif.
+// Tiap kriteria independen (✅ = kondisinya condong bullish). Alat bantu
+// baca sentimen pasar cepat, bukan sinyal jual/beli otomatis.
+// ==========================================
+const IHSG_LIVE_STALE_AFTER_MS = 30 * 60 * 1000; // 30 menit -- lebih longgar dari stale Stockbit (data EOD/cron bisa jarang)
+function computeMarketRegimeChecklist(list, ihsgLive){
+  list = (list||[]).filter(s=>s.ticker);
+  const total = list.length;
+
+  // 1) Market Breadth — saham naik vs turun hari ini
+  const advancers = list.filter(s=>(s.changePct||0) > 0).length;
+  const decliners = list.filter(s=>(s.changePct||0) < 0).length;
+  const breadthPct = total ? (advancers/total*100) : 0;
+
+  // 2) Perubahan IHSG — live kalau ada & masih segar, else fallback estimasi
+  // tertimbang Market Cap (sama seperti kartu "IHSG (estimasi vs kemarin)"
+  // di tab BSJP).
+  const withCap = list.filter(s=>s.marketCap>0 && s.changePct!=null);
+  const totalCap = withCap.reduce((a,s)=>a+s.marketCap,0);
+  const ihsgEstChangePct = totalCap>0 ? withCap.reduce((a,s)=>a+s.changePct*s.marketCap,0)/totalCap : null;
+
+  const liveUpdatedMs = ihsgLive?.updated_at ? new Date(ihsgLive.updated_at).getTime() : null;
+  const liveIsFresh = liveUpdatedMs != null && (Date.now() - liveUpdatedMs) <= IHSG_LIVE_STALE_AFTER_MS;
+  const liveChangePct = (ihsgLive && liveIsFresh && ihsgLive.price != null && ihsgLive.prev_close) != null
+    ? Number(ihsgLive.change_pct ?? (((ihsgLive.price - ihsgLive.prev_close) / ihsgLive.prev_close) * 100))
+    : null;
+  const usingLive = liveChangePct != null && Number.isFinite(liveChangePct);
+  const ihsgChangePct = usingLive ? liveChangePct : ihsgEstChangePct;
+
+  // 3) Trend Mayoritas — persentase saham yang trendHarga-nya "Bullish"
+  // (harga vs MA21/50/100/200, lihat ti_tentukanTrendHarga)
+  const bullishTrend = list.filter(s=>String(s.trendHarga||"").indexOf("Bullish")===0).length;
+  const bearishTrend = list.filter(s=>String(s.trendHarga||"").indexOf("Bearish")===0).length;
+  const bullishTrendPct = total ? (bullishTrend/total*100) : 0;
+
+  // 4) Net Asing Agregat — jumlah net beli/jual asing 1 hari seluruh saham
+  const netForeignSum = list.reduce((a,s)=>a+(s.foreignNet1D||0),0);
+
+  // 5) Momentum RSI Pasar — persentase saham dengan RSI7 > RSI21 (momentum
+  // naik, pola sama seperti syarat preset Eri Ginanjar/RSI & Harga Cross)
+  const withRsi = list.filter(s=>s.rsi7!=null && s.rsi21!=null);
+  const momentumUp = withRsi.filter(s=>s.rsi7 > s.rsi21).length;
+  const momentumUpPct = withRsi.length ? (momentumUp/withRsi.length*100) : 0;
+
+  // 6) Partisipasi Volume Pasar — rata-rata volRatio (volume hari ini vs
+  // rata-rata) seluruh saham. Volume yang menyusut (rata-rata &lt;1x) biasanya
+  // menandakan minat pasar melemah, ciri khas fase distribusi/bearish.
+  const withVol = list.filter(s=>s.volRatio!=null);
+  const avgVolRatio = withVol.length ? withVol.reduce((a,s)=>a+s.volRatio,0)/withVol.length : null;
+
+  const items = [
+    { key:"breadth", label:"Market Breadth (saham naik vs turun)",
+      pass: breadthPct >= 55,
+      detail: `▲${fmtNum(advancers)} vs ▼${fmtNum(decliners)} (${breadthPct.toFixed(0)}% naik)` },
+    { key:"ihsgest", label: usingLive ? "IHSG Live" : "IHSG Estimasi (tertimbang Market Cap)",
+      pass: ihsgChangePct != null && ihsgChangePct > 0,
+      detail: ihsgChangePct!=null
+        ? `${usingLive ? `${fmtNum(Math.round(ihsgLive.price))} · ` : ""}${ihsgChangePct>=0?'▲ +':'▼ '}${ihsgChangePct.toFixed(2)}%`
+        : "Data belum cukup" },
+    { key:"matrend", label:"Trend Mayoritas (harga vs MA21/50/100/200)",
+      pass: bullishTrendPct >= 50,
+      detail: `${bullishTrendPct.toFixed(0)}% Bullish · ${fmtNum(bullishTrend)} vs ${fmtNum(bearishTrend)} Bearish` },
+    { key:"asing", label:"Net Asing Agregat (1 hari)",
+      pass: netForeignSum > 0,
+      detail: fmtRp(netForeignSum) },
+    { key:"momentum", label:"Momentum RSI Pasar (RSI7 &gt; RSI21)",
+      pass: momentumUpPct >= 50,
+      detail: `${momentumUpPct.toFixed(0)}% saham momentum naik (${fmtNum(withRsi.length)} data)` },
+    { key:"volparticipation", label:"Partisipasi Volume Pasar (vs rata-rata)",
+      pass: avgVolRatio != null && avgVolRatio >= 1,
+      detail: avgVolRatio!=null ? `${avgVolRatio.toFixed(2)}x rata-rata volume` : "Data volRatio belum cukup" },
+  ];
+
+  // Verdict berbasis rasio (bukan angka mati) supaya tetap konsisten kalau
+  // suatu saat kriteria ditambah/dikurangi lagi.
+  const passCount = items.filter(i=>i.pass).length;
+  const passRatio = items.length ? passCount / items.length : 0;
+  let verdict, tone;
+  if (passRatio >= 0.65) { verdict = "🐂 Cenderung BULLISH"; tone = "up"; }
+  else if (passRatio <= 0.35) { verdict = "🐻 Cenderung BEARISH"; tone = "down"; }
+  else { verdict = "⚖️ NETRAL / Mixed Signal"; tone = "gold"; }
+
+  return { items, passCount, total: items.length, universeCount: total, verdict, tone, usingLive, liveUpdatedMs };
+}
+
+function renderMarketRegimeChecklist(list, ihsgLive){
+  const r = computeMarketRegimeChecklist(list, ihsgLive);
+  const rows = r.items.map(i => `
+    <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;padding:7px 0;border-bottom:1px solid var(--border);font-size:12.5px;">
+      <span style="color:${i.pass?'var(--up)':'var(--down)'};">${i.pass?'✅':'❌'} ${i.label}</span>
+      <span class="mono" style="color:var(--muted);white-space:nowrap;">${i.detail}</span>
+    </div>`).join("");
+  const sourceNote = r.usingLive
+    ? `Perubahan IHSG pakai harga live (diperbarui ${fmtRelativeTimeID(r.liveUpdatedMs)}). Kriteria lain dihitung dari agregat ${fmtNum(r.universeCount)} saham di universe screener saat ini.`
+    : `Perubahan IHSG masih estimasi tertimbang Market Cap dari ${fmtNum(r.universeCount)} saham di universe screener (harga live belum tersedia/basi — setup Edge Function fetch-ihsg-index kalau ingin harga index resmi).`;
+  return `<div class="panel">
+    <div class="panel-heading"><h3>📋 Ceklist Kondisi Market — Bearish vs Bullish</h3>
+      <span class="pill pill-${r.tone}">${r.verdict} · ${r.passCount}/${r.total}</span>
+    </div>
+    <div>${rows}</div>
+    <div class="empty-box" style="margin-top:10px;font-size:11px;">
+      ${sourceNote} ≥65% kriteria ✅ → cenderung bullish, ≤35% → cenderung bearish, selain itu netral/mixed. Alat bantu baca sentimen pasar cepat, bukan sinyal jual/beli otomatis.
+    </div>
+  </div>`;
+}
+
 function renderDashboard(){
   const data = enriched().filter(s => s.ticker);
   if(!data.length) return `<div class="empty-box">Belum ada data saham. Klik "Refresh Data" untuk memuat Market Overview.</div>`;
@@ -9713,6 +10574,7 @@ function renderDashboard(){
       <h2 class="dashboard-title">Peta pasar hari ini</h2><div class="dashboard-subtitle">Snapshot dari ${total} saham dalam universe screener · diperbarui saat Refresh Data</div></div>
       <div class="dashboard-breadth"><div class="dashboard-breadth-label"><span>Market breadth</span><strong>${breadth}% naik</strong></div><div class="breadth-track"><div style="width:${breadth}%"></div></div><div class="dashboard-breadth-foot"><span style="color:var(--up)">▲ ${gainers} naik</span><span style="color:var(--down)">▼ ${losers} turun</span></div></div>
     </div>
+    ${renderMarketRegimeChecklist(data, state.ihsgIndexLive)}
     <div class="summary-grid dashboard-summary">
       ${dashCard("total","tone-teal","Total Saham",fmtNum(total),"universe aktif · klik untuk lihat semua")}
       ${dashCard("under","tone-up","Undervalued",fmtNum(undervalued),"PER &lt; 10 · ROE ≥ 15%")}
@@ -11788,7 +12650,7 @@ function renderPanduan(){
     `)}
     ${pndCard("Cara pakai", null, null, `
       ${pndStep(1, `Buka tab <b>Entry Price Scanner</b>, lalu klik "🔄 Scan Sekarang" untuk menarik data broker terbaru (hasil scan sebelumnya tetap tersimpan di cache).`)}
-      ${pndStep(2, "Atur filter sesuai kebutuhan: Periode, Broker, Konvergensi, Tanjakan, Min Mutu/Akumulasi/Gap.")}
+      ${pndStep(2, "Atur filter sesuai kebutuhan: Periode, Broker, Konvergensi, Tanjakan, Posisi Harga (Nyangkut/Di Area/Untung), Min Mutu/Akumulasi/Gap.")}
       ${pndStep(3, "Semua filter berjalan instan begitu diubah — hasil di tabel langsung menyesuaikan.")}
     `)}
     ${pndCard("Arti tiap filter", null, null, `
@@ -13555,6 +14417,7 @@ function recomputeEpsResults(){
     if(!row) return;
     if(filters.konvergensi !== "all" && row.konvergensi !== filters.konvergensi) return;
     if(filters.tanjakan !== "all" && row.tanjakan !== filters.tanjakan) return;
+    if(filters.posisi !== "all" && row.areaLabel !== filters.posisi) return;
     if(filters.minMutu > 0 && row.mutu < filters.minMutu) return;
     // Min Akum berarti akumulasi bersih positif; net sell tidak boleh lolos.
     if(filters.minAkum > 0 && row.netBuy < filters.minAkum) return;
@@ -13653,7 +14516,7 @@ function renderEntryPriceScanner(){
           <div style="font-weight:700;margin-bottom:6px;">Cara pakai</div>
           <div style="color:var(--muted);">
             1. Buka tab ini — kalau sudah pernah di-scan, hasil terakhir otomatis tampil.<br>
-            2. Atur filter sesuai kebutuhan (periode, broker, konvergensi, tanjakan, min akumulasi, dst).<br>
+            2. Atur filter sesuai kebutuhan (periode, broker, konvergensi, tanjakan, posisi harga, min akumulasi, dst).<br>
             3. Semua filter berjalan <b>instan</b> — bebas diutak-atik tanpa scan ulang.
           </div>
           <div style="margin-top:8px;background:rgba(6,182,212,0.08);border:1px solid rgba(6,182,212,0.25);border-radius:8px;padding:10px 12px;">
@@ -13718,6 +14581,15 @@ function renderEntryPriceScanner(){
             ${epsSegBtn("tanjakan","all","Semua",f.tanjakan==="all")}
             ${epsSegBtn("tanjakan","menanjak","▲ Menanjak",f.tanjakan==="menanjak")}
             ${epsSegBtn("tanjakan","menyalip","⇈ Menyalip",f.tanjakan==="menyalip")}
+          </div>
+        </div>
+        <div>
+          <div style="font-size:10px;color:var(--muted);text-transform:uppercase;font-weight:700;margin-bottom:6px;">Posisi Harga</div>
+          <div style="display:flex;gap:6px;">
+            ${epsSegBtn("posisi","all","Semua",f.posisi==="all")}
+            ${epsSegBtn("posisi","NYANGKUT","Nyangkut",f.posisi==="NYANGKUT")}
+            ${epsSegBtn("posisi","DI AREA","Di Area",f.posisi==="DI AREA")}
+            ${epsSegBtn("posisi","UNTUNG","Untung",f.posisi==="UNTUNG")}
           </div>
         </div>
       </div>
@@ -14311,7 +15183,7 @@ function bsjpScoreBar(pts, max, color){
   </div>`;
 }
 
-function bsjpTradePlanCard(s){
+function bsjpTradePlanCard(s, eps){
   const tp = s.bsjp.tradePlan;
   const bd = s.bsjp.breakdown;
   const m = s.bsjp.metrics || {};
@@ -14385,7 +15257,31 @@ function bsjpTradePlanCard(s){
       <div style="margin-top:8px;font-size:10px;color:var(--muted);">⚠️ Bukan rekomendasi finansial — semata alat bantu screening berbasis data historis. Selalu cek ulang orderbook & berita sebelum entry.</div>
     </div>`;
 
-  return planCard + scoreCard + detailCard;
+  // --- Kartu tambahan: fee, ukuran posisi, VWAP broker, peringatan ---
+  const bp = state.bsjpParams || BSJP_DEFAULT_PARAMS;
+  const miniBox = (label, body) => `
+    <div style="flex:1 1 230px;background:color-mix(in srgb, currentColor 4%, transparent);border:1px solid var(--border);border-radius:8px;padding:10px 12px;">
+      <div style="font-size:10.5px;color:var(--muted);font-weight:700;margin-bottom:4px;">${label}</div>
+      <div class="mono" style="font-size:12.5px;font-weight:700;">${body}</div>
+    </div>`;
+  const sizingBody = tp.lots != null
+    ? `${fmtNum(tp.lots)} lot · ≈ Rp ${fmtNum(Math.round(tp.lotCost))}<div style="font-size:10.5px;color:var(--muted);font-weight:500;">risiko maks Rp ${fmtNum(Math.round(tp.riskRp))} (${bp.riskPct}% dari modal), sudah termasuk fee</div>`
+    : `<span style="color:var(--muted);font-weight:500;">Isi Modal di ⚙️ Params untuk menghitung jumlah lot</span>`;
+  const epsBody = eps
+    ? `${eps.areaLabel} (gap ${fmtPct(eps.gapPct)})<div style="font-size:10.5px;color:var(--muted);font-weight:500;">VWAP Buy ${fmtNum(Math.round(eps.vwapBuy))} · konvergensi ${escapeHtml(eps.konvergensi)} · tanjakan ${escapeHtml(eps.tanjakan)}</div>`
+    : `<span style="color:var(--muted);font-weight:500;">Belum ada data scan Entry Price Scanner untuk saham ini</span>`;
+  const flagsHtml = (s.bsjp.flags || []).map(f => `<div style="margin-top:8px;font-size:11.5px;color:var(--gold);">⚠️ ${escapeHtml(f)}</div>`).join("");
+  const extraCard = `
+    <div style="background:color-mix(in srgb, currentColor 5%, transparent);border:1px solid var(--border);border-radius:12px;padding:16px;margin-top:10px;">
+      <div style="display:flex;gap:10px;flex-wrap:wrap;">
+        ${miniBox(`💸 Setelah fee ${bp.feePct}% (bolak-balik)`, `TP1 net ${fmtPct(tp.tp1NetPct)} · R:R net ${tp.netRr!=null ? "1 : "+tp.netRr.toFixed(2) : "-"}`)}
+        ${miniBox("📐 Ukuran posisi", sizingBody)}
+        ${miniBox("🎯 Posisi vs VWAP Broker", epsBody)}
+      </div>
+      ${flagsHtml}
+    </div>`;
+
+  return planCard + extraCard + scoreCard + detailCard;
 }
 
 // Export watchlist ke format yang bisa langsung ditempel/diimpor ke
@@ -14452,15 +15348,60 @@ const BSJP_PRESETS = [
     filter: () => true },
 ];
 
+// ------------------------------------------------------------------
+// Posisi harga vs VWAP beli broker (dari Entry Price Scanner) untuk tab BSJP.
+// Memakai hasil scan EPS yang SUDAH ada (state.epsRaw / cache lokal) —
+// tidak melakukan fetch. Di-memo supaya render() (mis. saat mengetik di
+// kotak cari) tidak menghitung ulang ratusan saham tiap ketukan.
+// ------------------------------------------------------------------
+let _bsjpEpsLocalTried = false;
+let _bsjpEpsMemo = { key: null, stocksRef: null, map: null };
+function getBsjpEpsMap(list){
+  if(!state.epsRaw && !_bsjpEpsLocalTried){
+    _bsjpEpsLocalTried = true;
+    loadEpsCacheFromLocal();
+    if(state.epsRaw && state.epsRaw.dataVersion !== EPS_SCAN_DATA_VERSION) state.epsRaw = null;
+  }
+  const raw = state.epsRaw;
+  if(!raw || !raw.byStock) return null;
+  const f = state.epsFilters;
+  const key = `${raw.scannedAt}|${f.periode}|${f.broker}`;
+  if(_bsjpEpsMemo.map && _bsjpEpsMemo.key === key && _bsjpEpsMemo.stocksRef === state.stocks) return _bsjpEpsMemo.map;
+  const stockMap = new Map(list.map(x => [x.ticker, x]));
+  const map = new Map();
+  Object.entries(raw.byStock).forEach(([ticker, stockRaw]) => {
+    try{
+      const row = computeEpsRowForStock(ticker, stockRaw, f, stockMap);
+      if(row) map.set(ticker, row);
+    }catch(e){ /* satu saham gagal dihitung tidak boleh merusak tab */ }
+  });
+  _bsjpEpsMemo = { key, stocksRef: state.stocks, map };
+  return map;
+}
+function bsjpEpsCell(eps){
+  if(!eps) return "-";
+  return `${pillHtml(eps.areaLabel, eps.areaTone)} <span class="mono" style="font-size:11px;color:var(--muted);">${eps.gapPct>=0?'+':''}${eps.gapPct.toFixed(1)}%</span>`;
+}
+
 function renderBsjp(){
   const list = enriched();
+  const epsMap = getBsjpEpsMap(list);
+  const epsOf = (t) => epsMap ? (epsMap.get(t) || null) : null;
   const phase = computeBsjpMarketPhase();
   const activePreset = BSJP_PRESETS.find(x=>x.key===state.bsjpPreset) || BSJP_PRESETS[0];
 
   const q = state.bsjpSearch.trim().toLowerCase();
   let rows = list.filter(s => !q || s.ticker.toLowerCase().includes(q));
   rows = rows.filter(activePreset.filter);
+  if (state.bsjpPosisi !== "all") rows = rows.filter(s => { const e = epsOf(s.ticker); return !!e && e.areaLabel === state.bsjpPosisi; });
   rows.sort((a,b) => {
+    if (state.bsjpSort === "vwap") {
+      const ea = epsOf(a.ticker), eb = epsOf(b.ticker);
+      if (!ea && !eb) return 0;
+      if (!ea) return 1;
+      if (!eb) return -1;
+      return Math.abs(ea.gapPct) - Math.abs(eb.gapPct);
+    }
     if (state.bsjpSort === "score") return b.bsjp.score - a.bsjp.score;
     if (state.bsjpSort === "changePct") return (b.changePct||0) - (a.changePct||0);
     if (state.bsjpSort === "turnover") return (b.turnover||0) - (a.turnover||0);
@@ -14558,6 +15499,9 @@ function renderBsjp(){
         ${paramField("tp1Pct","TP1 (%)", 0.1)}
         ${paramField("tp2Pct","TP2 (%)", 0.1)}
         ${paramField("slPct","Stop Loss (%)", 0.1)}
+        ${paramField("feePct","Fee Bolak-balik (%)", 0.05)}
+        ${paramField("modal","Modal (Rp, 0 = tanpa hitung lot)", 1000000)}
+        ${paramField("riskPct","Risiko per Trade (%)", 0.25)}
       </div>
       <div style="margin-top:10px;"><button class="btn btn-outline" id="bsjpResetParamsBtn">↺ Kembalikan ke Default</button></div>
     </div>` : "";
@@ -14569,7 +15513,15 @@ function renderBsjp(){
         <option value="score" ${state.bsjpSort==="score"?"selected":""}>Urutkan: Skor BSJP</option>
         <option value="changePct" ${state.bsjpSort==="changePct"?"selected":""}>Urutkan: Perubahan %</option>
         <option value="turnover" ${state.bsjpSort==="turnover"?"selected":""}>Urutkan: Turnover</option>
+        <option value="vwap" ${state.bsjpSort==="vwap"?"selected":""}>Urutkan: Terdekat VWAP Broker</option>
       </select>
+      <select id="bsjpPosisiSelect" ${epsMap?"":"disabled"} title="${epsMap ? "Posisi harga terhadap VWAP beli broker (dari Entry Price Scanner)" : "Belum ada hasil scan — buka tab Entry Price Scanner lalu klik Scan Sekarang"}" style="background:color-mix(in srgb, currentColor 6%, transparent);border:1px solid var(--border);color:var(--text);font-size:12px;border-radius:8px;padding:7px 10px;">
+        <option value="all" ${state.bsjpPosisi==="all"?"selected":""}>VWAP Broker: Semua</option>
+        <option value="NYANGKUT" ${state.bsjpPosisi==="NYANGKUT"?"selected":""}>VWAP Broker: Nyangkut</option>
+        <option value="DI AREA" ${state.bsjpPosisi==="DI AREA"?"selected":""}>VWAP Broker: Di Area</option>
+        <option value="UNTUNG" ${state.bsjpPosisi==="UNTUNG"?"selected":""}>VWAP Broker: Untung</option>
+      </select>
+      ${epsMap ? "" : `<span style="font-size:11px;color:var(--muted);">Kolom &amp; filter VWAP Broker aktif setelah Entry Price Scanner di-scan.</span>`}
     </div>`;
 
   const exportPanel = state.bsjpExportOpen ? `
@@ -14589,12 +15541,13 @@ function renderBsjp(){
       <td style="color:${(s.changePct||0)>=0?'var(--up)':'var(--down)'};">${s.changePct!=null?((s.changePct>=0?'+':'')+s.changePct.toFixed(1)+'%'):'-'}</td>
       <td>${s.volRatio!=null?s.volRatio.toFixed(2)+'x':'-'}</td>
       <td>${s.turnover!=null?fmtCap(s.turnover):'-'}</td>
+      <td>${bsjpEpsCell(epsOf(s.ticker))}</td>
       <td>${s.bsjp.passedCount}/${s.bsjp.totalChecks}</td>
       <td class="mono" style="font-weight:700;">${s.bsjp.score}</td>
-      <td>${bsjpSignalPill(s.bsjp.signal, s.bsjp.signalTone)}</td>
+      <td>${bsjpSignalPill(s.bsjp.signal, s.bsjp.signalTone)}${s.bsjp.flags && s.bsjp.flags.length ? ` <span title="${escapeHtml(s.bsjp.flags.join(' | '))}" style="cursor:help;">⚠️</span>` : ""}</td>
       <td><button class="btn btn-outline" data-bsjp-expand="${s.ticker}" style="padding:4px 10px;font-size:11px;">${state.bsjpExpanded===s.ticker?"Tutup":"Trade Plan"}</button></td>
     </tr>
-    ${state.bsjpExpanded===s.ticker ? `<tr><td colspan="10" style="background:color-mix(in srgb, currentColor 4%, transparent);">${bsjpTradePlanCard(s)}</td></tr>` : ""}
+    ${state.bsjpExpanded===s.ticker ? `<tr><td colspan="11" style="background:color-mix(in srgb, currentColor 4%, transparent);">${bsjpTradePlanCard(s, epsOf(s.ticker))}</td></tr>` : ""}
   `).join("");
 
   const resultsPanel = `
@@ -14610,7 +15563,7 @@ function renderBsjp(){
       })))}
       <div class="table-wrap">
         <table class="mono">
-          <thead><tr><th></th><th>Kode</th><th>Harga</th><th>1D%</th><th>Vol Ratio</th><th>Turnover</th><th>Kriteria</th><th>Skor</th><th>Sinyal</th><th></th></tr></thead>
+          <thead><tr><th></th><th>Kode</th><th>Harga</th><th>1D%</th><th>Vol Ratio</th><th>Turnover</th><th>VWAP Broker</th><th>Kriteria</th><th>Skor</th><th>Sinyal</th><th></th></tr></thead>
           <tbody>${tableRows}</tbody>
         </table>
       </div>`}
@@ -14712,6 +15665,9 @@ function attachContentEvents(){
 
   const addRuleBtn = document.getElementById("addRuleBtn");
   if(addRuleBtn) addRuleBtn.onclick = addCustomRule;
+  document.querySelectorAll("[data-rule-template]").forEach(btn=>{
+    btn.onclick = () => applyRuleTemplate(btn.dataset.ruleTemplate);
+  });
 
   document.querySelectorAll("[data-rule-del]").forEach(btn=>{
     btn.onclick = () => deleteCustomRule(btn.dataset.ruleDel);
@@ -15025,6 +15981,12 @@ function attachContentEvents(){
   const exportAllBtBtn = document.getElementById("exportAllBtBtn");
   if(exportAllBtBtn) exportAllBtBtn.onclick = exportAllBacktestToExcel;
 
+  const exportRekapBtn = document.getElementById("exportRekapBtnv2");
+  if(exportRekapBtn) exportRekapBtn.onclick = exportBacktestRekapToExcel;
+
+  const exportScreenerRekapBtn = document.getElementById("exportScreenerRekapBtn");
+  if(exportScreenerRekapBtn) exportScreenerRekapBtn.onclick = exportBacktestScreenerRekapToExcel;
+
   const exportScreenerBtn = document.getElementById("exportScreenerBtn");
   if(exportScreenerBtn) exportScreenerBtn.onclick = exportScreenerToExcel;
   const bulkTickerFileInput = document.getElementById("bulkTickerFileInput");
@@ -15118,6 +16080,8 @@ function attachContentEvents(){
   bindSearchInputPreservingCursor("bsjpSearchInput", (val) => { state.bsjpSearch = val; });
   const bsjpSortSelect = document.getElementById("bsjpSortSelect");
   if(bsjpSortSelect) bsjpSortSelect.onchange = (e) => { state.bsjpSort = e.target.value; render(); };
+  const bsjpPosisiSelect = document.getElementById("bsjpPosisiSelect");
+  if(bsjpPosisiSelect) bsjpPosisiSelect.onchange = (e) => { state.bsjpPosisi = e.target.value; render(); };
   document.querySelectorAll("[data-bsjp-preset]").forEach(btn=>{
     btn.onclick = () => { state.bsjpPreset = btn.dataset.bsjpPreset; render(); };
   });
@@ -15209,6 +16173,13 @@ function attachContentEvents(){
     btn.onclick = ()=>{
       const t = btn.dataset.rekapExpand;
       state.backtestRekapExpanded.has(t) ? state.backtestRekapExpanded.delete(t) : state.backtestRekapExpanded.add(t);
+      render();
+    };
+  });
+  document.querySelectorAll("[data-screener-rekap-expand]").forEach(btn=>{
+    btn.onclick = ()=>{
+      const label = btn.dataset.screenerRekapExpand;
+      state.backtestScreenerExpanded.has(label) ? state.backtestScreenerExpanded.delete(label) : state.backtestScreenerExpanded.add(label);
       render();
     };
   });
