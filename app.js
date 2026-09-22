@@ -976,11 +976,18 @@ async function fetchAndSaveBrokerSummaryBulk(tickers, rangeFrom, rangeTo, opts =
   if(retryOnly){
     // Buang hasil LAMA untuk ticker yang sedang diulang (supaya tidak dobel
     // dengan hasil BARU yang segera ditambahkan lewat .push() di loop bawah),
-    // tapi PERTAHANKAN hasil ticker lain yang tidak ikut diulang.
+    // tapi PERTAHANKAN hasil ticker lain yang tidak ikut diulang (dipakai lagi
+    // kalau nanti "Tarik Ulang yang Gagal" dipencet lagi dan butuh hitung
+    // ulang failCount total). state.stockbitBrokerBulkRetryTickers dipakai
+    // di render() untuk MENYARING tampilan supaya cuma ticker yang sedang
+    // diulang ini yang muncul, ticker lain yang tidak diulang tetap
+    // disembunyikan dari daftar meski datanya masih ada di array.
     const retrySet = new Set(tickers);
     state.stockbitBrokerBulkResults = (state.stockbitBrokerBulkResults || []).filter(r => !retrySet.has(r.ticker));
+    state.stockbitBrokerBulkRetryTickers = retrySet;
   } else {
     state.stockbitBrokerBulkResults = [];
+    state.stockbitBrokerBulkRetryTickers = null;
   }
   render();
 
@@ -2700,6 +2707,13 @@ let state = {
   // lewat input di UI, default 10) HANYA untuk ticker yang dicentang
   // (state.selectedForBacktest) — lihat fetchAndSaveBrokerSummaryBulk().
   stockbitBrokerBulkLoading: false, stockbitBrokerBulkProgress: null, stockbitBrokerBulkResults: [],
+  // Non-null (Set ticker) HANYA selagi/​sehabis run "🔁 Tarik Ulang yang Gagal" —
+  // dipakai untuk menyaring TAMPILAN "Hasil Broker Summary" supaya cuma
+  // menampilkan ticker yang sedang diulang itu (bukan ratusan hasil ✅ lama
+  // yang cuma "dipertahankan" di stockbitBrokerBulkResults, lihat catatan di
+  // fetchAndSaveBrokerSummaryBulk). Direset ke null tiap kali run BUKAN retry
+  // (tombol "📊 Broker Summary" / "Tarik Otomatis" biasa) dimulai.
+  stockbitBrokerBulkRetryTickers: null,
   bsAutoBulkDays: 10,
   // Periode Tarik Otomatis sekarang dipilih lewat tanggal Dari–Sampai (bukan cuma "N hari
   // terakhir"), supaya bisa ambil rentang tanggal bebas di masa lalu, bukan cuma mundur dari
@@ -10327,19 +10341,28 @@ function renderScreener(){
               ` : ""}
               ${state.stockbitBrokerBulkResults && state.stockbitBrokerBulkResults.length ? `
                 <details class="bs-bulk-results-panel" id="screenerBsBulkResultsPanel" ${state.bsBulkResultsOpen?"open":""} style="margin-top:6px;">
+                  ${(() => {
+                    // Kalau lagi (atau baru selesai) proses "🔁 Tarik Ulang yang Gagal",
+                    // saring daftar yang DITAMPILKAN supaya cuma ticker yang sedang
+                    // diulang itu — hasil ✅ lama yang cuma "dipertahankan" di state
+                    // (bukan ikut ditarik ulang) tetap disembunyikan dari daftar.
+                    const retrySet = state.stockbitBrokerBulkRetryTickers;
+                    const displayResults = retrySet ? state.stockbitBrokerBulkResults.filter(r => retrySet.has(r.ticker)) : state.stockbitBrokerBulkResults;
+                    const failCount = getFailedBrokerSummaryTickers().length;
+                    return `
                   <summary style="cursor:pointer; font-size:11px; color:var(--muted); list-style:none; display:flex; align-items:center; gap:6px; user-select:none;">
                     <span class="bs-bulk-results-arrow" style="display:inline-block; transition:transform .15s; transform:rotate(${state.bsBulkResultsOpen?90:0}deg);">▶</span>
-                    Hasil Broker Summary (${state.stockbitBrokerBulkResults.length} saham)
+                    ${retrySet ? `Hasil Tarik Ulang yang Gagal (${displayResults.length}/${retrySet.size} saham)` : `Hasil Broker Summary (${state.stockbitBrokerBulkResults.length} saham)`}
                   </summary>
-                  ${(() => { const failCount = getFailedBrokerSummaryTickers().length; return failCount && !state.stockbitBrokerBulkLoading ? `
+                  ${failCount && !state.stockbitBrokerBulkLoading ? `
                   <button type="button" class="btn btn-outline" id="screenerBsRetryFailedBtn" style="margin-top:6px; font-size:11px; padding:4px 8px; color:var(--down); border-color:rgba(239,68,68,0.4);" title="Tarik ulang HANYA ${failCount} saham yang ❌ gagal, pakai periode tanggal yang sama. Kalau kegagalannya sistemik (mis. semua pesan sama persis), tarik ulang kemungkinan gagal lagi — cek template Endpoint Broker Summary di Pengaturan.">🔁 Tarik Ulang yang Gagal (${failCount})</button>
-                  ` : ""; })()}
+                  ` : ""}
                   <div class="bs-result-list mono" style="margin-top:6px; max-height:180px; overflow-y:auto; font-size:11px;">
-                    ${state.stockbitBrokerBulkResults.map(r => `
+                    ${displayResults.map(r => `
                       <div class="bs-result-line" style="padding:3px 0; border-bottom:1px solid var(--border); color:${r.ok ? 'var(--up)' : 'var(--down)'};">
                         ${r.ok ? '✅' : '❌'} ${escapeHtml(r.ticker)} &middot; ${escapeHtml(r.date)} — ${escapeHtml(r.msg||"")}
                       </div>`).join("")}
-                  </div>
+                  </div>`; })()}
                 </details>
               ` : ""}
             </div>
@@ -14430,19 +14453,26 @@ function renderBrokerSummary(){
         </div>
         ${state.stockbitBrokerBulkResults && state.stockbitBrokerBulkResults.length ? `
           <details class="bs-bulk-results-panel" id="bsBulkResultsPanel" ${state.bsBulkResultsOpen?"open":""} style="margin-top:10px;">
+            ${(() => {
+              // Sama seperti panel di tab Screener: saring tampilan ke ticker yang
+              // sedang diulang saja kalau ini hasil dari "🔁 Tarik Ulang yang Gagal".
+              const retrySet = state.stockbitBrokerBulkRetryTickers;
+              const displayResults = retrySet ? state.stockbitBrokerBulkResults.filter(r => retrySet.has(r.ticker)) : state.stockbitBrokerBulkResults;
+              const failCount = getFailedBrokerSummaryTickers().length;
+              return `
             <summary style="cursor:pointer; font-size:11.5px; color:var(--muted); list-style:none; display:flex; align-items:center; gap:6px; user-select:none;">
               <span class="bs-bulk-results-arrow" style="display:inline-block; transition:transform .15s; transform:rotate(${state.bsBulkResultsOpen?90:0}deg);">▶</span>
-              Hasil (${state.stockbitBrokerBulkResults.length} saham)
+              ${retrySet ? `Hasil Tarik Ulang yang Gagal (${displayResults.length}/${retrySet.size} saham)` : `Hasil (${state.stockbitBrokerBulkResults.length} saham)`}
             </summary>
-            ${(() => { const failCount = getFailedBrokerSummaryTickers().length; return failCount && !state.stockbitBrokerBulkLoading ? `
+            ${failCount && !state.stockbitBrokerBulkLoading ? `
             <button type="button" class="btn btn-outline" id="bsRetryFailedBtn" style="margin-top:8px; font-size:11.5px; padding:5px 10px; color:var(--down); border-color:rgba(239,68,68,0.4);" title="Tarik ulang HANYA ${failCount} saham yang ❌ gagal, pakai periode tanggal yang sama. Kalau kegagalannya sistemik (mis. semua pesan sama persis), tarik ulang kemungkinan gagal lagi — cek template Endpoint Broker Summary di Pengaturan.">🔁 Tarik Ulang yang Gagal (${failCount})</button>
-            ` : ""; })()}
+            ` : ""}
             <div class="bs-result-list mono" style="margin-top:8px; max-height:220px; overflow-y:auto; font-size:11.5px;">
-              ${state.stockbitBrokerBulkResults.map(r => `
+              ${displayResults.map(r => `
                 <div class="bs-result-line" style="padding:4px 0; border-bottom:1px solid var(--border); color:${r.ok ? 'var(--up)' : 'var(--down)'};">
                   ${r.ok ? '✅' : '❌'} ${escapeHtml(r.ticker)} &middot; ${escapeHtml(r.date)} — ${escapeHtml(r.msg||"")}
                 </div>`).join("")}
-            </div>
+            </div>`; })()}
           </details>` : ""}
       </div>
 
