@@ -4355,8 +4355,11 @@ function renderDetailTeknikal(s){
     <div class="detail-grid">
       ${dItem("EMA5", dNum(s.ema5))}
       ${dItem("EMA9", dNum(s.ema9))}
+      ${dItem("Prev EMA9", dNum(s.prevEma9))}
       ${dItem("EMA10", dNum(s.ema10))}
       ${dItem("EMA20", dNum(s.ema20))}
+      ${dItem("EMA21 (Close)", dNum(s.ema21))}
+      ${dItem("Prev EMA21 (Close)", dNum(s.prevEma21))}
       ${dItem("EMA21 High", dNum(s.ema21H))}
       ${dItem("EMA21 Low", dNum(s.ema21L))}
       ${dItem("EMA50", dNum(s.ema50))}
