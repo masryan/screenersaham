@@ -6423,6 +6423,23 @@ function ti_buildMergedBarsWithLiveQuote(bars, quote) {
   return merged;
 }
 
+// Buang key yang nilainya null/undefined dari sebuah object sebelum dikirim
+// ke Supabase (upsert on_conflict=ticker, Prefer: merge-duplicates). PENTING:
+// PostgREST/Supabase HANYA menyentuh kolom yang ADA di payload -- kolom yang
+// tidak dikirim SAMA SEKALI tetap dipertahankan nilai lamanya di DB. Kalau
+// field null tetap dikirim apa adanya (mis. week52_high/week52_low/ytd_pct
+// waktu histori Stockbit di price_history_stockbit belum 252 hari), field itu
+// justru DITIMPA jadi kosong -- padahal DB mungkin sudah punya nilai bagus
+// dari sumber lain (mis. import IDX/Yahoo harian). Dengan strip null di sini,
+// "📊 Update Teknikal" cuma MENGISI kolom yang berhasil dihitung, dan
+// membiarkan kolom yang belum bisa dihitung (histori kurang panjang) apa
+// adanya -- tidak pernah menimpanya jadi kosong.
+function ti_stripNulls(obj) {
+  const out = {};
+  for (const k in obj) { if (obj[k] !== null && obj[k] !== undefined) out[k] = obj[k]; }
+  return out;
+}
+
 async function updateTechnicalIndicatorsBulk(tickers, opts) {
   const live = !!(opts && opts.live);
   if (state.tiBulkLoading) return;
@@ -6491,11 +6508,11 @@ async function updateTechnicalIndicatorsBulk(tickers, opts) {
 
         await supaFetch(`${SUPABASE_URL}/stocks?on_conflict=ticker`, {
           method: "POST", headers: { ...getSupaHeaders(), "Prefer": "resolution=merge-duplicates,return=minimal" },
-          body: JSON.stringify([stockRow]),
+          body: JSON.stringify([ti_stripNulls(stockRow)]),
         });
         await supaFetch(`${SUPABASE_URL}/stock_indicators_ext?on_conflict=ticker`, {
           method: "POST", headers: { ...getSupaHeaders(), "Prefer": "resolution=merge-duplicates,return=minimal" },
-          body: JSON.stringify([extRow]),
+          body: JSON.stringify([ti_stripNulls(extRow)]),
         });
 
         state.tiBulkResults.push({ ticker, ok: true, msg: `${live ? "Live" : "Terhitung"} dari ${bars.length} hari data (${bars[0].date}..${bars[bars.length-1].date})${liveNote}. price=${technical.price} trend=${technical.trend_harga}` });
