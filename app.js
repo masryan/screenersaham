@@ -2436,6 +2436,11 @@ let state = {
   portoView: "list", // "list" = tabel transaksi apa adanya, "posisi" = agregat per ticker (avg harga tertimbang)
   portoFilterJenis: "Semua", // filter tab Portofolio: "Semua" / "Investasi" / "Scalping" / "Swing" -- 3 porto Stockbit terpisah yg diupload jadi satu tabel
   tab: "screener", search: "", activePreset: null,
+  // Mode untuk preset "🟢 EMA9×21 Golden Cross": 'fresh' = HANYA yang cross
+  // persis di hari data terakhir (ketat, sering 0 hasil), 'all' = semua yang
+  // EMA9 > EMA21 saat ini termasuk yang sudah cross beberapa hari lalu
+  // (lanjutan) -- lihat toggle di sebelah pill preset & filter di getFiltered().
+  ema921Mode: "fresh",
   visibleCols: new Set(), // diisi loadSettings() dari localStorage atau DEFAULT_VISIBLE_COLS
   colPickerOpen: false,
   filters: {sektor:[], syariahLabel:[], cekHarga:[], cekRsi:[], statusRsi:[], cekMacd:[], band:[], sinyalVolume:[], sinyalFrekuensi:[], keyakinanNaik:[], trendHarga:[], polaCandle:[], uangGedeMasuk:[], isBBSqueeze:[], valuasi:[], capTier:[], lq45:[]},
@@ -8202,11 +8207,19 @@ function getFiltered(){
       if (!(s.prevMacdHist <= 0 && s.hist > 0)) return false;
       if (!(s.prevStochK < s.prevStochD && s.stochK > s.stochD)) return false;
     } else if(state.activePreset === 'ema921cross') {
-      // Fresh cross EMA9xEMA21 hari ini -- butuh kolom ema21/prev_ema9/
-      // prev_ema21 di stock_indicators_ext (lihat migrasi SQL). Kalau
-      // belum dijalankan, ema921FreshCross selalu false/undefined dan
-      // preset ini tidak pernah menampilkan hasil (bukan error).
-      if (!s.ema921FreshCross) return false;
+      // Dua mode (toggle di UI, state.ema921Mode):
+      // - 'fresh' (default): HANYA cross persis di hari data terakhir --
+      //   ketat, wajar kalau sering 0 hasil (bukan bug) karena syaratnya
+      //   memang cross HARI ITU JUGA, bukan sekadar EMA9 > EMA21.
+      // - 'all': semua yang EMA9 > EMA21 SEKARANG, termasuk cross yang
+      //   sudah terjadi beberapa hari lalu (status "🟡 Bullish (Lanjutan)").
+      // Kedua mode butuh kolom ema21/prev_ema9/prev_ema21 di
+      // stock_indicators_ext (lihat migrasi SQL + tombol "📊 Update
+      // Teknikal") -- kalau belum pernah dihitung, ema921BullishNow/
+      // ema921FreshCross selalu null/false dan preset ini tidak pernah
+      // menampilkan hasil (bukan error).
+      if (state.ema921Mode === 'all') { if (!s.ema921BullishNow) return false; }
+      else { if (!s.ema921FreshCross) return false; }
     } else if (state.activePreset === 'uptrend') {
       if (!(s.cClose > s.ma21 && s.ma21 > s.ma50 && s.ma50 > s.ma100 && s.ma100 > s.ma200)) return false;
     } else if (state.activePreset === 'breakout') {
@@ -10239,7 +10252,13 @@ function renderScreener(){
             <button class="pill ${state.activePreset === 'eri' ? 'pill-gold' : 'pill-muted'}" onclick="state.activePreset = state.activePreset === 'eri' ? null : 'eri'; state.page=1; render();">Eri Ginanjar</button>
             <button class="pill ${state.activePreset === 'rsicross' ? 'pill-gold' : 'pill-muted'}" onclick="state.activePreset = state.activePreset === 'rsicross' ? null : 'rsicross'; state.page=1; render();">RSI & Harga Cross</button>
             <button class="pill ${state.activePreset === 'golden' ? 'pill-gold' : 'pill-muted'}" onclick="state.activePreset = state.activePreset === 'golden' ? null : 'golden'; state.page=1; render();">Golden Cross DSI</button>
-            <button class="pill ${state.activePreset === 'ema921cross' ? 'pill-up' : 'pill-muted'}" onclick="state.activePreset = state.activePreset === 'ema921cross' ? null : 'ema921cross'; state.page=1; render();" title="EMA9 baru saja crossup EMA21 hari ini (butuh kolom ema21/prev_ema9/prev_ema21 di stock_indicators_ext -- jalankan migrasi SQL & 'Hitung Ulang Indikator' dulu kalau kosong)">🟢 EMA9×21 Golden Cross</button>
+            <button class="pill ${state.activePreset === 'ema921cross' ? 'pill-up' : 'pill-muted'}" onclick="state.activePreset = state.activePreset === 'ema921cross' ? null : 'ema921cross'; state.page=1; render();" title="${state.ema921Mode==='all' ? 'Semua saham yang EMA9 > EMA21 sekarang (termasuk cross beberapa hari lalu)' : 'EMA9 baru saja crossup EMA21 PERSIS hari ini (ketat, wajar kalau sering 0 hasil)'} -- butuh kolom ema21/prev_ema9/prev_ema21 di stock_indicators_ext (jalankan migrasi SQL & '📊 Update Teknikal' dulu kalau kosong)">${state.ema921Mode==='all' ? '🟡' : '🟢'} EMA9×21 Golden Cross</button>
+            ${state.activePreset === 'ema921cross' ? `
+            <div style="display:flex; gap:4px; align-items:center; background:rgba(255,255,255,0.03); border-radius:20px; padding:3px; border:1px solid var(--border);">
+              <button class="pill ${state.ema921Mode!=='all' ? 'pill-up' : 'pill-muted'}" style="padding:4px 10px; font-size:11px;" onclick="state.ema921Mode='fresh'; state.page=1; render();" title="Cuma yang cross PERSIS hari data terakhir">🟢 Fresh Cross</button>
+              <button class="pill ${state.ema921Mode==='all' ? 'pill-gold' : 'pill-muted'}" style="padding:4px 10px; font-size:11px;" onclick="state.ema921Mode='all'; state.page=1; render();" title="Semua yang EMA9 > EMA21 sekarang, termasuk cross beberapa hari lalu (lanjutan)">🟡 Semua (termasuk lanjutan)</button>
+            </div>
+            ` : ""}
             <button class="pill ${state.activePreset === 'uptrend' ? 'pill-gold' : 'pill-muted'}" onclick="state.activePreset = state.activePreset === 'uptrend' ? null : 'uptrend'; state.page=1; render();">Super Uptrend</button>
             <button class="pill ${state.activePreset === 'breakout' ? 'pill-up' : 'pill-muted'}" onclick="state.activePreset = state.activePreset === 'breakout' ? null : 'breakout'; state.page=1; render();">🚀 Volatility Breakout</button>
             <button class="pill ${state.activePreset === 'pullback' ? 'pill-teal' : 'pill-muted'}" onclick="state.activePreset = state.activePreset === 'pullback' ? null : 'pullback'; state.page=1; render();">🧲 Pullback Uptrend</button>
