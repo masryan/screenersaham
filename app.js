@@ -934,13 +934,26 @@ function diagnoseEmptyStockbitBrokerResponse(raw){
   return "Stockbit balas SUKSES (200) tapi symbol/from/to ikut balik KOSONG dan brokers_buy/sell dua-duanya array kosong — parser di atas sebenarnya SUDAH mengenali bentuk JSON-nya, cuma isinya memang kosong dari sisi Stockbit. Ini biasanya berarti parameter ticker/tanggal (atau parameter lain yang endpoint versi sekarang butuhkan, mis. board/investor_type) TIDAK ke-apply di request — cek lagi template \"Endpoint Broker Summary\" di ⚙️ Pengaturan dibanding URL asli yang kepakai di tab Broker Summary manual (yang datanya tampil normal), bukan cari nama field baru.";
 }
 
-async function fetchAndSaveBrokerSummaryBulk(tickers, rangeFrom, rangeTo){
-
+async function fetchAndSaveBrokerSummaryBulk(tickers, rangeFrom, rangeTo, opts = {}){
+  // opts.retryOnly = true → dipakai tombol "🔁 Tarik Ulang yang Gagal": HANYA
+  // menembak ulang `tickers` yang dioper (biasanya daftar hasil ❌ dari run
+  // sebelumnya), dan hasil ✅ lama untuk ticker LAIN (yang tidak sedang
+  // diulang) tetap dipertahankan di state.stockbitBrokerBulkResults alih-alih
+  // ditimpa kosong seperti run biasa. CATATAN PENTING: kalau kegagalannya
+  // sistemik (mis. "symbol/from/to ikut balik KOSONG" karena template
+  // endpoint salah — lihat diagnoseEmptyStockbitBrokerResponse), mengulang
+  // dengan parameter YANG SAMA akan menghasilkan galat YANG SAMA lagi —
+  // tombol ini paling berguna untuk kegagalan yang sifatnya sementara
+  // (rate limit, koneksi putus, dsb.), bukan pengganti perbaikan template.
+  const retryOnly = !!opts.retryOnly;
 
   if(state.stockbitBrokerBulkLoading) return;
   if(!tickers || !tickers.length){
-    state.stockbitBrokerBulkResults = [{ ticker:"-", date:"-", ok:false, msg:"Centang minimal 1 saham di tab Screener dulu." }];
-    render(); return;
+    if(!retryOnly){
+      state.stockbitBrokerBulkResults = [{ ticker:"-", date:"-", ok:false, msg:"Centang minimal 1 saham di tab Screener dulu." }];
+      render();
+    }
+    return;
   }
   if(!state.stockbitToken){ openSettings(); return; }
   if(!state.stockbitBrokerEndpoint){
@@ -960,7 +973,15 @@ async function fetchAndSaveBrokerSummaryBulk(tickers, rangeFrom, rangeTo){
 
   state.stockbitBrokerBulkLoading = true;
   state.stockbitBrokerBulkProgress = { done: 0, total: tickers.length }; // progress tetap dihitung per SAHAM (tiap saham di dalamnya bisa beberapa request kecil)
-  state.stockbitBrokerBulkResults = [];
+  if(retryOnly){
+    // Buang hasil LAMA untuk ticker yang sedang diulang (supaya tidak dobel
+    // dengan hasil BARU yang segera ditambahkan lewat .push() di loop bawah),
+    // tapi PERTAHANKAN hasil ticker lain yang tidak ikut diulang.
+    const retrySet = new Set(tickers);
+    state.stockbitBrokerBulkResults = (state.stockbitBrokerBulkResults || []).filter(r => !retrySet.has(r.ticker));
+  } else {
+    state.stockbitBrokerBulkResults = [];
+  }
   render();
 
   for(const ticker of tickers){
@@ -1055,6 +1076,34 @@ async function fetchAndSaveBrokerSummaryBulk(tickers, rangeFrom, rangeTo){
   state.stockbitBrokerBulkLoading = false;
   render();
   if(state.bsStockCode && state.bsDate) loadBrokerSummary();
+}
+
+// Daftar ticker unik yang ❌ gagal di run "Tarik Otomatis Broker Summary"
+// TERAKHIR (state.stockbitBrokerBulkResults) — dipakai tombol "🔁 Tarik Ulang
+// yang Gagal". Ticker placeholder "-" (mis. pesan "Isi dulu Endpoint..." saat
+// belum ada saham dicentang sama sekali) sengaja dibuang karena itu bukan
+// ticker beneran yang bisa ditarik ulang satu-satu.
+function getFailedBrokerSummaryTickers(){
+  if(!state.stockbitBrokerBulkResults) return [];
+  return [...new Set(
+    state.stockbitBrokerBulkResults
+      .filter(r => r.ok === false && r.ticker && r.ticker !== "-")
+      .map(r => r.ticker)
+  )];
+}
+
+// Tarik ulang HANYA ticker yang gagal di run terakhir, pakai rentang tanggal
+// "Dari–Sampai" yang sama seperti terakhir kali dipakai (state.bsAutoBulkFrom/
+// bsAutoBulkTo — sama input yang dipakai tombol "📊 Broker Summary" / "Tarik
+// Otomatis" di kedua tab). Kalau semua kegagalannya sistemik (bukan sekadar
+// rate limit/koneksi), hasilnya kemungkinan besar ❌ lagi dengan pesan yang
+// SAMA PERSIS — itu sinyal untuk cek template "Endpoint Broker Summary" di
+// ⚙️ Pengaturan, BUKAN diulang terus-menerus.
+async function retryFailedBrokerSummaryBulk(){
+  if(state.stockbitBrokerBulkLoading) return;
+  const failedTickers = getFailedBrokerSummaryTickers();
+  if(!failedTickers.length) return;
+  await fetchAndSaveBrokerSummaryBulk(failedTickers, state.bsAutoBulkFrom, state.bsAutoBulkTo, { retryOnly: true });
 }
 
 // Pencarian field case/underscore-insensitive, MENELUSURI SELURUH kedalaman
@@ -1744,7 +1793,7 @@ async function openSettings() {
   const geminiKeyEl = document.getElementById("setGeminiApiKey");
   if(geminiKeyEl) geminiKeyEl.value = state.geminiApiKey || "";
   const geminiModelEl = document.getElementById("setGeminiModel");
-  if(geminiModelEl) geminiModelEl.value = state.geminiModel || GEMINI_DEFAULT_MODEL;
+  setGeminiModelSelectValue(geminiModelEl, state.geminiModel || GEMINI_DEFAULT_MODEL);
   const feeBeliDefEl = document.getElementById("setFeeBeliDefault");
   if(feeBeliDefEl) feeBeliDefEl.value = state.feeBeliDefaultPct ?? FEE_BELI_DEFAULT_PCT;
   const feeJualDefEl = document.getElementById("setFeeJualDefault");
@@ -1776,7 +1825,7 @@ async function openSettings() {
   // itu yang dipakai (lihat loadTelegramSettingsFromSupabase), bukan cuma localStorage.
   if(tgFnEl) tgFnEl.value = state.telegramFunctionUrl || "";
   if(geminiKeyEl) geminiKeyEl.value = state.geminiApiKey || "";
-  if(geminiModelEl) geminiModelEl.value = state.geminiModel || GEMINI_DEFAULT_MODEL;
+  setGeminiModelSelectValue(geminiModelEl, state.geminiModel || GEMINI_DEFAULT_MODEL);
   const tgTokenEl = document.getElementById("setTelegramBotToken");
   if(tgTokenEl) tgTokenEl.value = state.telegramBotToken || "";
   const tgChatEl = document.getElementById("setTelegramChatId");
@@ -2179,6 +2228,25 @@ const LS_GEMINI_API_KEY = "ihsg_gemini_api_key", LS_GEMINI_MODEL = "ihsg_gemini_
 const LS_FEE_BELI_DEFAULT = "ihsg_fee_beli_default_pct", LS_FEE_JUAL_DEFAULT = "ihsg_fee_jual_default_pct";
 const FEE_BELI_DEFAULT_PCT = 0.15, FEE_JUAL_DEFAULT_PCT = 0.25;
 const GEMINI_DEFAULT_MODEL = "gemini-flash-latest";
+// Set value <select id="setGeminiModel"> dengan aman: kalau model yang
+// tersimpan (mis. dari pengisian manual versi lama, sebelum field ini jadi
+// dropdown) tidak ada di antara <option> yang ada, tambahkan sebagai option
+// sisipan sementara supaya nilainya tidak diam-diam "hilang"/reset ke default.
+function setGeminiModelSelectValue(selectEl, modelValue){
+  if(!selectEl) return;
+  const exists = Array.from(selectEl.options || []).some(o => o.value === modelValue);
+  if(!exists){
+    let customOpt = selectEl.querySelector('option[data-custom="1"]');
+    if(!customOpt){
+      customOpt = document.createElement("option");
+      customOpt.setAttribute("data-custom", "1");
+      selectEl.insertBefore(customOpt, selectEl.firstChild);
+    }
+    customOpt.value = modelValue;
+    customOpt.textContent = `${modelValue} (kustom, tersimpan sebelumnya)`;
+  }
+  selectEl.value = modelValue;
+}
 const STOCKBIT_DEFAULT_QUOTE_EP = "https://exodus.stockbit.com/stream/v3/symbol/{ticker}";
 // NOTE (25 Agu 2026): endpoint di atas TERBUKTI SALAH — itu API "Stream"
 // (linimasa komentar komunitas), bukan API harga. Endpoint quote/orderbook
@@ -2709,7 +2777,7 @@ let state = {
   // bisa klik "🔄 Analisis Ulang" untuk memaksa refresh.
   // ==========================================
   geminiApiKey: "", geminiModel: GEMINI_DEFAULT_MODEL,
-  geminiLoading: new Set(), geminiAnalysis: new Map(), geminiError: new Map(), geminiLevels: new Map(),
+  geminiLoading: new Set(), geminiAnalysis: new Map(), geminiError: new Map(), geminiLevels: new Map(), geminiRetryStatus: new Map(), geminiSources: new Map(),
   telegramLastRunAt: null, telegramLastRunNote: null,
   telegramTestMsg: "", telegramTestMsgError: false, telegramTesting: false,
   // ==========================================
@@ -6448,10 +6516,22 @@ function renderDetailTradingPlan(s){
 // murni di app.js — tab ini benar-benar memanggil model Gemini (Google)
 // lewat REST API generateContent, dipanggil LANGSUNG dari browser pakai
 // API key milik user sendiri (lihat ⚙️ Pengaturan → "Analisis AI (Gemini)"),
-// bukan lewat Supabase/proxy manapun. Data yang dikirim ke Gemini sebagai
-// konteks HANYA field yang sudah ada & terlihat di screener (bukan data
-// baru) — jadi kualitas analisisnya seasli/semutakhir data screener itu
-// sendiri, bukan riset independen Gemini.
+// bukan lewat Supabase/proxy manapun.
+//
+// Sejak revisi ini, request ke Gemini SELALU menyertakan tool
+// "google_search" (Search Grounding bawaan Google) — lihat callGeminiModel.
+// Konsekuensinya, prompt di bawah sekarang minta Gemini menghasilkan DUA
+// bagian yang jelas dipisah:
+//   1) Analisis berdasarkan data screener (persis field yang sudah
+//      tampil di aplikasi ini — sama seperti sebelumnya).
+//   2) Riset independen Gemini DI LUAR konteks screener (berita
+//      terbaru/aksi korporasi, kondisi fundamental & teknikal versi
+//      Gemini sendiri, serta indikasi bandarmologi/aktivitas
+//      institusi/asing) — hasil dari pengetahuan + pencarian Google
+//      real-time model itu sendiri, bukan turunan data screener.
+// Sumber (link) yang dipakai Gemini saat searching diekstrak dari
+// groundingMetadata respons API dan ditampilkan terpisah di UI
+// (lihat parseGeminiLevels/runGeminiAnalysis/renderDetailAiGemini).
 // ==========================================
 function buildGeminiPrompt(s){
   const num = (v, suffix="") => (v===null||v===undefined||isNaN(v)) ? "tidak tersedia" : `${fmtNum(Number(v).toFixed ? Number(Number(v).toFixed(2)) : v)}${suffix}`;
@@ -6480,8 +6560,10 @@ function buildGeminiPrompt(s){
     `Keyakinan Naik: ${s.keyakinanNaik || "tidak tersedia"}`,
     `Rekomendasi Setup: ${s.rekomendasi && s.rekomendasi!=="-" ? s.rekomendasi : "tidak ada"}`,
   ];
-  return `Kamu adalah asisten riset saham untuk investor ritel di Bursa Efek Indonesia (BEI). Berdasarkan data screener saham berikut untuk ticker ${s.ticker}, buat analisis singkat berbahasa Indonesia dengan format:
+  return `Kamu adalah asisten riset saham untuk investor ritel di Bursa Efek Indonesia (BEI), dengan akses ke Google Search untuk riset real-time. Untuk ticker ${s.ticker} (${s.sektor || "sektor tidak diketahui"}), buat analisis berbahasa Indonesia dalam DUA BAGIAN besar berikut, persis dengan judul bagian di bawah (format Markdown, gunakan heading "## BAGIAN 1 ..." dan "## BAGIAN 2 ...").
 
+## BAGIAN 1 — BERDASARKAN DATA SCREENER
+Gunakan HANYA data screener di bawah ini (jangan campur dengan hasil pencarian internet di bagian ini). Format:
 1. **Ringkasan** (2-3 kalimat kondisi saat ini)
 2. **Kekuatan** (poin-poin positif dari data yang ada)
 3. **Risiko / Hal yang Perlu Diwaspadai** (poin-poin negatif/peringatan dari data yang ada)
@@ -6491,11 +6573,18 @@ function buildGeminiPrompt(s){
 Data screener (semua angka berasal dari data historis/heuristik, BUKAN prediksi):
 ${lines.join("\n")}
 
-PENTING: Ini BUKAN saran/rekomendasi investasi finansial. Jangan menyebut diri sebagai penasihat keuangan, jangan memberi instruksi eksplisit "beli"/"jual"/"hold", dan ingatkan secara implisit bahwa keputusan akhir tetap di tangan pembaca. Gunakan bahasa Indonesia yang natural dan ringkas (maksimal ~250 kata) untuk poin 1-5 di atas.
+## BAGIAN 2 — RISET INDEPENDEN GEMINI (DI LUAR DATA SCREENER)
+Di bagian ini, WAJIB gunakan Google Search untuk mencari informasi TERBARU tentang ${s.ticker} yang TIDAK ada di data screener di atas, lalu ringkas dalam 3 sub-poin:
+1. **Fundamental (riset independen)** — kondisi bisnis/laporan keuangan terbaru, aksi korporasi (rights issue, buyback, dividen, akuisisi), guidance manajemen, atau berita material terbaru yang kamu temukan.
+2. **Teknikal (riset independen)** — pandangan teknikal dari sumber lain di luar data screener ini (mis. pola chart, level psikologis, atau konsensus analis teknikal), kalau memang tersedia dari hasil pencarian.
+3. **Bandarmologi / Aliran Dana (riset independen)** — berita atau indikasi soal aktivitas broker besar/asing, insider trading, kepemilikan institusi, atau sentimen pasar terkini yang kamu temukan lewat pencarian — di luar proksi volume/harga dan data Net Asing yang sudah ada di Bagian 1.
+Kalau untuk salah satu sub-poin kamu TIDAK menemukan informasi baru yang relevan/terpercaya lewat pencarian, katakan terus terang "tidak ditemukan informasi tambahan yang relevan" untuk sub-poin itu — JANGAN mengarang.
 
-SETELAH poin 1-5 selesai, WAJIB tambahkan tepat SATU baris baru paling akhir (tanpa markdown code fence, tanpa teks apapun setelahnya) persis berformat:
+PENTING (berlaku untuk BAGIAN 1 dan BAGIAN 2): Ini BUKAN saran/rekomendasi investasi finansial. Jangan menyebut diri sebagai penasihat keuangan, jangan memberi instruksi eksplisit "beli"/"jual"/"hold", dan ingatkan secara implisit bahwa keputusan akhir tetap di tangan pembaca. Gunakan bahasa Indonesia yang natural dan ringkas (maksimal ~250 kata untuk Bagian 1, maksimal ~200 kata untuk Bagian 2).
+
+SETELAH kedua bagian selesai, WAJIB tambahkan tepat SATU baris baru paling akhir (tanpa markdown code fence, tanpa teks apapun setelahnya) persis berformat:
 LEVELS_JSON: {"entry": <angka>, "tp1": <angka>, "tp2": <angka atau null>, "sl": <angka>, "basis": "<alasan singkat, maks 12 kata>"}
-Aturan angka level ini: harus turunan wajar dari Harga Terakhir/Support/Resistance/Trend yang sudah ada di data di atas (bukan mengarang di luar itu), entry mendekati harga terakhir/area support, tp1 < tp2 (kalau ada) di atas entry, sl di bawah entry/support terdekat. Kalau data teknikal terlalu minim untuk membuat level yang wajar, isi entry/tp1/sl dengan angka Harga Terakhir apa adanya dan jelaskan keterbatasannya di "basis".`;
+Aturan angka level ini: harus turunan wajar dari Harga Terakhir/Support/Resistance/Trend yang sudah ada di data Bagian 1 (bukan mengarang di luar itu), entry mendekati harga terakhir/area support, tp1 < tp2 (kalau ada) di atas entry, sl di bawah entry/support terdekat. Kalau data teknikal terlalu minim untuk membuat level yang wajar, isi entry/tp1/sl dengan angka Harga Terakhir apa adanya dan jelaskan keterbatasannya di "basis".`;
 }
 
 // Ekstrak baris "LEVELS_JSON: {...}" dari akhir respons teks Gemini (lihat
@@ -6528,6 +6617,101 @@ function parseGeminiLevels(rawText){
   return { cleanText: cleanLines.join("\n").trim(), levels };
 }
 
+function sleepMs(ms){ return new Promise(resolve => setTimeout(resolve, ms)); }
+
+// Error 503 "model overloaded"/"high demand" dari Google bersifat TRANSIENT —
+// server mereka lagi kebanjiran request, bukan masalah di key/kode kita.
+// Ini sering muncul terutama di gemini-2.5-pro/gemini-pro-latest (model
+// terberat) walau akun sudah billing aktif. Solusinya retry dengan jeda
+// (exponential backoff), bukan langsung nyerah di percobaan pertama.
+function isRetryableGeminiError(status, data){
+  if(status === 503 || status === 429) return true;
+  const msg = (data?.error?.message || "").toLowerCase();
+  return msg.includes("overloaded") || msg.includes("high demand") || msg.includes("unavailable");
+}
+
+const GEMINI_MAX_ATTEMPTS = 2; // percobaan per model (dikurangi dari 4 karena sekarang ada fallback ANTAR model juga, lihat GEMINI_FALLBACK_MODELS)
+const GEMINI_RETRY_BASE_DELAY_MS = 1500; // 1.5s, lalu 3s (exponential backoff + sedikit jitter)
+// Kapasitas server Google 503 "overloaded"/"high demand" itu PER MODEL, bukan soal
+// quota/key kita (retry model yang sama berkali-kali sering percuma kalau memang model
+// itu lagi penuh secara global). Makanya kalau model utama gagal karena overload, kita
+// coba model lain yang biasanya lebih longgar (lebih ringan/kurang populer) sebelum menyerah.
+// Urutkan dari yang paling murah/ringan dulu supaya fallback cepat & jarang overload.
+const GEMINI_FALLBACK_MODELS = ["gemini-3.5-flash-lite", "gemini-flash-latest"];
+
+// Panggil satu model Gemini dengan retry+backoff untuk model itu saja.
+// Melempar Error dengan properti .retryable: true kalau errornya khas overload/kapasitas
+// (503/429/"overloaded") sehingga pantas coba model lain; false kalau errornya bukan soal
+// kapasitas (key salah, diblokir safety filter, request invalid, dll) sehingga fallback ke
+// model lain juga percuma.
+// Ekstrak daftar sumber unik (judul+link) dari groundingMetadata respons
+// Gemini (hasil tool "google_search" — lihat callGeminiModel). Dipakai
+// untuk menampilkan "Sumber Riset Independen" di UI supaya klaim di
+// BAGIAN 2 (riset independen) bisa ditelusuri user, bukan cuma dipercaya
+// mentah-mentah. Return [] kalau tidak ada grounding sama sekali (mis.
+// Gemini menilai tidak perlu search untuk ticker ini).
+function extractGeminiSources(candidate){
+  const chunks = candidate?.groundingMetadata?.groundingChunks || [];
+  const seen = new Set();
+  const sources = [];
+  for(const c of chunks){
+    const uri = c?.web?.uri;
+    if(!uri || seen.has(uri)) continue;
+    seen.add(uri);
+    sources.push({ uri, title: c?.web?.title || uri });
+  }
+  return sources;
+}
+
+async function callGeminiModel(model, ticker, s){
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent?key=${encodeURIComponent(state.geminiApiKey)}`;
+  for(let attempt = 1; attempt <= GEMINI_MAX_ATTEMPTS; attempt++){
+    let res, data;
+    try{
+      res = await fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          contents: [{ role: "user", parts: [{ text: buildGeminiPrompt(s) }] }],
+          // google_search: Search Grounding bawaan Google — supaya BAGIAN 2
+          // (riset independen) di prompt beneran bisa cari info real-time,
+          // bukan cuma mengarang dari pengetahuan lama model. Didukung semua
+          // model Gemini 2.x/3.x ke atas (termasuk default & fallback di sini).
+          tools: [{ google_search: {} }],
+          generationConfig: { temperature: 0.4 }
+        })
+      });
+      data = await res.json().catch(()=>null);
+    }catch(networkErr){
+      // Gagal koneksi (offline, CORS, dll) — bukan soal model, fallback ke model lain percuma.
+      networkErr.retryable = false;
+      throw networkErr;
+    }
+    if(res.ok){
+      const candidate = data?.candidates?.[0];
+      const rawText = (candidate?.content?.parts || []).map(p => p.text || "").join("").trim();
+      if(!rawText){
+        const blockReason = data?.promptFeedback?.blockReason;
+        const err = new Error(blockReason ? `Diblokir oleh safety filter Gemini (${blockReason}).` : "Respons kosong dari Gemini.");
+        err.retryable = false;
+        throw err;
+      }
+      return { text: rawText, model, sources: extractGeminiSources(candidate) };
+    }
+    const errorIsRetryable = isRetryableGeminiError(res.status, data);
+    const canRetrySameModel = attempt < GEMINI_MAX_ATTEMPTS && errorIsRetryable;
+    if(!canRetrySameModel){
+      const err = new Error(data?.error?.message || `HTTP ${res.status}`);
+      err.retryable = errorIsRetryable; // true = pantas coba model fallback berikutnya
+      throw err;
+    }
+    const delay = GEMINI_RETRY_BASE_DELAY_MS * Math.pow(2, attempt - 1) * (0.85 + Math.random() * 0.3);
+    state.geminiRetryStatus.set(ticker, { attempt, max: GEMINI_MAX_ATTEMPTS, model });
+    render();
+    await sleepMs(delay);
+  }
+}
+
 async function runGeminiAnalysis(ticker){
   if(state.geminiLoading.has(ticker)) return;
   if(!state.geminiApiKey){
@@ -6540,36 +6724,44 @@ async function runGeminiAnalysis(ticker){
 
   state.geminiLoading.add(ticker);
   state.geminiError.delete(ticker);
+  state.geminiRetryStatus.delete(ticker);
+  state.geminiSources.delete(ticker);
   render();
+
+  const primaryModel = state.geminiModel || GEMINI_DEFAULT_MODEL;
+  // Rantai fallback: model pilihan user dulu, baru model cadangan (skip yang duplikat).
+  const modelChain = [primaryModel, ...GEMINI_FALLBACK_MODELS.filter(m => m !== primaryModel)];
+  let triedMoreThanOne = false;
   try{
-    const model = state.geminiModel || GEMINI_DEFAULT_MODEL;
-    const url = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent?key=${encodeURIComponent(state.geminiApiKey)}`;
-    const res = await fetch(url, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        contents: [{ role: "user", parts: [{ text: buildGeminiPrompt(s) }] }],
-        generationConfig: { temperature: 0.4 }
-      })
-    });
-    const data = await res.json().catch(()=>null);
-    if(!res.ok){
-      const msg = data?.error?.message || `HTTP ${res.status}`;
-      throw new Error(msg);
+    for(let i = 0; i < modelChain.length; i++){
+      const model = modelChain[i];
+      try{
+        const result = await callGeminiModel(model, ticker, s);
+        const { cleanText, levels } = parseGeminiLevels(result.text);
+        state.geminiAnalysis.set(ticker, { text: cleanText, model: result.model, at: Date.now() });
+        if(levels) state.geminiLevels.set(ticker, levels); else state.geminiLevels.delete(ticker);
+        if(result.sources && result.sources.length) state.geminiSources.set(ticker, result.sources); else state.geminiSources.delete(ticker);
+        return; // sukses
+      }catch(e){
+        const isLastModel = i === modelChain.length - 1;
+        if(!isLastModel && e.retryable){
+          // Model ini overload -> coba model cadangan berikutnya di chain.
+          triedMoreThanOne = true;
+          state.geminiRetryStatus.set(ticker, { attempt: 1, max: GEMINI_MAX_ATTEMPTS, model: modelChain[i+1], switchingFrom: model });
+          render();
+          continue;
+        }
+        throw e;
+      }
     }
-    const candidate = data?.candidates?.[0];
-    const rawText = (candidate?.content?.parts || []).map(p => p.text || "").join("").trim();
-    if(!rawText){
-      const blockReason = data?.promptFeedback?.blockReason;
-      throw new Error(blockReason ? `Diblokir oleh safety filter Gemini (${blockReason}).` : "Respons kosong dari Gemini.");
-    }
-    const { cleanText, levels } = parseGeminiLevels(rawText);
-    state.geminiAnalysis.set(ticker, { text: cleanText, model, at: Date.now() });
-    if(levels) state.geminiLevels.set(ticker, levels); else state.geminiLevels.delete(ticker);
   }catch(e){
-    state.geminiError.set(ticker, e.message || String(e));
+    const note = triedMoreThanOne
+      ? ` (sudah dicoba beberapa model Gemini, server Google masih sibuk — coba lagi beberapa saat lagi)`
+      : "";
+    state.geminiError.set(ticker, (e.message || String(e)) + note);
   }finally{
     state.geminiLoading.delete(ticker);
+    state.geminiRetryStatus.delete(ticker);
     render();
   }
 }
@@ -6597,17 +6789,36 @@ function geminiLevelsCard(levels){
     </div>`;
 }
 
+// Render daftar sumber (link) hasil Google Search grounding yang dipakai
+// Gemini di BAGIAN 2 (riset independen) prompt — lihat extractGeminiSources.
+// Ditampilkan terpisah dari teks analisis supaya user bisa cek sendiri
+// asal klaim "riset independen"-nya, bukan cuma percaya mentah-mentah.
+function geminiSourcesCard(sources){
+  if(!sources || !sources.length) return "";
+  const items = sources.slice(0, 8).map(src =>
+    `<li style="margin-bottom:4px;"><a href="${escapeHtml(src.uri)}" target="_blank" rel="noopener noreferrer" style="color:var(--teal);text-decoration:underline;font-size:12px;">${escapeHtml(src.title)}</a></li>`
+  ).join("");
+  return `
+    <div style="background:rgba(56,189,248,0.06);border:1px solid rgba(56,189,248,0.25);border-radius:10px;padding:12px 14px;margin-top:10px;">
+      <div style="font-size:11px;text-transform:uppercase;letter-spacing:.05em;color:var(--muted);font-weight:700;margin-bottom:6px;">🔎 Sumber Riset Independen (Google Search)</div>
+      <ul style="margin:0;padding-left:18px;">${items}</ul>
+    </div>`;
+}
+
 function renderDetailAiGemini(s){
   const ticker = s.ticker;
   const loading = state.geminiLoading.has(ticker);
   const cached = state.geminiAnalysis.get(ticker);
   const error = state.geminiError.get(ticker);
   const levels = state.geminiLevels.get(ticker);
+  const sources = state.geminiSources.get(ticker);
   const hasKey = !!state.geminiApiKey;
+  const retryStatus = state.geminiRetryStatus.get(ticker);
 
   const analysisHtml = cached
     ? `<div class="empty-box" style="text-align:left;white-space:pre-wrap;line-height:1.6;font-size:13px;background:rgba(167,139,250,0.06);border-color:rgba(167,139,250,0.25);">${escapeHtml(cached.text)}</div>
        <div style="font-size:11px;color:var(--muted);margin-top:6px;">Model: <code>${escapeHtml(cached.model)}</code> · Dihasilkan ${new Date(cached.at).toLocaleString("id-ID")}</div>
+       ${geminiSourcesCard(sources)}
        ${geminiLevelsCard(levels)}`
     : "";
   const errorHtml = error
@@ -6617,13 +6828,14 @@ function renderDetailAiGemini(s){
   return `
     <div class="detail-subtitle">🤖 Analisis AI (Gemini) — ${escapeHtml(ticker)}</div>
     <div style="font-size:11.5px;color:var(--muted);margin-bottom:12px;line-height:1.5;">
-      Ringkasan berbahasa natural dari model Gemini (Google), berdasarkan data fundamental/teknikal/Bandarmologi
-      yang sudah tampil di screener ini sebagai konteks — <b>bukan rekomendasi/nasihat investasi</b>, dan bukan
-      riset independen di luar data yang tersedia di sini. Termasuk level Entry/TP/SL ilustratif di bawah.
+      Dua bagian: <b>(1)</b> ringkasan naratif dari data fundamental/teknikal/Bandarmologi yang sudah tampil di
+      screener ini, dan <b>(2)</b> riset independen Gemini via Google Search — berita/aksi korporasi, pandangan
+      teknikal, dan indikasi bandarmologi/aliran dana TERBARU di luar data screener. Tetap
+      <b>bukan rekomendasi/nasihat investasi</b>. Termasuk level Entry/TP/SL ilustratif dan daftar sumber di bawah.
     </div>
     ${!hasKey ? `<div class="empty-box" style="text-align:left;">API key Gemini belum diisi. Buka <button type="button" onclick="closeDetail();openSettings();" style="background:none;border:none;color:var(--teal);text-decoration:underline;cursor:pointer;padding:0;font-size:12px;">⚙️ Pengaturan</button> → bagian "🤖 Analisis AI (Gemini)" untuk mengisi API key gratis dari Google AI Studio.</div>` : ""}
     <button type="button" class="btn btn-outline" data-gemini-run="${escapeHtml(ticker)}" ${loading || !hasKey ? "disabled" : ""} style="margin-bottom:12px;">
-      ${loading ? "⏳ Menganalisis..." : cached ? "🔄 Analisis Ulang" : "🤖 Buat Analisis AI"}
+      ${loading ? (retryStatus ? `⏳ Server sibuk, mencoba lagi (${retryStatus.attempt}/${retryStatus.max})...` : "⏳ Menganalisis...") : cached ? "🔄 Analisis Ulang" : "🤖 Buat Analisis AI"}
     </button>
     ${errorHtml}
     ${analysisHtml}
@@ -10109,6 +10321,9 @@ function renderScreener(){
                     <span class="bs-bulk-results-arrow" style="display:inline-block; transition:transform .15s; transform:rotate(${state.bsBulkResultsOpen?90:0}deg);">▶</span>
                     Hasil Broker Summary (${state.stockbitBrokerBulkResults.length} saham)
                   </summary>
+                  ${(() => { const failCount = getFailedBrokerSummaryTickers().length; return failCount && !state.stockbitBrokerBulkLoading ? `
+                  <button type="button" class="btn btn-outline" id="screenerBsRetryFailedBtn" style="margin-top:6px; font-size:11px; padding:4px 8px; color:var(--down); border-color:rgba(239,68,68,0.4);" title="Tarik ulang HANYA ${failCount} saham yang ❌ gagal, pakai periode tanggal yang sama. Kalau kegagalannya sistemik (mis. semua pesan sama persis), tarik ulang kemungkinan gagal lagi — cek template Endpoint Broker Summary di Pengaturan.">🔁 Tarik Ulang yang Gagal (${failCount})</button>
+                  ` : ""; })()}
                   <div class="bs-result-list mono" style="margin-top:6px; max-height:180px; overflow-y:auto; font-size:11px;">
                     ${state.stockbitBrokerBulkResults.map(r => `
                       <div class="bs-result-line" style="padding:3px 0; border-bottom:1px solid var(--border); color:${r.ok ? 'var(--up)' : 'var(--down)'};">
@@ -13922,7 +14137,7 @@ function renderPanduan(){
       ${pndKv("🏦 Broker Summary", "Tabel broker beli/jual lengkap dan grafik Broker Flow — garis net kumulatif menanjak terus = akumulasi konsisten.")}
       ${pndKv("📅 Historical Data", "Riwayat harga &amp; volume harian saham ini.")}
       ${pndKv("🧠 Analisa", "Ringkasan otomatis dari Teknikal + Fundamental + Bandarmologi jadi satu kesimpulan singkat.")}
-      ${pndKv("🤖 AI (Gemini)", "Analisis naratif dari AI berdasarkan data fundamental, RSI/MACD/EMA, dan momentum multi-timeframe — butuh API key gratis dari Google AI Studio.")}
+      ${pndKv("🤖 AI (Gemini)", "Analisis naratif dari AI: gabungan data fundamental/RSI/MACD/EMA/momentum di screener INI, ditambah riset independen Gemini via Google Search (berita, teknikal, bandarmologi di luar screener) — butuh API key gratis dari Google AI Studio.")}
       ${pndKv("⚖️ vs Sektor", "Perbandingan tiap metrik dengan rata-rata peer sesektor.")}
       ${pndKv("📋 Trading Plan", "Zona entry, target, stop loss, dan rasio risk/reward yang dihitung otomatis.")}
     `)}
@@ -14209,6 +14424,9 @@ function renderBrokerSummary(){
               <span class="bs-bulk-results-arrow" style="display:inline-block; transition:transform .15s; transform:rotate(${state.bsBulkResultsOpen?90:0}deg);">▶</span>
               Hasil (${state.stockbitBrokerBulkResults.length} saham)
             </summary>
+            ${(() => { const failCount = getFailedBrokerSummaryTickers().length; return failCount && !state.stockbitBrokerBulkLoading ? `
+            <button type="button" class="btn btn-outline" id="bsRetryFailedBtn" style="margin-top:8px; font-size:11.5px; padding:5px 10px; color:var(--down); border-color:rgba(239,68,68,0.4);" title="Tarik ulang HANYA ${failCount} saham yang ❌ gagal, pakai periode tanggal yang sama. Kalau kegagalannya sistemik (mis. semua pesan sama persis), tarik ulang kemungkinan gagal lagi — cek template Endpoint Broker Summary di Pengaturan.">🔁 Tarik Ulang yang Gagal (${failCount})</button>
+            ` : ""; })()}
             <div class="bs-result-list mono" style="margin-top:8px; max-height:220px; overflow-y:auto; font-size:11.5px;">
               ${state.stockbitBrokerBulkResults.map(r => `
                 <div class="bs-result-line" style="padding:4px 0; border-bottom:1px solid var(--border); color:${r.ok ? 'var(--up)' : 'var(--down)'};">
@@ -17249,6 +17467,11 @@ function attachContentEvents(){
   const screenerBsBulkBtn = document.getElementById("screenerBsBulkBtn");
   if(screenerBsBulkBtn) screenerBsBulkBtn.onclick = () => {
     fetchAndSaveBrokerSummaryBulk(resolveBulkTickers(), state.bsAutoBulkFrom, state.bsAutoBulkTo);
+    return;
+  };
+  const screenerBsRetryFailedBtn = document.getElementById("screenerBsRetryFailedBtn");
+  if(screenerBsRetryFailedBtn) screenerBsRetryFailedBtn.onclick = () => {
+    retryFailedBrokerSummaryBulk();
   };
   const screenerHdFromInput = document.getElementById("screenerHdFromInput");
   if(screenerHdFromInput) screenerHdFromInput.onchange = (e) => { state.hdAutoBulkFrom = e.target.value || state.hdAutoBulkFrom; };
@@ -17547,6 +17770,8 @@ function attachContentEvents(){
   };
   const bsAutoBulkBtn = document.getElementById("bsAutoBulkBtn");
   if(bsAutoBulkBtn) bsAutoBulkBtn.onclick = () => fetchAndSaveBrokerSummaryBulk([...state.selectedForBacktest], state.bsAutoBulkFrom, state.bsAutoBulkTo);
+  const bsRetryFailedBtn = document.getElementById("bsRetryFailedBtn");
+  if(bsRetryFailedBtn) bsRetryFailedBtn.onclick = retryFailedBrokerSummaryBulk;
   const bsBulkResultsPanel = document.getElementById("bsBulkResultsPanel");
   if(bsBulkResultsPanel) bsBulkResultsPanel.ontoggle = (e) => { state.bsBulkResultsOpen = e.target.open; };
   const screenerBsBulkResultsPanel = document.getElementById("screenerBsBulkResultsPanel");
