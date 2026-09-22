@@ -6522,8 +6522,10 @@ function renderDetailTradingPlan(s){
 // "google_search" (Search Grounding bawaan Google) — lihat callGeminiModel.
 // Konsekuensinya, prompt di bawah sekarang minta Gemini menghasilkan DUA
 // bagian yang jelas dipisah:
-//   1) Analisis berdasarkan data screener (persis field yang sudah
-//      tampil di aplikasi ini — sama seperti sebelumnya).
+//   1) Analisis Fundamental/Teknikal/Bandarmologi yang memakai data
+//      screener sebagai TITIK AWAL, tapi WAJIB diperkaya dengan
+//      interpretasi/analisa versi Gemini sendiri (bukan sekadar
+//      membaca ulang angka screener apa adanya).
 //   2) Riset independen Gemini DI LUAR konteks screener (berita
 //      terbaru/aksi korporasi, kondisi fundamental & teknikal versi
 //      Gemini sendiri, serta indikasi bandarmologi/aktivitas
@@ -6562,15 +6564,23 @@ function buildGeminiPrompt(s){
   ];
   return `Kamu adalah asisten riset saham untuk investor ritel di Bursa Efek Indonesia (BEI), dengan akses ke Google Search untuk riset real-time. Untuk ticker ${s.ticker} (${s.sektor || "sektor tidak diketahui"}), buat analisis berbahasa Indonesia dalam DUA BAGIAN besar berikut, persis dengan judul bagian di bawah (format Markdown, gunakan heading "## BAGIAN 1 ..." dan "## BAGIAN 2 ...").
 
-## BAGIAN 1 — BERDASARKAN DATA SCREENER
-Gunakan HANYA data screener di bawah ini (jangan campur dengan hasil pencarian internet di bagian ini). Format:
-1. **Ringkasan** (2-3 kalimat kondisi saat ini)
-2. **Kekuatan** (poin-poin positif dari data yang ada)
-3. **Risiko / Hal yang Perlu Diwaspadai** (poin-poin negatif/peringatan dari data yang ada)
-4. **Catatan Penutup** (satu kalimat netral, TANPA rekomendasi beli/jual/hold eksplisit)
-5. **Level Ilustratif** (1-2 kalimat singkat menjelaskan DASAR penentuan level entry/TP/SL di bawah, misalnya mengacu ke support/resistance/MA/ATR dari data teknikal di atas — bukan angka baru di luar data yang diberikan)
+## BAGIAN 1 — ANALISIS FUNDAMENTAL, TEKNIKAL & BANDARMOLOGI (data screener + analisa Gemini)
+Data screener di bawah ini adalah TITIK AWAL, bukan satu-satunya sumber. JANGAN sekadar membaca ulang angkanya — untuk tiap aspek, perkaya dengan analisa/interpretasi versi KAMU SENDIRI (dari pengetahuan umum kamu, dan boleh pakai Google Search kalau relevan untuk konteks tambahan seperti rata-rata valuasi sektor, karakteristik bisnis emiten, atau pola teknikal yang lebih luas):
+- **Fundamental**: interpretasikan PER/PBV/ROE/ROA/DER/Dividend Yield di atas — apakah wajar/mahal/murah dibanding sektornya, kualitas bisnisnya menurut analisamu, bukan cuma menyebut ulang angka.
+- **Teknikal**: interpretasikan trend/RSI/MACD/volume/support-resistance di atas dengan analisa pola & momentum versi kamu sendiri, bukan cuma menyalin status yang sudah ada.
+- **Bandarmologi**: interpretasikan sinyal proxy volume+harga dan data Net Asing di atas, lalu tambahkan analisa aliran dana/indikasi aktivitas bandar versi kamu sendiri berdasarkan pengetahuan & pencarian (kalau memang ada dasarnya — jangan mengarang).
+Kalau interpretasimu berbeda dari heuristik screener (kolom Valuasi/Keyakinan Naik/Rekomendasi Setup), boleh disebutkan eksplisit sebagai catatan pembanding.
 
-Data screener (semua angka berasal dari data historis/heuristik, BUKAN prediksi):
+Format:
+1. **Ringkasan** (2-3 kalimat kondisi saat ini)
+2. **Analisis Fundamental** (gabungan data screener + interpretasi kamu)
+3. **Analisis Teknikal** (gabungan data screener + interpretasi kamu)
+4. **Analisis Bandarmologi** (gabungan data screener + interpretasi kamu)
+5. **Risiko / Hal yang Perlu Diwaspadai** (poin-poin negatif/peringatan)
+6. **Catatan Penutup** (satu kalimat netral, TANPA rekomendasi beli/jual/hold eksplisit)
+7. **Level Ilustratif** (1-2 kalimat singkat menjelaskan DASAR penentuan level entry/TP/SL di bawah, misalnya mengacu ke support/resistance/MA/ATR dari data teknikal di atas atau analisamu sendiri)
+
+Data screener (semua angka berasal dari data historis/heuristik, BUKAN prediksi — jadikan bahan analisa, bukan sekadar dikutip ulang):
 ${lines.join("\n")}
 
 ## BAGIAN 2 — RISET INDEPENDEN GEMINI (DI LUAR DATA SCREENER)
@@ -6828,8 +6838,8 @@ function renderDetailAiGemini(s){
   return `
     <div class="detail-subtitle">🤖 Analisis AI (Gemini) — ${escapeHtml(ticker)}</div>
     <div style="font-size:11.5px;color:var(--muted);margin-bottom:12px;line-height:1.5;">
-      Dua bagian: <b>(1)</b> ringkasan naratif dari data fundamental/teknikal/Bandarmologi yang sudah tampil di
-      screener ini, dan <b>(2)</b> riset independen Gemini via Google Search — berita/aksi korporasi, pandangan
+      Dua bagian: <b>(1)</b> analisa Fundamental/Teknikal/Bandarmologi versi Gemini sendiri — data screener
+      cuma jadi titik awal, bukan sekadar dibaca ulang, dan <b>(2)</b> riset independen Gemini via Google Search — berita/aksi korporasi, pandangan
       teknikal, dan indikasi bandarmologi/aliran dana TERBARU di luar data screener. Tetap
       <b>bukan rekomendasi/nasihat investasi</b>. Termasuk level Entry/TP/SL ilustratif dan daftar sumber di bawah.
     </div>
@@ -14137,7 +14147,7 @@ function renderPanduan(){
       ${pndKv("🏦 Broker Summary", "Tabel broker beli/jual lengkap dan grafik Broker Flow — garis net kumulatif menanjak terus = akumulasi konsisten.")}
       ${pndKv("📅 Historical Data", "Riwayat harga &amp; volume harian saham ini.")}
       ${pndKv("🧠 Analisa", "Ringkasan otomatis dari Teknikal + Fundamental + Bandarmologi jadi satu kesimpulan singkat.")}
-      ${pndKv("🤖 AI (Gemini)", "Analisis naratif dari AI: gabungan data fundamental/RSI/MACD/EMA/momentum di screener INI, ditambah riset independen Gemini via Google Search (berita, teknikal, bandarmologi di luar screener) — butuh API key gratis dari Google AI Studio.")}
+      ${pndKv("🤖 AI (Gemini)", "Analisis naratif dari AI: data fundamental/RSI/MACD/EMA/momentum di screener INI dipakai sebagai titik awal lalu dianalisa/diinterpretasi versi Gemini sendiri (bukan sekadar dibaca ulang), ditambah riset independen Gemini via Google Search (berita, teknikal, bandarmologi di luar screener) — butuh API key gratis dari Google AI Studio.")}
       ${pndKv("⚖️ vs Sektor", "Perbandingan tiap metrik dengan rata-rata peer sesektor.")}
       ${pndKv("📋 Trading Plan", "Zona entry, target, stop loss, dan rasio risk/reward yang dihitung otomatis.")}
     `)}
