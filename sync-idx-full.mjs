@@ -513,6 +513,35 @@ function calcSMA(data, period) {
   return average(data.slice(-period));
 }
 
+// --- Deteksi Swing High/Low (fractal pivot) ---
+// Diporting dari ti_detectSwingPoints() di app.js -- dipakai sbg basis
+// alternatif utk Fibonacci extension yang lebih akurat dibanding window
+// tetap 20 hari (yang gampang motong swing asli kalau high/low sebenarnya
+// terjadi di luar 20 hari terakhir). Sebuah bar dianggap "pivot high" kalau
+// high-nya lebih tinggi dari `leftRight` bar di kiri DAN kanan; sebaliknya
+// utk "pivot low". Loop berjalan maju di waktu, jadi assignment terakhir =
+// pivot paling baru dalam window `lookback`.
+function detectSwingPoints(highsArr, lowsArr, lookback, leftRight) {
+  lookback = lookback || 60; leftRight = leftRight || 3;
+  const n = highsArr.length;
+  const start = Math.max(leftRight, n - lookback);
+  let swingHigh = null, swingHighIdx = -1, swingLow = null, swingLowIdx = -1;
+  for (let i = start; i < n - leftRight; i++) {
+    const h = highsArr[i], l = lowsArr[i];
+    if (h == null || l == null) continue;
+    let isPivotHigh = true, isPivotLow = true;
+    for (let j = i - leftRight; j <= i + leftRight; j++) {
+      if (j === i) continue;
+      if (highsArr[j] == null || lowsArr[j] == null) continue;
+      if (highsArr[j] > h) isPivotHigh = false;
+      if (lowsArr[j] < l) isPivotLow = false;
+    }
+    if (isPivotHigh) { swingHigh = h; swingHighIdx = i; }
+    if (isPivotLow) { swingLow = l; swingLowIdx = i; }
+  }
+  return { swingHigh, swingHighIdx, swingLow, swingLowIdx };
+}
+
 function calcStdDev(arr) {
   const m = average(arr);
   return Math.sqrt(arr.reduce((sq, n) => sq + Math.pow(n - m, 2), 0) / arr.length);
@@ -618,6 +647,12 @@ function computeExtendedIndicators(bars) {
     // Sekarang VWAP20 sungguhan (volume-weighted, 20 bar terakhir).
     vwap: round2(calcVWAP(closes, highs, lows, volumes, 20)),
     ema5: round2(calcEMA(closes, 5)), ema9: round2(calcEMA(closes, 9)), ema10: round2(calcEMA(closes, 10)), ema20: round2(calcEMA(closes, 20)),
+    // ema21 basis CLOSE (beda dari ema21h/ema21l di tabel `stocks` yang basis
+    // High/Low) -- dipakai khusus buat sinyal screener "EMA9×EMA21 Golden
+    // Cross" di app.js. Selaraskan dengan computeExtendedIndicators() di
+    // app.js supaya kedua jalur tulis (script ini & tombol "Hitung Ulang
+    // Indikator" di browser) menghasilkan kolom yang sama.
+    ema21: round2(calcEMA(closes, 21)),
     ema50: round2(calcEMA(closes, 50)), ema100: round2(calcEMA(closes, 100)), ema200: round2(calcEMA(closes, 200)),
     fibP: fib.p, fibR1: fib.r1, fibR2: fib.r2, fibR3: fib.r3, fibS1: fib.s1, fibS2: fib.s2, fibS3: fib.s3,
   };
@@ -763,6 +798,12 @@ function buildStockRowFromBars(ticker, bars, listedShares) {
   const ma50 = calcSMA(closes, 50);
   const ma100 = calcSMA(closes, 100);
   const ma200 = calcSMA(closes, 200);
+  // "Jarak ke MA50 (%)" & "Jarak ke MA200 (%)" -- diporting dari app.js:
+  // dipakai di Rule Builder (vsMa50Pct/vsMa200Pct) & panel Detail Emiten,
+  // tapi sebelumnya tidak pernah dihitung sama sekali (kolom DB-nya cuma
+  // dibaca, tidak pernah ditulis) sehingga selalu null di seluruh app.
+  const vsMa50Pct = (cClose != null && ma50 != null && ma50 !== 0) ? round2(((cClose - ma50) / ma50) * 100) : null;
+  const vsMa200Pct = (cClose != null && ma200 != null && ma200 !== 0) ? round2(((cClose - ma200) / ma200) * 100) : null;
   const trendHarga = tentukanTrendHarga_(cClose, ma21, ma50, ma100, ma200);
 
   const yOpen = opens[n - 2], yHigh = highs[n - 2], yLow = lows[n - 2], yClose = closes[n - 2];
@@ -795,13 +836,38 @@ function buildStockRowFromBars(ticker, bars, listedShares) {
   const window52wL = has52w ? lowsFilled.slice(-252) : null;
   const high52w = has52w ? round2(Math.max(...window52wH)) : null;
   const low52w = has52w ? round2(Math.min(...window52wL)) : null;
-  const closeAYearAgo = n > 252 ? closes[n - 252] : null;
+  const closeAYearAgo = n > 253 ? closes[n - 253] : null;
   const week52ChangePct = closeAYearAgo ? round2(((cClose - closeAYearAgo) / closeAYearAgo) * 100) : null;
+  // "1 Week Price Returns (%)" & "1 Month Price Returns (%)" — sama pola
+  // dengan week52ChangePct di atas, tapi mundur 5 bar (~1 minggu bursa) dan
+  // 20 bar (~1 bulan bursa) dari harga penutupan terakhir. Dipakai di
+  // RULE_METRICS (rule builder) di app.js, mis. "1 Month Price Returns ≤ -10".
+  // Index dipakai n-1-K (bukan n-K): cClose ada di closes[n-1], jadi "K bar
+  // lalu" yang benar adalah closes[n-1-K]. n-K salah 1 bar (window jadi K-1
+  // hari, bukan K hari) -- REVISI setelah audit off-by-one (selaras dgn app.js).
+  const close1WAgo = n > 6 ? closes[n - 6] : null;
+  const weekChangePct = close1WAgo ? round2(((cClose - close1WAgo) / close1WAgo) * 100) : null;
+  const close1MAgo = n > 21 ? closes[n - 21] : null;
+  const monthChangePct = close1MAgo ? round2(((cClose - close1MAgo) / close1MAgo) * 100) : null;
 
   const window20H = highsFilled.slice(-20);
   const window20L = lowsFilled.slice(-20);
   const support = round2(Math.min(...window20L));
   const resistance = round2(Math.max(...window20H));
+
+  // Swing high/low (fractal pivot, lookback ~90 bar, 3 kiri-3 kanan) --
+  // basis alternatif Fibonacci yang mengikuti struktur harga yang
+  // sebenarnya, bukan cuma window tetap 20 hari. Hanya dianggap valid
+  // kalau swing low terjadi SEBELUM swing high (pola naik: low dulu, baru
+  // high) -- itu yang relevan sbg basis extension utk target TP long.
+  const swingLookback = Math.min(n - 1, 90);
+  const swingRaw = detectSwingPoints(highsFilled, lowsFilled, swingLookback, 3);
+  let swingHigh = null, swingLow = null;
+  if (swingRaw.swingLow != null && swingRaw.swingHigh != null &&
+      swingRaw.swingHigh > swingRaw.swingLow && swingRaw.swingLowIdx < swingRaw.swingHighIdx) {
+    swingHigh = round2(swingRaw.swingHigh);
+    swingLow = round2(swingRaw.swingLow);
+  }
 
   // YTD (Year-to-Date): perubahan % dari close pertama tahun berjalan
   // ke close terakhir. Bar pertama tahun berjalan = bar pertama dengan
@@ -912,7 +978,8 @@ function buildStockRowFromBars(ticker, bars, listedShares) {
     c_open: cOpen, day_high: cHigh, day_low: cLow, price: cClose,
     prev_close: prevClose, change_abs: changeAbs, change_pct: changePct,
     week52_high: high52w, week52_low: low52w, week52_change_pct: week52ChangePct,
-    ytd_pct: ytdPct,
+    ytd_pct: ytdPct, week_change_pct: weekChangePct, month_change_pct: monthChangePct,
+    swing_high: swingHigh, swing_low: swingLow,
     support, resistance, fibonacci: fib,
     ema21h: round2(ema21H), ema21l: round2(ema21L), ema89: round2(ema89),
     rsi7: round1(rsi7), rsi21: round1(rsi21),
@@ -922,6 +989,7 @@ function buildStockRowFromBars(ticker, bars, listedShares) {
     cek_volume: cekVolume, keyakinan_naik: keyakinanNaik,
     vwap20: round2(vwap20), turnover, value_traded: bars[n - 1].value ?? null,
     ma21: round2(ma21), ma50: round2(ma50), ma100: round2(ma100), ma200: round2(ma200),
+    vs_ma50_pct: vsMa50Pct, vs_ma200_pct: vsMa200Pct,
     trend_harga: trendHarga,
     candle_kemarin: candleKemarin, candle_hari_ini: candleHariIni, pola_candle: polaCandle,
     clv, uang_gede_masuk: uangGedeMasuk, bb_width: currentBBWidth, is_bb_squeeze: isBBSqueeze, atr14,
@@ -1424,6 +1492,7 @@ try {
           adr14: ext.adr14, prev_atr14: prevExt.atr14 ?? null, prev_adr14: prevExt.adr14 ?? null,
           vwap: ext.vwap,
           ema5: ext.ema5, ema9: ext.ema9, ema10: ext.ema10, ema20: ext.ema20, ema50: ext.ema50, ema100: ext.ema100, ema200: ext.ema200,
+          ema21: ext.ema21, prev_ema9: prevExt.ema9 ?? null, prev_ema21: prevExt.ema21 ?? null,
           prev_ema200: prevExt.ema200 ?? null,
           fib_p: ext.fibP, fib_r1: ext.fibR1, fib_r2: ext.fibR2, fib_r3: ext.fibR3,
           fib_s1: ext.fibS1, fib_s2: ext.fibS2, fib_s3: ext.fibS3,

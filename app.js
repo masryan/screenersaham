@@ -104,6 +104,115 @@ function escapeHtml(str){
   return String(str ?? "").replace(/[&<>"']/g, c => ({ "&":"&amp;", "<":"&lt;", ">":"&gt;", '"':"&quot;", "'":"&#39;" }[c]));
 }
 
+// ==========================================
+// UTILITAS FILTER + SORT GENERIK UNTUK SEMUA TABEL
+//
+// Dipakai oleh tabel-tabel yang sebelumnya statis (Rekap Backtest,
+// Portofolio, Target Bandar, Entry Price Scanner, Kraken Flow, dst) supaya
+// tiap tabel punya kotak pencarian (filter teks bebas, dicek ke beberapa
+// kolom sekaligus lewat `keys`) + header kolom yang bisa diklik buat sort
+// (▲/▼), TANPA numpuk banyak variabel baru per tabel di `state` utama.
+// Semua state (kata kunci filter + kolom & arah sort) disimpan per-ID
+// tabel di state.tableUI, jadi tabel yang satu tidak saling bentrok
+// dengan tabel lain walau dua-duanya kebetulan punya kolom bernama sama.
+// ==========================================
+function getTableUI(id){
+  if(!state.tableUI) state.tableUI = {};
+  if(!state.tableUI[id]) state.tableUI[id] = { filter: "", sortCol: null, sortAsc: true };
+  return state.tableUI[id];
+}
+
+// Cocokkan `filterText` (bebas huruf besar/kecil) ke gabungan nilai-nilai
+// yang dikembalikan `getFields(row)` (array of string/number/null).
+function tableFilterRows(id, rows, getFields){
+  const ui = getTableUI(id);
+  const q = (ui.filter || "").trim().toLowerCase();
+  if(!q) return rows;
+  return rows.filter(row => {
+    const fields = getFields(row) || [];
+    return fields.some(f => String(f ?? "").toLowerCase().includes(q));
+  });
+}
+
+// Urutkan `rows` sesuai state.tableUI[id].sortCol, di mana `accessors` adalah
+// { [colKey]: row => nilai_untuk_dibandingkan }. Kalau belum ada kolom yang
+// dipilih user, urutan asli (dari `rows`) dibiarkan apa adanya.
+function tableSortRows(id, rows, accessors){
+  const ui = getTableUI(id);
+  if(!ui.sortCol || !accessors[ui.sortCol]) return rows;
+  const getVal = accessors[ui.sortCol];
+  const withIdx = rows.map((r,i) => ({ r, i }));
+  withIdx.sort((a,b) => {
+    let va = getVal(a.r), vb = getVal(b.r);
+    const na = typeof va === "number" || va == null ? va : parseFloat(va);
+    const nb = typeof vb === "number" || vb == null ? vb : parseFloat(vb);
+    let cmp;
+    if(Number.isFinite(na) && Number.isFinite(nb)){ cmp = na - nb; }
+    else { cmp = String(va ?? "").localeCompare(String(vb ?? ""), "id"); }
+    if(cmp === 0) return a.i - b.i; // stabil kalau nilainya sama
+    return ui.sortAsc ? cmp : -cmp;
+  });
+  return withIdx.map(x => x.r);
+}
+
+// Header <th> yang bisa diklik buat sort, dipasangi data-table-sort/data-sort-col
+// supaya kena delegasi klik generik di attachContentEvents(). `extraStyle`
+// opsional buat kolom yang butuh style tambahan (mis. freeze/lebar).
+function tableSortTh(id, label, col, extraStyle){
+  const ui = getTableUI(id);
+  const style = extraStyle ? ` style="${extraStyle}"` : "";
+  let icon = `<span class="sort-icon"></span>`;
+  if(ui.sortCol === col) icon = `<span class="sort-icon">${ui.sortAsc ? '▲' : '▼'}</span>`;
+  return `<th class="sortable" data-table-sort="${id}" data-sort-col="${col}"${style}>${escapeHtml(label)} ${icon}</th>`;
+}
+
+// Kotak pencarian generik buat ditaruh di atas tabel. `id` DOM-nya dibuat
+// otomatis (`tblFilter-<id>`) dan di-bind lewat bindSearchInputPreservingCursor
+// supaya kursor ketikan tidak lompat-lompat tiap render() penuh dipanggil.
+function tableFilterBoxHtml(id, placeholder){
+  const ui = getTableUI(id);
+  return `<div class="table-filter-box" style="margin-bottom:10px;">
+    <input type="text" class="input" id="tblFilter-${id}" placeholder="${escapeHtml(placeholder || 'Cari...')}" value="${escapeHtml(ui.filter)}" style="max-width:280px;">
+  </div>`;
+}
+
+// Dipanggil sekali per render dari attachContentEvents() untuk semua tabel
+// yang pakai tableFilterBoxHtml() di atas -- cukup daftar ID-nya di
+// GENERIC_TABLE_FILTER_IDS (lihat dekat definisi array itu).
+function bindGenericTableFilter(id){
+  bindSearchInputPreservingCursor(`tblFilter-${id}`, (val) => { getTableUI(id).filter = val; });
+}
+
+// Bind kotak pencarian + klik sort utk satu tabel generik. Selain dipanggil
+// dari attachContentEvents() (lewat GENERIC_TABLE_FILTER_IDS, tiap render()
+// penuh), fungsi ini JUGA dipanggil manual di tempat-tempat yang mengganti
+// innerHTML SEBAGIAN tanpa lewat attachContentEvents (mis. update live-tick
+// P/L Mengambang di renderPortoPositionsTable) -- supaya kotak pencarian &
+// header sort di tabel itu tidak "mati" (kehilangan event listener) begitu
+// elemen lamanya diganti elemen baru oleh innerHTML replace tsb.
+function rebindGenericTable(id){
+  bindGenericTableFilter(id);
+  document.querySelectorAll(`[data-table-sort="${id}"]`).forEach(th => {
+    th.onclick = () => {
+      const col = th.dataset.sortCol;
+      const ui = getTableUI(id);
+      if(ui.sortCol === col){ ui.sortAsc = !ui.sortAsc; }
+      else { ui.sortCol = col; ui.sortAsc = true; }
+      render();
+    };
+  });
+}
+
+// Daftar ID semua tabel yang pakai mekanisme filter+sort generik di atas.
+// Tambahkan ID baru ke sini tiap kali tableFilterBoxHtml(id, ...) dipakai
+// di tabel lain supaya kotak pencarian-nya ikut ke-wire otomatis.
+const GENERIC_TABLE_FILTER_IDS = [
+  "backtestRekap", "backtestScreenerRekap",
+  "portoList", "portoPosisi",
+  "targetBandar", "targetBandarTop",
+  "entryScanner", "krakenFlow",
+];
+
 function getSupaHeaders() {
   return {
     "apikey": SUPABASE_KEY,
@@ -527,7 +636,7 @@ async function stockbitFetchHistorical(ticker, period, opts = {}){
   // terakhir sampai hari ini (cukup luas untuk isi awal chart/backtest).
   const endDate = opts.endDate || todayLocalISO();
   const startDate = opts.startDate || toLocalISODate(new Date(new Date(endDate).setFullYear(new Date(endDate).getFullYear() - 1)));
-  const limit = opts.limit || 300;
+  const limit = opts.limit || STOCKBIT_HISTORICAL_SAFE_LIMIT;
   const page = opts.page || 1;
   const url = state.stockbitHistoricalEndpoint
     .replace("{ticker}", encodeURIComponent(ticker))
@@ -537,6 +646,59 @@ async function stockbitFetchHistorical(ticker, period, opts = {}){
     .replace("{limit}", encodeURIComponent(limit))
     .replace("{page}", encodeURIComponent(page));
   return stockbitRawRequest(url, { "x-platform": "web" });
+}
+
+// ==========================================
+// PAGINASI OTOMATIS untuk rentang tanggal panjang.
+//
+// KENAPA INI PERLU (bug ditemukan 22 Sep 2026): pemanggil lama minta SATU
+// halaman raksasa lewat limit = jumlah hari bursa di rentang (bisa 200-300+
+// untuk rentang setahun) — Stockbit TERBUKTI menolak ini dengan
+// "HTTP 400 — Invalid parameter" untuk SEMUA ticker sekaligus begitu limit
+// terlalu besar. Contoh request yang TERBUKTI jalan dari user (22 Sep 2026):
+// limit=50 dengan rentang ~4.5 bulan, responsnya lengkap dengan
+// `data.paginate.next_page` untuk lanjut ke halaman berikutnya.
+//
+// Jadi solusinya BUKAN menaikkan limit, tapi memakai limit kecil+aman
+// (STOCKBIT_HISTORICAL_SAFE_LIMIT) lalu mengikuti `paginate.next_page`
+// berulang kali sampai (a) sudah tidak ada next_page, (b) baris TERTUA yang
+// didapat sudah menembus startDate (data terurut baru->lama, jadi begitu
+// sudah lewat startDate, halaman selanjutnya pasti di luar rentang yang
+// diminta -- tidak perlu ditarik), atau (c) STOCKBIT_HISTORICAL_MAX_PAGES
+// tercapai (pengaman terhadap loop tak berujung kalau next_page ternyata
+// tidak pernah berhenti).
+//
+// Kalau nanti batas limit ASLI dari Stockbit sudah dikonfirmasi lebih
+// tinggi dari 50 (misal lewat percobaan manual di DevTools), boleh naikkan
+// STOCKBIT_HISTORICAL_SAFE_LIMIT -- tapi mekanisme paginate di bawah ini
+// TETAP dipertahankan supaya rentang panjang manapun tetap aman walau
+// batasnya berubah lagi di masa depan.
+// ==========================================
+const STOCKBIT_HISTORICAL_SAFE_LIMIT = 50; // dikonfirmasi manual bekerja 22 Sep 2026 -- lihat catatan di atas
+const STOCKBIT_HISTORICAL_MAX_PAGES = 40;  // pengaman: 40 x 50 = 2000 baris historical, jauh lebih dari cukup bahkan utk rentang multi-tahun
+
+async function stockbitFetchHistoricalRange(ticker, period, opts = {}){
+  const endDate = opts.endDate || todayLocalISO();
+  const startDate = opts.startDate || toLocalISODate(new Date(new Date(endDate).setFullYear(new Date(endDate).getFullYear() - 1)));
+  const pageLimit = opts.pageLimit || STOCKBIT_HISTORICAL_SAFE_LIMIT;
+  let page = 1;
+  let allRows = [];
+  let firstRaw = null;
+  for(let i = 0; i < STOCKBIT_HISTORICAL_MAX_PAGES; i++){
+    const res = await stockbitFetchHistorical(ticker, period, { startDate, endDate, limit: pageLimit, page });
+    if(res.error) return { error: res.error, raw: firstRaw || res.raw, rows: allRows };
+    if(!firstRaw) firstRaw = res.raw;
+    const parsed = parseStockbitHistorical(res.raw);
+    if(!parsed || !parsed.length) break; // halaman kosong / format tidak dikenali -- data sudah habis atau tidak ada
+    allRows = allRows.concat(parsed);
+    const oldestDateInPage = parsed.reduce((min,r) => (r.date && (!min || r.date < min)) ? r.date : min, null);
+    const nextPage = res.raw?.data?.paginate?.next_page || res.raw?.paginate?.next_page || null;
+    if(!nextPage) break; // Stockbit bilang tidak ada halaman lagi
+    if(oldestDateInPage && oldestDateInPage <= startDate) break; // sudah cukup jauh ke belakang, tidak perlu halaman lagi
+    page = nextPage;
+    await new Promise(r => setTimeout(r, 150)); // jeda kecil antar-halaman, jaga rate limit Stockbit
+  }
+  return { raw: firstRaw, rows: allRows };
 }
 
 // Menerima response mentah dan mencoba menormalkannya jadi daftar baris
@@ -661,6 +823,90 @@ function resolveBulkTickers(){
   if(state.uploadedBulkTickers.length) return [...state.uploadedBulkTickers];
   const checked = [...state.selectedForBacktest];
   return checked.length ? checked : getSorted(getFiltered()).map(s => s.ticker);
+}
+
+// ==========================================
+// SUMBER TICKER untuk tab Watchlist / Portofolio / Backtest — dipakai oleh
+// toolbar "Tarik Data Massal" di masing-masing tab itu (lihat
+// renderBulkPullToolbar() di bawah), supaya bulk-fetch (Live Stockbit,
+// Historical + Update Teknikal) bisa langsung ditarget ke saham yang ADA
+// di tab tsb, tanpa perlu pindah dulu ke tab Screener & centang manual.
+// ==========================================
+function getWatchlistTickers(){
+  return [...state.watchlist];
+}
+function getPortfolioTickers(){
+  return [...new Set(state.portfolio.map(p => p.ticker).filter(Boolean))];
+}
+function getBacktestTickers(){
+  const set = new Set();
+  state.backtests.forEach(b => (b.items||[]).forEach(it => { if(it && it.ticker) set.add(it.ticker); }));
+  return [...set];
+}
+
+// Toolbar generik "Tarik Data Massal" — dipakai di tab Watchlist, Portofolio,
+// dan Backtest. namespace dipakai untuk prefix id elemen DOM (lihat wiring
+// di attachContentEvents, cari "BULK PULL TOOLBAR"), supaya tiap tab punya
+// tombol sendiri tapi manggil fungsi bulk yang SAMA PERSIS dengan yang
+// dipakai toolbar Screener (fetchStockbitLiveBulk, fetchAndSaveHistoricalBulk,
+// updateTechnicalIndicatorsBulk) — cuma daftar tickernya beda sumber.
+function renderBulkPullToolbar(namespace, tickers, contextLabel){
+  if(!tickers.length){
+    return `<div class="bs-msg" style="margin-bottom:14px;font-size:12px;">Belum ada saham di ${escapeHtml(contextLabel)} untuk ditarik datanya.</div>`;
+  }
+  // Default rentang Dari–Sampai kalau belum pernah diisi sama sekali (state
+  // sama dgn "Historical (Daily)" di toolbar Screener) — dipilih ~260 hari
+  // bursa (bukan 10), karena update teknikal (RSI/MACD/dst) butuh minimal
+  // ~30 bar, dan kolom seperti MA200/52w high-low (lihat TI_MIN_BARS_52W)
+  // baru terisi kalau histori yang tersimpan >=252 hari bursa.
+  if(!state.hdAutoBulkFrom || !state.hdAutoBulkTo){
+    const defaultHdDates = tradingDaysBack(260);
+    state.hdAutoBulkFrom = defaultHdDates[0];
+    state.hdAutoBulkTo = defaultHdDates[defaultHdDates.length - 1];
+  }
+  const liveLoading = state.stockbitBulkLoading;
+  const hdLoading = state.stockbitHistoricalBulkLoading;
+  const tiLoading = state.tiBulkLoading;
+  const busy = liveLoading || hdLoading || tiLoading;
+  const from = state.hdAutoBulkFrom || "";
+  const to = state.hdAutoBulkTo || "";
+  let statusLine = "";
+  if(liveLoading) statusLine = `🔴 Menarik Live: ${state.stockbitBulkProgress?.done||0}/${state.stockbitBulkProgress?.total||0}...`;
+  else if(hdLoading) statusLine = `📅 Menarik Historical: ${state.stockbitHistoricalBulkProgress?.done||0}/${state.stockbitHistoricalBulkProgress?.total||0}...`;
+  else if(tiLoading) statusLine = `📊 Menghitung Teknikal: ${state.tiBulkProgress?.done||0}/${state.tiBulkProgress?.total||0}...`;
+  return `
+    <div class="panel" style="margin-bottom:16px;display:flex;flex-wrap:wrap;align-items:center;gap:10px;">
+      <div style="font-size:12px;color:var(--muted);white-space:nowrap;">⬇️ Tarik Data Massal · <b style="color:var(--text);">${tickers.length}</b> saham di ${escapeHtml(contextLabel)}</div>
+      <button type="button" class="btn btn-outline" id="${namespace}LiveBulkBtn" ${busy?"disabled":""}
+        style="color:#f87171;border-color:rgba(239,68,68,0.4);white-space:nowrap;"
+        title="Tarik harga/orderbook live dari Stockbit untuk semua saham di ${escapeHtml(contextLabel)} — butuh Token diisi di Pengaturan">
+        🔴 Tarik Live
+      </button>
+      <input type="date" id="${namespace}HdFromInput" value="${from}" ${busy?"disabled":""}
+        style="padding:9.5px 8px;border-radius:8px;border:1px solid var(--border);background:color-mix(in srgb, currentColor 6%, transparent);color:var(--text);font-size:12px;">
+      <span style="color:var(--muted);font-size:11px;">&ndash;</span>
+      <input type="date" id="${namespace}HdToInput" value="${to}" ${busy?"disabled":""}
+        style="padding:9.5px 8px;border-radius:8px;border:1px solid var(--border);background:color-mix(in srgb, currentColor 6%, transparent);color:var(--text);font-size:12px;">
+      <button type="button" class="btn btn-outline" id="${namespace}HdTiBulkBtn" ${busy?"disabled":""}
+        style="color:#22d3ee;border-color:rgba(34,211,238,0.4);white-space:nowrap;"
+        title="Tarik Historical Data (Daily) untuk rentang tanggal di samping, LALU otomatis hitung ulang & simpan indikator teknikal (RSI/MACD/MA/dst) — ini yang mengisi kolom teknikal yang masih kosong di tabel/ekspor">
+        📅📊 Tarik Historical &amp; Update Teknikal
+      </button>
+      ${statusLine ? `<span style="font-size:11px;color:var(--gold);white-space:nowrap;">${statusLine}</span>` : ""}
+      ${!state.stockbitToken ? `<span style="font-size:11px;color:var(--down);white-space:nowrap;">⚠️ Token Stockbit belum diisi di Pengaturan</span>` : ""}
+    </div>`;
+}
+
+// Handler bersama tombol "📅📊 Tarik Historical & Update Teknikal" — dipakai
+// oleh ketiga tab (Watchlist/Portofolio/Backtest) DAN bisa dipakai ulang di
+// Screener kalau suatu saat mau disatukan. Dibuat terpisah dari
+// fetchAndSaveHistoricalBulk supaya urutannya EKSPLISIT: historical harus
+// selesai tersimpan dulu ke DB sebelum update teknikal dihitung (soalnya
+// updateTechnicalIndicatorsBulk baca bar dari DB, bukan dari hasil fetch
+// historical secara langsung).
+async function fetchHistoricalThenUpdateTechnicalBulk(tickers, rangeFrom, rangeTo){
+  await fetchAndSaveHistoricalBulk(tickers, rangeFrom, rangeTo);
+  await updateTechnicalIndicatorsBulk(tickers);
 }
 
 // Pola balasan Stockbit yang HTTP-nya SUKSES ("message":"Successfully
@@ -1382,61 +1628,94 @@ async function testStockbitHistoricalEndpoint(){
 async function testStockbitBrokerEndpoint(){
   const resultEl = document.getElementById("testStockbitBrokerResult");
   const tickerEl = document.getElementById("testStockbitBrokerTicker");
-  const dateEl = document.getElementById("testStockbitBrokerDate");
+  const fromEl = document.getElementById("testStockbitBrokerFrom");
+  const toEl = document.getElementById("testStockbitBrokerTo");
   const epEl = document.getElementById("setStockbitBrokerEndpoint");
   const tokenEl = document.getElementById("setStockbitToken");
   if(!resultEl || !tickerEl || !epEl) return;
   const ticker = (tickerEl.value||"").trim().toUpperCase();
   if(!ticker){ resultEl.innerHTML = `<div style="font-size:11.5px;color:var(--down);">Isi ticker uji dulu (mis. BBCA).</div>`; return; }
-  const dateStr = (dateEl?.value||"").trim() || todayLocalISO();
+  const fromStr = (fromEl?.value||"").trim() || todayLocalISO();
+  const toStr = (toEl?.value||"").trim() || fromStr;
+
+  // Endpoint ini cuma menerima SATU tanggal per request (lihat
+  // STOCKBIT_BROKER_CHUNK_DAYS=1), jadi periode "Dari–Sampai" di sini
+  // ditembak sebagai beberapa request terpisah (satu per hari bursa),
+  // BUKAN satu request dengan rentang beneran — sama seperti pola yang
+  // dipakai fetchAndSaveBrokerSummaryBulk(), tapi tanpa simpan ke DB.
+  const tradingDates = tradingDaysInRange(fromStr, toStr);
+  if(!tradingDates.length){
+    resultEl.innerHTML = `<div style="font-size:11.5px;color:var(--down);">Periode tanggal tidak valid atau tidak ada hari bursa di rentang itu — cek lagi "Dari" harus &le; "Sampai", dan bukan cuma Sabtu/Minggu/libur bursa.</div>`;
+    return;
+  }
 
   const prevEndpoint = state.stockbitBrokerEndpoint;
   const prevToken = state.stockbitToken;
   state.stockbitBrokerEndpoint = (epEl.value||"").trim() || STOCKBIT_DEFAULT_BROKER_EP;
   if(tokenEl && tokenEl.value.trim()) state.stockbitToken = tokenEl.value.trim();
-  // Simpan URL yang BENAR-BENAR ditembak (sesudah {ticker}/{date} diisi)
-  // supaya kalau gagal, bisa dicek persis apa yang salah dari URL-nya
-  // sendiri (placeholder ke-skip, salah taruh parameter, dll) — bukan cuma
-  // pesan error generik dari Stockbit.
-  const resolvedUrl = state.stockbitBrokerEndpoint
-    .replaceAll("{ticker}", encodeURIComponent(ticker))
-    .replaceAll("{date}", dateStr);
-  resultEl.innerHTML = `<div style="font-size:11.5px;color:var(--muted);">Menguji ${escapeHtml(ticker)} tanggal ${escapeHtml(dateStr)}...</div>`;
-  const res = await stockbitFetchMarketDetector(ticker, dateStr, dateStr, 1);
+
+  const perDate = []; // { date, ok, error?, raw, buy, sell, total, withLot, withType, sampleLot, sampleType }
+  for(let i = 0; i < tradingDates.length; i++){
+    const dateStr = tradingDates[i];
+    resultEl.innerHTML = `<div style="font-size:11.5px;color:var(--muted);">Menguji ${escapeHtml(ticker)}... ${i+1}/${tradingDates.length} (${escapeHtml(dateStr)})</div>`;
+    const res = await stockbitFetchMarketDetector(ticker, dateStr, dateStr, 1);
+    if(res.error){
+      perDate.push({ date: dateStr, ok:false, error: res.error, raw: res.raw ?? null });
+    } else {
+      const byDate = parseStockbitMarketDetector(res.raw, dateStr);
+      const dayRows = byDate ? byDate[dateStr] : null;
+      const buy = dayRows?.buy || [];
+      const sell = dayRows?.sell || [];
+      const allRows = [...buy, ...sell];
+      const withLot = allRows.filter(r => r.lot != null && r.lot > 0);
+      const withType = allRows.filter(r => r.investor_type);
+      perDate.push({ date: dateStr, ok: allRows.length>0, buy: buy.length, sell: sell.length, total: allRows.length, withLot: withLot.length, withType: withType.length, sampleLot: withLot[0]||null, sampleType: withType[0]||null, raw: res.raw });
+    }
+    if(tradingDates.length > 1) await new Promise(r => setTimeout(r, 300)); // jaga rate limit antar-tanggal, sama seperti bulk pull
+  }
   state.stockbitBrokerEndpoint = prevEndpoint;
   state.stockbitToken = prevToken;
 
-  if(res.error){
-    const rawPreview = res.raw != null ? (typeof res.raw === "string" ? res.raw : JSON.stringify(res.raw, null, 2)) : null;
-    resultEl.innerHTML = `
-      <div style="font-size:11.5px;color:var(--down);margin-bottom:6px;">⚠️ ${escapeHtml(res.error)}</div>
-      <div style="font-size:10.5px;color:var(--muted);margin-bottom:6px;word-break:break-all;">URL yang ditembak: ${escapeHtml(resolvedUrl)}</div>
-      ${rawPreview ? `<details open><summary style="cursor:pointer;font-size:11px;color:var(--teal);">Lihat respons error mentah</summary>
-        <pre style="font-size:10.5px;background:color-mix(in srgb, currentColor 9%, transparent);padding:8px;border-radius:6px;overflow-x:auto;max-height:200px;">${escapeHtml(rawPreview)}</pre>
-      </details>` : ""}`;
-    return;
-  }
-  const byDate = parseStockbitMarketDetector(res.raw, dateStr);
-  const dayRows = byDate ? byDate[dateStr] : null;
-  const buy = dayRows?.buy || [];
-  const sell = dayRows?.sell || [];
-  const allRows = [...buy, ...sell];
-  const withLot = allRows.filter(r => r.lot != null && r.lot > 0);
-  const withType = allRows.filter(r => r.investor_type);
+  const periodLabel = fromStr === toStr ? escapeHtml(fromStr) : `${escapeHtml(fromStr)}..${escapeHtml(toStr)}`;
+  const totalRows = perDate.reduce((s,d)=>s+(d.total||0),0);
+  const totalWithLot = perDate.reduce((s,d)=>s+(d.withLot||0),0);
+  const totalWithType = perDate.reduce((s,d)=>s+(d.withType||0),0);
+  const daysWithData = perDate.filter(d=>d.total).length;
+  const sampleLotEntry = perDate.find(d=>d.sampleLot)?.sampleLot;
+  const sampleTypeEntry = perDate.find(d=>d.sampleType)?.sampleType;
 
   let verdict;
-  if(!allRows.length){
-    verdict = `<span style="color:var(--down);">❌ Tidak ada baris Top Buy/Sell yang terbaca sama sekali untuk ${escapeHtml(dateStr)} — coba tanggal hari bursa lain (bukan Sabtu/Minggu/libur), atau kemungkinan skema respons berubah lagi. Cek JSON mentah di bawah.</span>`;
-  } else if(withLot.length){
-    verdict = `<span style="color:var(--up);">✅ Terbaca ${buy.length} broker Top Buy, ${sell.length} Top Sell — ${withLot.length}/${allRows.length} baris PUNYA Lot terisi (contoh: ${escapeHtml(withLot[0].broker_code)} = ${withLot[0].lot} lot), dan ${withType.length}/${allRows.length} baris PUNYA Tipe Investor terisi${withType.length ? ` (contoh: ${escapeHtml(withType[0].broker_code)} = ${escapeHtml(withType[0].investor_type)})` : ""}. Kalau salah satu dari dua ini masih 0/${allRows.length}, kemungkinan skema respons endpoint yang sedang dites ini memang tidak menyertakan field itu — cek JSON mentah di bawah untuk pastikan nama field aslinya.</span>`;
+  if(!totalRows){
+    verdict = `<span style="color:var(--down);">❌ Tidak ada baris Top Buy/Sell yang terbaca sama sekali untuk ${escapeHtml(ticker)} di ${tradingDates.length} hari bursa (${periodLabel}) — coba periode/hari bursa lain (bukan Sabtu/Minggu/libur), atau kemungkinan skema respons berubah lagi. Cek rincian &amp; JSON mentah per-tanggal di bawah.</span>`;
+  } else if(totalWithLot){
+    verdict = `<span style="color:var(--up);">✅ Terbaca ${totalRows} baris di ${daysWithData}/${tradingDates.length} hari — ${totalWithLot}/${totalRows} baris PUNYA Lot terisi${sampleLotEntry ? ` (contoh: ${escapeHtml(sampleLotEntry.broker_code)} = ${sampleLotEntry.lot} lot)` : ""}, dan ${totalWithType}/${totalRows} baris PUNYA Tipe Investor terisi${sampleTypeEntry ? ` (contoh: ${escapeHtml(sampleTypeEntry.broker_code)} = ${escapeHtml(sampleTypeEntry.investor_type)})` : ""}. Kalau salah satu dari dua ini masih 0, kemungkinan skema respons endpoint yang sedang dites ini memang tidak menyertakan field itu — cek JSON mentah di bawah untuk pastikan nama field aslinya.</span>`;
   } else {
-    verdict = `<span style="color:var(--gold);">⚠️ Terbaca ${buy.length} broker Top Buy, ${sell.length} Top Sell, TAPI semua baris Lot-nya kosong/null (cuma value_idr yang terisi, tipe investor: ${withType.length}/${allRows.length} terisi). Untuk endpoint /order-trade/broker/distribution ini biasanya berarti cabang by_volume memang tidak dikirim Stockbit untuk data_type yang sedang dites — coba timpa data_type di kotak endpoint jadi BROKER_DISTRIBUTION_DATA_TYPE_VOLUME lalu tes ulang. Untuk endpoint /marketdetectors, cek JSON mentah untuk nama field lot yang sebenarnya (mis. blot/slot).</span>`;
+    verdict = `<span style="color:var(--gold);">⚠️ Terbaca ${totalRows} baris di ${daysWithData}/${tradingDates.length} hari, TAPI semua baris Lot-nya kosong/null (cuma value_idr yang terisi, tipe investor: ${totalWithType}/${totalRows} terisi). Untuk endpoint /order-trade/broker/distribution ini biasanya berarti cabang by_volume memang tidak dikirim Stockbit untuk data_type yang sedang dites — coba timpa data_type di kotak endpoint jadi BROKER_DISTRIBUTION_DATA_TYPE_VOLUME lalu tes ulang. Untuk endpoint /marketdetectors, cek JSON mentah untuk nama field lot yang sebenarnya (mis. blot/slot).</span>`;
   }
+
+  const perDateListHtml = perDate.map(d => {
+    if(d.error) return `<div style="padding:3px 0;border-bottom:1px solid var(--border);color:var(--down);">❌ ${escapeHtml(d.date)} — ${escapeHtml(d.error)}</div>`;
+    if(!d.total) return `<div style="padding:3px 0;border-bottom:1px solid var(--border);color:var(--down);">❌ ${escapeHtml(d.date)} — tidak ada baris.</div>`;
+    return `<div style="padding:3px 0;border-bottom:1px solid var(--border);color:${d.withLot ? 'var(--up)' : 'var(--gold)'};">${d.withLot ? '✅' : '⚠️'} ${escapeHtml(d.date)} — ${d.buy} Buy, ${d.sell} Sell, Lot ${d.withLot}/${d.total}, Tipe ${d.withType}/${d.total}</div>`;
+  }).join("");
+
+  const rawJsonHtml = tradingDates.length > 1
+    ? perDate.map(d => `
+        <details style="margin-top:4px;">
+          <summary style="cursor:pointer;font-size:10.5px;color:var(--teal);">${escapeHtml(d.date)} — JSON mentah</summary>
+          <pre style="font-size:10.5px;background:color-mix(in srgb, currentColor 9%, transparent);padding:8px;border-radius:6px;overflow-x:auto;max-height:200px;">${escapeHtml(JSON.stringify(d.raw ?? {}, null, 2))}</pre>
+        </details>`).join("")
+    : `<pre style="font-size:10.5px;background:color-mix(in srgb, currentColor 9%, transparent);padding:8px;border-radius:6px;overflow-x:auto;max-height:200px;">${escapeHtml(JSON.stringify(perDate[0]?.raw ?? {}, null, 2))}</pre>`;
 
   resultEl.innerHTML = `
     <div style="font-size:11.5px;margin-bottom:6px;">${verdict}</div>
-    <details><summary style="cursor:pointer;font-size:11px;color:var(--teal);">Lihat JSON mentah</summary>
-      <pre style="font-size:10.5px;background:color-mix(in srgb, currentColor 9%, transparent);padding:8px;border-radius:6px;overflow-x:auto;max-height:200px;">${escapeHtml(JSON.stringify(res.raw, null, 2))}</pre>
+    ${tradingDates.length > 1 ? `
+    <details open style="margin-bottom:6px;">
+      <summary style="cursor:pointer;font-size:11px;color:var(--teal);">Rincian per-tanggal (${tradingDates.length} hari)</summary>
+      <div class="mono" style="margin-top:6px;font-size:11px;max-height:180px;overflow-y:auto;">${perDateListHtml}</div>
+    </details>` : ""}
+    <details><summary style="cursor:pointer;font-size:11px;color:var(--teal);">Lihat JSON mentah${tradingDates.length>1 ? " (per tanggal)" : ""}</summary>
+      ${rawJsonHtml}
     </details>`;
 }
 
@@ -1466,6 +1745,10 @@ async function openSettings() {
   if(geminiKeyEl) geminiKeyEl.value = state.geminiApiKey || "";
   const geminiModelEl = document.getElementById("setGeminiModel");
   if(geminiModelEl) geminiModelEl.value = state.geminiModel || GEMINI_DEFAULT_MODEL;
+  const feeBeliDefEl = document.getElementById("setFeeBeliDefault");
+  if(feeBeliDefEl) feeBeliDefEl.value = state.feeBeliDefaultPct ?? FEE_BELI_DEFAULT_PCT;
+  const feeJualDefEl = document.getElementById("setFeeJualDefault");
+  if(feeJualDefEl) feeJualDefEl.value = state.feeJualDefaultPct ?? FEE_JUAL_DEFAULT_PCT;
   document.getElementById("settingsModalOverlay").classList.add("open");
   updateStockbitTokenStatusUI();
   updateStockbitLastSuccessStatusUI();
@@ -1563,6 +1846,13 @@ function saveSettings() {
   state.geminiModel = (document.getElementById("setGeminiModel")?.value || "").trim() || GEMINI_DEFAULT_MODEL;
   localStorage.setItem(LS_GEMINI_API_KEY, state.geminiApiKey);
   localStorage.setItem(LS_GEMINI_MODEL, state.geminiModel);
+
+  const feeBeliDefRaw = parseFloat(document.getElementById("setFeeBeliDefault")?.value);
+  state.feeBeliDefaultPct = Number.isFinite(feeBeliDefRaw) && feeBeliDefRaw >= 0 ? feeBeliDefRaw : FEE_BELI_DEFAULT_PCT;
+  const feeJualDefRaw = parseFloat(document.getElementById("setFeeJualDefault")?.value);
+  state.feeJualDefaultPct = Number.isFinite(feeJualDefRaw) && feeJualDefRaw >= 0 ? feeJualDefRaw : FEE_JUAL_DEFAULT_PCT;
+  localStorage.setItem(LS_FEE_BELI_DEFAULT, String(state.feeBeliDefaultPct));
+  localStorage.setItem(LS_FEE_JUAL_DEFAULT, String(state.feeJualDefaultPct));
 
   state.telegramFunctionUrl = (document.getElementById("setTelegramFunctionUrl")?.value || "").trim();
   localStorage.setItem(LS_TELEGRAM_FUNCTION_URL, state.telegramFunctionUrl);
@@ -1829,6 +2119,19 @@ async function testTelegramNotification(){
 // APLIKASI UTAMA
 // ==========================================
 const LS_WATCHLIST = "ihsg_watchlist", LS_BACKTEST = "ihsg_backtest", LS_PORTO = "ihsg_portofolio", LS_STOCK_CACHE = "ihsg_stock_cache";
+// Jenis Portofolio -- 3 porto Stockbit terpisah (Investasi/Scalping/Swing) yg
+// datanya diupload/dicatat jadi satu tabel di sini, dibedakan pakai field
+// jenisPorto per transaksi supaya bisa difilter & dihitung total per jenis
+// tanpa tercampur (mis. saham yg sama dipegang di 2 porto berbeda).
+const PORTO_JENIS_LIST = ["Investasi", "Scalping", "Swing"];
+const PORTO_JENIS_DEFAULT = "Investasi";
+function portoJenisTone(jenis){
+  return jenis === "Scalping" ? "down" : jenis === "Swing" ? "gold" : "up"; // Investasi=hijau, Swing=kuning, Scalping=merah (biar kebedaan cepat sekilas)
+}
+function portoJenisBadge(jenis){
+  const j = jenis || PORTO_JENIS_DEFAULT;
+  return `<span class="badge" style="border:1px solid var(--${portoJenisTone(j)});color:var(--${portoJenisTone(j)});font-size:10.5px;padding:2px 7px;border-radius:20px;white-space:nowrap;">${escapeHtml(j)}</span>`;
+}
 const LS_FREQ_ANALYZER_COL = "ihsg_freq_analyzer_col";
 const LS_CUSTOM_RULES = "ihsg_custom_rules_v1";
 const LS_STOCKBIT_TOKEN = "ihsg_stockbit_token", LS_STOCKBIT_QUOTE_EP = "ihsg_stockbit_quote_ep",
@@ -1865,6 +2168,16 @@ const LS_TELEGRAM_FUNCTION_URL = "ihsg_telegram_function_url";
 // rilis Flash stabil terbaru — supaya tidak perlu diupdate manual tiap kali
 // Google merilis versi baru (lihat https://ai.google.dev/gemini-api/docs/models).
 const LS_GEMINI_API_KEY = "ihsg_gemini_api_key", LS_GEMINI_MODEL = "ihsg_gemini_model";
+// Fee Beli/Jual DEFAULT (%) — dipakai sbg nilai awal field Fee di form
+// Tambah Transaksi Portofolio (baru/import), DAN sbg basis estimasi fee jual
+// di perhitungan P/L Mengambang (computePortoPositions) supaya P/L Mengambang
+// & P/L Realisasi sama-sama net-fee (apple-to-apple), bukan cuma yang
+// realisasi. Diedit lewat panel "⚙️ Pengaturan" > Fee Default, tersimpan ke
+// localStorage. Angka 0.15/0.25 dipertahankan sbg default out-of-the-box
+// (sama seperti sebelumnya) supaya user lama tidak tiba-tiba berubah tanpa
+// pernah menyentuh setting ini.
+const LS_FEE_BELI_DEFAULT = "ihsg_fee_beli_default_pct", LS_FEE_JUAL_DEFAULT = "ihsg_fee_jual_default_pct";
+const FEE_BELI_DEFAULT_PCT = 0.15, FEE_JUAL_DEFAULT_PCT = 0.25;
 const GEMINI_DEFAULT_MODEL = "gemini-flash-latest";
 const STOCKBIT_DEFAULT_QUOTE_EP = "https://exodus.stockbit.com/stream/v3/symbol/{ticker}";
 // NOTE (25 Agu 2026): endpoint di atas TERBUKTI SALAH — itu API "Stream"
@@ -2045,6 +2358,8 @@ let state = {
 
   portfolio: [], portoEditId: null, portoModalOpen: false, portoPrefill: null, selectedPorto: new Set(),
   portoImporting: false, portoImportMsg: "", portoImportMsgError: false,
+  portoView: "list", // "list" = tabel transaksi apa adanya, "posisi" = agregat per ticker (avg harga tertimbang)
+  portoFilterJenis: "Semua", // filter tab Portofolio: "Semua" / "Investasi" / "Scalping" / "Swing" -- 3 porto Stockbit terpisah yg diupload jadi satu tabel
   tab: "screener", search: "", activePreset: null,
   visibleCols: new Set(), // diisi loadSettings() dari localStorage atau DEFAULT_VISIBLE_COLS
   colPickerOpen: false,
@@ -2546,6 +2861,12 @@ function loadSettings(){
     state.geminiApiKey = localStorage.getItem(LS_GEMINI_API_KEY) || "";
     state.geminiModel = localStorage.getItem(LS_GEMINI_MODEL) || GEMINI_DEFAULT_MODEL;
   }catch(e){}
+  try{
+    const savedFeeBeli = parseFloat(localStorage.getItem(LS_FEE_BELI_DEFAULT));
+    state.feeBeliDefaultPct = Number.isFinite(savedFeeBeli) && savedFeeBeli >= 0 ? savedFeeBeli : FEE_BELI_DEFAULT_PCT;
+    const savedFeeJual = parseFloat(localStorage.getItem(LS_FEE_JUAL_DEFAULT));
+    state.feeJualDefaultPct = Number.isFinite(savedFeeJual) && savedFeeJual >= 0 ? savedFeeJual : FEE_JUAL_DEFAULT_PCT;
+  }catch(e){ state.feeBeliDefaultPct = FEE_BELI_DEFAULT_PCT; state.feeJualDefaultPct = FEE_JUAL_DEFAULT_PCT; }
   loadLiveAlertSettings(); // function declaration di-hoist, aman dipanggil di sini walau definisinya jauh di bawah (dekat handleLiveTick)
 }
 function saveVisibleCols(){ localStorage.setItem(LS_VISIBLE_COLS, JSON.stringify([...state.visibleCols])); }
@@ -2564,6 +2885,7 @@ function saveBacktests(){ localStorage.setItem(LS_BACKTEST, JSON.stringify(state
 function savePortoLocal(){ localStorage.setItem(LS_PORTO, JSON.stringify(state.portfolio)); }
 
 function bandarmologi(row, ratio){
+  if(ratio===null || ratio===undefined || isNaN(ratio)) return {label:"-", tone:"muted"};
   const naik = row.cClose>row.cOpen;
   if(ratio>=1.5 && naik) return {label:"Indikasi Akumulasi", tone:"up"};
   if(ratio>=1.5 && !naik) return {label:"Indikasi Distribusi", tone:"down"};
@@ -2572,6 +2894,7 @@ function bandarmologi(row, ratio){
   return {label:"Netral", tone:"muted"};
 }
 function volumeSignal(row, ratio){
+  if(ratio===null || ratio===undefined || isNaN(ratio)) return { ratio:null, label:"-", tone:"muted" };
   let label, tone;
   if(ratio>=2)      { label="Sangat Tinggi"; tone="up"; }
   else if(ratio>=1.5){ label="Tinggi"; tone="up"; }
@@ -3295,7 +3618,7 @@ async function loadLive(){
       ytdPct: numOrNull(r.ytd_pct ?? r.ytd_change_pct ?? r.ytd),
       indexLq45: r.lq45 ?? r.is_lq45 ?? r.idx_lq45 ?? r.index_lq45 ?? null,
       ema21H: r.ema21h, ema21L: r.ema21l, ma21: r.ma21, ma50: r.ma50, ma100: r.ma100, ma200: r.ma200,
-      rsi7: r.rsi7, rsi21: r.rsi21, hist: r.macd_hist, histPrev: 0,
+      rsi7: r.rsi7, rsi21: r.rsi21, hist: r.macd_hist,
       fib: r.fibonacci, 
       swingHigh: numOrNull(r.swing_high), swingLow: numOrNull(r.swing_low),
       cekHarga: r.cek_harga, cekRsi: r.cek_rsi, statusRsi: r.status_rsi, cekMacd: r.cek_macd, cekVolume: r.cek_volume,
@@ -3370,7 +3693,7 @@ async function loadLive(){
 
     if (Array.isArray(portoRes)) {
        state.portfolio = portoRes.map(p => ({
-         id: p.id, ticker: p.ticker, status: p.status,
+         id: p.id, ticker: p.ticker, jenisPorto: p.jenis_porto || PORTO_JENIS_DEFAULT, status: p.status,
          tglBeli: p.tgl_beli, hargaBeli: p.harga_beli, lotBeli: p.lot_beli, feeBeliPct: p.fee_beli_pct, totalBeli: p.total_beli,
          support: p.support, resistance: p.resistance, fib618: p.fib618, targetTP: p.target_tp, cutLoss: p.cut_loss,
          tglJual: p.tgl_jual, hargaJual: p.harga_jual, lotJual: p.lot_jual, feeJualPct: p.fee_jual_pct, netJual: p.net_jual,
@@ -5126,22 +5449,29 @@ async function loadDetailHistorical(period){
   if(period) state.detailHistoricalPeriod = period;
   if(!ticker) return;
   state.detailHistoricalLoading = true; state.detailHistoricalMsg = ""; render();
-  const res = await stockbitFetchHistorical(ticker, state.detailHistoricalPeriod);
-  if(res.error){
+  // Pakai versi paginasi otomatis (stockbitFetchHistoricalRange), BUKAN
+  // stockbitFetchHistorical satu-halaman langsung -- limit defaultnya cuma
+  // 50/halaman (lihat catatan di stockbitFetchHistoricalRange), jadi kalau
+  // manggil versi satu-halaman di sini, rentang default setahun bakal diam2
+  // kepotong jadi cuma 50 baris terbaru tanpa pemberitahuan ke user.
+  const res = await stockbitFetchHistoricalRange(ticker, state.detailHistoricalPeriod);
+  if(res.error && (!res.rows || !res.rows.length)){
     state.detailHistoricalMsg = res.error;
     state.detailHistoricalMsgError = true;
     state.detailHistoricalRows = [];
   } else {
-    const parsed = parseStockbitHistorical(res.raw);
-    if(!parsed){
-      state.detailHistoricalMsg = "Response diterima tapi formatnya tidak dikenali. Cek console (F12) untuk lihat JSON mentahnya, lalu sesuaikan parseStockbitHistorical() di app.js.";
+    const parsed = res.rows;
+    if(!parsed || !parsed.length){
+      state.detailHistoricalMsg = "Response diterima tapi formatnya tidak dikenali atau kosong. Cek console (F12) untuk lihat JSON mentahnya, lalu sesuaikan parseStockbitHistorical() di app.js.";
       state.detailHistoricalMsgError = true;
       state.detailHistoricalRows = [];
       console.log("Stockbit historical raw response:", res.raw);
     } else {
       state.detailHistoricalRows = parsed;
-      state.detailHistoricalMsg = `Berhasil menarik ${parsed.length} baris (${state.detailHistoricalPeriod}) langsung dari Stockbit. Klik "💾 Simpan ke Database" supaya tersimpan permanen dan muncul lagi lewat "🔄 Muat dari Database".`;
-      state.detailHistoricalMsgError = false;
+      state.detailHistoricalMsg = res.error
+        ? `Menarik ${parsed.length} baris (${state.detailHistoricalPeriod}) -- SEBAGIAN halaman gagal di tengah jalan (${res.error}), jadi datanya mungkin belum lengkap sampai tanggal paling lama. Klik "💾 Simpan ke Database" untuk simpan yang berhasil didapat, atau coba tarik ulang.`
+        : `Berhasil menarik ${parsed.length} baris (${state.detailHistoricalPeriod}) langsung dari Stockbit. Klik "💾 Simpan ke Database" supaya tersimpan permanen dan muncul lagi lewat "🔄 Muat dari Database".`;
+      state.detailHistoricalMsgError = !!res.error;
     }
   }
   state.detailHistoricalLoading = false;
@@ -5291,16 +5621,22 @@ async function fetchAndSaveHistoricalBulk(tickers, rangeFrom, rangeTo){
       continue;
     }
 
-    const res = await stockbitFetchHistorical(ticker, "daily", { startDate: fromDate, endDate: toDate, limit: Math.max(tradingDates.length + 5, 30), page: 1 });
-    if(res.error){
+    // Dulu di sini manggil stockbitFetchHistorical() langsung dengan
+    // limit = jumlah hari bursa di rentang (bisa 300+ utk rentang setahun) —
+    // itu penyebab "HTTP 400 — Invalid parameter" massal (lihat catatan di
+    // stockbitFetchHistoricalRange). Sekarang pakai versi paginasi otomatis
+    // yang selalu request dengan limit aman (50) lalu ikuti next_page.
+    const res = await stockbitFetchHistoricalRange(ticker, "daily", { startDate: fromDate, endDate: toDate });
+    if(res.error && (!res.rows || !res.rows.length)){
       state.stockbitHistoricalBulkResults.push({ ticker, date: `${fromDate}..${toDate}`, ok:false, msg: res.error });
       console.log(`Stockbit historical ERROR (${ticker}):`, res.error, "raw:", res.raw);
     } else {
-      const parsed = parseStockbitHistorical(res.raw);
-      if(!parsed){
-        state.stockbitHistoricalBulkResults.push({ ticker, date: `${fromDate}..${toDate}`, ok:false, msg: "Response diterima tapi formatnya tidak dikenali (cek console)." });
+      const parsed = res.rows;
+      if(!parsed || !parsed.length){
+        state.stockbitHistoricalBulkResults.push({ ticker, date: `${fromDate}..${toDate}`, ok:false, msg: "Response diterima tapi formatnya tidak dikenali atau kosong (cek console)." });
         console.log(`Stockbit historical raw response (${ticker}):`, res.raw);
       } else {
+        if(res.error) console.log(`Stockbit historical PARTIAL (${ticker}) — ada halaman yang gagal tapi sebagian data (${parsed.length} baris) berhasil didapat:`, res.error);
         const inRange = parsed.filter(r => r.date >= fromDate && r.date <= toDate);
         if(!inRange.length){
           state.stockbitHistoricalBulkResults.push({ ticker, date: `${fromDate}..${toDate}`, ok:false, msg: `Endpoint mengembalikan ${parsed.length} baris tapi tidak ada yang jatuh di rentang ${fromDate}..${toDate} — kemungkinan start_date/end_date/limit di endpoint belum sesuai skema aslinya (cek raw JSON di console).` });
@@ -5767,6 +6103,14 @@ function ti_buildStockRowFromBars(ticker, bars, listedShares) {
 
   const atr14 = ti_round2(ti_calcATR(highsFilled, lowsFilled, closes, 14));
   const ma21 = ti_calcSMA(closes, 21), ma50 = ti_calcSMA(closes, 50), ma100 = ti_calcSMA(closes, 100), ma200 = ti_calcSMA(closes, 200);
+  // "Jarak ke MA50 (%)" & "Jarak ke MA200 (%)" — dipakai di Rule Builder
+  // (RULE_METRICS: vsMa50Pct/vsMa200Pct) & panel Detail Emiten ("vs MA50%"/
+  // "vs MA200%"), tapi sebelumnya TIDAK PERNAH dihitung di mana pun (cuma
+  // dibaca dari kolom DB yang tidak pernah ditulis) -- akibatnya selalu
+  // null/"-" di seluruh aplikasi. Ditambahkan di sini (positif = harga di
+  // atas MA, negatif = di bawah MA).
+  const vsMa50Pct = (cClose != null && ma50 != null && ma50 !== 0) ? ti_round2(((cClose - ma50) / ma50) * 100) : null;
+  const vsMa200Pct = (cClose != null && ma200 != null && ma200 !== 0) ? ti_round2(((cClose - ma200) / ma200) * 100) : null;
   const trendHarga = ti_tentukanTrendHarga(cClose, ma21, ma50, ma100, ma200);
 
   const yOpen = opens[n - 2], yHigh = highs[n - 2], yLow = lows[n - 2], yClose = closes[n - 2];
@@ -5789,15 +6133,18 @@ function ti_buildStockRowFromBars(ticker, bars, listedShares) {
   const window52wL = has52w ? lowsFilled.slice(-252) : null;
   const high52w = has52w ? ti_round2(Math.max(...window52wH)) : null;
   const low52w = has52w ? ti_round2(Math.min(...window52wL)) : null;
-  const closeAYearAgo = n > 252 ? closes[n - 252] : null;
+  const closeAYearAgo = n > 253 ? closes[n - 253] : null;
   const week52ChangePct = closeAYearAgo ? ti_round2(((cClose - closeAYearAgo) / closeAYearAgo) * 100) : null;
   // "1 Week Price Returns (%)" & "1 Month Price Returns (%)" — sama pola dengan
   // week52ChangePct di atas, tapi mundur 5 bar (~1 minggu bursa) dan 20 bar
   // (~1 bulan bursa) dari harga penutupan terakhir. Dipakai di RULE_METRICS
   // (rule builder) seperti contoh Stockbit "1 Month Price Returns ≤ -10".
-  const close1WAgo = n > 5 ? closes[n - 5] : null;
+  // Index dipakai n-1-K (bukan n-K): cClose ada di closes[n-1], jadi "K bar
+  // lalu" yang benar adalah closes[n-1-K]. n-K salah 1 bar (window jadi K-1
+  // hari, bukan K hari) -- REVISI setelah audit off-by-one.
+  const close1WAgo = n > 6 ? closes[n - 6] : null;
   const weekChangePct = close1WAgo ? ti_round2(((cClose - close1WAgo) / close1WAgo) * 100) : null;
-  const close1MAgo = n > 20 ? closes[n - 20] : null;
+  const close1MAgo = n > 21 ? closes[n - 21] : null;
   const monthChangePct = close1MAgo ? ti_round2(((cClose - close1MAgo) / close1MAgo) * 100) : null;
 
   const window20H = highsFilled.slice(-20), window20L = lowsFilled.slice(-20);
@@ -5910,6 +6257,7 @@ function ti_buildStockRowFromBars(ticker, bars, listedShares) {
     cek_volume: cekVolume, keyakinan_naik: keyakinanNaik,
     vwap20: ti_round2(vwap20), turnover, value_traded: bars[n - 1].value ?? null,
     ma21: ti_round2(ma21), ma50: ti_round2(ma50), ma100: ti_round2(ma100), ma200: ti_round2(ma200),
+    vs_ma50_pct: vsMa50Pct, vs_ma200_pct: vsMa200Pct,
     trend_harga: trendHarga,
     candle_kemarin: candleKemarin, candle_hari_ini: candleHariIni, pola_candle: polaCandle,
     clv, uang_gede_masuk: uangGedeMasuk, bb_width: currentBBWidth, is_bb_squeeze: isBBSqueeze, atr14,
@@ -7036,7 +7384,7 @@ function exportBacktestScreenerRekapToExcel(){
 
 async function syncPortoToServer_(record) {
   const payload = {
-    id: record.id, ticker: record.ticker, status: record.status,
+    id: record.id, ticker: record.ticker, jenis_porto: record.jenisPorto || PORTO_JENIS_DEFAULT, status: record.status,
     tgl_beli: record.tglBeli || null, harga_beli: record.hargaBeli || 0,
     lot_beli: record.lotBeli || 0, fee_beli_pct: record.feeBeliPct || 0, total_beli: record.totalBeli || 0,
     support: record.support || null, resistance: record.resistance || null,
@@ -7068,11 +7416,11 @@ async function submitPortoForm(){
   const c = hitungPorto(v);
   const record = {
     id: state.portoEditId || String(Date.now()),
-    ticker: v.ticker, tglBeli: v.tglBeli, hargaBeli: v.hargaBeli, lotBeli: v.lotBeli,
-    feeBeliPct: isNaN(v.feeBeliPct) ? 0.15 : v.feeBeliPct, totalBeli: c.totalBeli,
+    ticker: v.ticker, jenisPorto: v.jenisPorto || PORTO_JENIS_DEFAULT, tglBeli: v.tglBeli, hargaBeli: v.hargaBeli, lotBeli: v.lotBeli,
+    feeBeliPct: isNaN(v.feeBeliPct) ? (state.feeBeliDefaultPct ?? FEE_BELI_DEFAULT_PCT) : v.feeBeliPct, totalBeli: c.totalBeli,
     support: v.support, resistance: v.resistance, fib618: v.fib618, targetTP: v.targetTP, cutLoss: v.cutLoss,
     tglJual: v.tglJual, hargaJual: v.hargaJual, lotJual: v.lotJual,
-    feeJualPct: isNaN(v.feeJualPct) ? 0.25 : v.feeJualPct, netJual: c.netJual,
+    feeJualPct: isNaN(v.feeJualPct) ? (state.feeJualDefaultPct ?? FEE_JUAL_DEFAULT_PCT) : v.feeJualPct, netJual: c.netJual,
     jangkaWaktu: c.jangkaWaktu, persenPL: c.persenPL, nilaiPL: c.nilaiPL, status: c.status,
     catatan: v.catatan
   };
@@ -7133,7 +7481,7 @@ async function bulkDeletePorto(){
 function exportPortfolioToExcel(){
   if(!state.portfolio.length) return alert("Belum ada transaksi portofolio untuk diekspor.");
   const data = state.portfolio.map(p => ({
-    "ID": p.id, "Ticker": p.ticker,
+    "ID": p.id, "Ticker": p.ticker, "Jenis Portofolio": p.jenisPorto || PORTO_JENIS_DEFAULT,
     "Tgl Beli": p.tglBeli || "", "Harga Beli": p.hargaBeli || 0, "Lot Beli": p.lotBeli || 0, "Fee Beli %": p.feeBeliPct ?? "",
     "Tgl Jual": p.tglJual || "", "Harga Jual": p.hargaJual || "", "Lot Jual": p.lotJual || "", "Fee Jual %": p.feeJualPct ?? "",
     "Support": p.support || "", "Resistance": p.resistance || "", "Fib618": p.fib618 || "", "Target TP": p.targetTP || "", "Cut Loss": p.cutLoss || "",
@@ -7166,7 +7514,7 @@ function portoImportTemplateHeaders(){
   // yang tidak dijamin konsisten) -- ID sengaja TIDAK disertakan di template
   // kosong (cuma relevan kalau mau UPDATE baris yang sudah ada, bukan buat
   // input transaksi baru, lihat catatan di sheet "Petunjuk").
-  const order = ["ticker","tglBeli","hargaBeli","lotBeli","feeBeliPct","tglJual","hargaJual","lotJual","feeJualPct","support","resistance","fib618","targetTP","cutLoss","catatan"];
+  const order = ["ticker","jenisPorto","tglBeli","hargaBeli","lotBeli","feeBeliPct","tglJual","hargaJual","lotJual","feeJualPct","support","resistance","fib618","targetTP","cutLoss","catatan"];
   // Judul kolom manusiawi = alias pertama tiap key, huruf awal tiap kata dikapitalkan.
   const titleCase = (s) => s.replace(/(^|\s)\S/g, c => c.toUpperCase());
   return order.map(key => titleCase(PORTO_IMPORT_COLUMNS[key][0]));
@@ -7183,12 +7531,12 @@ function downloadPortoImportTemplate(){
   // -> baris contoh utk kolom itu jadi kosong diam-diam). Array-of-array
   // lewat aoa_to_sheet() tidak butuh kecocokan nama sama sekali.
   const contohValues = {
-    ticker: "BBCA", tglBeli: "2026-01-15", hargaBeli: 9500, lotBeli: 10, feeBeliPct: 0.15,
-    tglJual: "", hargaJual: "", lotJual: "", feeJualPct: 0.25,
+    ticker: "BBCA", jenisPorto: "Investasi", tglBeli: "2026-01-15", hargaBeli: 9500, lotBeli: 10, feeBeliPct: state.feeBeliDefaultPct ?? FEE_BELI_DEFAULT_PCT,
+    tglJual: "", hargaJual: "", lotJual: "", feeJualPct: state.feeJualDefaultPct ?? FEE_JUAL_DEFAULT_PCT,
     support: "9300", resistance: "9800", fib618: "", targetTP: "10200", cutLoss: "9100",
     catatan: "Contoh baris -- hapus/timpa dengan transaksi Anda sendiri",
   };
-  const order = ["ticker","tglBeli","hargaBeli","lotBeli","feeBeliPct","tglJual","hargaJual","lotJual","feeJualPct","support","resistance","fib618","targetTP","cutLoss","catatan"];
+  const order = ["ticker","jenisPorto","tglBeli","hargaBeli","lotBeli","feeBeliPct","tglJual","hargaJual","lotJual","feeJualPct","support","resistance","fib618","targetTP","cutLoss","catatan"];
   const contohRow = order.map(key => contohValues[key]);
   const sheetTemplate = XLSX.utils.aoa_to_sheet([headers, contohRow]);
   sheetTemplate['!cols'] = headers.map(h => ({ wch: Math.max(12, h.length + 2) }));
@@ -7197,13 +7545,14 @@ function downloadPortoImportTemplate(){
     ["Petunjuk Impor Transaksi Portofolio"],
     [""],
     ["1. Wajib diisi tiap baris: Ticker, Tgl Beli, Harga Beli, Lot Beli. Baris tanpa salah satu dari 4 kolom ini akan DILEWATI saat impor (tidak menggagalkan baris lain)."],
-    ["2. Format Tgl Beli / Tgl Jual: YYYY-MM-DD (mis. 2026-01-15). Boleh juga DD/MM/YYYY atau tanggal Excel asli (hasil ketik langsung di sel bertipe Date)."],
-    ["3. Fee Beli % / Fee Jual %: kalau dikosongkan, otomatis dipakai default 0.15% (beli) / 0.25% (jual), sama seperti form manual."],
-    ["4. Tgl Jual, Harga Jual, Lot Jual boleh dikosongkan kalau transaksi masih Open (belum dijual)."],
-    ["5. Kolom Total Beli, Net Jual, %P/L, Nilai P/L, Status TIDAK ada di template ini karena SELALU dihitung ulang otomatis dari kolom di atas -- mengisinya manual tidak akan berpengaruh."],
-    ["6. Mau UPDATE transaksi yang sudah ada (bukan tambah baru)? Tambahkan kolom \"ID\" berisi ID transaksi tersebut (lihat kolom ID di file hasil \"📤 Ekspor Excel\") -- baris dengan ID yang cocok akan DITIMPA, bukan dobel."],
-    ["7. Header kolom fleksibel (tidak case-sensitive, boleh pakai/tanpa spasi) -- tapi paling aman pakai persis nama di sheet Template ini."],
-    ["8. Satu sheet pertama di file = yang dibaca. Kalau ada beberapa sheet, pastikan datanya di sheet paling pertama."],
+    ["2. Jenis Portofolio: isi salah satu dari Investasi / Scalping / Swing (sesuai 3 porto di Stockbit). Kalau dikosongkan atau diisi teks lain, otomatis dianggap \"Investasi\"."],
+    ["3. Format Tgl Beli / Tgl Jual: YYYY-MM-DD (mis. 2026-01-15). Boleh juga DD/MM/YYYY atau tanggal Excel asli (hasil ketik langsung di sel bertipe Date)."],
+    [`4. Fee Beli % / Fee Jual %: kalau dikosongkan, otomatis dipakai default ${state.feeBeliDefaultPct ?? FEE_BELI_DEFAULT_PCT}% (beli) / ${state.feeJualDefaultPct ?? FEE_JUAL_DEFAULT_PCT}% (jual) sesuai Pengaturan > Fee Default, sama seperti form manual.`],
+    ["5. Tgl Jual, Harga Jual, Lot Jual boleh dikosongkan kalau transaksi masih Open (belum dijual)."],
+    ["6. Kolom Total Beli, Net Jual, %P/L, Nilai P/L, Status TIDAK ada di template ini karena SELALU dihitung ulang otomatis dari kolom di atas -- mengisinya manual tidak akan berpengaruh."],
+    ["7. Mau UPDATE transaksi yang sudah ada (bukan tambah baru)? Tambahkan kolom \"ID\" berisi ID transaksi tersebut (lihat kolom ID di file hasil \"📤 Ekspor Excel\") -- baris dengan ID yang cocok akan DITIMPA, bukan dobel."],
+    ["8. Header kolom fleksibel (tidak case-sensitive, boleh pakai/tanpa spasi) -- tapi paling aman pakai persis nama di sheet Template ini."],
+    ["9. Satu sheet pertama di file = yang dibaca. Kalau ada beberapa sheet, pastikan datanya di sheet paling pertama."],
   ];
   const sheetPetunjuk = XLSX.utils.aoa_to_sheet(petunjuk);
   sheetPetunjuk['!cols'] = [{ wch: 110 }];
@@ -7222,6 +7571,7 @@ function downloadPortoImportTemplate(){
 const PORTO_IMPORT_COLUMNS = {
   id: ["id"],
   ticker: ["ticker", "kode", "kode saham", "saham"],
+  jenisPorto: ["jenis portofolio", "jenis porto", "jenis", "tipe portofolio", "tipe", "kategori", "kategori porto"],
   tglBeli: ["tgl beli", "tanggal beli", "tgl_beli"],
   hargaBeli: ["harga beli", "harga_beli"],
   lotBeli: ["lot beli", "lot_beli", "jumlah lot beli"],
@@ -7265,14 +7615,19 @@ function mapPortoImportRow(rawRow){
   return {
     id: pick(PORTO_IMPORT_COLUMNS.id) || "",
     ticker: String(pick(PORTO_IMPORT_COLUMNS.ticker) || "").trim().toUpperCase().replace(".JK",""),
+    jenisPorto: (() => {
+      const raw = String(pick(PORTO_IMPORT_COLUMNS.jenisPorto) || "").trim();
+      const match = PORTO_JENIS_LIST.find(j => j.toLowerCase() === raw.toLowerCase());
+      return match || PORTO_JENIS_DEFAULT; // teks tak dikenali/kosong -> default "Investasi", bukan ditolak
+    })(),
     tglBeli: normImportDate(pick(PORTO_IMPORT_COLUMNS.tglBeli)),
     hargaBeli: num(pick(PORTO_IMPORT_COLUMNS.hargaBeli)),
     lotBeli: num(pick(PORTO_IMPORT_COLUMNS.lotBeli)),
-    feeBeliPct: pick(PORTO_IMPORT_COLUMNS.feeBeliPct) !== "" ? num(pick(PORTO_IMPORT_COLUMNS.feeBeliPct)) : 0.15,
+    feeBeliPct: pick(PORTO_IMPORT_COLUMNS.feeBeliPct) !== "" ? num(pick(PORTO_IMPORT_COLUMNS.feeBeliPct)) : (state.feeBeliDefaultPct ?? FEE_BELI_DEFAULT_PCT),
     tglJual: normImportDate(pick(PORTO_IMPORT_COLUMNS.tglJual)),
     hargaJual: num(pick(PORTO_IMPORT_COLUMNS.hargaJual)),
     lotJual: num(pick(PORTO_IMPORT_COLUMNS.lotJual)),
-    feeJualPct: pick(PORTO_IMPORT_COLUMNS.feeJualPct) !== "" ? num(pick(PORTO_IMPORT_COLUMNS.feeJualPct)) : 0.25,
+    feeJualPct: pick(PORTO_IMPORT_COLUMNS.feeJualPct) !== "" ? num(pick(PORTO_IMPORT_COLUMNS.feeJualPct)) : (state.feeJualDefaultPct ?? FEE_JUAL_DEFAULT_PCT),
     support: String(pick(PORTO_IMPORT_COLUMNS.support) || ""),
     resistance: String(pick(PORTO_IMPORT_COLUMNS.resistance) || ""),
     fib618: String(pick(PORTO_IMPORT_COLUMNS.fib618) || ""),
@@ -7309,7 +7664,7 @@ async function handlePortoImportFile(fileInput){
       const c = hitungPorto(v);
       records.push({
         id: v.id || (String(Date.now()) + "_" + records.length), // suffix indeks: beberapa baris diimpor di milidetik yang sama akan tabrakan id kalau cuma pakai Date.now()
-        ticker: v.ticker, tglBeli: v.tglBeli, hargaBeli: v.hargaBeli, lotBeli: v.lotBeli,
+        ticker: v.ticker, jenisPorto: v.jenisPorto || PORTO_JENIS_DEFAULT, tglBeli: v.tglBeli, hargaBeli: v.hargaBeli, lotBeli: v.lotBeli,
         feeBeliPct: v.feeBeliPct, totalBeli: c.totalBeli,
         support: v.support, resistance: v.resistance, fib618: v.fib618, targetTP: v.targetTP, cutLoss: v.cutLoss,
         tglJual: v.tglJual, hargaJual: v.hargaJual, lotJual: v.lotJual,
@@ -7329,7 +7684,7 @@ async function handlePortoImportFile(fileInput){
         method: "POST",
         headers: { ...getSupaHeaders(), "Prefer": "resolution=merge-duplicates" },
         body: JSON.stringify(records.map(r => ({
-          id: r.id, ticker: r.ticker, status: r.status,
+          id: r.id, ticker: r.ticker, jenis_porto: r.jenisPorto || PORTO_JENIS_DEFAULT, status: r.status,
           tgl_beli: r.tglBeli || null, harga_beli: r.hargaBeli || 0,
           lot_beli: r.lotBeli || 0, fee_beli_pct: r.feeBeliPct || 0, total_beli: r.totalBeli || 0,
           support: r.support || null, resistance: r.resistance || null,
@@ -7388,6 +7743,7 @@ function readPortoForm(){
   const g = id => document.getElementById(id);
   return {
     ticker: (g("pfTicker").value||"").trim().toUpperCase().replace(".JK",""),
+    jenisPorto: g("pfJenis") ? g("pfJenis").value : PORTO_JENIS_DEFAULT,
     tglBeli: g("pfTglBeli").value,
     hargaBeli: parseFloat(g("pfHargaBeli").value) || 0,
     lotBeli: parseFloat(g("pfLotBeli").value) || 0,
@@ -7484,7 +7840,14 @@ function editPortoRecord(id){
 // enrichOne() untuk tiap baris di state.stocks — perilakunya identik
 // dengan sebelum refactor ini.
 function enrichOne(s){
-    const ratio = (s.volRatio!=null && !isNaN(s.volRatio)) ? s.volRatio : (s.cVol/(s.volMA20||1));
+    // Fallback HANYA dihitung kalau volMA20 juga ada datanya — kalau
+    // vol_ratio maupun vol_ma20 sama-sama belum tersinkron dari Supabase,
+    // ratio harus null (data belum ada), BUKAN dibagi 1 (itu akan membuat
+    // volume mentah hari itu terbaca seolah rasio, sehingga Bandarmologi/
+    // BSJP/Skor Bagger/checklist EMA9x21 semuanya lolos palsu).
+    const ratio = (s.volRatio!=null && !isNaN(s.volRatio))
+      ? s.volRatio
+      : (s.cVol!=null && s.volMA20 > 0 ? s.cVol / s.volMA20 : null);
     const band = bandarmologi(s, ratio);
     const vol = volumeSignal(s, ratio);
     const sinyalVolume = s.sinyalVolume ?? vol.label;
@@ -9729,9 +10092,33 @@ function renderScreener(){
               title="Tarik data Broker Summary Stockbit ${state.uploadedBulkTickers.length ? `untuk ${state.uploadedBulkTickers.length} ticker dari file yang diupload` : "untuk saham yang dicentang (atau semua hasil filter kalau tidak ada yang dicentang)"}, untuk periode tanggal di samping">
               ${state.stockbitBrokerBulkLoading
                 ? `Menarik ${state.stockbitBrokerBulkProgress?.done||0}/${state.stockbitBrokerBulkProgress?.total||0}...`
-                : (state.uploadedBulkTickers.length ? `Tarik Data (${state.uploadedBulkTickers.length} dari file)` : (state.selectedForBacktest.size>0 ? `Tarik Data (${state.selectedForBacktest.size} dicentang)` : `Tarik Data (${sorted.length} lolos)`))}
+                : (state.uploadedBulkTickers.length ? `📊 Broker Summary (${state.uploadedBulkTickers.length} dari file)` : (state.selectedForBacktest.size>0 ? `📊 Broker Summary (${state.selectedForBacktest.size} dicentang)` : `📊 Broker Summary (${sorted.length} lolos)`))}
             </button>
           </div>
+          ${state.stockbitBrokerBulkLoading || (state.stockbitBrokerBulkResults && state.stockbitBrokerBulkResults.length) ? `
+            <div class="screener-bs-bulk-progress" style="margin-top:8px; max-width:340px;">
+              ${state.stockbitBrokerBulkLoading ? `
+                <div style="height:6px; border-radius:4px; background:rgba(239,68,68,0.15); overflow:hidden; margin-bottom:6px;">
+                  <div style="height:100%; background:#f87171; width:${Math.round(((state.stockbitBrokerBulkProgress?.done||0)/(state.stockbitBrokerBulkProgress?.total||1))*100)}%; transition:width .2s;"></div>
+                </div>
+                <div style="font-size:11px; color:var(--muted);">Menarik Broker Summary: ${state.stockbitBrokerBulkProgress?.done||0}/${state.stockbitBrokerBulkProgress?.total||0} saham...</div>
+              ` : ""}
+              ${state.stockbitBrokerBulkResults && state.stockbitBrokerBulkResults.length ? `
+                <details class="bs-bulk-results-panel" id="screenerBsBulkResultsPanel" ${state.bsBulkResultsOpen?"open":""} style="margin-top:6px;">
+                  <summary style="cursor:pointer; font-size:11px; color:var(--muted); list-style:none; display:flex; align-items:center; gap:6px; user-select:none;">
+                    <span class="bs-bulk-results-arrow" style="display:inline-block; transition:transform .15s; transform:rotate(${state.bsBulkResultsOpen?90:0}deg);">▶</span>
+                    Hasil Broker Summary (${state.stockbitBrokerBulkResults.length} saham)
+                  </summary>
+                  <div class="bs-result-list mono" style="margin-top:6px; max-height:180px; overflow-y:auto; font-size:11px;">
+                    ${state.stockbitBrokerBulkResults.map(r => `
+                      <div class="bs-result-line" style="padding:3px 0; border-bottom:1px solid var(--border); color:${r.ok ? 'var(--up)' : 'var(--down)'};">
+                        ${r.ok ? '✅' : '❌'} ${escapeHtml(r.ticker)} &middot; ${escapeHtml(r.date)} — ${escapeHtml(r.msg||"")}
+                      </div>`).join("")}
+                  </div>
+                </details>
+              ` : ""}
+            </div>
+          ` : ""}
         </div>
         <div class="field" style="flex:0 0 auto;">
           <label>&nbsp;</label>
@@ -10410,7 +10797,17 @@ function renderBacktestRekap(){
     return exportRow + controls + `<div class="empty-box">Belum ada item tersimpan di sesi manapun.</div>`;
   }
 
-  const rows = rekap.map(r => {
+  const filtered = tableFilterRows("backtestRekap", rekap, r => [r.ticker, ...(r.screenerSet||[])]);
+  const sorted = tableSortRows("backtestRekap", filtered, {
+    ticker: r => r.ticker,
+    win: r => r.winCount,
+    loss: r => r.lossCount,
+    totalPl: r => r.totalPL,
+    bestPl: r => r.bestPL,
+    tp: r => r.trackedCount ? r.achievedCount / r.trackedCount : -1,
+  });
+
+  const rows = sorted.map(r => {
     const isOpen = state.backtestRekapExpanded.has(r.ticker);
     const plTone = r.totalPL > 0 ? "up" : r.totalPL < 0 ? "down" : "muted";
     const bestTone = (r.bestPL ?? 0) > 0 ? "up" : (r.bestPL ?? 0) < 0 ? "down" : "muted";
@@ -10441,22 +10838,22 @@ function renderBacktestRekap(){
       ${detailRows}`;
   }).join("");
 
-  return exportRow + controls + `
+  return exportRow + controls + tableFilterBoxHtml("backtestRekap", "Cari ticker atau screener...") + `
     <div class="panel" style="flex-direction:column; align-items:stretch;">
       <div class="table-wrap">
         <table class="mono">
           <thead>
             <tr>
-              <th>Ticker</th>
+              ${tableSortTh("backtestRekap", "Ticker", "ticker")}
               <th>Muncul di Screener</th>
-              <th title="Jumlah kemunculan dengan P/L closing positif">Menang</th>
-              <th title="Jumlah kemunculan dengan P/L closing negatif">Kalah</th>
-              <th title="Jumlah P/L closing dari SEMUA kemunculan ticker ini (bukan rata-rata)">Total P/L (Closing)</th>
-              <th title="P/L tertinggi yang pernah dicapai dari kemunculan manapun">P/L Tertinggi</th>
-              <th title="Berapa kali & dalam berapa hari harga menembus target TP-nya (mode aktif: ${mode === 'auto' ? 'Auto, TP1 per saham' : tpPct + '% tetap'})">Target TP (${tpLabel})</th>
+              ${tableSortTh("backtestRekap", "Menang", "win")}
+              ${tableSortTh("backtestRekap", "Kalah", "loss")}
+              ${tableSortTh("backtestRekap", "Total P/L (Closing)", "totalPl")}
+              ${tableSortTh("backtestRekap", "P/L Tertinggi", "bestPl")}
+              ${tableSortTh("backtestRekap", `Target TP (${tpLabel})`, "tp")}
             </tr>
           </thead>
-          <tbody>${rows}</tbody>
+          <tbody>${rows || `<tr><td colspan="7"><div class="empty-box">Tidak ada ticker yang cocok dengan pencarian.</div></td></tr>`}</tbody>
         </table>
       </div>
     </div>`;
@@ -10514,7 +10911,18 @@ function renderBacktestScreenerRekap(){
     return exportRow + controls + `<div class="empty-box">Belum ada item tersimpan di sesi manapun.</div>`;
   }
 
-  const rows = rekap.map(r => {
+  const filtered = tableFilterRows("backtestScreenerRekap", rekap, r => [r.label]);
+  const sorted = tableSortRows("backtestScreenerRekap", filtered, {
+    label: r => r.label,
+    win: r => r.winCount,
+    loss: r => r.lossCount,
+    winRate: r => r.winRate,
+    avgPl: r => r.avgPL,
+    bestPl: r => r.bestPL,
+    tp: r => r.trackedCount ? r.achievedCount / r.trackedCount : -1,
+  });
+
+  const rows = sorted.map(r => {
     const isOpen = state.backtestScreenerExpanded.has(r.label);
     const avgTone = (r.avgPL ?? 0) > 0 ? "up" : (r.avgPL ?? 0) < 0 ? "down" : "muted";
     const bestTone = (r.bestPL ?? 0) > 0 ? "up" : (r.bestPL ?? 0) < 0 ? "down" : "muted";
@@ -10546,22 +10954,22 @@ function renderBacktestScreenerRekap(){
       ${detailRows}`;
   }).join("");
 
-  return exportRow + controls + `
+  return exportRow + controls + tableFilterBoxHtml("backtestScreenerRekap", "Cari sumber/kriteria screener...") + `
     <div class="panel" style="flex-direction:column; align-items:stretch;">
       <div class="table-wrap">
         <table class="mono">
           <thead>
             <tr>
-              <th>Sumber / Kriteria Screener</th>
-              <th title="Jumlah kemunculan dengan P/L closing positif">Menang</th>
-              <th title="Jumlah kemunculan dengan P/L closing negatif">Kalah</th>
-              <th title="Menang ÷ (Menang+Kalah)">Win Rate</th>
-              <th title="Rata-rata P/L closing dari SEMUA kemunculan screener ini (bukan total) -- metrik utama buat bandingkan antar screener">Rata-rata P/L (Closing)</th>
-              <th title="P/L tertinggi yang pernah dicapai dari kemunculan manapun">P/L Tertinggi</th>
-              <th title="Berapa kali & dalam berapa hari harga menembus target TP-nya (mode aktif: ${mode === 'auto' ? 'Auto, TP1 per saham' : tpPct + '% tetap'})">Target TP (${tpLabel})</th>
+              ${tableSortTh("backtestScreenerRekap", "Sumber / Kriteria Screener", "label")}
+              ${tableSortTh("backtestScreenerRekap", "Menang", "win")}
+              ${tableSortTh("backtestScreenerRekap", "Kalah", "loss")}
+              ${tableSortTh("backtestScreenerRekap", "Win Rate", "winRate")}
+              ${tableSortTh("backtestScreenerRekap", "Rata-rata P/L (Closing)", "avgPl")}
+              ${tableSortTh("backtestScreenerRekap", "P/L Tertinggi", "bestPl")}
+              ${tableSortTh("backtestScreenerRekap", `Target TP (${tpLabel})`, "tp")}
             </tr>
           </thead>
-          <tbody>${rows}</tbody>
+          <tbody>${rows || `<tr><td colspan="7"><div class="empty-box">Tidak ada yang cocok dengan pencarian.</div></td></tr>`}</tbody>
         </table>
       </div>
     </div>`;
@@ -10634,6 +11042,8 @@ function renderBacktest(){
       </div>
     </div>`;
 
+  const bulkToolbar = renderBulkPullToolbar("bt", getBacktestTickers(), "Backtest");
+
   // Sub-tab: "Per Sesi" (tampilan lama, satu blok per sesi backtest) vs
   // "Rekap per Saham" (agregasi lintas sesi per ticker — lihat
   // renderBacktestRekap()) & "Rekap per Sumber" (agregasi lintas sesi per
@@ -10648,14 +11058,14 @@ function renderBacktest(){
     </div>`;
 
   if (state.backtestView === "rekap"){
-    return manualForm + viewToggle + renderBacktestRekap();
+    return manualForm + bulkToolbar + viewToggle + renderBacktestRekap();
   }
   if (state.backtestView === "sumber"){
-    return manualForm + viewToggle + renderBacktestScreenerRekap();
+    return manualForm + bulkToolbar + viewToggle + renderBacktestScreenerRekap();
   }
 
   if(state.backtests.length === 0){
-    return manualForm + viewToggle + `<div class="empty-box">Belum ada sesi backtest yang disimpan.</div>`;
+    return manualForm + bulkToolbar + viewToggle + `<div class="empty-box">Belum ada sesi backtest yang disimpan.</div>`;
   }
 
   const sessions = state.backtests.map(session => {
@@ -10787,7 +11197,7 @@ function renderBacktest(){
     `;
   }).join("");
 
-  return manualForm + viewToggle + sessions;
+  return manualForm + bulkToolbar + viewToggle + sessions;
 }
 
   
@@ -11741,15 +12151,27 @@ function wlStatusBadge(s, plPct){
 function renderWatchlist(){
   const rows = enriched().filter(s=>state.watchlist.has(s.ticker));
   if(rows.length===0) return `<div class="empty-box">Belum ada saham di watchlist. Klik ikon ★ di tab Screener untuk menambahkan — harga entry otomatis dicatat untuk pelacakan P&L.</div>`;
+  const bulkToolbar = renderBulkPullToolbar("wl", getWatchlistTickers(), "Watchlist");
   const meta = getWatchlistMeta();
   let totEntry=0, totNow=0;
   const cards = rows.map(s=>{
     const m = meta[s.ticker]||{};
     const entry = Number(m.entry);
     const hasEntry = isFinite(entry) && entry>0;
-    const plPct = hasEntry && s.cClose ? ((s.cClose-entry)/entry)*100 : null;
-    if(hasEntry && s.cClose){ totEntry+=entry; totNow+=s.cClose; }
+    // Harga sekarang: prioritas live Stockbit (kalau sudah pernah ditarik
+    // utk ticker ini, di mana pun -- state.stockbitLive dipakai bersama
+    // lintas tab, sama seperti computePortoPositions() di Portofolio),
+    // fallback ke harga close (EOD) terakhir di database (s.cClose).
+    // Live HARUS > 0 -- lihat catatan di computePortoPositions().
+    const live = state.stockbitLive[s.ticker];
+    const isLivePrice = !!(live && live.mapped && Number.isFinite(Number(live.mapped.last)) && Number(live.mapped.last) > 0);
+    const currentPrice = isLivePrice ? Number(live.mapped.last) : (Number.isFinite(Number(s.cClose)) ? Number(s.cClose) : null);
+    const plPct = hasEntry && currentPrice ? ((currentPrice-entry)/entry)*100 : null;
+    if(hasEntry && currentPrice){ totEntry+=entry; totNow+=currentPrice; }
     const plTone = plPct==null?'muted':plPct>=0?'up':'down';
+    const priceBadge = isLivePrice
+      ? `<span style="font-size:9px;color:var(--down);margin-left:6px;vertical-align:middle;" title="Harga live Stockbit, ditarik ${Math.max(0,Math.round((Date.now()-live.fetchedAt)/1000))} detik lalu">🔴 LIVE</span>`
+      : `<span style="font-size:9px;color:var(--muted);margin-left:6px;vertical-align:middle;" title="Harga close (EOD) terakhir di database, bukan live">EOD</span>`;
     return `
     <div class="wl-card">
       <div class="wl-card-top">
@@ -11759,7 +12181,7 @@ function renderWatchlist(){
           <svg width="18" height="18" viewBox="0 0 24 24" fill="var(--gold)" stroke="var(--gold)" stroke-width="2" style="filter: drop-shadow(0 0 4px rgba(245,158,11,0.6));"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>
         </button>
       </div>
-      <div class="wl-price mono">${fmtNum(s.cClose)}</div>
+      <div class="wl-price mono">${fmtNum(currentPrice)}${priceBadge}</div>
       ${hasEntry?`<div class="wl-pl mono" style="color:var(--${plTone})">
         <span>Entry ${fmtNum(entry)} <span style="color:var(--muted);font-size:10px;">· ${m.date?fmtDateID(m.date):'-'}</span></span>
         <strong>${plPct!=null?dNum(plPct,{plusSign:true,decimals:2,suffix:'%'}):'-'}</strong>
@@ -11782,16 +12204,17 @@ function renderWatchlist(){
   const totPl = totEntry>0 ? ((totNow-totEntry)/totEntry)*100 : null;
   const header = rows.some(s=>{const e=Number((meta[s.ticker]||{}).entry); return isFinite(e)&&e>0;}) ? `
     <div class="panel wl-portfolio-header"><div><div class="summary-lbl">Total P&L belum terealisasi (equal-weight)</div><div class="summary-val mono" style="color:${totPl!=null&&totPl>=0?'var(--up)':'var(--down)'}">${totPl!=null?dNum(totPl,{plusSign:true,decimals:2,suffix:'%'}):'-'}</div></div><div style="text-align:right"><div class="summary-lbl">Jumlah saham</div><div class="summary-val">${rows.length}</div></div></div>` : "";
-  return header+`<div class="wl-grid">${cards}</div>`;
+  return bulkToolbar+header+`<div class="wl-grid">${cards}</div>`;
 }
 
 function renderPortoFormFields(){
   const editing = state.portoEditId ? state.portfolio.find(p => String(p.id) === String(state.portoEditId)) : null;
   const prefill = !editing && state.portoPrefill ? state.portoPrefill : null;
   const f = editing || {
-    ticker: prefill?.ticker || "", tglBeli: prefill?.tglBeli || "", hargaBeli: prefill?.hargaBeli || "", lotBeli: "", feeBeliPct: 0.15,
+    ticker: prefill?.ticker || "", tglBeli: prefill?.tglBeli || "", hargaBeli: prefill?.hargaBeli || "", lotBeli: "", feeBeliPct: state.feeBeliDefaultPct ?? FEE_BELI_DEFAULT_PCT,
+    jenisPorto: PORTO_JENIS_DEFAULT,
     support:"", resistance:"", fib618:"", targetTP:"", cutLoss:"",
-    tglJual:"", hargaJual:"", lotJual:"", feeJualPct:0.25, catatan: prefill ? `Dari Backtest — harga entry terkunci ${fmtNum(prefill.hargaBeli)} @ ${fmtDateID(prefill.tglBeli)}` : ""
+    tglJual:"", hargaJual:"", lotJual:"", feeJualPct: state.feeJualDefaultPct ?? FEE_JUAL_DEFAULT_PCT, catatan: prefill ? `Dari Backtest — harga entry terkunci ${fmtNum(prefill.hargaBeli)} @ ${fmtDateID(prefill.tglBeli)}` : ""
   };
   const c = editing ? hitungPorto({
     hargaBeli:+f.hargaBeli||0, lotBeli:+f.lotBeli||0, feeBeliPct:+f.feeBeliPct||0,
@@ -11819,10 +12242,11 @@ function renderPortoFormFields(){
   return `
       <div class="porto-form">
         <div class="field"><label>Nama Emiten *</label><input id="pfTicker" list="pfTickerList" value="${f.ticker}" placeholder="BBCA" style="text-transform:uppercase;"><datalist id="pfTickerList">${tickerOptions}</datalist></div>
+        <div class="field"><label>Jenis Portofolio *</label><select id="pfJenis">${PORTO_JENIS_LIST.map(j=>`<option value="${j}" ${(f.jenisPorto||PORTO_JENIS_DEFAULT)===j?"selected":""}>${j}</option>`).join("")}</select></div>
         <div class="field"><label>Tanggal Beli *</label><input id="pfTglBeli" type="date" value="${f.tglBeli||""}"></div>
         <div class="field"><label>Harga Beli *</label><input id="pfHargaBeli" type="number" value="${f.hargaBeli||""}"></div>
         <div class="field"><label>Jumlah Lot Beli *</label><input id="pfLotBeli" type="number" value="${f.lotBeli||""}"></div>
-        <div class="field"><label>Fee Beli (%)</label><input id="pfFeeBeli" type="number" step="0.01" value="${f.feeBeliPct??0.15}"></div>
+        <div class="field"><label>Fee Beli (%)</label><input id="pfFeeBeli" type="number" step="0.01" value="${f.feeBeliPct ?? (state.feeBeliDefaultPct ?? FEE_BELI_DEFAULT_PCT)}"></div>
         <div class="field"><label>Total Beli (Rp)</label><input id="pfTotalBeli" readonly value="${c.totalBeli?fmtNum(c.totalBeli):""}"></div>
         <div class="field"><label>Harga Support</label><input id="pfSupport" type="number" value="${f.support||""}"></div>
         <div class="field"><label>Harga Resistance</label><input id="pfResistance" type="number" value="${f.resistance||""}"></div>
@@ -11832,7 +12256,7 @@ function renderPortoFormFields(){
         <div class="field"><label>Tanggal Jual</label><input id="pfTglJual" type="date" value="${f.tglJual||""}"></div>
         <div class="field"><label>Harga Jual</label><input id="pfHargaJual" type="number" value="${f.hargaJual||""}"></div>
         <div class="field"><label>Jumlah Lot Jual</label><input id="pfLotJual" type="number" value="${f.lotJual||""}"></div>
-        <div class="field"><label>Fee Jual (%)</label><input id="pfFeeJual" type="number" step="0.01" value="${f.feeJualPct??0.25}"></div>
+        <div class="field"><label>Fee Jual (%)</label><input id="pfFeeJual" type="number" step="0.01" value="${f.feeJualPct ?? (state.feeJualDefaultPct ?? FEE_JUAL_DEFAULT_PCT)}"></div>
         <div class="field"><label>Net Jual (Rp)</label><input id="pfNetJual" readonly value="${c.netJual?fmtNum(c.netJual):""}"></div>
         <div class="field"><label>Jangka Waktu</label><input id="pfJangka" readonly value="${c.jangkaWaktu!==""?c.jangkaWaktu+" hari":""}"></div>
         <div class="field"><label>Prosentase P/L</label><input id="pfPersenPL" readonly value="${c.persenPL!==""?((c.persenPL>0?'+':'')+c.persenPL+'%'):""}"></div>
@@ -11848,7 +12272,7 @@ function renderPortoFormFields(){
 }
 
 function renderPortfolioStrategyStats() {
-    const closed = state.portfolio.filter(p => p.nilaiPL !== "" && p.nilaiPL !== undefined && p.nilaiPL !== null);
+    const closed = getPortfolioFiltered().filter(p => p.nilaiPL !== "" && p.nilaiPL !== undefined && p.nilaiPL !== null);
     if(closed.length === 0) return '';
     const strategyStats = {};
     closed.forEach(p => {
@@ -11875,15 +12299,54 @@ function renderPortfolioStrategyStats() {
     </div>`;
 }
 
+// Baris transaksi sesuai filter "Jenis Portofolio" (Semua/Investasi/
+// Scalping/Swing) yang lagi aktif di tab Portofolio -- dipakai bareng oleh
+// renderPortfolio() (summary + tabel) dan wiring select-all, biar konsisten.
+function getPortfolioFiltered(){
+  const f = state.portoFilterJenis;
+  return (!f || f === "Semua") ? state.portfolio : state.portfolio.filter(p => (p.jenisPorto||PORTO_JENIS_DEFAULT) === f);
+}
+
+// Sama seperti getPortfolioFiltered() (filter jenis porto), TAPI ikut
+// menerapkan kotak pencarian bebas teks tabel "Daftar Transaksi" (lihat
+// tableFilterBoxHtml("portoList",...) di renderPortfolio()). Dipisah jadi
+// fungsi sendiri supaya "Pilih Semua" (chkSelectAllPorto) & baris yang
+// benar-benar tampil di layar selalu konsisten -- centang "Semua" tidak
+// akan pernah mencentang baris yang sedang disembunyikan oleh pencarian.
+function getPortfolioFilteredDisplay(){
+  const base = getPortfolioFiltered();
+  return tableFilterRows("portoList", base, p => [p.ticker, p.jenisPorto, p.catatan, p.status, p.tglBeli, p.tglJual]);
+}
+
 function renderPortfolio(){
-  const closed = state.portfolio.filter(p => p.nilaiPL !== "" && p.nilaiPL !== undefined && p.nilaiPL !== null);
-  const totalInvest = state.portfolio.reduce((a,p)=>a+(+p.totalBeli||0),0);
+  const filtered = getPortfolioFiltered();
+  const closed = filtered.filter(p => p.nilaiPL !== "" && p.nilaiPL !== undefined && p.nilaiPL !== null);
+  const totalInvest = filtered.reduce((a,p)=>a+(+p.totalBeli||0),0);
   const totalPL = closed.reduce((a,p)=>a+(+p.nilaiPL||0),0);
   const winCount = closed.filter(p=>p.status==="Win").length;
   const winRate = closed.length ? Math.round((winCount/closed.length)*100) : 0;
+  // P/L Mengambang (unrealized) dari SEMUA posisi Open (sesuai filter jenis
+  // aktif), dihitung ulang dari harga live/EOD terkini (computePortoPositions)
+  // -- ini bagian yang "bergerak" mengikuti harga, beda dgn Total P/L
+  // Realisasi di atas yang cuma dari transaksi yg SUDAH dijual (closed)
+  // sehingga statis sampai ada penjualan baru. Dipisah agar id-nya bisa
+  // dipatch langsung oleh updatePortfolioSummaryLive() tiap ada tick harga,
+  // tanpa render ulang seluruh tabel (lihat handleLiveTick).
+  const openPositions = computePortoPositions(state.portoFilterJenis);
+  const totalUnrealizedPL = openPositions.reduce((a,g)=>a+(g.unrealizedPL||0),0);
+  const anyLivePrice = openPositions.some(g=>g.isLivePrice);
+  const anyMissingLive = openPositions.some(g=>g.currentPrice==null);
+  const bulkToolbar = renderBulkPullToolbar("porto", getPortfolioTickers(), "Portofolio");
+
+  const jenisCount = j => state.portfolio.filter(p=>(p.jenisPorto||PORTO_JENIS_DEFAULT)===j).length;
+  const jenisFilterBar = `
+    <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:12px;">
+      <button type="button" class="btn ${state.portoFilterJenis==='Semua'?'btn-primary':'btn-outline'}" style="padding:5px 12px;font-size:12px;" onclick="state.portoFilterJenis='Semua';render();">Semua Porto (${state.portfolio.length})</button>
+      ${PORTO_JENIS_LIST.map(j=>`<button type="button" class="btn ${state.portoFilterJenis===j?'btn-primary':'btn-outline'}" style="padding:5px 12px;font-size:12px;border-color:var(--${portoJenisTone(j)});${state.portoFilterJenis===j?`background:var(--${portoJenisTone(j)});`:''}" onclick="state.portoFilterJenis='${j}';render();">${j} (${jenisCount(j)})</button>`).join("")}
+    </div>`;
 
   const topBar = `
-    <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:12px;margin-bottom:20px;">
+    <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:12px;margin-bottom:14px;">
       <div style="display:flex;gap:8px;flex-wrap:wrap;">
         <button class="btn btn-primary" id="pfOpenAddBtn">+ Tambah Transaksi Portofolio</button>
         <button class="btn btn-outline" id="pfExportBtn" title="Unduh seluruh transaksi portofolio sebagai file Excel">📤 Ekspor Excel</button>
@@ -11893,29 +12356,55 @@ function renderPortfolio(){
       </div>
       ${state.selectedPorto.size > 0 ? `<button class="btn btn-outline" style="color:#f87171;border-color:rgba(239,68,68,0.4);" id="pfBulkDeleteBtn">🗑 Hapus ${state.selectedPorto.size} Terpilih</button>` : ""}
     </div>
+    ${jenisFilterBar}
+    <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:20px;background:color-mix(in srgb, currentColor 4%, transparent);padding:4px;border-radius:10px;width:fit-content;">
+      <button type="button" class="btn ${state.portoView==='list'?'btn-primary':'btn-outline'}" style="padding:6px 12px;font-size:12px;" onclick="state.portoView='list';render();">📋 Daftar Transaksi</button>
+      <button type="button" class="btn ${state.portoView==='posisi'?'btn-primary':'btn-outline'}" style="padding:6px 12px;font-size:12px;" onclick="state.portoView='posisi';render();" title="Agregat semua transaksi yang masih Open per ticker+jenis porto, avg harga dihitung tertimbang (weighted average) seperti di Stockbit">📊 Posisi per Saham</button>
+    </div>
     ${state.portoImportMsg ? `<div class="bs-msg ${state.portoImportMsgError?"bs-msg-error":"bs-msg-ok"}" style="margin-bottom:14px;">${escapeHtml(state.portoImportMsg)}</div>` : ""}`;
 
   const summary = `
     <div class="porto-summary">
-      <div class="porto-stat"><div class="lbl">Total Transaksi</div><div class="val">${state.portfolio.length}</div></div>
+      <div class="porto-stat"><div class="lbl">Total Transaksi</div><div class="val">${filtered.length}</div></div>
       <div class="porto-stat"><div class="lbl">Total Modal Dibeli</div><div class="val">${fmtNum(totalInvest)}</div></div>
-      <div class="porto-stat"><div class="lbl">Total P/L Realisasi</div><div class="val" style="color:${totalPL>=0?'var(--up)':'var(--down)'}">${totalPL>=0?'+':''}${fmtNum(totalPL)}</div></div>
+      <div class="porto-stat"><div class="lbl">Total P/L Realisasi</div><div class="val" id="pfTotalPLRealisasi" style="color:${totalPL>=0?'var(--up)':'var(--down)'}">${totalPL>=0?'+':''}${fmtNum(totalPL)}</div></div>
+      <div class="porto-stat" title="${anyMissingLive?'Sebagian ticker Open belum punya harga live/EOD, jadi belum ikut terhitung.':'Dihitung ulang otomatis tiap ada tick harga live utk ticker yg lagi Open.'}"><div class="lbl">P/L Mengambang ${anyLivePrice?'<span style="color:var(--down);">🔴 LIVE</span>':''}</div><div class="val" id="pfTotalPLMengambang" style="color:${totalUnrealizedPL>=0?'var(--up)':'var(--down)'}">${openPositions.length?`${totalUnrealizedPL>=0?'+':''}${fmtNum(Math.round(totalUnrealizedPL))}`:'-'}</div></div>
       <div class="porto-stat"><div class="lbl">Win Rate</div><div class="val">${winRate}% <span style="font-size:12px;color:var(--muted); font-weight:500;">(${winCount}/${closed.length})</span></div></div>
       ${renderPortfolioStrategyStats()}
     </div>`;
 
   if(state.portfolio.length === 0){
-    return topBar + summary + `<div class="empty-box">Belum ada transaksi portofolio. Klik "+ Tambah Transaksi Portofolio" untuk mulai mencatat.</div>`;
+    return bulkToolbar + topBar + summary + `<div class="empty-box">Belum ada transaksi portofolio. Klik "+ Tambah Transaksi Portofolio" untuk mulai mencatat.</div>`;
+  }
+  if(filtered.length === 0){
+    return bulkToolbar + topBar + summary + `<div class="empty-box">Belum ada transaksi utk porto ${escapeHtml(state.portoFilterJenis)}. Klik "Semua Porto" utk lihat semuanya, atau tambah transaksi baru.</div>`;
   }
 
-  const allChecked = state.portfolio.length > 0 && state.portfolio.every(p => state.selectedPorto.has(String(p.id)));
+  const searched = getPortfolioFilteredDisplay();
+  const sorted = tableSortRows("portoList", searched, {
+    ticker: p => p.ticker,
+    tglBeli: p => p.tglBeli || "",
+    hargaBeli: p => p.hargaBeli,
+    lotBeli: p => p.lotBeli,
+    totalBeli: p => p.totalBeli,
+    tglJual: p => p.tglJual || "",
+    hargaJual: p => p.hargaJual,
+    netJual: p => p.netJual,
+    jangka: p => p.jangkaWaktu,
+    persenPl: p => p.persenPL,
+    nilaiPl: p => p.nilaiPL,
+    status: p => p.status,
+  });
 
-  const rows = state.portfolio.map(p => {
+  const allChecked = sorted.length > 0 && sorted.every(p => state.selectedPorto.has(String(p.id)));
+
+  const rows = sorted.map(p => {
     const statusClass = p.status==="Win" ? "status-win" : p.status==="Loss" ? "status-loss" : "status-open";
     const plStr = p.persenPL!=="" && p.persenPL!=null ? (p.persenPL>0?'+':'')+p.persenPL+'%' : "-";
     return `<tr>
       <td><input type="checkbox" class="custom-checkbox chk-porto-row" data-check-porto="${p.id}" ${state.selectedPorto.has(String(p.id))?'checked':''}></td>
       <td class="ticker-cell"><button class="ticker-link" data-detail="${p.ticker}" title="Lihat detail ${p.ticker}">${p.ticker}</button></td>
+      <td>${portoJenisBadge(p.jenisPorto)}</td>
       <td class="mono">${p.tglBeli||"-"}</td>
       <td class="mono">${fmtNum(p.hargaBeli)}</td>
       <td class="mono">${p.lotBeli}</td>
@@ -11934,19 +12423,175 @@ function renderPortfolio(){
   }).join("");
 
   const table = `
+    ${tableFilterBoxHtml("portoList", "Cari ticker, jenis, status, atau catatan...")}
     <div class="table-wrap">
       <table class="mono">
         <thead><tr>
-          <th style="width:30px;"><input type="checkbox" id="chkSelectAllPorto" class="custom-checkbox" title="Pilih Semua" ${allChecked ? 'checked' : ''}></th>
-          <th>Ticker</th><th>Tgl Beli</th><th>Hrg Beli</th><th>Lot Beli</th><th>Total Beli</th>
-          <th>Tgl Jual</th><th>Hrg Jual</th><th>Net Jual</th><th>Jangka</th><th>%P/L</th><th>Nilai P/L</th>
-          <th>Status</th><th>Catatan</th><th></th><th></th>
+          <th style="width:30px;"><input type="checkbox" id="chkSelectAllPorto" class="custom-checkbox" title="Pilih Semua (sesuai filter aktif)" ${allChecked ? 'checked' : ''}></th>
+          ${tableSortTh("portoList", "Ticker", "ticker")}<th>Jenis</th>${tableSortTh("portoList", "Tgl Beli", "tglBeli")}${tableSortTh("portoList", "Hrg Beli", "hargaBeli")}${tableSortTh("portoList", "Lot Beli", "lotBeli")}${tableSortTh("portoList", "Total Beli", "totalBeli")}
+          ${tableSortTh("portoList", "Tgl Jual", "tglJual")}${tableSortTh("portoList", "Hrg Jual", "hargaJual")}${tableSortTh("portoList", "Net Jual", "netJual")}${tableSortTh("portoList", "Jangka", "jangka")}${tableSortTh("portoList", "%P/L", "persenPl")}${tableSortTh("portoList", "Nilai P/L", "nilaiPl")}
+          ${tableSortTh("portoList", "Status", "status")}<th>Catatan</th><th></th><th></th>
         </tr></thead>
-        <tbody>${rows}</tbody>
+        <tbody>${rows || `<tr><td colspan="16"><div class="empty-box">Tidak ada transaksi yang cocok dengan pencarian.</div></td></tr>`}</tbody>
       </table>
     </div>`;
 
-  return topBar + summary + table;
+  return bulkToolbar + topBar + summary + (state.portoView === "posisi" ? `<div id="pfPosisiWrap">${renderPortoPositionsTable()}</div>` : table);
+}
+
+
+// ==========================================
+// POSISI PER SAHAM — agregat transaksi Open per ticker
+// ==========================================
+// Menggabungkan SEMUA baris transaksi berstatus "Open" (belum ada Tgl/Harga/
+// Lot Jual) per ticker+jenis portofolio jadi SATU posisi (dipisah per jenis
+// -- BBCA di porto Investasi dan BBCA di porto Scalping dihitung sbg 2
+// posisi terpisah, bukan digabung, karena avg harga & tujuannya beda),
+// dengan avg harga beli dihitung TERTIMBANG (weighted average) dari harga
+// beli x lot tiap transaksi -- rumus yang SAMA dengan kalkulator manual
+// calcAveraging() di form edit (window.calcAveraging: totalOldValue+
+// totalNewValue / totalLot), cuma di sini otomatis jalan utk SEMUA transaksi
+// Open ticker+jenis itu (bukan cuma 1 posisi lama vs 1 tambahan baru).
+// avgHarga sengaja TIDAK memasukkan fee (murni harga), sedangkan totalModal
+// tetap memakai field totalBeli yang sudah dihitung hitungPorto() DENGAN fee
+// -- konsisten dgn kolom "Total Beli" di tabel Daftar Transaksi.
+function computePortoPositions(jenisFilter){
+  const openRows = state.portfolio.filter(p => p.status === "Open" && (!jenisFilter || jenisFilter==="Semua" || (p.jenisPorto||PORTO_JENIS_DEFAULT)===jenisFilter));
+  const byKey = {};
+  openRows.forEach(p => {
+    const jenis = p.jenisPorto || PORTO_JENIS_DEFAULT;
+    const key = p.ticker + "|" + jenis;
+    if(!byKey[key]) byKey[key] = { ticker:p.ticker, jenisPorto:jenis, totalLot:0, totalValue:0, totalModal:0, txCount:0 };
+    const g = byKey[key];
+    g.totalLot += (+p.lotBeli||0);
+    g.totalValue += (+p.hargaBeli||0) * (+p.lotBeli||0); // utk avg harga MURNI (tanpa fee)
+    g.totalModal += (+p.totalBeli||0); // sudah termasuk fee beli (field totalBeli)
+    g.txCount += 1;
+  });
+  // Estimasi fee jual dipakai utk P/L Mengambang supaya SEJAJAR/apple-to-apple
+  // dgn P/L Realisasi (hitungPorto(): nilaiPL = netJual - totalBeli, DUA-duanya
+  // net fee) -- diambil dari setting "Fee Default" (⚙️ Pengaturan), bukan
+  // hardcode, jadi ikut menyesuaikan kalau user ganti broker/tier fee.
+  const estSellFeePct = Math.max(0, Number(state.feeJualDefaultPct ?? FEE_JUAL_DEFAULT_PCT) || 0);
+  return Object.values(byKey).map(g => {
+    const avgHarga = g.totalLot > 0 ? g.totalValue / g.totalLot : 0;
+    // Harga sekarang: prioritas live Stockbit (kalau sudah pernah ditarik utk
+    // ticker ini di tab manapun -- state.stockbitLive dipakai bersama), fallback
+    // ke harga close (EOD) terakhir yang tersimpan di database (state.stocks).
+    // Live HARUS > 0 -- Stockbit kadang balas last:0 (mis. saham suspensi/
+    // di-gocap-kan, atau endpoint quote gagal parsing simbol tsb) yang secara
+    // teknis "finite" tapi jelas bukan harga beneran; tanpa filter ini P/L
+    // Mengambang bisa keliru jatuh ke -100% padahal cuma quote-nya kosong.
+    const live = state.stockbitLive[g.ticker];
+    const isLivePrice = !!(live && live.mapped && Number.isFinite(Number(live.mapped.last)) && Number(live.mapped.last) > 0);
+    const liveData = state.stocks.find(s => s.ticker === g.ticker);
+    const currentPrice = isLivePrice ? Number(live.mapped.last)
+      : (liveData && Number.isFinite(Number(liveData.cClose)) ? Number(liveData.cClose) : null);
+    // unrealizedPL = nilai jual bersih ESTIMASI (kalau dijual sekarang, sudah
+    // dipotong estimasi fee jual) DIKURANGI totalModal (yang SUDAH termasuk
+    // fee beli via field totalBeli per transaksi) -- bukan cuma selisih harga
+    // mentah spt sebelumnya. %P/L juga dihitung dari totalModal (bukan
+    // avgHarga) supaya basisnya sama dgn persenPL di transaksi closed.
+    let unrealizedPL = null, unrealizedPLPct = null;
+    if (currentPrice != null) {
+      const currentValue = currentPrice * g.totalLot * 100;
+      const estSellFee = currentValue * estSellFeePct / 100;
+      const netCurrentValue = currentValue - estSellFee;
+      unrealizedPL = netCurrentValue - g.totalModal;
+      unrealizedPLPct = g.totalModal > 0 ? (unrealizedPL / g.totalModal) * 100 : null;
+    }
+    return { ...g, avgHarga, currentPrice, isLivePrice, unrealizedPL, unrealizedPLPct };
+  }).sort((a,b) => b.totalModal - a.totalModal);
+}
+
+// Dipanggil dari handleLiveTick tiap ada tick harga masuk utk ticker yg
+// posisinya lagi Open di Portofolio & tab Portofolio sedang aktif -- supaya
+// card "P/L Mengambang" di summary ikut "hidup"/bergerak real-time seiring
+// pergerakan harga, tanpa perlu render ulang seluruh tabel (biar gak lag).
+// Kalau tab Portofolio sedang tidak aktif, dilewati saja -- toh nanti
+// otomatis ke-render ulang (dgn harga terbaru) begitu user buka tabnya.
+function updatePortfolioSummaryLive(){
+  if(state.tab !== "portfolio") return;
+  const el = document.getElementById("pfTotalPLMengambang");
+  if(!el) return; // summary blm ke-render (mis. lagi di view "Posisi per Saham" tanpa summary, atau porto kosong)
+  const openPositions = computePortoPositions(state.portoFilterJenis);
+  const totalUnrealizedPL = openPositions.reduce((a,g)=>a+(g.unrealizedPL||0),0);
+  el.style.color = totalUnrealizedPL>=0 ? "var(--up)" : "var(--down)";
+  el.textContent = openPositions.length ? `${totalUnrealizedPL>=0?"+":""}${fmtNum(Math.round(totalUnrealizedPL))}` : "-";
+  // Kalau lagi di view "Posisi per Saham", tabelnya juga butuh diperbarui
+  // (harga sekarang & P/L Mengambang per baris) -- pakai wrapper #pfPosisiWrap
+  // biar cuma innerHTML-nya yg diganti (bukan nambah node baru tiap tick).
+  if(state.portoView === "posisi"){
+    const posWrap = document.getElementById("pfPosisiWrap");
+    if(posWrap){
+      posWrap.innerHTML = renderPortoPositionsTable();
+      rebindGenericTable("portoPosisi"); // innerHTML diganti di luar attachContentEvents, jadi perlu di-rebind manual
+    }
+  }
+}
+
+function renderPortoPositionsTable(){
+  const positions = computePortoPositions(state.portoFilterJenis);
+  if(!positions.length){
+    return `<div class="empty-box">Tidak ada posisi Open saat ini${state.portoFilterJenis && state.portoFilterJenis!=="Semua" ? ` utk porto ${escapeHtml(state.portoFilterJenis)}` : ""} -- semua transaksi tercatat sudah closed (sudah dijual), atau memang belum ada transaksi.</div>`;
+  }
+
+  const anyMissingPrice = positions.some(g => g.currentPrice == null);
+  const filtered = tableFilterRows("portoPosisi", positions, g => [g.ticker, g.jenisPorto]);
+  const sorted = tableSortRows("portoPosisi", filtered, {
+    ticker: g => g.ticker,
+    txCount: g => g.txCount,
+    totalLot: g => g.totalLot,
+    avgHarga: g => g.avgHarga,
+    totalModal: g => g.totalModal,
+    currentPrice: g => g.currentPrice,
+    unrealizedPl: g => g.unrealizedPL,
+    unrealizedPlPct: g => g.unrealizedPLPct,
+  });
+  const rows = sorted.map(g => {
+    const plColor = g.unrealizedPL == null ? "var(--muted)" : (g.unrealizedPL > 0 ? "var(--up)" : (g.unrealizedPL < 0 ? "var(--down)" : "var(--muted)"));
+    const plStr = g.unrealizedPL == null ? "-" : `${g.unrealizedPL>0?"+":""}${fmtNum(Math.round(g.unrealizedPL))}`;
+    const plPctStr = g.unrealizedPLPct == null ? "-" : `${g.unrealizedPLPct>0?"+":""}${g.unrealizedPLPct.toFixed(2)}%`;
+    const priceCell = g.currentPrice != null
+      ? `${fmtNum(g.currentPrice)} <span style="font-size:9px;color:${g.isLivePrice?'var(--down)':'var(--muted)'};" title="${g.isLivePrice?'Harga live Stockbit':'Harga close (EOD) terakhir di database, bukan live'}">${g.isLivePrice?'🔴 LIVE':'EOD'}</span>`
+      : `<span style="color:var(--muted);font-size:11px;" title="Belum ada harga live maupun EOD di database utk ticker ini">-</span>`;
+    return `<tr>
+      <td class="ticker-cell"><button class="ticker-link" data-detail="${g.ticker}" title="Lihat detail ${g.ticker}">${g.ticker}</button></td>
+      <td>${portoJenisBadge(g.jenisPorto)}</td>
+      <td class="mono" style="text-align:center;">${g.txCount}</td>
+      <td class="mono">${g.totalLot}</td>
+      <td class="mono">${fmtNum(Math.round(g.avgHarga))}</td>
+      <td class="mono">${fmtNum(g.totalModal)}</td>
+      <td class="mono">${priceCell}</td>
+      <td class="mono" style="color:${plColor};font-weight:700;">${plStr}</td>
+      <td class="mono" style="color:${plColor};font-weight:700;">${plPctStr}</td>
+    </tr>`;
+  }).join("");
+
+  const totalModalAll = filtered.reduce((a,g)=>a+g.totalModal,0);
+  const totalPLAll = filtered.reduce((a,g)=>a+(g.unrealizedPL||0),0);
+
+  return `
+    <div style="font-size:11px;color:var(--muted);margin-bottom:10px;line-height:1.6;">
+      Avg Harga dihitung <b>tertimbang</b> (weighted average) dari harga beli &times; lot SEMUA transaksi <b>Open</b> ticker+jenis portofolio itu (belum termasuk fee -- sama seperti kalkulator "Averaging" di form edit), BUKAN sekadar harga transaksi terakhir. Ticker yg sama di jenis porto berbeda dihitung sbg posisi terpisah. 🔴 LIVE = harga live Stockbit (kalau sudah pernah ditarik di tab Screener/Detail), EOD = harga close terakhir yang tersimpan di database. P/L Mengambang cuma estimasi kasar (belum dikurangi fee jual).
+      ${anyMissingPrice ? `<br>⚠️ Sebagian ticker belum ada harga sama sekali (live maupun EOD) -- P/L ticker itu belum bisa dihitung, tarik dulu Live Stockbit-nya atau pastikan data EOD sudah ada di database.` : ""}
+    </div>
+    ${tableFilterBoxHtml("portoPosisi", "Cari ticker atau jenis porto...")}
+    <div class="table-wrap">
+      <table class="mono">
+        <thead><tr>
+          ${tableSortTh("portoPosisi", "Ticker", "ticker")}<th>Jenis</th>${tableSortTh("portoPosisi", "Jml Tx", "txCount")}${tableSortTh("portoPosisi", "Total Lot", "totalLot")}${tableSortTh("portoPosisi", "Avg Harga", "avgHarga")}${tableSortTh("portoPosisi", "Total Modal", "totalModal")}${tableSortTh("portoPosisi", "Harga Sekarang", "currentPrice")}${tableSortTh("portoPosisi", "P/L Mengambang", "unrealizedPl")}${tableSortTh("portoPosisi", "%P/L", "unrealizedPlPct")}
+        </tr></thead>
+        <tbody>${rows || `<tr><td colspan="9"><div class="empty-box">Tidak ada posisi yang cocok dengan pencarian.</div></td></tr>`}</tbody>
+        <tfoot><tr style="font-weight:700;border-top:2px solid var(--border);">
+          <td colspan="5">Total (${filtered.length} posisi)</td>
+          <td class="mono">${fmtNum(totalModalAll)}</td>
+          <td></td>
+          <td class="mono" style="color:${totalPLAll>=0?'var(--up)':'var(--down)'};">${totalPLAll>=0?"+":""}${fmtNum(Math.round(totalPLAll))}</td>
+          <td></td>
+        </tr></tfoot>
+      </table>
+    </div>`;
 }
 
 function tvSymbol(ticker){ return `IDX:${ticker}`; }
@@ -12185,7 +12830,35 @@ function renderChart(){
 function chartSMA(values, period){ return values.map((_,i)=>i+1<period?null:values.slice(i+1-period,i+1).reduce((a,b)=>a+b,0)/period); }
 function chartEMA(values, period){ const out=[]; const k=2/(period+1); values.forEach((v,i)=>out.push(i===0?v:(v*k+out[i-1]*(1-k)))); return out; }
 function chartStd(values, period, i, mean){ if(i+1<period)return null; const a=values.slice(i+1-period,i+1), m=mean??a.reduce((x,y)=>x+y,0)/period; return Math.sqrt(a.reduce((x,y)=>x+(y-m)**2,0)/period); }
-function chartRSI(values, period=14){ const out=values.map(()=>null); let gains=0,losses=0; for(let i=1;i<values.length;i++){const d=values[i]-values[i-1]; if(i<=period){gains+=Math.max(d,0);losses+=Math.max(-d,0);if(i===period)out[i]=losses===0?100:100-100/(1+gains/losses);} else {gains=(gains*(period-1)+Math.max(d,0))/period;losses=(losses*(period-1)+Math.max(-d,0))/period;out[i]=losses===0?100:100-100/(1+gains/losses);}} return out; }
+// RSI Wilder untuk garis chart -- dipisah dari ti_calcRSI() (yang cuma
+// mengembalikan satu nilai terakhir buat skor Screener) karena di sini
+// perlu SELURUH deret buat digambar sebagai garis. PENTING: setelah bar
+// seed (i===period), variabel gains/losses HARUS dikonversi dari total
+// SUM 14-hari jadi RATA-RATA dulu sebelum masuk loop smoothing Wilder --
+// kalau tidak (versi lama, bug), bar-bar tepat setelah seed memakai SUM
+// mentah seolah-olah itu rata-rata, jadi ~`period` kali kegedean, dan RSI
+// hasilnya meleset cukup jauh (pernah diukur ~6 poin di bar ke-16) sampai
+// error itu meluruh pelan-pelan lewat banyak bar berikutnya. Pola yang
+// benar ini sama persis dengan yang dipakai ti_calcRSI() dan chartATR() di
+// bawah -- keduanya sudah benar dari awal.
+function chartRSI(values, period=14){
+  const out = values.map(()=>null);
+  if (values.length <= period) return out;
+  let gains = 0, losses = 0;
+  for (let i = 1; i <= period; i++) {
+    const d = values[i] - values[i-1];
+    if (d > 0) gains += d; else losses -= d;
+  }
+  let avgGain = gains / period, avgLoss = losses / period; // <-- konversi SUM ke RATA-RATA (ini yang hilang di versi lama)
+  out[period] = avgLoss === 0 ? 100 : 100 - 100/(1+avgGain/avgLoss);
+  for (let i = period+1; i < values.length; i++) {
+    const d = values[i] - values[i-1];
+    avgGain = (avgGain*(period-1) + Math.max(d,0)) / period;
+    avgLoss = (avgLoss*(period-1) + Math.max(-d,0)) / period;
+    out[i] = avgLoss === 0 ? 100 : 100 - 100/(1+avgGain/avgLoss);
+  }
+  return out;
+}
 function chartHighest(values, period, i){ if(i+1<period)return null; const a=values.slice(i+1-period,i+1).filter(v=>v!=null); return a.length?Math.max(...a):null; }
 function chartLowest(values, period, i){ if(i+1<period)return null; const a=values.slice(i+1-period,i+1).filter(v=>v!=null); return a.length?Math.min(...a):null; }
 // ATR Wilder (dipakai SuperTrend) -- true range dihaluskan dengan rumus
@@ -14115,12 +14788,19 @@ function renderTargetBandar(){
   ` : `<div class="empty-box" style="padding:16px;font-size:12px;">Muat data dulu di atas untuk melihat Avg Bandar & Target.</div>`;
 
   const maxNet = Math.max(1, ...top5.map(b=>Math.abs(b.netValue)));
+  const top5Sorted = tableSortRows("targetBandarTop", top5, {
+    broker: b => b.broker_code,
+    muncul: b => b.daysAppeared,
+    netValue: b => b.netValue,
+    avgPerAppearance: b => b.avgPerAppearance,
+    tipe: b => b.type,
+  });
   const top5Html = top5.length ? `
     <div class="table-wrap">
       <table class="mono">
-        <thead><tr><th>Broker</th><th>Muncul</th><th>Net Value</th><th>Avg/Muncul</th><th>Tipe</th></tr></thead>
+        <thead><tr>${tableSortTh("targetBandarTop", "Broker", "broker")}${tableSortTh("targetBandarTop", "Muncul", "muncul")}${tableSortTh("targetBandarTop", "Net Value", "netValue")}${tableSortTh("targetBandarTop", "Avg/Muncul", "avgPerAppearance")}${tableSortTh("targetBandarTop", "Tipe", "tipe")}</tr></thead>
         <tbody>
-          ${top5.map(b=>`
+          ${top5Sorted.map(b=>`
             <tr>
               <td>${escapeHtml(b.broker_code)}</td>
               <td>${b.daysAppeared}/${state.targetWindowActualDays} hari</td>
@@ -14145,12 +14825,23 @@ function renderTargetBandar(){
       Hit Rate hanya dihitung dari kalkulasi yang sudah lewat ${TB_HIT_HORIZON_DAYS} hari bursa sejak tanggal kalkulasi (atau sudah kena target lebih cepat) — kalkulasi yang masih baru berstatus "Berjalan" dan belum masuk hitungan.
     </div>`;
 
+  const historyFiltered = tableFilterRows("targetBandar", history, h => [h.stock_code, h.calc_date]);
+  const historySorted = tableSortRows("targetBandar", historyFiltered, {
+    tgl: h => h.calc_date,
+    emiten: h => h.stock_code,
+    avgBandar: h => h.avg_bandar_price,
+    r1: h => h.target_r1,
+    max: h => h.target_max,
+    statusR1: h => h.hitR1 ? 1 : 0,
+    statusMax: h => h.hitMax ? 1 : 0,
+  });
   const historyRowsHtml = history.length ? `
+    ${tableFilterBoxHtml("targetBandar", "Cari emiten atau tanggal...")}
     <div class="table-wrap">
       <table class="mono">
-        <thead><tr><th>Tgl Kalkulasi</th><th>Emiten</th><th>Avg Bandar</th><th>R1</th><th>Max</th><th>Status R1</th><th>Status Max</th></tr></thead>
+        <thead><tr>${tableSortTh("targetBandar", "Tgl Kalkulasi", "tgl")}${tableSortTh("targetBandar", "Emiten", "emiten")}${tableSortTh("targetBandar", "Avg Bandar", "avgBandar")}${tableSortTh("targetBandar", "R1", "r1")}${tableSortTh("targetBandar", "Max", "max")}${tableSortTh("targetBandar", "Status R1", "statusR1")}${tableSortTh("targetBandar", "Status Max", "statusMax")}</tr></thead>
         <tbody>
-          ${history.map(h=>`
+          ${historySorted.map(h=>`
             <tr>
               <td>${escapeHtml(h.calc_date)}</td>
               <td>${escapeHtml(h.stock_code)}</td>
@@ -14159,7 +14850,7 @@ function renderTargetBandar(){
               <td>${fmtNum(Math.round(h.target_max))}</td>
               <td>${targetStatusPill(h.hitR1)}${h.daysToR1!=null?` <span style="font-size:10.5px;color:var(--muted);">(H+${h.daysToR1})</span>`:""}</td>
               <td>${targetStatusPill(h.hitMax)}${h.daysToMax!=null?` <span style="font-size:10.5px;color:var(--muted);">(H+${h.daysToMax})</span>`:""}</td>
-            </tr>`).join("")}
+            </tr>`).join("") || `<tr><td colspan="7"><div class="empty-box">Tidak ada riwayat yang cocok dengan pencarian.</div></td></tr>`}
         </tbody>
       </table>
     </div>` : `<div class="empty-box" style="padding:16px;font-size:12px;">Belum ada riwayat. Simpan perhitungan dari Kalkulator di atas dulu.</div>`;
@@ -15008,7 +15699,7 @@ function epsSortBtn(key, label){
 function renderEntryPriceScanner(){
   const f = state.epsFilters;
   const raw = state.epsRaw;
-  const rows = state.epsResults;
+  const rows = tableFilterRows("entryScanner", state.epsResults, r => [r.ticker, r.nama, r.topBroker]);
 
   const infoPanel = `
     <details class="panel" id="epsInfoPanel" style="flex-direction:column;align-items:stretch;" ${state.epsInfoOpen?"open":""}>
@@ -15159,7 +15850,9 @@ function renderEntryPriceScanner(){
   const resultsPanel = `
     <div class="panel" style="flex-direction:column;align-items:stretch;">
       <div class="filter-section-title">Hasil Scan <span class="count-badge">${rows.length} saham</span><span class="line"></span></div>
-      ${!rows.length ? `<div class="empty-box">${raw ? "Tidak ada saham yang lolos kombinasi filter ini — coba longgarkan Min Mutu/Akumulasi/Gap." : "Belum ada hasil. Klik \"🔄 Scan Sekarang\" di atas untuk mulai."}</div>` : `
+      ${!raw ? `<div class="empty-box">Belum ada hasil. Klik "🔄 Scan Sekarang" di atas untuk mulai.</div>` : `
+      ${tableFilterBoxHtml("entryScanner", "Cari kode, nama emiten, atau top broker...")}
+      ${!rows.length ? `<div class="empty-box">Tidak ada saham yang lolos kombinasi filter/pencarian ini — coba longgarkan Min Mutu/Akumulasi/Gap atau kosongkan kotak pencarian.</div>` : `
       ${renderBacktestSaveBar("eps", rows.map(r=>({
         ticker: r.ticker, price: Math.round(r.harga),
         kriteria: "Entry Price Scanner",
@@ -15196,7 +15889,7 @@ function renderEntryPriceScanner(){
               </tr>`).join("")}
           </tbody>
         </table>
-      </div>`}
+      </div>`}`}
     </div>`;
 
   return infoPanel + filterPanel + resultsPanel;
@@ -15621,11 +16314,17 @@ function renderKrakenFlow(){
         <table class="mono">
           <thead>
             <tr>
-              <th></th><th>#</th><th>Kode</th><th>Nama</th><th>Harga</th><th>1D%</th><th>Bid</th><th>Offer</th><th>B/O</th><th>ATS${result.usingHistory?` (${state.orcaDuration}H)`:""}</th><th>Freq${result.usingHistory?` (${state.orcaDuration}H)`:""}</th><th>Non-Reg%${result.usingHistory?` (${state.orcaDuration}H)`:""}</th><th>Foreign (${escapeHtml(result.foreignWinLabel||"")})</th><th>Volume</th><th>Mkt Cap</th>
+              <th></th><th>#</th>${tableSortTh("krakenFlow","Kode","ticker")}${tableSortTh("krakenFlow","Nama","name")}${tableSortTh("krakenFlow","Harga","harga")}${tableSortTh("krakenFlow","1D%","chg")}${tableSortTh("krakenFlow","Bid","bid")}${tableSortTh("krakenFlow","Offer","offer")}${tableSortTh("krakenFlow","B/O","bo")}${tableSortTh("krakenFlow",`ATS${result.usingHistory?` (${state.orcaDuration}H)`:""}`,"ats")}${tableSortTh("krakenFlow",`Freq${result.usingHistory?` (${state.orcaDuration}H)`:""}`,"freq")}${tableSortTh("krakenFlow",`Non-Reg%${result.usingHistory?` (${state.orcaDuration}H)`:""}`,"nonreg")}${tableSortTh("krakenFlow",`Foreign (${escapeHtml(result.foreignWinLabel||"")})`,"foreign")}${tableSortTh("krakenFlow","Volume","volume")}${tableSortTh("krakenFlow","Mkt Cap","mktcap")}
             </tr>
           </thead>
           <tbody>
-            ${rows.map((r,i)=>`
+            ${tableSortRows("krakenFlow", rows, {
+              ticker: r => r.ticker, name: r => r.name, harga: r => r.cClose,
+              chg: r => r.changePct, bid: r => r.bidVolume, offer: r => r.offerVolume,
+              bo: r => r.orcaBidOfferRatio, ats: r => r.avgTicket, freq: r => r.frequency,
+              nonreg: r => r.crossingPct, foreign: r => r.orcaForeignVal, volume: r => r.cVol,
+              mktcap: r => r.marketCap,
+            }).map((r,i)=>`
               <tr>
                 ${backtestRowCheckbox("orca", { ticker: r.ticker, price: Math.round(r.cClose||0) })}
                 <td>${i+1}</td>
@@ -16571,6 +17270,33 @@ function attachContentEvents(){
   };
   const hdBulkResultsPanel = document.getElementById("hdBulkResultsPanel");
   if(hdBulkResultsPanel) hdBulkResultsPanel.ontoggle = (e) => { state.hdBulkResultsOpen = e.target.open; };
+
+  // --- Toolbar "Tarik Data Massal" di tab Watchlist / Portofolio / Backtest
+  // (lihat renderBulkPullToolbar) — pola sama dengan wiring stockbitBulkBtn/
+  // screenerHdBulkBtn di atas, cuma daftar tickernya dari getWatchlistTickers()/
+  // getPortfolioTickers()/getBacktestTickers() alih-alih resolveBulkTickers().
+  [
+    ["wl", getWatchlistTickers],
+    ["porto", getPortfolioTickers],
+    ["bt", getBacktestTickers],
+  ].forEach(([ns, getTickers]) => {
+    const fromInput = document.getElementById(`${ns}HdFromInput`);
+    if(fromInput) fromInput.onchange = (e) => { state.hdAutoBulkFrom = e.target.value || state.hdAutoBulkFrom; };
+    const toInput = document.getElementById(`${ns}HdToInput`);
+    if(toInput) toInput.onchange = (e) => { state.hdAutoBulkTo = e.target.value || state.hdAutoBulkTo; };
+    const liveBtn = document.getElementById(`${ns}LiveBulkBtn`);
+    if(liveBtn) liveBtn.onclick = () => {
+      if(!state.stockbitToken){ openSettings(); return; }
+      const tickers = getTickers();
+      if(tickers.length) fetchStockbitLiveBulk(tickers);
+    };
+    const hdTiBtn = document.getElementById(`${ns}HdTiBulkBtn`);
+    if(hdTiBtn) hdTiBtn.onclick = () => {
+      if(!state.stockbitToken){ openSettings(); return; }
+      const tickers = getTickers();
+      if(tickers.length) fetchHistoricalThenUpdateTechnicalBulk(tickers, state.hdAutoBulkFrom, state.hdAutoBulkTo);
+    };
+  });
   
   document.querySelectorAll("[data-sektor-toggle]").forEach(el=>{
     el.onclick = ()=>{
@@ -16745,8 +17471,9 @@ function attachContentEvents(){
   if(pfBulkDeleteBtn) pfBulkDeleteBtn.onclick = bulkDeletePorto;
   const chkSelectAllPorto = document.getElementById("chkSelectAllPorto");
   if(chkSelectAllPorto) chkSelectAllPorto.onchange = (e)=>{
-    if(e.target.checked) state.portfolio.forEach(p=> state.selectedPorto.add(String(p.id)));
-    else state.selectedPorto.clear();
+    const visible = getPortfolioFilteredDisplay(); // cuma baris yg lagi kelihatan (sesuai filter Jenis Portofolio + kotak pencarian aktif), bukan SEMUA transaksi
+    if(e.target.checked) visible.forEach(p=> state.selectedPorto.add(String(p.id)));
+    else visible.forEach(p=> state.selectedPorto.delete(String(p.id)));
     render();
   };
   document.querySelectorAll(".chk-porto-row").forEach(chk=>{
@@ -16762,7 +17489,7 @@ function attachContentEvents(){
   if (btnPrev) btnPrev.onclick = () => { if(state.page > 1) { state.page--; render(); } };
   if (btnNext) btnNext.onclick = () => { state.page++; render(); };
 
-  document.querySelectorAll(".sortable").forEach(th => {
+  document.querySelectorAll(".sortable:not([data-table-sort])").forEach(th => {
     th.onclick = () => {
       const col = th.dataset.sort;
       if (state.sort.col === col) {
@@ -16775,6 +17502,12 @@ function attachContentEvents(){
       render();
     };
   });
+
+  // Wiring kotak pencarian + header sort generik (lihat tableFilterBoxHtml()/
+  // tableSortTh() dekat escapeHtml) buat semua tabel yang sudah dipasangi
+  // fitur filter+sort baru -- satu baris ini menggantikan kebutuhan nulis
+  // wiring manual per tabel.
+  GENERIC_TABLE_FILTER_IDS.forEach(rebindGenericTable);
 
   // --- Broker Summary ---
   const bsStockCodeInput = document.getElementById("bsStockCode");
@@ -16816,6 +17549,8 @@ function attachContentEvents(){
   if(bsAutoBulkBtn) bsAutoBulkBtn.onclick = () => fetchAndSaveBrokerSummaryBulk([...state.selectedForBacktest], state.bsAutoBulkFrom, state.bsAutoBulkTo);
   const bsBulkResultsPanel = document.getElementById("bsBulkResultsPanel");
   if(bsBulkResultsPanel) bsBulkResultsPanel.ontoggle = (e) => { state.bsBulkResultsOpen = e.target.open; };
+  const screenerBsBulkResultsPanel = document.getElementById("screenerBsBulkResultsPanel");
+  if(screenerBsBulkResultsPanel) screenerBsBulkResultsPanel.ontoggle = (e) => { state.bsBulkResultsOpen = e.target.open; };
   const bsEditorPanel = document.getElementById("bsEditorPanel");
   if(bsEditorPanel) bsEditorPanel.ontoggle = (e) => { state.bsEditorOpen = e.target.open; };
 
@@ -18041,6 +18776,14 @@ function handleLiveTick(parsedData) {
 
     // Perbarui UI jika saham ini sedang dirender di layar (tanpa me-render seluruh tabel agar tidak lag)
     updateLivePriceUI(ticker, currentPrice, prevPrice);
+
+    // Kalau ticker ini lagi jadi posisi Open di Portofolio, ikut update card
+    // "P/L Mengambang" (+ tabel Posisi per Saham kalau lagi dibuka) supaya
+    // ikut bergerak real-time mengikuti harga -- bukan cuma diam di 0/statis
+    // sampai user reload atau pindah-pindah tab.
+    if(state.portfolio.some(p => p.status === "Open" && p.ticker === ticker)){
+        updatePortfolioSummaryLive();
+    }
 
     // 🔔 Cek & kirim Alert Live ke Telegram (lihat blok panjang di atas
     // handleLiveTick ini untuk alasan kenapa ini dilakukan di sini, bukan

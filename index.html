@@ -158,6 +158,23 @@
     </div>
 
     <div style="border-top:1px solid var(--border); padding-top:14px; margin-bottom:8px;">
+      <h3 style="font-size:14px; margin:0 0 4px;">💰 Fee Default Portofolio</h3>
+      <div style="font-size:11.5px; color:var(--muted); margin-bottom:10px; line-height:1.5;">
+        Dipakai sebagai nilai awal field Fee di form Tambah Transaksi Portofolio (baru & impor Excel/CSV),
+        dan sebagai estimasi fee jual untuk menghitung <b>P/L Mengambang</b> supaya angkanya net-fee —
+        sejajar dengan P/L Realisasi transaksi yang sudah closed. Sesuaikan dengan tarif fee broker Anda.
+      </div>
+    </div>
+    <div class="field">
+      <label>Fee Beli Default (%)</label>
+      <input id="setFeeBeliDefault" type="number" step="0.01" placeholder="0.15">
+    </div>
+    <div class="field">
+      <label>Fee Jual Default (%)</label>
+      <input id="setFeeJualDefault" type="number" step="0.01" placeholder="0.25">
+    </div>
+
+    <div style="border-top:1px solid var(--border); padding-top:14px; margin-bottom:8px;">
       <h3 style="font-size:14px; margin:0 0 4px;">🔴 Live Data Stockbit (opsional)</h3>
       <div style="font-size:11.5px; color:var(--muted); margin-bottom:10px; line-height:1.5;">
         Pakai token dari extension Chrome Stockbit milikmu sendiri untuk menarik harga/orderbook <b>live</b>
@@ -209,10 +226,12 @@
         request VALUE+VOLUME). Tes ini baca langsung dari kotak endpoint di atas (belum perlu disimpan dulu).
         <div style="display:flex;gap:8px;align-items:center;margin-top:10px;flex-wrap:wrap;">
           <input id="testStockbitBrokerTicker" type="text" placeholder="Ticker uji, mis. BBCA" maxlength="6" style="text-transform:uppercase;max-width:140px;">
-          <input id="testStockbitBrokerDate" type="date" style="background:color-mix(in srgb, currentColor 6%, transparent);border:1px solid var(--border);color:var(--text);font-size:11.5px;border-radius:6px;padding:6px;">
+          <input id="testStockbitBrokerFrom" type="date" title="Dari tanggal" style="background:color-mix(in srgb, currentColor 6%, transparent);border:1px solid var(--border);color:var(--text);font-size:11.5px;border-radius:6px;padding:6px;">
+          <span style="color:var(--muted);font-size:11px;">&ndash;</span>
+          <input id="testStockbitBrokerTo" type="date" title="Sampai tanggal" style="background:color-mix(in srgb, currentColor 6%, transparent);border:1px solid var(--border);color:var(--text);font-size:11.5px;border-radius:6px;padding:6px;">
           <button type="button" class="btn btn-outline" onclick="testStockbitBrokerEndpoint()" style="font-size:11.5px;padding:6px 10px;">🧪 Uji Endpoint Ini</button>
         </div>
-        <div style="font-size:10.5px;color:var(--muted);margin-top:4px;">Kosongkan tanggal untuk pakai hari ini. Pilih hari bursa (bukan Sabtu/Minggu/libur) supaya ada data.</div>
+        <div style="font-size:10.5px;color:var(--muted);margin-top:4px;">Kosongkan "Dari" untuk pakai hari ini; kosongkan "Sampai" untuk sama dengan "Dari" (1 hari saja). Tiap hari bursa dalam periode ditembak sebagai request terpisah (jeda ~300ms), jadi periode yang panjang akan lebih lama. Pilih hari bursa (bukan Sabtu/Minggu/libur) supaya ada data.</div>
         <div id="testStockbitBrokerResult" style="margin-top:8px;"></div>
       </div>
     </div>
