@@ -1,0 +1,288 @@
+═════════════════════════════════════════════════════════════════════════
+  PANDUAN INTEGRASI: fetch-yahoo-financials + Tabel Baru ke Aplikasi
+═════════════════════════════════════════════════════════════════════════
+
+YANG SUDAH ANDA DAPAT:
+1. 09_yahoo_financials.sql — Migration untuk membuat 3 tabel baru di Supabase
+2. fetch-yahoo-financials.mjs — Script untuk menarik data dari Yahoo Finance ke Supabase
+
+═════════════════════════════════════════════════════════════════════════
+BAGIAN 1: CARA MENJALANKAN FETCHER
+═════════════════════════════════════════════════════════════════════════
+
+LANGKAH 1: Jalankan Migration SQL
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Buka Supabase Dashboard → SQL Editor → Paste isi file 09_yahoo_financials.sql → Klik "Run"
+
+Atau kalau pakai CLI:
+  psql -h db.xxxx.supabase.co -U postgres -d postgres -f sql/09_yahoo_financials.sql
+
+Setelah itu cek bahwa tabel baru sudah ada:
+  SELECT table_name FROM information_schema.tables WHERE table_name IN ('institutional_holders','insider_transactions','financials_annual');
+
+LANGKAH 2: Set Environment Variables
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Di terminal/command prompt, set 2 variabel ini SEBELUM menjalankan script:
+
+Windows (CMD):
+  set SUPABASE_URL=https://xxxx.supabase.co
+  set SUPABASE_SERVICE_KEY=eyJ...   ← paste service_role key (bukan anon key!)
+
+Windows (PowerShell):
+  $env:SUPABASE_URL="https://xxxx.supabase.co"
+  $env:SUPABASE_SERVICE_KEY="eyJ..."
+
+Linux/Mac:
+  export SUPABASE_URL="https://xxxx.supabase.co"
+  export SUPABASE_SERVICE_KEY="eyJ..."
+
+⚠️  PENTING: Pakai SERVICE_ROLE key (bukan anon key) supaya script bisa menulis
+melewati RLS. Service_role key ada di Supabase Dashboard → Settings → API → service_role.
+
+LANGKAH 3: Jalankan Fetcher
+━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Pastikan Node.js versi 18+ sudah terinstall (cek: node --version)
+
+  # Tes dulu 5 ticker saja (dry run — tidak menyimpan):
+  node fetch-yahoo-financials.mjs --limit=5 --dry
+
+  # Kalau tidak ada error, jalankan 50 ticker pertama (simpan ke DB):
+  node fetch-yahoo-financials.mjs --limit=50
+
+  # Jalankan semua ticker:
+  node fetch-yahoo-financials.mjs
+
+  # Atau hanya beberapa ticker spesifik:
+  node fetch-yahoo-financials.mjs --only=BBCA,BBRI,TLKM,ASII
+
+Waktu yang dibutuhkan:
+- 500 ticker ± 4-5 menit (DELAY_MS = 450ms antar ticker)
+- Kalau kena 429 rate limit, script otomatis tunggu 10 detik lalu retry
+
+Output yang diharapkan:
+  🔑 Mengambil session Yahoo (cookie + crumb)…
+  ✅ Session Yahoo siap (crumb: xxxxxx…)
+  📋 500 ticker akan diproses
+
+  [1/500] BBCA — ✅ 34 kolom, 3 holders, 0 insiders
+  [2/500] BBRI — ✅ 32 kolom, 2 holders, 0 insiders
+  [3/500] TLKM — tidak ada di Yahoo (skip)
+  ...
+
+  ════════════════════════════════════════════════════
+  ✅ Berhasil : 420
+  ⏭️  Tidak ada di Yahoo: 50
+  ❌ Gagal    : 30
+
+LANGKAH 4: Jadwalkan Otomatis (Opsional)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Untuk menjalankan otomatis setiap hari, tambahkan ke cron (Linux) atau Task Scheduler (Windows):
+  0 18 * * 1-5 cd /path/to/screener && node fetch-yahoo-financials.mjs >> logs/yahoo.log 2>&1
+(Jam 18:00 WIB setelah bursa tutup, Senin-Jumat)
+
+═════════════════════════════════════════════════════════════════════════
+BAGIAN 2: CARA MENGINTEGASIKAN DATA KE FRONTEND
+═════════════════════════════════════════════════════════════════════════
+
+Setelah fetcher berhasil menjalankan, Anda punya data baru di Supabase:
+- Kolom baru di tabel stocks (per, pbv, roe, der, npm, dll sudah ada dari sync lama;
+  yang baru: gross_margin, ebitda_margin, total_cash, total_debt, business_summary)
+- Tabel institutional_holders (pemegang saham institusi/fund)
+- Tabel insider_transactions (transaksi insider)
+- Tabel financials_annual (laporan keuangan tahunan: revenue, net_income, total_assets)
+
+Ada 3 cara untuk menampilkan data ini di frontend:
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+CARA A: Paling Mudah — Tambahkan Fetch ke loadLive() di app.js
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Di dalam fungsi loadLive() di app.js, sudah ada Promise.all([
+  fetch stocks_screener,
+  fetch portfolios,
+  fetch backtest_sessions,
+  fetch watchlists,
+  fetch custom_presets,
+  fetch price_history_stockbit,
+]);
+
+Tambahkan 3 fetch lagi:
+
+  const [stocksRes, portoRes, backtestRes, wlRes, presetsRes, stockbitHistRes,
+         holdersRes, insidersRes, annualsRes] = await Promise.all([
+    // ... fetch yang sudah ada
+    fetch(`${SUPABASE_URL}/institutional_holders?select=*`, { headers: getSupaHeaders(), cache: "no-store" }).then(r => r.ok ? r.json() : []),
+    fetch(`${SUPABASE_URL}/insider_transactions?select=*`, { headers: getSupaHeaders(), cache: "no-store" }).then(r => r.ok ? r.json() : []),
+    fetch(`${SUPABASE_URL}/financials_annual?select=*&order=fiscal_year.desc`, { headers: getSupaHeaders(), cache: "no-store" }).then(r => r.ok ? r.json() : []),
+  ]);
+
+Lalu simpan ke state:
+
+  state.holders = holdersRes;
+  state.insiders = insidersRes;
+  state.annuals = annualsRes;
+
+Dan tampilkan di halaman Detail Emiten (modal detail):
+  - Tab "Komposisi Pemegang Saham" → gunakan data state.holders.filter(h => h.stock_code === ticker)
+  - Tab "Insider" → state.insiders.filter(i => i.stock_code === ticker)
+  - Tab "Fundamental" → state.annuals.filter(a => a.stock_code === ticker)
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+CARA B: Fetch On-Demand Saat Detail Emiten Dibuka
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Jika data terlalu besar untuk dimuat semua saat startup (ribuan baris holders),
+fetch hanya untuk 1 ticker saat modal detail dibuka:
+
+  async function loadHoldersForTicker(ticker) {
+    const res = await fetch(
+      `${SUPABASE_URL}/institutional_holders?stock_code=eq.${encodeURIComponent(ticker)}&order=pct_held.desc`,
+      { headers: getSupaHeaders() }
+    );
+    return res.ok ? await res.json() : [];
+  }
+
+Panggil saat user buka detail saham:
+  async function openDetail(ticker) {
+    state.detailHolders = await loadHoldersForTicker(ticker);
+    state.detailInsiders = await loadInsidersForTicker(ticker);
+    // ... buka modal
+  }
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+CARA C: Tambahkan ke quant-hub.js (Modal Detail di Quant Hub)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Untuk menampilkan data di modal detail Quant Hub yang sudah ada, tambahkan
+fetch di dalam fungsi qhOpenModal(ticker). Di bagian render modal, tambahkan
+seksi "Komposisi Pemegang Saham":
+
+  if (QH.holdersByTicker === undefined) QH.holdersByTicker = {};
+  if (!QH.holdersByTicker[t]) {
+    const res = await fetch(QH_REST + `/institutional_holders?stock_code=eq.${t}&order=pct_held.desc`, {
+      headers: QH_SUPA_HEADERS
+    });
+    QH.holdersByTicker[t] = res.ok ? await res.json() : [];
+  }
+  const holders = QH.holdersByTicker[t];
+  if (holders.length) {
+    html += `
+    <div class="qh-section-title">Komposisi Pemegang Saham</div>
+    <div class="qh-weight-list">
+      ${holders.slice(0,10).map((h,i) => `
+        <div class="qh-weight-row" style="cursor:default">
+          <div class="qh-weight-tk">${i+1}. ${qhEsc(h.holder_name)}</div>
+          <div class="qh-weight-track"><div class="qh-weight-fill buy" style="width:${Math.min(h.pct_held||0,100)}%"></div></div>
+          <div class="qh-weight-net">${h.pct_held != null ? new Intl.NumberFormat("id-ID",{maximumFractionDigits:1}).format(h.pct_held)+"%" : "-"}</div>
+        </div>`).join("")}
+    </div>`;
+  }
+
+═════════════════════════════════════════════════════════════════════════
+BAGIAN 3: TAMBAHAN DATA DARI SUMBER LAIN
+═════════════════════════════════════════════════════════════════════════
+
+JIKA Yahoo Finance tidak cukup atau data tidak lengkap untuk beberapa saham,
+berikut sumber alternatif:
+
+1. IDX.CO.ID — Profile Perusahaan
+   GET https://www.idx.co.id/primary/CompanyProfile/GetCompanyProfile?code={ticker}
+   Mengembalikan: company_name, shares_outstanding, market_cap
+   Tambahkan ke sync-idx-full.mjs, fetch per 10 detik, simpan ke kolom stocks
+   yang sudah ada (shares_outstanding, market_cap).
+
+2. IDX.CO.ID — Financial Statement
+   GET https://www.idx.co.id/primary/FinancialStatement/GetFinancialStatement?code={ticker}&year=2026
+   Mengembalikan: revenue, net_profit, EPS, ROE per kuartal
+   Simpan ke tabel financials_annual atau buat tabel baru financials_quarterly.
+
+3. IDX.CO.ID — Shareholders
+   GET https://www.idx.co.id/primary/CompanyProfile/GetShareholder?code={ticker}
+   Mengembalikan: daftar pemegang saham >5%, pengendali, direksi
+   Simpan ke tabel institutional_holders.
+
+4. Yahoo Finance Financials Module (sudah di-cover fetcher ini)
+   V10 finance quoteSummary → incomeStatementHistory, balanceSheetHistory
+   Sudah termasuk di fetch-yahoo-financials.mjs
+
+5. Stockbit (yang sudah Anda pakai untuk broker summary)
+   Halaman detail saham di stockbit.com punya data pemegang saham.
+   Inspect DevTools → Network → cari request ke /api/v2/shareholder atau sejenisnya.
+
+6. RTI Business (rti.co.id)
+   Data laporan keuangan lengkap, data insider, perubahan kepemilikan.
+   Butuh registrasi gratis. API-nya tidak public tapi bisa di-scrape.
+
+7. LKPP (lppjk.lkpp.go.id) — data lelang pemerintah
+   Tidak relevan untuk data saham, tapi berguna untuk riset perusahaan BUMN.
+
+═════════════════════════════════════════════════════════════════════════
+BAGIAN 4: DATA APA YANG AKAN TAMPIL DI APLIKASI SETELAH INTEGRASI
+═════════════════════════════════════════════════════════════════════════
+
+Setelah fetcher dan frontend terintegrasi, fitur ihsgscreener yang bisa
+ANDA miliki:
+
+1. MODAL DETAIL SAHAM (tab Ringkasan):
+   - Skor AI Intelligence (0-100) dengan donut chart
+   - Statistik Kunci: PER, PBV, ROE, DER, NPM, EPS, Div Yield, Market Cap
+   - Trading Plan: Entry ideal, Take Profit, Stop Loss
+   - Est. Upside berbasis PER/PBV
+
+2. MODAL DETAIL SAHAM (tab Fundamental):
+   - Bar chart profitabilitas: ROE, ROA, NPM
+   - Valuasi: PER, PBV dengan status (Murah/Mahal)
+   - Kesehatan keuangan: DER, Current Ratio
+   - Pergerakan harga: 1D%, 52W%
+
+3. MODAL DETAIL SAHAM (tab Verdict):
+   - Kelebihan (DER sehat, NPM tebal, dll)
+   - Risiko (PER mahal, PBV premium, ROE rendah)
+   - Analisis AI: "WAIT & SEE" dengan alasan
+
+4. MODAL DETAIL SAHAM (tab vs Sektor):
+   - Perbandingan ROE, ROA, NPM, DER, PER vs rata-rata sektor
+   - Bar chart visual per metrik
+
+5. MODAL DETAIL SAHAM (tab Komposisi Pemegang Saham):
+   - Tabel nama pemegang saham >5%, % kepemilikan, jumlah saham
+   - Kategori: pengendali, afiliasi, publik
+
+6. TAB INSIDER FLOW (menu sidebar):
+   - Daftar transaksi terbaru insider (beli/jual)
+   - Filter per ticker
+   - Pencarian
+
+7. FAVORIT P&L (Quant Hub):
+   - Kolom SCORE dari skor AI baru (lebih lengkap dari Bagger lama)
+   - Kolom STATUS: FAIR / OV / UV / DANGER berdasarkan valuasi & insider
+
+═════════════════════════════════════════════════════════════════════════
+CATATAN TROUBLESHOOTING
+═════════════════════════════════════════════════════════════════════════
+
+Error "duplicate key value violates unique constraint":
+→ Tabel sudah punya data dari run sebelumnya. Jalankan dengan flag --dry dulu
+  untuk cek, atau hapus data lama:
+  DELETE FROM institutional_holders WHERE stock_code = 'BBCA';
+
+Error "relation stocks does not exist" saat ALTER TABLE:
+→ Tabel stocks tidak ada atau nama berbeda. Cek nama tabel di Supabase:
+  SELECT table_name FROM information_schema.tables WHERE table_name LIKE '%stock%';
+
+Yahoo mengembalikan data kosong / notFound untuk semua ticker:
+→ Session Yahoo expired atau cookie salah. Jalankan ulang script —
+  session akan di-renew otomatis kalau crumb gagal.
+
+"Error: fetch failed" atau timeout:
+→ Koneksi internet lambat atau Yahoo memblokir IP. Coba:
+  - Tambah DELAY_MS dari 450 ke 800
+  - Gunakan VPN
+  - Jalankan dari server/cloud (Supabase Edge Function tidak bisa karena diblokir CORS)
+
+Script berhenti di tengah (Ctrl+C / crash):
+→ Data yang sudah berhasil masuk tetap tersimpan. Jalankan ulang —
+  fetcher akan memproses SEMUA ticker lagi (termasuk yang sudah ada).
+  Untuk efisiensi, tambahkan flag --skip-existing (belum diimplementasi).
+
+═════════════════════════════════════════════════════════════════════════
