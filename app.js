@@ -2580,6 +2580,30 @@ let state = {
   brokerStalkerFilterType: null, // null (semua) | "asing" | "lokal"
   brokerStalkerResultSearch: "", // cari broker/saham di dalam hasil (client-side)
   brokerStalkerChartOpen: false,
+  // ==========================================
+  // HIDDEN GEMS (mode ke-3 di tab Broker Stalker, data-bs-mode="gems").
+  // Scan LINTAS SEMUA SAHAM (bukan satu ticker) untuk cari emiten market
+  // cap kecil yang sedang diakumulasi baru/segar — terinspirasi fitur
+  // "Broker Stalker" ihsgscreener.com. Dibangun DI ATAS data yang sama
+  // dengan EPS Scanner (RPC eps_scan_daily_v2 / eps_scan_daily,
+  // lihat tryFastEpsScanV2/tryFastEpsScan) supaya tidak perlu tarik ulang
+  // broker_summary mentah dari nol — hgRaw disimpan TERPISAH dari epsRaw
+  // karena jendela tanggalnya lebih panjang (perlu baseline "sebelumnya"
+  // untuk status BARU/BALIK/ULANG).
+  // "Serap FF%" di bawah ini BUKAN free float asli (data itu belum ada
+  // di DB) — dipakai proksi % dari Saham Beredar (shares_outstanding),
+  // selalu dilabeli jelas di UI.
+  // ==========================================
+  hgRaw: null, hgScanning: false, hgMsg: "", hgMsgError: false, hgScannedAt: null,
+  hgPeriod: "1w", // "today" | "1w" | "2w" | "1m"
+  hgMinAkumulasi: 1e9, // 100e6 | 1e9 | 10e9 (Rp, net beli minimal dalam periode)
+  hgCapFilter: "all", // "all" | "1t" | "500b" | "100b" (Market Cap maksimal)
+  hgFfFilter: "all", // "all" | "15" | "30" | "50" (Serap FF% minimal)
+  hgBrokerFilter: "all", // "all" | "asing" | "lokal"
+  hgSort: "marketcap", // "marketcap" | "akumulasi"
+  hgCodeFilter: "",
+  hgStatusFilter: new Set(), // subset dari BARU/BALIK/ULANG/BERUNTUN
+  hgRows: [],
   // Tab Broker Summary: top 5 broker buy/sell per saham per tanggal.
   // Data diisi MANUAL (dari screenshot akun Stockbit sendiri) lewat
   // form atau tempel CSV — bukan hasil scraping otomatis.
@@ -12380,7 +12404,313 @@ function renderBrokerStalkerChartHtml(dailyNet){
   return `<div class="bs2-chart">${bars}</div>`;
 }
 
+// ==========================================================================
+// HIDDEN GEMS — mode ke-3 Broker Stalker: scan lintas SEMUA saham untuk
+// menemukan emiten market cap kecil dengan akumulasi besar & baru mulai
+// diakum. Lihat blok komentar besar di state.hgRaw di atas untuk konteks
+// sumber data (eps_scan_daily_v2).
+// ==========================================================================
+const HG_PERIOD_TRADING_DAYS = { today:1, "1w":5, "2w":10, "1m":20 };
+const HG_CAP_MAX = { "1t":1e12, "500b":500e9, "100b":100e9 }; // "all" = tanpa batas
+
+// Jendela scan: periode terpanjang (1 Bulan = 20 hari bursa) DIKALI 2 —
+// separuh akhir jadi "periode aktif", separuh awal jadi "baseline
+// sebelumnya" (dipakai deteksi BARU/BALIK/ULANG). +buffer libur bursa.
+function hgCutoffDate(){ return epsCutoffDate(HG_PERIOD_TRADING_DAYS["1m"] * 2 + 10); }
+
+async function ensureHiddenGemsScanned(force){
+  if(!SUPABASE_URL || !SUPABASE_KEY){ openSettings(); return; }
+  if(state.hgScanning) return;
+  if(state.hgRaw && !force) return;
+  state.hgScanning = true; state.hgMsg = "Memindai broker_summary seluruh saham…"; state.hgMsgError = false; render();
+  try{
+    const cutoff = hgCutoffDate();
+    let raw = await tryFastEpsScanV2(cutoff);
+    if(!raw) raw = await tryFastEpsScan(cutoff);
+    if(!raw){
+      state.hgMsg = "Gagal memindai data broker — cek koneksi Supabase / RPC eps_scan_daily.";
+      state.hgMsgError = true; state.hgRaw = null;
+    } else {
+      state.hgRaw = raw; state.hgScannedAt = new Date().toISOString();
+      state.hgMsg = ""; state.hgMsgError = false;
+    }
+  }catch(e){
+    state.hgMsg = "Gagal memindai: " + e.message; state.hgMsgError = true; state.hgRaw = null;
+  }
+  state.hgScanning = false;
+  state.hgRows = computeHiddenGemsRows();
+  render();
+}
+
+// Jumlah dari sisi asing/lokal sebuah hari, mengikuti filter Broker
+// (Semua/Asing/Lokal) — dipakai berulang saat menjumlah periode & baseline.
+function hgSideList(day, brokerFilter){
+  if(!day) return [];
+  if(brokerFilter === 'asing') return [day.asing];
+  if(brokerFilter === 'lokal') return [day.lokal];
+  return [day.asing, day.lokal];
+}
+function hgDailyNet(day, brokerFilter){
+  return hgSideList(day, brokerFilter).reduce((a,side)=> a + ((side?.buyVal||0) - (side?.sellVal||0)), 0);
+}
+function hgDailyActive(day, brokerFilter){
+  return hgSideList(day, brokerFilter).some(side => side && ((side.buyVal||0) > 0 || (side.sellVal||0) > 0));
+}
+function hgSumAgg(days, dates, brokerFilter){
+  let buyVal=0, sellVal=0, buyLot=0, sellLot=0; const brokerNetAgg = {};
+  dates.forEach(d=>{
+    const day = days[d]; if(!day) return;
+    hgSideList(day, brokerFilter).forEach(side=>{
+      if(!side) return;
+      buyVal += side.buyVal||0; sellVal += side.sellVal||0;
+      buyLot += side.buyLot||0; sellLot += side.sellLot||0;
+      Object.entries(side.brokerNet||{}).forEach(([bc,net])=>{ brokerNetAgg[bc] = (brokerNetAgg[bc]||0) + (Number(net)||0); });
+    });
+  });
+  return { buyVal, sellVal, buyLot, sellLot, net: buyVal-sellVal, netLot: buyLot-sellLot, brokerNetAgg };
+}
+
+// Bangun daftar Hidden Gems dari state.hgRaw (TANPA fetch ulang) — dipanggil
+// tiap kali hasil scan datang ATAU filter periode/broker berubah (keduanya
+// mengubah kandidat inti, beda dari filter cap/ff/status/kode/urutkan yang
+// cukup dihitung di hgFilteredSorted tanpa membangun ulang dari sini).
+function computeHiddenGemsRows(){
+  if(!state.hgRaw || !state.hgRaw.byStock) return [];
+  const byStock = state.hgRaw.byStock;
+  const dateSet = new Set();
+  Object.values(byStock).forEach(st => Object.keys(st.days||{}).forEach(d=>dateSet.add(d)));
+  const allDates = [...dateSet].sort();
+  if(!allDates.length) return [];
+
+  const periodN = HG_PERIOD_TRADING_DAYS[state.hgPeriod] || 5;
+  const periodDates = allDates.slice(-periodN);
+  const baselineDates = allDates.slice(0, Math.max(0, allDates.length - periodN));
+  const priorDates = baselineDates.slice(-periodN); // jendela sama panjang, tepat sebelum periode
+
+  const capByTicker = {};
+  enriched().forEach(s=>{ capByTicker[s.ticker] = { marketCap: s.marketCap, sharesOutstanding: s.sharesOutstanding, name: s.name }; });
+
+  const rows = [];
+  Object.keys(byStock).forEach(code=>{
+    const days = byStock[code].days || {};
+    const periodAgg = hgSumAgg(days, periodDates, state.hgBrokerFilter);
+    if(periodAgg.buyVal===0 && periodAgg.sellVal===0) return; // tidak aktif di periode ini sama sekali
+
+    const priorAgg = hgSumAgg(days, priorDates, state.hgBrokerFilter);
+    const activeBaseline = baselineDates.filter(d=>hgDailyActive(days[d], state.hgBrokerFilter));
+    const baselineAbsSum = baselineDates.reduce((a,d)=> a + Math.abs(hgDailyNet(days[d], state.hgBrokerFilter)), 0);
+    const baselineAvgDaily = baselineDates.length ? baselineAbsSum / baselineDates.length : 0;
+    const periodAvgDaily = Math.abs(periodAgg.net) / periodN;
+    const ratio = baselineAvgDaily > 0 ? periodAvgDaily / baselineAvgDaily : (periodAvgDaily > 0 ? 99 : 0);
+
+    // Status BARU/BALIK/ULANG dihitung terhadap baseline (jendela SEBELUM
+    // periode aktif); BERUNTUN dihitung dari hari bursa TERBARU mundur.
+    const statusFlags = [];
+    if(!activeBaseline.length && periodAgg.net !== 0) statusFlags.push('BARU');
+    if(priorAgg.net < 0 && periodAgg.net >= 0) statusFlags.push('BALIK');
+    if(activeBaseline.length && baselineAvgDaily > 0 && ratio >= 5) statusFlags.push('ULANG');
+    let streak = 0;
+    for(let i = allDates.length - 1; i >= 0; i--){
+      const net = hgDailyNet(days[allDates[i]], state.hgBrokerFilter);
+      const active = hgDailyActive(days[allDates[i]], state.hgBrokerFilter);
+      if(!active) continue; // hari tanpa transaksi saham ini dilewati, tidak memutus streak
+      if(net > 0) streak++; else break;
+    }
+    if(streak >= 5) statusFlags.push('BERUNTUN');
+
+    let tag, tagTone;
+    if(periodAgg.net < 0){ tag = 'DILEPAS'; tagTone = 'down'; }
+    else if(ratio >= 2){ tag = 'DISERAP'; tagTone = 'up'; }
+    else if(ratio >= 1.2){ tag = 'MENINGKAT'; tagTone = 'gold'; }
+    else { tag = 'NORMAL'; tagTone = 'muted'; }
+
+    const capInfo = capByTicker[code] || {};
+    const netShares = periodAgg.netLot * 100;
+    const serapFFPct = capInfo.sharesOutstanding > 0 ? (Math.abs(netShares) / capInfo.sharesOutstanding) * 100 : null;
+    const baselineNetShares = (baselineAbsSum>0 ? (baselineDates.reduce((a,d)=>{
+      const day=days[d]; if(!day) return a;
+      const lot = hgSideList(day, state.hgBrokerFilter).reduce((x,side)=> x + ((side?.buyLot||0)-(side?.sellLot||0)), 0);
+      return a + Math.abs(lot);
+    },0) / Math.max(1,baselineDates.length)) : 0) * 100;
+    const normalFFPct = capInfo.sharesOutstanding > 0 && baselineNetShares > 0 ? (baselineNetShares*periodN / capInfo.sharesOutstanding) * 100 : null;
+
+    const brokerChips = Object.entries(periodAgg.brokerNetAgg)
+      .filter(([,net])=>net>0)
+      .sort((a,b)=>b[1]-a[1])
+      .slice(0,4)
+      .map(([bc])=>bc);
+
+    rows.push({
+      ticker: code, name: capInfo.name || code,
+      marketCap: capInfo.marketCap ?? null,
+      periodNet: periodAgg.net, ratio, tag, tagTone,
+      serapFFPct, normalFFPct,
+      statusFlags, brokerChips,
+      brokerCount: Object.values(periodAgg.brokerNetAgg).filter(n=>n>0).length
+    });
+  });
+  return rows;
+}
+
+function hgFilteredSorted(){
+  let rows = (state.hgRows||[]).slice();
+  const code = String(state.hgCodeFilter||'').trim().toUpperCase();
+  if(code) rows = rows.filter(r=>r.ticker.includes(code));
+  if(state.hgMinAkumulasi) rows = rows.filter(r=>r.periodNet >= state.hgMinAkumulasi);
+  if(state.hgCapFilter !== 'all'){
+    const max = HG_CAP_MAX[state.hgCapFilter];
+    rows = rows.filter(r=> r.marketCap!=null && r.marketCap <= max);
+  }
+  if(state.hgFfFilter !== 'all'){
+    const min = Number(state.hgFfFilter);
+    rows = rows.filter(r=> r.serapFFPct!=null && r.serapFFPct >= min);
+  }
+  if(state.hgStatusFilter && state.hgStatusFilter.size){
+    rows = rows.filter(r=> r.statusFlags.some(f=>state.hgStatusFilter.has(f)));
+  }
+  rows.sort((a,b)=>{
+    if(state.hgSort==='akumulasi') return b.periodNet - a.periodNet;
+    // "marketcap": kecil -> besar (cara cari hidden gem: cap kecil, tidak tersedia di akhir)
+    const av = a.marketCap ?? Infinity, bv = b.marketCap ?? Infinity;
+    return av - bv;
+  });
+  return rows;
+}
+function applyHiddenGemsView(){ render(); }
+
+const HG_STATUS_META = {
+  BARU: { tone:'up', title:'Tidak aktif sebelumnya — baru pertama kali diakum dalam jendela scan' },
+  BALIK: { tone:'teal', title:'Sebelumnya net jual, sekarang berbalik net beli' },
+  ULANG: { tone:'gold', title:'Muncul lagi setelah sempat sepi, akumulasi periode ini ≥5x rata-rata hariannya' },
+  BERUNTUN: { tone:'muted', title:'Net beli ≥5 hari bursa berturut-turut tanpa net jual' }
+};
+const HG_PERIOD_LABEL = { today:'Hari Ini', '1w':'1 Minggu', '2w':'2 Minggu', '1m':'1 Bulan' };
+const HG_MIN_LABEL = { 100e6:'100 Jt', 1e9:'1 M', 10e9:'10 M' };
+const HG_CAP_LABEL = { all:'Semua', '1t':'≤ 1 T', '500b':'≤ 500 M', '100b':'≤ 100 M' };
+const HG_FF_LABEL = { all:'Semua', '15':'≥ 15%', '30':'≥ 30%', '50':'≥ 50%' };
+
+function renderHiddenGemsPanel(){
+  const rows = hgFilteredSorted();
+  const scanned = !!state.hgRaw;
+  const dateSet = new Set();
+  if(scanned) Object.values(state.hgRaw.byStock||{}).forEach(st=>Object.keys(st.days||{}).forEach(d=>dateSet.add(d)));
+  const allDates = [...dateSet].sort();
+  const stockCount = scanned ? Object.keys(state.hgRaw.byStock||{}).length : 0;
+
+  return `<div class="hg-page">
+    <style>
+      .hg-page .hg-card{background:color-mix(in srgb, currentColor 2%, transparent);border:1px solid var(--border);border-radius:12px;padding:16px;margin-bottom:16px;}
+      .hg-page .hg-title{font-weight:800;letter-spacing:.03em;font-size:14px;margin-bottom:4px;}
+      .hg-page .hg-meta{font-size:11px;color:var(--muted);margin-bottom:14px;}
+      .hg-page .hg-group{margin-bottom:14px;}
+      .hg-page .hg-label{font-size:11px;color:var(--muted);font-weight:700;letter-spacing:.04em;display:block;margin-bottom:6px;}
+      .hg-page .hg-chipset{display:flex;gap:6px;flex-wrap:wrap;}
+      .hg-page .hg-chip{padding:7px 12px;border-radius:6px;border:1px solid var(--border);background:transparent;color:var(--muted);font-size:11px;font-weight:700;cursor:pointer;white-space:nowrap;}
+      .hg-page .hg-chip.active{background:#7c5cff;border-color:#7c5cff;color:#fff;}
+      .hg-page .hg-row2{display:flex;gap:20px;flex-wrap:wrap;}
+      .hg-page .hg-code-input{width:100%;background:color-mix(in srgb, currentColor 3%, transparent);border:1px solid var(--border);border-radius:8px;padding:10px 12px;color:var(--text);font-weight:700;font-size:13px;text-transform:uppercase;box-sizing:border-box;}
+      .hg-page .hg-cta{margin-top:14px;width:100%;padding:14px;border:none;border-radius:8px;background:linear-gradient(90deg,#22d3ee,#34d399);color:#04211c;font-weight:800;font-size:13px;letter-spacing:.05em;cursor:pointer;}
+      .hg-page .hg-cta:disabled{opacity:.6;cursor:wait;}
+      .hg-page .hg-status-badge{display:inline-block;padding:2px 7px;border-radius:5px;font-size:9.5px;font-weight:800;letter-spacing:.02em;margin-right:3px;margin-bottom:2px;}
+      .hg-page .hg-broker-chip{display:inline-block;padding:2px 7px;border-radius:999px;border:1px solid var(--border);font-size:10px;font-weight:700;margin-right:3px;margin-bottom:2px;}
+      .hg-page .hg-sub{font-size:10px;color:var(--muted);margin-top:2px;}
+    </style>
+
+    <div class="hg-card">
+      <div class="hg-title">🔥 Hidden Gems — Broker Stalker</div>
+      <div class="hg-meta">Cari emiten market cap kecil yang sedang diakumulasi baru/segar, lintas ${stockCount||'—'} saham dipantau.${scanned&&allDates.length? ` Data ${fmtDateID(allDates[0])} – ${fmtDateID(allDates[allDates.length-1])}.`:''} "Serap FF%" memakai proksi Saham Beredar (bukan free float asli).</div>
+
+      <div class="hg-group">
+        <label class="hg-label">MULAI</label>
+        <div class="hg-chipset">${Object.entries(HG_PERIOD_LABEL).map(([k,l])=>`<button class="hg-chip ${state.hgPeriod===k?'active':''}" data-hg-period="${k}">${l}</button>`).join('')}</div>
+      </div>
+
+      <div class="hg-row2">
+        <div class="hg-group" style="flex:1;min-width:180px;">
+          <label class="hg-label">MIN AKUMULASI</label>
+          <div class="hg-chipset">${Object.entries(HG_MIN_LABEL).map(([k,l])=>`<button class="hg-chip ${Number(state.hgMinAkumulasi)===Number(k)?'active':''}" data-hg-min="${k}">${l}</button>`).join('')}</div>
+        </div>
+        <div class="hg-group" style="flex:1;min-width:180px;">
+          <label class="hg-label">KAPITALISASI</label>
+          <div class="hg-chipset">${Object.entries(HG_CAP_LABEL).map(([k,l])=>`<button class="hg-chip ${state.hgCapFilter===k?'active':''}" data-hg-cap="${k}">${l}</button>`).join('')}</div>
+        </div>
+      </div>
+
+      <div class="hg-row2">
+        <div class="hg-group" style="flex:1;min-width:180px;">
+          <label class="hg-label">SERAP FF (proksi Saham Beredar)</label>
+          <div class="hg-chipset">${Object.entries(HG_FF_LABEL).map(([k,l])=>`<button class="hg-chip ${state.hgFfFilter===k?'active':''}" data-hg-ff="${k}">${l}</button>`).join('')}</div>
+        </div>
+        <div class="hg-group" style="flex:1;min-width:180px;">
+          <label class="hg-label">BROKER</label>
+          <div class="hg-chipset">
+            <button class="hg-chip ${state.hgBrokerFilter==='all'?'active':''}" data-hg-broker="all">Semua</button>
+            <button class="hg-chip ${state.hgBrokerFilter==='asing'?'active':''}" data-hg-broker="asing">Asing</button>
+            <button class="hg-chip ${state.hgBrokerFilter==='lokal'?'active':''}" data-hg-broker="lokal">Lokal</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="hg-row2">
+        <div class="hg-group" style="flex:1;min-width:180px;">
+          <label class="hg-label">URUTKAN</label>
+          <div class="hg-chipset">
+            <button class="hg-chip ${state.hgSort==='marketcap'?'active':''}" data-hg-sort="marketcap">Market Cap</button>
+            <button class="hg-chip ${state.hgSort==='akumulasi'?'active':''}" data-hg-sort="akumulasi">Akumulasi</button>
+          </div>
+        </div>
+        <div class="hg-group" style="flex:1;min-width:180px;">
+          <label class="hg-label">FILTER KODE</label>
+          <input class="hg-code-input" id="hgCodeFilterInput" value="${escapeHtml(state.hgCodeFilter)}" placeholder="BROKER / SAHAM">
+        </div>
+      </div>
+
+      <div class="hg-group">
+        <label class="hg-label">STATUS <span style="font-weight:400;text-transform:none;">— klik untuk pilih, bisa lebih dari satu</span></label>
+        <div class="hg-chipset">
+          ${Object.keys(HG_STATUS_META).map(k=>`<button class="hg-chip ${state.hgStatusFilter.has(k)?'active':''}" data-hg-status="${k}" title="${escapeHtml(HG_STATUS_META[k].title)}">${k}</button>`).join('')}
+        </div>
+      </div>
+
+      <button class="hg-cta" id="hgScanBtn" ${state.hgScanning?'disabled':''}>${state.hgScanning?'⏳ Memindai…':(scanned?'🔄 Scan Ulang':'🔍 Scan Sekarang')}</button>
+      ${state.hgMsg ? `<div style="margin-top:10px;font-size:11px;color:${state.hgMsgError?'var(--down)':'var(--muted)'};">${escapeHtml(state.hgMsg)}</div>` : ''}
+    </div>
+
+    ${!scanned && !state.hgScanning ? '<div class="empty-box">Klik "Scan Sekarang" untuk memindai broker_summary seluruh saham.</div>' : ''}
+    ${scanned ? renderHiddenGemsTable(rows) : ''}
+  </div>`;
+}
+
+function renderHiddenGemsTable(rows){
+  return `<div class="hg-card">
+    <div class="hg-head" style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
+      <div class="hg-title" style="margin-bottom:0;">HASIL — ${rows.length} saham</div>
+    </div>
+    <div class="table-wrap" style="max-height:65vh;">
+      <table class="data-table mono">
+        <thead><tr>
+          <th>#</th><th>Kode</th><th>Mkt Cap</th><th>Akumulasi</th><th>Serap FF</th><th>Serapan</th><th>Status</th><th>Broker Aktif</th>
+        </tr></thead>
+        <tbody>
+          ${rows.length ? rows.map((r,i)=>`
+            <tr>
+              <td>${i+1}</td>
+              <td class="ticker-cell"><button class="ticker-link" data-detail="${escapeHtml(r.ticker)}">${escapeHtml(r.ticker)}</button></td>
+              <td>${r.marketCap!=null?fmtCap(r.marketCap):'-'}</td>
+              <td style="color:${r.periodNet>=0?'var(--up)':'var(--down)'};font-weight:700;">${fmtRp(r.periodNet)}</td>
+              <td>${r.serapFFPct!=null?r.serapFFPct.toFixed(1)+'%':'-'}${r.normalFFPct!=null?`<div class="hg-sub">normal ${r.normalFFPct.toFixed(1)}%</div>`:''}</td>
+              <td>${r.ratio!=null?r.ratio.toFixed(2)+'x':'-'} ${pillHtml(r.tag, r.tagTone)}</td>
+              <td>${r.statusFlags.length ? r.statusFlags.map(f=>`<span class="hg-status-badge pill-${HG_STATUS_META[f].tone}" title="${escapeHtml(HG_STATUS_META[f].title)}">${f}</span>`).join('') : '<span style="color:var(--muted);">-</span>'}</td>
+              <td>${r.brokerChips.length ? r.brokerChips.map(bc=>`<span class="hg-broker-chip">${escapeHtml(bc)}</span>`).join('') : '<span style="color:var(--muted);">-</span>'}</td>
+            </tr>`).join('') : `<tr><td colspan="8"><div class="empty-box">Tidak ada saham yang cocok dengan filter saat ini.</div></td></tr>`}
+        </tbody>
+      </table>
+    </div>
+  </div>`;
+}
+
 function renderBrokerStalker(){
+  const gemsMode = state.brokerStalkerMode === 'gems';
   const modeStock = state.brokerStalkerMode === 'stock';
   const rows = state.brokerStalkerRows || [];
   const period = state.brokerStalkerPeriod;
@@ -12440,10 +12770,12 @@ function renderBrokerStalker(){
     <div class="dashboard-subtitle">Lacak aliran akumulasi dan distribusi dari data Broker Summary.</div>
 
     <div class="bs2-tabs">
-      <button class="bs2-tab ${!modeStock?'active':''}" data-bs-mode="broker">◎ Lacak Broker</button>
+      <button class="bs2-tab ${!modeStock&&!gemsMode?'active':''}" data-bs-mode="broker">◎ Lacak Broker</button>
       <button class="bs2-tab ${modeStock?'active':''}" data-bs-mode="stock">◆ Lacak Saham</button>
+      <button class="bs2-tab ${gemsMode?'active':''}" data-bs-mode="gems">🔥 Hidden Gems</button>
     </div>
 
+    ${gemsMode ? renderHiddenGemsPanel() : `
     <div class="bs2-card">
       <div class="bs2-card-title"><span>${modeStock?'LACAK SAHAM':'LACAK BROKER'}</span><span class="pill pill-teal" style="font-size:9px;">BROKER SCAN</span></div>
       <label class="bs2-label">${modeStock?'KODE SAHAM':'KODE BROKER'}</label>
@@ -12537,6 +12869,7 @@ function renderBrokerStalker(){
         }).join('') : `<div class="empty-box">Tidak ada broker yang cocok dengan filter/pencarian saat ini.</div>`}
       </div>
     ` : ''}
+  `}
   </div>`;
 }
 
@@ -18514,6 +18847,34 @@ function attachContentEvents(){
     state.brokerStalkerResultSearch = v;
     state.brokerStalkerRows = brokerStalkerFilteredSorted();
   });
+
+  // --- Hidden Gems (mode ke-3 Broker Stalker) ---
+  const hgScanBtn = document.getElementById("hgScanBtn");
+  if(hgScanBtn) hgScanBtn.onclick = () => ensureHiddenGemsScanned(true);
+  document.querySelectorAll("[data-hg-period]").forEach(btn=>btn.onclick=()=>{
+    state.hgPeriod = btn.dataset.hgPeriod; state.hgRows = computeHiddenGemsRows(); render();
+  });
+  document.querySelectorAll("[data-hg-min]").forEach(btn=>btn.onclick=()=>{
+    state.hgMinAkumulasi = Number(btn.dataset.hgMin); render();
+  });
+  document.querySelectorAll("[data-hg-cap]").forEach(btn=>btn.onclick=()=>{
+    state.hgCapFilter = btn.dataset.hgCap; render();
+  });
+  document.querySelectorAll("[data-hg-ff]").forEach(btn=>btn.onclick=()=>{
+    state.hgFfFilter = btn.dataset.hgFf; render();
+  });
+  document.querySelectorAll("[data-hg-broker]").forEach(btn=>btn.onclick=()=>{
+    state.hgBrokerFilter = btn.dataset.hgBroker; state.hgRows = computeHiddenGemsRows(); render();
+  });
+  document.querySelectorAll("[data-hg-sort]").forEach(btn=>btn.onclick=()=>{
+    state.hgSort = btn.dataset.hgSort; render();
+  });
+  document.querySelectorAll("[data-hg-status]").forEach(btn=>btn.onclick=()=>{
+    const val = btn.dataset.hgStatus;
+    if(state.hgStatusFilter.has(val)) state.hgStatusFilter.delete(val); else state.hgStatusFilter.add(val);
+    render();
+  });
+  bindSearchInputPreservingCursor("hgCodeFilterInput", v => { state.hgCodeFilter = v; });
 
   // --- "Simpan ke Backtest" generik (EPS/ORCA/BSJP) — lihat definisi di
   // dekat saveToBacktest/addManualBacktest. Aman dipanggil tanpa syarat
