@@ -1511,7 +1511,17 @@ try {
         await sleep(YAHOO_DELAY_MS);
       }
 
-      const quote = latestQuotes.get(ticker) ?? { offer: null, offer_volume: null, bid: null, bid_volume: null };
+      // FIX (2026-09): dulu di sini fallback-nya {offer:null,bid:null,...}
+      // dan SELALU ikut di-spread ke payload upsert `stocks` -- akibatnya
+      // tiap kali run ini BUKAN mode snapshot harian (mis. backfill
+      // --start/--end/--offset), bid/offer yang sudah benar dari run
+      // harian sebelumnya ketiban null lagi untuk SEMUA ticker. Sekarang
+      // quote dibiarkan undefined kalau tidak ada snapshot segar, dan di
+      // bawah cuma di-spread kalau memang ada isinya -- jadi kalau tidak
+      // ada quote baru, key offer/bid/offer_volume/bid_volume sama sekali
+      // tidak ikut dikirim, dan PostgREST tidak menyentuh nilai lama di
+      // `stocks` (upsert cuma meng-update kolom yang ada di payload).
+      const quote = latestQuotes.get(ticker);
 
       const row = skipTechnical
         ? {
@@ -1524,7 +1534,7 @@ try {
           }
         : {
             ...technical,
-            ...quote,
+            ...(quote || {}),
             ...fundamentals,
             lq45: LQ45_TICKERS.has(String(ticker).toUpperCase()),
             valuasi: valuasiDari(fundamentals.per, fundamentals.pbv),

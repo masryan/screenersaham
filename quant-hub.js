@@ -44,6 +44,13 @@ const QH = {
   bdLoading:false, bdError:null, bdRaw:null, bdRangeDays:22, bdLatestDate:null,
   // favorit
   favSearch:"", favSort:{key:"pnl",asc:false},
+  // BPJS (Beli Pagi, Jual Sore) — sumber: tabel sesi_snapshots (lihat
+  // 08_sesi_snapshots.sql), diisi 2x/hari oleh snapshot-sesi.mjs
+  bpjsLoading:false, bpjsError:null, bpjsRows:null,
+  bpjsSearch:"", bpjsSort:{key:"return",asc:false}, bpjsMinReturn:null,
+  // tombol "Snapshot Sekarang" — tarik live Stockbit utk watchlist, isi
+  // sesi_snapshots langsung dari browser (tanpa laptop/cron)
+  snapLoading:false, snapError:null, snapLastResult:null,
   lastStocksSig:"", modalTicker:null, booted:false
 };
 const QH_LS_ENTRY="qh_entry_prices_v1";
@@ -329,6 +336,91 @@ async function qhLoadBroker(){
   QH.bdLoading=false; QH.qhRenderSafe();
 }
 
+/* ───────────── BPJS — Beli Pagi, Jual Sore (tabel sesi_snapshots) ─────────────
+   Beda dengan broker_summary/flows (EOD, 1x/hari), tabel ini diisi INTRADAY
+   2x/hari oleh script snapshot-sesi.mjs (mode "pagi" ~09:05 WIB & "sore"
+   ~15:45 WIB) — lihat 08_sesi_snapshots.sql. Dibaca langsung lewat qhSupa()
+   (fallback yang sama dipakai qhFetchBrokerRows), TIDAK lewat state.stocks. */
+function qhTodayWIB(){
+  try{ return new Intl.DateTimeFormat("en-CA",{timeZone:"Asia/Jakarta",year:"numeric",month:"2-digit",day:"2-digit"}).format(new Date()); }
+  catch(e){ return new Date().toISOString().slice(0,10); }
+}
+async function qhFetchBpjsRows(){
+  const supa = qhSupa();
+  if(!supa) throw new Error("Supabase belum dikonfigurasi (buka Pengaturan di aplikasi utama dulu).");
+  const date = qhTodayWIB();
+  const qs = `trade_date=eq.${date}&select=ticker,trade_date,harga_pagi,volume_pagi,captured_pagi_at,harga_sore,volume_sore,captured_sore_at,return_pct&order=return_pct.desc.nullslast`;
+  const res = await fetch(`${supa.url}/sesi_snapshots?${qs}`, {headers:supa.headers, cache:"no-store"});
+  if(!res.ok){
+    let msg=`HTTP ${res.status}`;
+    try{ const body=await res.json(); if(body && body.message) msg+=" — "+body.message; }catch(e){}
+    // Pesan ramah kalau tabelnya belum ada sama sekali (migrasi belum dijalankan)
+    if(res.status===404 || /relation .* does not exist/i.test(msg)) msg="Tabel sesi_snapshots belum ada — jalankan migrasi 08_sesi_snapshots.sql dulu.";
+    throw new Error(msg);
+  }
+  return {date, rows: await res.json()};
+}
+async function qhLoadBpjs(){
+  if(QH.bpjsLoading) return;
+  QH.bpjsLoading=true; QH.bpjsError=null; QH.qhRenderSafe();
+  try{
+    const {rows} = await qhFetchBpjsRows();
+    QH.bpjsRows=rows;
+    if(!rows.length) QH.bpjsError="Belum ada snapshot untuk hari ini. Jalankan `node snapshot-sesi.mjs pagi` (pagi) atau tunggu cron jalan.";
+  }catch(e){ QH.bpjsError=e.message; QH.bpjsRows=[]; }
+  QH.bpjsLoading=false; QH.qhRenderSafe();
+}
+
+/* ───────────── SNAPSHOT SEKARANG (tombol) ─────────────
+   Alternatif snapshot-sesi.mjs: tarik harga live Watchlist lewat
+   fetchStockbitLiveBulk() milik app.js (token + proxy CORS-nya sudah
+   ada), lalu upsert ke sesi_snapshots — semua dari browser, tanpa
+   laptop/cron menyala di jam tertentu. */
+async function qhSnapshotSesiNow(mode){
+  if(QH.snapLoading) return;
+  if(typeof fetchStockbitLiveBulk !== "function"){
+    QH.snapError="fetchStockbitLiveBulk() tidak ditemukan — pastikan quant-hub.js dimuat SETELAH app.js.";
+    QH.qhRenderSafe(); return;
+  }
+  let tickers=[];
+  try{ tickers=[...(state.watchlist||[])]; }catch(e){}
+  if(!tickers.length){
+    QH.snapError="Watchlist kosong — tandai saham dengan ⭐ di tab Screener dulu (itu sumber ticker utk tombol ini).";
+    QH.qhRenderSafe(); return;
+  }
+  const supa = qhSupa();
+  if(!supa){ QH.snapError="Supabase belum dikonfigurasi."; QH.qhRenderSafe(); return; }
+  if(!state.stockbitToken){ QH.snapError="Token Stockbit belum diisi (buka Pengaturan di aplikasi utama)."; QH.qhRenderSafe(); return; }
+
+  QH.snapLoading=true; QH.snapError=null; QH.snapLastResult=null; QH.qhRenderSafe();
+  try{
+    await fetchStockbitLiveBulk(tickers); // isi state.stockbitLive[ticker].mapped, ~350ms/ticker
+    const tradeDate = qhTodayWIB();
+    const capturedAt = new Date().toISOString();
+    const rows=[]; let failed=0;
+    for(const t of tickers){
+      const live = state.stockbitLive && state.stockbitLive[t];
+      const price = live && live.mapped ? qhN(live.mapped.last) : null;
+      const vol = live && live.mapped ? qhN(live.mapped.volume) : null;
+      if(price==null){ failed++; continue; } // jangan tulis NULL nimpa data lama
+      const row = {ticker:t, trade_date:tradeDate};
+      if(mode==="pagi"){ row.harga_pagi=price; row.volume_pagi=vol; row.captured_pagi_at=capturedAt; }
+      else { row.harga_sore=price; row.volume_sore=vol; row.captured_sore_at=capturedAt; }
+      rows.push(row);
+    }
+    if(rows.length){
+      await supaFetch(`${supa.url}/sesi_snapshots?on_conflict=ticker,trade_date`, {
+        method:"POST", headers:{...supa.headers, "Prefer":"resolution=merge-duplicates"},
+        body: JSON.stringify(rows)
+      });
+    }
+    QH.snapLastResult = {mode, ok:rows.length, failed, total:tickers.length, at:capturedAt};
+    QH.bpjsRows=null; // paksa tabel BPJS reload dari data terbaru
+    await qhLoadBpjs();
+  }catch(e){ QH.snapError=e.message; }
+  QH.snapLoading=false; QH.qhRenderSafe();
+}
+
 /* ───────────── FAVORIT P&L (localStorage) ───────────── */
 function qhLoadEntries(){ try{ return JSON.parse((typeof localStorage !== "undefined" && localStorage.getItem(QH_LS_ENTRY))||"{}"); }catch(e){ return {}; } }
 function qhSaveEntry(ticker, price){
@@ -351,7 +443,7 @@ QH.render = function(){
   const stocks = qhStocks();
   const tabs = [
     ["dashboard","◧ Dashboard"],["bandar","🔥 Bandarmology"],
-    ["broker","◉ Broker Stalker"],["fav","◈ Favorit P&L"]
+    ["broker","◉ Broker Stalker"],["bpjs","🌅 BPJS"],["fav","◈ Favorit P&L"]
   ];
   let html = `
   <div class="qh-topbar">
@@ -370,6 +462,7 @@ QH.render = function(){
     QH.subtab==="dashboard" ? QH.renderDashboard(stocks) :
     QH.subtab==="bandar"    ? QH.renderBandar(stocks) :
     QH.subtab==="broker"    ? QH.renderBroker(stocks) :
+    QH.subtab==="bpjs"      ? QH.renderBpjs(stocks) :
                               QH.renderFav(stocks)
   )}</div>
   ${QH.modalTicker ? QH.modalHtml(stocks.find(s=>s.ticker===QH.modalTicker)) : ""}`;
@@ -377,6 +470,11 @@ QH.render = function(){
   if(QH.subtab==="dashboard" && stocks.length){
     QH.mountTradingView();
     window.qhSearchDash && null;
+  }
+  // BPJS: lazy-load sekali saat tab dibuka pertama kali (bukan tiap render,
+  // supaya tidak spam request tiap auto-refresh 5 detik dari state.stocks).
+  if(QH.subtab==="bpjs" && QH.bpjsRows===null && !QH.bpjsLoading){
+    qhLoadBpjs();
   }
 };
 
@@ -749,6 +847,90 @@ QH.renderFav = function(stocks){
   </div>`;
 };
 
+/* ---------- BPJS — BELI PAGI, JUAL SORE ---------- */
+QH.renderBpjs = function(){
+  if(QH.bpjsLoading) return '<div class="qh-loading">⏳ Menarik sesi_snapshots dari Supabase…</div>';
+
+  const all = QH.bpjsRows || [];
+  const withBoth = all.filter(r=>r.harga_pagi!=null && r.harga_sore!=null);
+  const avgReturn = withBoth.length ? withBoth.reduce((a,r)=>a+(Number(r.return_pct)||0),0)/withBoth.length : null;
+  const gainers = withBoth.filter(r=>Number(r.return_pct)>0).length;
+  const losers  = withBoth.filter(r=>Number(r.return_pct)<0).length;
+
+  const q = QH.bpjsSearch.trim().toUpperCase();
+  let rows = all.filter(r=>!q || r.ticker.toUpperCase().includes(q));
+  if(QH.bpjsMinReturn!=null) rows = rows.filter(r=>r.return_pct!=null && Number(r.return_pct)>=QH.bpjsMinReturn);
+
+  const dir = QH.bpjsSort.asc ? 1 : -1;
+  const sortBy = {
+    return: r=>qhN(r.return_pct), volume: r=>qhN(r.volume_sore)??qhN(r.volume_pagi),
+    ticker: r=>r.ticker, pagi: r=>qhN(r.harga_pagi), sore: r=>qhN(r.harga_sore)
+  }[QH.bpjsSort.key];
+  if(sortBy) rows.sort((a,b)=>{ const va=sortBy(a), vb=sortBy(b);
+    if(va==null&&vb==null) return 0; if(va==null) return 1; if(vb==null) return -1;
+    return typeof va==="string" ? va.localeCompare(vb)*dir : (va-vb)*dir; });
+  const sortArrow = k => QH.bpjsSort.key===k ? (QH.bpjsSort.asc?" ▲":" ▼") : "";
+  const thSort = (k,label)=>`<th style="cursor:pointer;user-select:none" onclick="qhBpjsSort('${k}')">${label}${sortArrow(k)}</th>`;
+
+  const jam = iso => { if(!iso) return "-"; try{ return new Intl.DateTimeFormat("id-ID",{timeZone:"Asia/Jakarta",hour:"2-digit",minute:"2-digit"}).format(new Date(iso)); }catch(e){ return "-"; } };
+
+  return `
+  <div class="qh-metric-grid">
+    <div class="qh-metric ${avgReturn>=0?"tone-up":"tone-down"}">
+      <div class="qh-lbl">AVG RETURN PAGI→SORE</div>
+      <div class="qh-val">${avgReturn!=null?qhPct(avgReturn,true):"-"}</div>
+      <div class="qh-hint">${withBoth.length} saham sudah 2 snapshot</div>
+    </div>
+    <div class="qh-metric tone-up"><div class="qh-lbl">NAIK</div><div class="qh-val">${gainers}</div><div class="qh-hint">return_pct &gt; 0</div></div>
+    <div class="qh-metric tone-down"><div class="qh-lbl">TURUN</div><div class="qh-val">${losers}</div><div class="qh-hint">return_pct &lt; 0</div></div>
+    <div class="qh-metric tone-teal"><div class="qh-lbl">TOTAL TER-SNAPSHOT</div><div class="qh-val">${all.length}</div><div class="qh-hint">${qhTodayWIB()}</div></div>
+  </div>
+
+  ${QH.bpjsError ? `<div class="qh-info-note">⚠️ ${qhEsc(QH.bpjsError)}</div>` : ""}
+
+  <div class="panel" style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;">
+    <span style="font-size:11px;color:var(--muted);font-weight:700;">📸 SNAPSHOT SEKARANG (dari browser, watchlist · ${(()=>{try{return (state.watchlist||[]).length;}catch(e){return 0;}})()} ticker):</span>
+    <button class="qh-minibtn" ${QH.snapLoading?"disabled":""} onclick="qhSnapshotSesiNow('pagi')">${QH.snapLoading?"⏳ Menarik...":"🌅 Snapshot PAGI"}</button>
+    <button class="qh-minibtn" ${QH.snapLoading?"disabled":""} onclick="qhSnapshotSesiNow('sore')">${QH.snapLoading?"⏳ Menarik...":"🌆 Snapshot SORE"}</button>
+    ${QH.snapLoading ? '<span style="font-size:11px;color:var(--muted);">Menarik harga live Stockbit satu-satu (~0.35 dtk/ticker, mohon tunggu)…</span>' : ""}
+    ${QH.snapError ? `<span style="font-size:11px;color:var(--down);">⚠️ ${qhEsc(QH.snapError)}</span>` : ""}
+    ${QH.snapLastResult ? `<span style="font-size:11px;color:var(--up);">✅ ${QH.snapLastResult.ok}/${QH.snapLastResult.total} ticker ter-snapshot (${QH.snapLastResult.mode})${QH.snapLastResult.failed?`, ${QH.snapLastResult.failed} gagal ambil harga`:""}</span>` : ""}
+  </div>
+
+  <div class="panel" style="padding:0;overflow:hidden">
+    <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;padding:12px 16px 0;font-size:11px;color:var(--muted)">
+      <input class="qh-input" style="width:180px;text-transform:none" placeholder="Cari ticker…" value="${qhEsc(QH.bpjsSearch)}" oninput="qhBpjsSearch(this.value)">
+      <select class="qh-input" onchange="qhBpjsMinReturn(this.value)">
+        <option value="" ${QH.bpjsMinReturn==null?"selected":""}>Semua return</option>
+        <option value="1" ${QH.bpjsMinReturn===1?"selected":""}>≥ +1%</option>
+        <option value="2" ${QH.bpjsMinReturn===2?"selected":""}>≥ +2%</option>
+        <option value="3" ${QH.bpjsMinReturn===3?"selected":""}>≥ +3%</option>
+        <option value="5" ${QH.bpjsMinReturn===5?"selected":""}>≥ +5%</option>
+      </select>
+      <span>${rows.length} ticker tampil</span>
+      <button class="qh-minibtn" onclick="qhLoadBpjs()">↻ Refresh</button>
+    </div>
+    <div class="table-wrap" style="border:none;max-height:70vh">
+    <table>
+      <thead><tr>${thSort("ticker","TICKER")}${thSort("pagi","HARGA PAGI")}${thSort("sore","HARGA SORE")}${thSort("return","RETURN %")}${thSort("volume","VOLUME")}</tr></thead>
+      <tbody>
+        ${rows.slice(0,300).map(r=>{
+          const rp = r.return_pct!=null ? Number(r.return_pct) : null;
+          return `<tr>
+            <td><button class="ticker-link" style="font-weight:800" onclick="qhOpenModal('${qhEsc(r.ticker)}')">${qhEsc(r.ticker)}</button></td>
+            <td class="mono">${qhRp(r.harga_pagi)}<div style="font-size:10px;color:var(--muted)">${jam(r.captured_pagi_at)} WIB</div></td>
+            <td class="mono">${qhRp(r.harga_sore)}<div style="font-size:10px;color:var(--muted)">${jam(r.captured_sore_at)} WIB</div></td>
+            <td class="mono ${qhChgTone(rp)}">${rp!=null?qhChgArrow(rp)+" "+qhPct(rp,true):"-"}</td>
+            <td class="mono" style="color:var(--muted)">${qhFmt(r.volume_sore??r.volume_pagi)}</td>
+          </tr>`;
+        }).join("") || '<tr><td colspan="5"><div class="empty-box">Tidak ada ticker yang cocok filter.</div></td></tr>'}
+      </tbody>
+    </table>
+    </div>
+  </div>
+  <div class="qh-info-note">ℹ️ Harga Pagi & Sore adalah snapshot live (Yahoo Finance) via <code>snapshot-sesi.mjs</code> pada jam yang tertera — bukan Open/Close resmi bursa. "-" berarti snapshot sesi itu belum jalan hari ini.</div>`;
+};
+
 /* ---------- MODAL DETAIL ---------- */
 QH.modalHtml = function(s){
   if(!s) return "";
@@ -925,6 +1107,22 @@ window.qhExportDash=()=>{
     XLSX.writeFile(wb, "ultimate-score-"+new Date().toISOString().slice(0,10)+".xlsx");
   }catch(e){ alert("Export gagal: "+e.message); }
 };
+window.qhBpjsSort=(k)=>{
+  if(QH.bpjsSort.key===k) QH.bpjsSort.asc=!QH.bpjsSort.asc;
+  else QH.bpjsSort={key:k, asc:false};
+  QH.qhRenderSafe();
+};
+window.qhBpjsSearch=(v)=>{
+  QH.bpjsSearch=v;
+  const el=document.activeElement;
+  const pos=el && el.tagName==="INPUT" ? el.selectionStart : null;
+  QH.qhRenderSafe();
+  const inp=document.querySelector("#qhBody .qh-input");
+  if(inp && pos!=null){ inp.focus(); try{ inp.setSelectionRange(pos,pos); }catch(e){} }
+};
+window.qhBpjsMinReturn=(v)=>{ QH.bpjsMinReturn = v===""?null:Number(v); QH.qhRenderSafe(); };
+window.qhLoadBpjs=()=>{ QH.bpjsRows=null; qhLoadBpjs(); };
+window.qhSnapshotSesiNow=(mode)=>qhSnapshotSesiNow(mode);
 window.qhSetBdTab=(t)=>{ QH.bdTab=t; QH.qhRenderSafe(); };
 window.qhSetBdPeriod=(p)=>{ QH.bdPeriod=p; QH.qhRenderSafe(); };
 window.qhSetBdView=(v)=>{ QH.bdView=v; QH.qhRenderSafe(); };

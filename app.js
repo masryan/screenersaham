@@ -13885,6 +13885,8 @@ const ABOUT_TAB_GUIDE = [
     desc:"Menganalisis konvergensi VWAP broker (menyatu / diam / menjauh), tren akumulasi 10 hari (\"tanjakan\"), dan skor \"mutu\" untuk membantu mencari area entry yang dekat dengan harga rata-rata broker besar." },
   { icon:"⬢", title:"Kraken Flow (ORCA)", tone:"gold",
     desc:"Screener order-flow ala fitur \"ORCA System\" — mendeteksi pola antrian bid/offer, ukuran transaksi rata-rata (ATS), transaksi non-reguler, dan aliran dana asing, langsung dari data live tanpa perlu tombol \"Scan\" terpisah — cukup ubah filter, hasil update otomatis." },
+  { icon:"⚡", title:"Quant Hub (modul tambahan)", tone:"gold",
+    desc:"Halaman terpisah (menu \"⚡ Quant Hub\" di sidebar, dari file quant-hub.js) dengan 5 sub-tab: Dashboard (Ultimate Score &amp; chart IHSG), Bandarmology (ARA Candidate &amp; Swing Big Cap), Broker Stalker versi Quant Hub, BPJS (Beli Pagi Jual Sore), dan Favorit P&amp;L. Datanya memakai sumber yang sama dengan tab-tab utama (state.stocks &amp; Supabase)." },
 ];
 
 const ABOUT_INTEGRATION_GUIDE = [
@@ -14323,7 +14325,56 @@ function renderPanduan(){
     `)}
   `));
 
-  // ---------- 12. Panduan Fitur (ringkasan semua tab) ----------
+  // ---------- 12. Quant Hub (modul tambahan) ----------
+  S.push(pndAcc("quant-hub", "⚡", "Quant Hub — Modul Tambahan", "Dashboard · Bandarmology · Broker Stalker · BPJS · Favorit P&L", pndOpenState("quant-hub", false), `
+    ${pndCard("Apa itu Quant Hub?", "Halaman Terpisah", "gold", `
+      <p>Quant Hub adalah modul tambahan (file <code>quant-hub.js</code>, dimuat setelah <code>app.js</code>) yang menambahkan menu <b>"⚡ Quant Hub"</b> di sidebar. Ia membuka <b>halaman sendiri</b> di luar tab-tab utama — klik tab app.js manapun (Screener, dll) untuk kembali &amp; menutupnya.</p>
+      <p>Datanya bukan sumber baru: memakai data live yang sama dengan Screener (fundamental, teknikal, bandarmologi), ditambah tabel <code>broker_summary</code> dan <code>sesi_snapshots</code> di Supabase yang sama dengan fitur Broker Summary &amp; Target Bandar.</p>
+      ${pndKv("Buka/Tutup", "Klik \"⚡ Quant Hub\" di sidebar untuk buka. Klik tab utama manapun (mis. Screener) untuk kembali.")}
+      ${pndKv("5 Sub-tab", "◧ Dashboard · 🔥 Bandarmology · ◉ Broker Stalker · 🌅 BPJS · ◈ Favorit P&L — tombolnya ada di bagian atas halaman Quant Hub.")}
+      ${pndKv("Klik saham", "Klik kode saham di kartu/baris manapun untuk membuka modal ringkas: skor, valuasi, indikator, tautan TradingView/Stockbit, dan tombol set harga entry.")}
+      ${pndCallout(`Broker Stalker &amp; BPJS di Quant Hub butuh koneksi Supabase yang sama seperti dipakai fitur Broker Summary (diatur di ⚙️ Pengaturan). BPJS khususnya butuh tabel <code>sesi_snapshots</code> sudah dibuat (migrasi <code>08_sesi_snapshots.sql</code>).`, "warn")}
+    `)}
+    ${pndCard("◧ Dashboard — Ultimate Score", "For Long Term", "up", `
+      <p>Ringkasan pasar ala ihsgscreener: 7 kartu metrik (Total Saham, Undervalue, Score Rata-rata, Danger Zone, Fair Value, Top Candidate, Vol Total), chart IHSG (TradingView) lengkap dengan status <b>PASAR BUKA/TUTUP</b> &amp; ticker tape (IHSG, LQ45, BBCA, BBRI, BMRI, TLKM, ASII, UNTR), lalu daftar kartu <b>Ultimate Score</b> — top 30 saham skor tertinggi, bisa difilter cari kode/nama, sektor, dan skor minimum, serta diekspor ke Excel.</p>
+      ${pndKv("Fundamental (50)", "ROE, NPM, DER, Current Ratio, Dividend Yield, dan konsistensi laba (EPS positif + label valuasi murah).")}
+      ${pndKv("Valuasi (25)", "PER (murah mendekati 5x = skor penuh) &amp; PBV (murah mendekati 0.5x = skor penuh).")}
+      ${pndKv("Momentum (25)", "Harga di atas MA50 &amp; MA200, RSI14 di rentang sehat 40–70, dan tren harga bullish.")}
+      ${pndKv("Grade", "≥75 Potensi Besar · 60–74 Menarik · 40–59 Biasa · &lt;40 Lemah.")}
+      ${pndKv("Est. Upside", "Estimasi fair value kasar dari PER atau PBV dibandingkan ROE — <b>bukan</b> saran investasi, hanya arah kasar.")}
+      ${pndCallout(`Ultimate Score adalah formula transparan milik aplikasi ini sendiri (bisa diaudit di kode <code>qhUltimateScore</code>) — <b>bukan</b> tiruan formula ihsgscreener.com yang tidak dipublikasikan.`, "info")}
+    `)}
+    ${pndCard("🔥 Bandarmology — ARA Candidate & Swing Big Cap", "2 Panel", "gold", `
+      <p>Dua daftar berdampingan, masing-masing top 10, dihitung dari perilaku order/harga EOD (bukan jaminan, selalu cek berita &amp; risiko masing-masing saham).</p>
+      ${pndKv("ARA Candidate", "Saham small–mid cap (kapitalisasi &lt;Rp5T) yang closing di area high hari itu, antrian offer tipis/kosong, tapi kenaikannya belum mendekati batas ARA (ARA limit otomatis mengikuti rentang harga: &lt;Rp50 = 35% · &lt;Rp200 = 25% · ≤Rp5.000 = 20% · &gt;Rp5.000 = 15%).")}
+      ${pndKv("Swing Big Cap", "Saham big/mega cap (kapitalisasi ≥Rp10T) dengan net asing beli positif hari ini; skor tambahan kalau asing konsisten net beli ≥2 hari dan harga di atas MA21/MA50.")}
+    `)}
+    ${pndCard("◉ Broker Stalker (versi Quant Hub)", "Baca dari broker_summary langsung", "teal", `
+      <p>Sama nama dengan fitur "Broker Stalker &amp; Target Bandar" di tab utama, tapi implementasinya terpisah — versi Quant Hub menarik langsung tabel <code>broker_summary</code> dari Supabase dengan tampilan chip cepat untuk broker asing/lokal populer.</p>
+      ${pndStep(1, "Pilih mode: <b>◎ Lacak Broker</b> (satu broker → semua saham yang ia transaksikan) atau <b>◈ Lacak Saham</b> (satu saham → broker mana saja yang aktif).")}
+      ${pndStep(2, "Isi kode broker/saham, atau klik salah satu chip cepat (dikelompokkan Asing Institusional / Lokal Kuat) di bawah kolom Lacak Broker.")}
+      ${pndStep(3, "Atur Periode (Today/1W/1M/3M). Untuk Lacak Broker, bisa ganti tampilan Net Buy atau Volume.")}
+      ${pndKv("ACC / DIS / NET", "Status per saham pada mode Lacak Broker: ACC = broker itu net beli ≥55% dari total transaksinya di saham itu. DIS = net jual ≥55%. NET = campuran/netral.")}
+      ${pndCallout(`Datanya sama-sama dari tabel <code>broker_summary</code> (top-5 broker per hari) dengan fitur Broker Summary di tab utama — jadi seakurat &amp; serutin Anda/tim Anda mengisi data itu. Kalau ingin kalkulator target harga bandar (ATR14 → R1/Max), tetap pakai <b>Target Bandar</b> di tab utama.`, "info")}
+    `)}
+    ${pndCard("🌅 BPJS — Beli Pagi, Jual Sore", "Jangan tertukar dengan BSJP", "down", `
+      <p><b>Kebalikan arah dari BSJP</b> yang sudah dibahas di atas (BSJP = Beli <i>Sore</i>, Jual <i>Pagi</i>). BPJS membandingkan harga <b>pagi</b> (snapshot ~09:05 WIB) vs harga <b>sore</b> (snapshot ~15:45 WIB) pada hari yang sama, dari tabel <code>sesi_snapshots</code>.</p>
+      ${pndKv("Sumber data", "Diisi otomatis 2×/hari oleh script <code>snapshot-sesi.mjs</code> (cron), ATAU manual lewat tombol <b>📸 Snapshot PAGI</b> / <b>📸 Snapshot SORE</b> di halaman ini — menarik harga live Stockbit untuk semua saham di Watchlist Anda, tanpa perlu laptop/cron menyala.")}
+      ${pndKv("Kolom tabel", "Harga Pagi, Harga Sore (dengan jam pengambilan WIB), Return % (pagi→sore), Volume.")}
+      ${pndKv("Kartu metrik", "Avg Return Pagi→Sore, jumlah saham Naik/Turun, dan Total Ter-snapshot hari itu.")}
+      ${pndCallout(`Tombol Snapshot PAGI/SORE butuh: Watchlist tidak kosong (⭐ tandai saham di Screener dulu), token Stockbit sudah diisi di ⚙️ Pengaturan, dan koneksi Supabase aktif.`, "warn")}
+      ${pndCallout(`Harga Pagi/Sore adalah snapshot live, <b>bukan</b> harga Open/Close resmi bursa. Tanda "-" berarti sesi snapshot itu belum jalan hari ini.`, "info")}
+    `)}
+    ${pndCard("◈ Favorit P&L", "Ekstensi Watchlist", "up", `
+      <p>Memakai daftar Watchlist (⭐) yang sama dengan tab utama, lalu menambahkan pelacakan harga entry &amp; P&amp;L. Saat sebuah saham pertama kali masuk Watchlist, harga penutupan saat itu <b>otomatis tersimpan sebagai harga entry</b> (di localStorage perangkat ini) — bisa diubah manual kapan saja.</p>
+      ${pndKv("Kolom tabel", "Score (Ultimate Score), Tgl Favorit, Harga Entry, Harga Kini, P&amp;L %, perubahan 1 hari, posisi dalam range 52 minggu, dan Status (UV/OV/FAIR/PROFIT/DANGER/NEUTRAL).")}
+      ${pndKv("Ringkasan P&L", "Dihitung berbobot modal (harga entry × 100 lembar per saham) supaya tidak menyesatkan kalau ukuran posisi tiap saham berbeda; versi equal-weight tetap ditampilkan sebagai pembanding.")}
+      ${pndKv("Tombol per baris", "\"set\" untuk ubah harga entry manual, \"×\" untuk hapus entry saham itu saja.")}
+      ${pndKv("Tombol atas", "Share (salin ringkasan P&amp;L ke clipboard), Export Excel, dan Clear All (hapus semua harga entry tersimpan).")}
+    `)}
+  `));
+
+  // ---------- 13. Panduan Fitur (ringkasan semua tab) ----------
   S.push(pndAcc("panduan-fitur", "🗂️", "Panduan Fitur — Ringkasan Semua Tab", null, pndOpenState("panduan-fitur", false), `
     ${ABOUT_TAB_GUIDE.map(t => pndCard(`${t.icon} ${t.title}`, null, t.tone, `
       <p>${t.desc}</p>
@@ -14331,12 +14382,12 @@ function renderPanduan(){
     `)).join("")}
   `));
 
-  // ---------- 13. Sumber Data & Integrasi ----------
+  // ---------- 14. Sumber Data & Integrasi ----------
   S.push(pndAcc("integrasi", "🔌", "Sumber Data & Integrasi", null, pndOpenState("integrasi", false), `
     ${ABOUT_INTEGRATION_GUIDE.map(g => pndCard(g.title, null, g.tone, `<p>${g.desc}</p>`)).join("")}
   `));
 
-  // ---------- 14. Disclaimer ----------
+  // ---------- 15. Disclaimer ----------
   S.push(pndAcc("disclaimer", "⚠️", "Disclaimer Penting", null, pndOpenState("disclaimer", false), `
     ${pndCard("Baca sebelum menggunakan data di aplikasi ini", null, "down", `
       <ul class="pnd-list">
@@ -14354,7 +14405,7 @@ function renderPanduan(){
     ["eps","🎯 EPS"], ["broker-stalker","🛰️ Broker Stalker"], ["kraken","⬢ Kraken Flow"],
     ["bsjp","🌆 BSJP"], ["detail","📊 Detail Emiten"], ["checklist","✅ Checklist"],
     ["istilah-fundamental","📖 Istilah"], ["indikator-teknikal","📈 Indikator"],
-    ["panduan-fitur","🗂️ Semua Fitur"], ["disclaimer","⚠️ Disclaimer"]
+    ["quant-hub","⚡ Quant Hub"], ["panduan-fitur","🗂️ Semua Fitur"], ["disclaimer","⚠️ Disclaimer"]
   ].map(([id,label]) => `<a href="#pnd-${id}" data-pnd-jump="${id}">${label}</a>`).join("");
 
   return `
