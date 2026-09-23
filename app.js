@@ -859,10 +859,14 @@ function renderBulkPullToolbar(namespace, tickers, contextLabel){
   // bursa (bukan 10), karena update teknikal (RSI/MACD/dst) butuh minimal
   // ~30 bar, dan kolom seperti MA200/52w high-low (lihat TI_MIN_BARS_52W)
   // baru terisi kalau histori yang tersimpan >=252 hari bursa.
+  // "Sampai" SELALU tanggal hari ini (bukan hari bursa terakhir) supaya user
+  // tidak perlu geser manual tiap hari — tradingDaysBack() sendiri sengaja
+  // mundur mulai dari KEMARIN (lihat komentarnya), jadi timpa lagi ke hari
+  // ini di sini.
   if(!state.hdAutoBulkFrom || !state.hdAutoBulkTo){
     const defaultHdDates = tradingDaysBack(260);
     state.hdAutoBulkFrom = defaultHdDates[0];
-    state.hdAutoBulkTo = defaultHdDates[defaultHdDates.length - 1];
+    state.hdAutoBulkTo = todayLocalISO();
   }
   const liveLoading = state.stockbitBulkLoading;
   const hdLoading = state.stockbitHistoricalBulkLoading;
@@ -2485,6 +2489,17 @@ let state = {
   // pindah-pindah tab tidak saling menimpa nilai pencarian satu sama lain.
   cariTickerSearch: "",
   chartRange: "all", chartSeries: { close:true, support:true, resistance:true, fib:true, bb:false, emaHL:false, ema89:false, ema921:false, sar:false, supertrend:false, pc:false, bandar:false, vol:false, stochrsi:false, rsi721:false, foreignflow:false, macd:false, netforeign:false },
+  // Pengaturan tampilan garis Close di chart (warna & model garis) --
+  // disimpan di localStorage supaya pilihan user tetap nyangkut walau
+  // halaman di-reload. Lihat kontrol "Garis Close" di renderChart() &
+  // pemakaiannya di drawChartSVG() (closePath).
+  chartLineColor: localStorage.getItem("ihsg_chart_line_color") || "#f59e0b",
+  chartLineStyle: localStorage.getItem("ihsg_chart_line_style") || "solid", // solid | dashed | dotted
+  chartLineWidth: +(localStorage.getItem("ihsg_chart_line_width")) || 2.8,
+  // Tipe tampilan harga utama chart -- "line" (garis Close, default lama)
+  // atau "candle" (candlestick OHLC ala Stockbit/TradingView, lihat gambar
+  // referensi user). Disimpan localStorage juga spy nyangkut antar sesi.
+  chartType: localStorage.getItem("ihsg_chart_type") || "line", // line | candle
   // Timeframe candle (harian/mingguan), level zoom (1 = tampilkan semua bar
   // hasil filter Rentang; <1 = perbesar/tampilkan N bar terakhir saja),
   // serta status minimize/fullscreen kotak chart. Lihat drawChartSVG() &
@@ -7016,6 +7031,20 @@ async function loadChart(ticker){
   // (bukan cuma close/volume) supaya panel chart custom (SAR, SuperTrend,
   // Price Channel, Bandar Volume, Foreign Flow, Net Foreign Buy/Sell) bisa
   // dihitung -- semuanya butuh high/low atau data asing harian.
+  //
+  // MASALAH: sync-idx-full.mjs itu EOD resmi IDX dan harus dijalankan
+  // MANUAL dari jaringan rumah, jadi `flows` gampang ketinggalan 1+ hari
+  // bursa (candle terakhir di Chart jadi lebih tua dari yang tampil di
+  // Stockbit/TradingView). Sebagai penutup jarak itu, SETELAH `flows`
+  // selesai ditarik, kita susul-tarik `price_history_stockbit` (diisi
+  // lewat tombol "⬇️ Tarik Data dari Stockbit" di tab Historical Data,
+  // jalan langsung dari browser -- tidak nunggu jaringan rumah) dan
+  // TEMPELKAN cuma baris yang tanggalnya LEBIH BARU dari baris terakhir
+  // `flows`. Baris susulan ini tidak punya foreign_buy/foreign_sell (kolom
+  // itu tidak ada di price_history_stockbit) jadi foreignBuy/foreignSell-nya
+  // null -- panel Foreign Flow/Net Foreign untuk bar itu otomatis kosong
+  // sampai `flows` menyusul via sync-idx-full.mjs, tapi candle/EMA/overlay
+  // harga lain tetap ikut update.
   state.chartData = [];
   state.chartLoading = true;
   render();
@@ -7037,11 +7066,47 @@ async function loadChart(ticker){
           volume: r.volume == null ? null : Number(r.volume),
           foreignBuy: r.foreign_buy == null ? null : Number(r.foreign_buy),
           foreignSell: r.foreign_sell == null ? null : Number(r.foreign_sell),
+          source: "flows",
         }));
     }
   } catch(e){
     state.chartData = [];
   }
+
+  // Susul-tarik price_history_stockbit HANYA untuk tanggal yang belum ada
+  // di `flows` -- kalau `flows` kosong total (belum pernah disync untuk
+  // ticker ini), pakai price_history_stockbit sebagai satu-satunya sumber.
+  try{
+    const lastFlowsDate = state.chartData.length ? state.chartData[state.chartData.length - 1].date : null;
+    const qs = new URLSearchParams({
+      stock_code: `eq.${ticker}`, period: "eq.daily",
+      select: "trade_date,open,high,low,close,volume",
+      order: "trade_date.asc",
+    });
+    if (lastFlowsDate) qs.set("trade_date", `gt.${lastFlowsDate}`);
+    const stockbitRows = await fetch(`${SUPABASE_URL}/price_history_stockbit?${qs}`, { headers: getSupaHeaders(), cache: "no-store" }).then(r=>r.json());
+    if (Array.isArray(stockbitRows) && stockbitRows.length){
+      const catchUp = stockbitRows
+        .filter(r => r.close != null && (!lastFlowsDate || r.trade_date > lastFlowsDate))
+        .map(r => ({
+          date: r.trade_date,
+          open: r.open == null ? null : Number(r.open),
+          high: r.high == null ? null : Number(r.high),
+          low: r.low == null ? null : Number(r.low),
+          close: Math.round(r.close),
+          volume: r.volume == null ? null : Number(r.volume),
+          foreignBuy: null,
+          foreignSell: null,
+          source: "stockbit",
+        }));
+      if (catchUp.length) state.chartData = state.chartData.concat(catchUp);
+    }
+  } catch(e){
+    // Gagal susul-tarik price_history_stockbit BUKAN alasan buat buang data
+    // `flows` yang sudah berhasil didapat -- diamkan saja, chart tetap
+    // tampil dengan data flows apa adanya (mungkin sedikit lebih tua).
+  }
+
   state.chartLoading = false;
   render();
 }
@@ -10190,15 +10255,16 @@ function renderScreener(){
   // Default Periode Dari–Sampai untuk tombol "Tarik Data Stockbit" di toolbar
   // Screener (state sama dengan yang dipakai tab Broker Summary, jadi kalau
   // diubah di sini otomatis kepakai juga di sana, dan sebaliknya).
+  // "Sampai" SELALU tanggal hari ini — lihat catatan di renderBulkPullToolbar().
   if(!state.bsAutoBulkFrom || !state.bsAutoBulkTo){
     const defaultDates = tradingDaysBack(state.bsAutoBulkDays || 10);
     state.bsAutoBulkFrom = defaultDates[0];
-    state.bsAutoBulkTo = defaultDates[defaultDates.length - 1];
+    state.bsAutoBulkTo = todayLocalISO();
   }
   if(!state.hdAutoBulkFrom || !state.hdAutoBulkTo){
     const defaultHdDates = tradingDaysBack(10);
     state.hdAutoBulkFrom = defaultHdDates[0];
-    state.hdAutoBulkTo = defaultHdDates[defaultHdDates.length - 1];
+    state.hdAutoBulkTo = todayLocalISO();
   }
   
   const effectiveLimit = state.limit === "all" ? Math.max(sorted.length, 1) : state.limit;
@@ -13045,9 +13111,15 @@ function renderChart(){
   // vertikal yang kebebas dari blok kontrol yang disembunyikan.
   const controlsHidden = !!state.chartMinimized;
 
+  // Berapa bar di ekor chart yang sumbernya price_history_stockbit (susulan
+  // Stockbit karena `flows`/IDX belum sampai tanggal itu) -- dipakai buat
+  // catatan kecil di toolbar supaya user sadar bar-bar itu belum final IDX
+  // dan Foreign Flow/Net Foreign-nya masih kosong sampai `flows` menyusul.
+  const stockbitCatchUpCount = state.chartData.filter(d => d.source === "stockbit").length;
   const chartToolbar = `
     <div class="chart-toolbar" style="margin-top: 24px;">
-      <span style="color:var(--muted);font-size:13px; font-weight:500;">Chart <b class="mono" style="color:var(--text); font-size:15px;">${t}</b> (dihitung &amp; digambar langsung dari data <code>flows</code>)</span>
+      <span style="color:var(--muted);font-size:13px; font-weight:500;">Chart <b class="mono" style="color:var(--text); font-size:15px;">${t}</b> (dihitung &amp; digambar dari data <code>flows</code>${stockbitCatchUpCount ? `, +${stockbitCatchUpCount} bar terakhir susulan <code>price_history_stockbit</code>` : ""})</span>
+      ${stockbitCatchUpCount ? `<div style="width:100%;font-size:11px;color:var(--muted);margin-top:2px;">ⓘ ${stockbitCatchUpCount} candle terakhir dari Stockbit (belum ada di <code>flows</code>/IDX) — harga/volume sudah ikut update, tapi Foreign Flow &amp; Net Foreign Buy/Sell untuk bar itu masih kosong sampai <code>sync-idx-full.mjs</code> dijalankan lagi.</div>` : ""}
       <div class="chart-external-links">
         <a class="btn btn-outline btn-tradingview" href="${tvChartPageUrl(t)}" target="_blank" rel="noopener">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 13v6a2 2 0 01-2 2H5a2 2 0 01-2-2V8a2 2 0 012-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
@@ -13083,9 +13155,33 @@ function renderChart(){
       <button class="chart-range-btn chart-zoom-btn" data-chart-zoom="reset" ${zoom>=1?'disabled':''} title="Reset zoom ke 100%">${Math.round(zoom*100)}%</button>
       <button class="chart-range-btn chart-zoom-btn" data-chart-zoom="in" ${zoom<=0.15?'disabled':''} title="Zoom in">+</button>
     </div>
+    <div class="chart-control-group" style="align-items:center;">
+      <span class="chart-control-label">Tipe Chart</span>
+      <button type="button" class="chart-range-btn ${(state.chartType||'line')!=='candle'?'active':''}" data-chart-type="line" title="Garis harga Close (default)">📈 Line</button>
+      <button type="button" class="chart-range-btn ${state.chartType==='candle'?'active':''}" data-chart-type="candle" title="Candlestick OHLC (open-high-low-close) ala Stockbit/TradingView">🕯️ Candlestick</button>
+    </div>
+    ${state.chartType!=='candle' ? `
+    <div class="chart-control-group" style="align-items:center;">
+      <span class="chart-control-label">Garis Close</span>
+      <input type="color" id="chartLineColorInput" value="${state.chartLineColor}" title="Warna garis Close" style="width:30px;height:26px;padding:0;border:1px solid var(--border);border-radius:6px;background:none;cursor:pointer;">
+      <select id="chartLineStyleSelect" class="chart-range-btn" style="padding:4px 8px;cursor:pointer;" title="Model garis Close">
+        <option value="solid" ${state.chartLineStyle==="solid"?"selected":""}>— Solid</option>
+        <option value="dashed" ${state.chartLineStyle==="dashed"?"selected":""}>┄ Putus-putus</option>
+        <option value="dotted" ${state.chartLineStyle==="dotted"?"selected":""}>┈ Titik-titik</option>
+      </select>
+      <select id="chartLineWidthSelect" class="chart-range-btn" style="padding:4px 8px;cursor:pointer;" title="Ketebalan garis Close">
+        <option value="1.5" ${state.chartLineWidth===1.5?"selected":""}>Tipis</option>
+        <option value="2.8" ${state.chartLineWidth===2.8?"selected":""}>Sedang</option>
+        <option value="4.2" ${state.chartLineWidth===4.2?"selected":""}>Tebal</option>
+      </select>
+    </div>` : `
+    <div class="chart-control-group" style="align-items:center;">
+      <span class="chart-control-label">Candle</span>
+      <span style="font-size:11px;color:var(--muted);white-space:nowrap;"><span style="color:var(--up);">■</span> Naik (Close ≥ Open) &nbsp; <span style="color:var(--down);">■</span> Turun (Close &lt; Open)</span>
+    </div>`}
     <div class="chart-control-group chart-series-group">
       <span class="chart-control-label">Overlay Harga</span>
-      ${toggle('close','Close','var(--gold)')}
+      ${toggle('close','Close',state.chartLineColor||'var(--gold)')}
       ${toggle('support','Support','var(--down)')}
       ${toggle('resistance','Resisten','var(--up)')}
       ${toggle('fib','Fibonacci','#94a3b8')}
@@ -13463,6 +13559,13 @@ function drawChartSVG(){
   const rsi7=pick(rsi7All), rsi21=pick(rsi21All), foreignFlow=pick(foreignFlowAll), netForeign=pick(netForeignAll);
 
   const levelVals = lv ? [lv.support,lv.resistance,lv.fib?.f382,lv.fib?.f50,lv.fib?.f618].filter(v=>v!=null) : [];
+  // High/Low tiap candle dimasukkan ke perhitungan rentang skala Y HANYA saat
+  // mode Candlestick aktif -- supaya sumbu chart lebih pas mencakup sumbu
+  // (wick) candle, sekaligus tidak mengubah framing chart mode Line yang
+  // lama (yang memang cuma dipatok dari harga Close).
+  const candleExtents = state.chartType==="candle"
+    ? plotted.flatMap(d=>[d.high!=null?d.high:d.close, d.low!=null?d.low:d.close])
+    : [];
   const priceExtras = [
     showBB ? bbUp.concat(bbLo) : [],
     showEmaHL ? emaH.concat(emaL) : [], showEma89 ? ema89 : [],
@@ -13470,7 +13573,7 @@ function drawChartSVG(){
     showSar ? sar : [], showSuperTrend ? stLine : [],
     showPC ? pcHi.concat(pcLo) : [],
   ].flat().filter(v=>v!=null);
-  const allVals = closes.concat(levelVals, priceExtras), min=Math.min(...allVals), max=Math.max(...allVals), pad=(max-min)*.08||1;
+  const allVals = closes.concat(levelVals, priceExtras, candleExtents), min=Math.min(...allVals), max=Math.max(...allVals), pad=(max-min)*.08||1;
   const yMin=min-pad,yMax=max+pad,T=18,B=38;
   const subH={bandar:70,vol:70,stochrsi:80,rsi721:80,foreignflow:70,macd:80,netforeign:70}, gap=14, mainH=380-T-B;
   const subKeys=[showBandar&&'bandar',showVol&&'vol',showStochRsi&&'stochrsi',showRsi721&&'rsi721',showForeignFlow&&'foreignflow',showMACD&&'macd',showNetForeign&&'netforeign'].filter(Boolean);
@@ -13497,8 +13600,17 @@ function drawChartSVG(){
   const xScale=i=>L+(plotted.length<2?plotW/2:i*(plotW/(plotted.length-1||1)));
   const yScale=v=>T+mainH-((v-yMin)/(yMax-yMin))*mainH;
   const linePath=(arr,value)=>arr.map((d,i)=>`${i?'L':'M'}${xScale(i).toFixed(1)},${yScale(value(d,i)).toFixed(1)}`).join(' ');
-  let html='';
-  for(let i=0;i<=5;i++){ const y=T+i*mainH/5, val=yMax-i*(yMax-yMin)/5; html+=`<line x1="${L}" y1="${y}" x2="${W-R}" y2="${y}" stroke="color-mix(in srgb, currentColor 5%, transparent)" stroke-dasharray="4,4"/><text x="5" y="${y+4}" fill="var(--muted)" font-size="${fs(11)}" font-family="JetBrains Mono,monospace">${fmtNum(Math.round(val))}</text>`; }
+  // FIX kontras (2026-09): chart ini pakai palet warna garis/teks yang
+  // didesain untuk latar GELAP (teal terang, oranye, pink, hijau/merah
+  // saturasi tinggi). Sebelumnya SVG tidak punya rect latar sendiri --
+  // jadi di mode terang, warna2 itu duduk di atas latar panel yang abu2
+  // terang dan nyaris tak terbaca. Solusinya: canvas chart SEKARANG
+  // SELALU gelap (independen dari tema app), sama seperti platform
+  // trading pada umumnya -- semua warna teks/grid di bawah sudah
+  // diganti jadi warna tetap (bukan var(--muted)/currentColor lagi)
+  // supaya kontras konsisten di kedua tema.
+  let html=`<rect x="0" y="0" width="${W}" height="${Htot}" fill="#0f172a"/>`;
+  for(let i=0;i<=5;i++){ const y=T+i*mainH/5, val=yMax-i*(yMax-yMin)/5; html+=`<line x1="${L}" y1="${y}" x2="${W-R}" y2="${y}" stroke="rgba(148,163,184,0.14)" stroke-dasharray="4,4"/><text x="5" y="${y+4}" fill="#94a3b8" font-size="${fs(11)}" font-family="JetBrains Mono,monospace">${fmtNum(Math.round(val))}</text>`; }
   const drawLevel=(val,color,label,dashed,visible)=>{ if(!visible||val==null||isNaN(val))return; const y=yScale(val); html+=`<line x1="${L}" y1="${y}" x2="${W-R}" y2="${y}" stroke="${color}" stroke-width="1.7" ${dashed?'stroke-dasharray="6,5"':''} opacity=".85"/><text x="${W-R+7}" y="${(y+4).toFixed(1)}" fill="${color}" font-size="${fs(10.5)}" font-family="JetBrains Mono,monospace" font-weight="600">${label}</text>`; };
   if(lv){ drawLevel(lv.support,'var(--down)',fmtNum(Math.round(lv.support)),false,on('support')); drawLevel(lv.resistance,'var(--up)',fmtNum(Math.round(lv.resistance)),false,on('resistance')); if(lv.fib){drawLevel(lv.fib.f382,'#94a3b8','Fib38',true,on('fib'));drawLevel(lv.fib.f50,'#94a3b8','Fib50',true,on('fib'));drawLevel(lv.fib.f618,'#94a3b8','Fib61',true,on('fib'));}}
 
@@ -13567,20 +13679,53 @@ function drawChartSVG(){
     labelRight(lastVal(sar),'#ef4444','SAR');
   }
 
-  const closePath=on('close') ? `<path d="${linePath(plotted,d=>d.close)}" fill="none" stroke="var(--gold)" stroke-width="2.8" stroke-linejoin="round"/>` : '';
-  html += `<rect x="${L}" y="${T}" width="${plotW}" height="${mainH}" fill="transparent" data-chart-plot="1"/>${closePath}`;
+  // Garis Close: warna, model (solid/putus-putus/titik-titik), dan
+  // ketebalan sekarang bisa diatur user lewat kontrol "Garis Close" (lihat
+  // renderChart()) -- disimpan di state.chartLineColor/Style/Width. Default
+  // sama seperti sebelumnya (var(--gold), solid, 2.8) kalau belum pernah
+  // diubah user. HANYA dipakai kalau state.chartType !== "candle".
+  const lineColor = state.chartLineColor || "#f59e0b";
+  const lineWidth = state.chartLineWidth || 2.8;
+  const lineDash = state.chartLineStyle==="dashed" ? `stroke-dasharray="${(lineWidth*2.5).toFixed(1)},${(lineWidth*1.6).toFixed(1)}"`
+    : state.chartLineStyle==="dotted" ? `stroke-dasharray="${(lineWidth*0.6).toFixed(1)},${(lineWidth*1.4).toFixed(1)}" stroke-linecap="round"`
+    : '';
+  const isCandle = state.chartType==="candle";
+  const closePath=(on('close') && !isCandle) ? `<path d="${linePath(plotted,d=>d.close)}" fill="none" stroke="${lineColor}" stroke-width="${lineWidth}" stroke-linejoin="round" ${lineDash}/>` : '';
+  // Candlestick: satu <line> (sumbu/wick, high-low) + satu <rect> (badan,
+  // open-close) per bar, lebar badan mengikuti jarak antar-bar (capped biar
+  // tidak kelewat lebar saat bar-nya sedikit / kelewat sempit saat banyak).
+  // Fallback open/high/low -> close kalau datanya belum ada (baris `flows`
+  // lama sebelum kolom OHLC lengkap disinkron) -- jadi tetap tergambar
+  // sebagai candle "doji" tipis, bukan hilang/NaN.
+  let candlesSvg = '';
+  if(on('close') && isCandle){
+    const barGap = plotted.length>1 ? (plotW/(plotted.length-1||1)) : plotW;
+    const candleW = Math.max(2, Math.min(barGap*0.62, 18));
+    candlesSvg = plotted.map((d,i)=>{
+      const o=d.open!=null?d.open:d.close, c=d.close;
+      const h=d.high!=null?d.high:Math.max(o,c), l=d.low!=null?d.low:Math.min(o,c);
+      const up = c>=o;
+      const color = up ? "var(--up)" : "var(--down)";
+      const cx=xScale(i);
+      const yH=yScale(h).toFixed(1), yL=yScale(l).toFixed(1);
+      const yO=yScale(o), yC=yScale(c);
+      const bodyTop=Math.min(yO,yC).toFixed(1), bodyH=Math.max(1,Math.abs(yO-yC)).toFixed(1);
+      return `<line x1="${cx.toFixed(1)}" y1="${yH}" x2="${cx.toFixed(1)}" y2="${yL}" stroke="${color}" stroke-width="1.1"/><rect x="${(cx-candleW/2).toFixed(1)}" y="${bodyTop}" width="${candleW.toFixed(1)}" height="${bodyH}" fill="${color}" stroke="${color}" stroke-width="0.6"/>`;
+    }).join('');
+  }
+  html += `<rect x="${L}" y="${T}" width="${plotW}" height="${mainH}" fill="transparent" data-chart-plot="1"/>${closePath}${candlesSvg}`;
 
   // --- Sub-panel bawah (RSI / MACD / Volume), masing2 dengan sumbu & label sendiri
   let sTop=T+mainH+gap;
   subKeys.forEach(k=>{
     const h=subH[k];
-    html+=`<line x1="${L}" y1="${sTop+h}" x2="${W-R}" y2="${sTop+h}" stroke="color-mix(in srgb, currentColor 8%, transparent)"/>`;
+    html+=`<line x1="${L}" y1="${sTop+h}" x2="${W-R}" y2="${sTop+h}" stroke="rgba(148,163,184,0.18)"/>`;
     if(k==='bandar'){
       const vals=bandar.filter(v=>v!=null&&!isNaN(v));
       const vmax=Math.max(...vals.map(v=>Math.abs(v)))||1;
       const yB=v=>sTop+h/2-(v/vmax)*(h/2-8);
       const bw=Math.max(1.2,plotW/plotted.length*0.6);
-      html+=`<line x1="${L}" y1="${sTop+h/2}" x2="${W-R}" y2="${sTop+h/2}" stroke="color-mix(in srgb, currentColor 10%, transparent)"/>`;
+      html+=`<line x1="${L}" y1="${sTop+h/2}" x2="${W-R}" y2="${sTop+h/2}" stroke="rgba(148,163,184,0.22)"/>`;
       bandar.forEach((v,i)=>{ if(v==null)return; const y0=yB(0),y1=yB(v); html+=`<rect x="${(xScale(i)-bw/2).toFixed(1)}" y="${Math.min(y0,y1).toFixed(1)}" width="${bw.toFixed(1)}" height="${Math.max(1,Math.abs(y1-y0)).toFixed(1)}" fill="${v>=0?'rgba(16,185,129,.6)':'rgba(239,68,68,.6)'}"/>`; });
       html+=`<text x="5" y="${sTop+12}" fill="#22c55e" font-size="${fs(10)}" font-family="JetBrains Mono,monospace" font-weight="700">BANDAR VOLUME</text>`;
       const lb=lastVal(bandar); if(lb!=null)html+=`<text x="${W-R+7}" y="${sTop+12}" fill="${lb>=0?'#22c55e':'#ef4444'}" font-size="${fs(10)}" font-family="JetBrains Mono,monospace">${fmtNum(Math.round(lb))}</text>`;
@@ -13592,29 +13737,29 @@ function drawChartSVG(){
       const yV=v=>sTop+h-(v/vmax)*(h-14);
       vols.forEach((v,i)=>{if(v==null)return;const hgt=(v/vmax)*(h-14);const up=i===0||plotted[i].close>=plotted[i-1].close;html+=`<rect x="${(xScale(i)-bw/2).toFixed(1)}" y="${(sTop+h-hgt).toFixed(1)}" width="${bw.toFixed(1)}" height="${Math.max(1,hgt).toFixed(1)}" fill="${up?'rgba(16,185,129,.45)':'rgba(239,68,68,.45)'}"/>`;});
       html+=`<path d="${volMA20.map((v,i)=>v==null?'':`${i?'L':'M'}${xScale(i).toFixed(1)},${yV(v).toFixed(1)}`).filter(Boolean).join(' ')}" fill="none" stroke="#60a5fa" stroke-width="1.6"/>`;
-      html+=`<text x="5" y="${sTop+12}" fill="var(--muted)" font-size="${fs(10)}" font-family="JetBrains Mono,monospace" font-weight="700">VOLUME 20</text>`;
+      html+=`<text x="5" y="${sTop+12}" fill="#94a3b8" font-size="${fs(10)}" font-family="JetBrains Mono,monospace" font-weight="700">VOLUME 20</text>`;
       const lv2=lastVal(vols), lm2=lastVal(volMA20);
-      if(lv2!=null)html+=`<text x="${W-R+7}" y="${sTop+12}" fill="var(--muted)" font-size="${fs(10)}" font-family="JetBrains Mono,monospace">${fmtNum(Math.round(lv2))}</text>`;
+      if(lv2!=null)html+=`<text x="${W-R+7}" y="${sTop+12}" fill="#94a3b8" font-size="${fs(10)}" font-family="JetBrains Mono,monospace">${fmtNum(Math.round(lv2))}</text>`;
       if(lm2!=null)html+=`<text x="${W-R+7}" y="${(sTop+26)}" fill="#60a5fa" font-size="${fs(10)}" font-family="JetBrains Mono,monospace">MA ${fmtNum(Math.round(lm2))}</text>`;
     }
     if(k==='stochrsi'){
       const yR=v=>sTop+h-((v-0)/100)*h;
-      [20,50,80].forEach(g=>{const y=yR(g);html+=`<line x1="${L}" y1="${y}" x2="${W-R}" y2="${y}" stroke="${g===50?'color-mix(in srgb, currentColor 5%, transparent)':'rgba(239,68,68,.25)'}" stroke-dasharray="3,4"/>`;});
+      [20,50,80].forEach(g=>{const y=yR(g);html+=`<line x1="${L}" y1="${y}" x2="${W-R}" y2="${y}" stroke="${g===50?'rgba(148,163,184,0.14)':'rgba(239,68,68,.25)'}" stroke-dasharray="3,4"/>`;});
       const linePts=arr=>arr.map((v,i)=>v==null?'':`${i?'L':'M'}${xScale(i).toFixed(1)},${yR(v).toFixed(1)}`).filter(Boolean).join(' ');
       html+=`<path d="${linePts(stochD)}" fill="none" stroke="#ef4444" stroke-width="1.6"/>`;
       html+=`<path d="${linePts(stochK)}" fill="none" stroke="#22c55e" stroke-width="1.6"/>`;
-      html+=`<text x="5" y="${sTop+12}" fill="var(--text)" font-size="${fs(10)}" font-family="JetBrains Mono,monospace" font-weight="700">STOCH RSI 14,14,3,3</text>`;
+      html+=`<text x="5" y="${sTop+12}" fill="#e2e8f0" font-size="${fs(10)}" font-family="JetBrains Mono,monospace" font-weight="700">STOCH RSI 14,14,3,3</text>`;
       const lk=lastVal(stochK), ld=lastVal(stochD);
       if(lk!=null)html+=`<text x="${W-R+7}" y="${(yR(lk)+4).toFixed(1)}" fill="#22c55e" font-size="${fs(10)}" font-family="JetBrains Mono,monospace">%K ${lk.toFixed(1)}</text>`;
       if(ld!=null)html+=`<text x="${W-R+7}" y="${(yR(ld)+14).toFixed(1)}" fill="#ef4444" font-size="${fs(10)}" font-family="JetBrains Mono,monospace">%D ${ld.toFixed(1)}</text>`;
     }
     if(k==='rsi721'){
       const yR=v=>sTop+h-((v-0)/100)*h;
-      [30,50,70].forEach(g=>{const y=yR(g);html+=`<line x1="${L}" y1="${y}" x2="${W-R}" y2="${y}" stroke="${g===50?'color-mix(in srgb, currentColor 5%, transparent)':'rgba(244,114,182,.25)'}" stroke-dasharray="3,4"/>`;});
+      [30,50,70].forEach(g=>{const y=yR(g);html+=`<line x1="${L}" y1="${y}" x2="${W-R}" y2="${y}" stroke="${g===50?'rgba(148,163,184,0.14)':'rgba(244,114,182,.25)'}" stroke-dasharray="3,4"/>`;});
       const linePts=arr=>arr.map((v,i)=>v==null?'':`${i?'L':'M'}${xScale(i).toFixed(1)},${yR(v).toFixed(1)}`).filter(Boolean).join(' ');
       html+=`<path d="${linePts(rsi21)}" fill="none" stroke="#60a5fa" stroke-width="1.6"/>`;
       html+=`<path d="${linePts(rsi7)}" fill="none" stroke="#22c55e" stroke-width="1.8"/>`;
-      html+=`<text x="5" y="${sTop+12}" fill="var(--text)" font-size="${fs(10)}" font-family="JetBrains Mono,monospace" font-weight="700">RSI 7 &amp; 21</text>`;
+      html+=`<text x="5" y="${sTop+12}" fill="#e2e8f0" font-size="${fs(10)}" font-family="JetBrains Mono,monospace" font-weight="700">RSI 7 &amp; 21</text>`;
       const l7=lastVal(rsi7), l21=lastVal(rsi21);
       if(l7!=null)html+=`<text x="${W-R+7}" y="${(yR(l7)+4).toFixed(1)}" fill="#22c55e" font-size="${fs(10)}" font-family="JetBrains Mono,monospace">${l7.toFixed(1)}</text>`;
       if(l21!=null)html+=`<text x="${W-R+7}" y="${(yR(l21)+14).toFixed(1)}" fill="#60a5fa" font-size="${fs(10)}" font-family="JetBrains Mono,monospace">${l21.toFixed(1)}</text>`;
@@ -13635,7 +13780,7 @@ function drawChartSVG(){
       const bw=Math.max(1.2,plotW/plotted.length*0.6);
       macd.forEach((m2,i)=>{const hv=m2-macdSig[i];if(m2==null||isNaN(m2)||macdSig[i]==null)return;const y0=yM(0),y1=yM(hv);html+=`<rect x="${(xScale(i)-bw/2).toFixed(1)}" y="${Math.min(y0,y1).toFixed(1)}" width="${bw.toFixed(1)}" height="${Math.max(1,Math.abs(y1-y0)).toFixed(1)}" fill="${hv>=0?'rgba(16,185,129,.5)':'rgba(239,68,68,.5)'}"/>`;});
       const lp=arr=>arr.map((v,i)=>v==null||isNaN(v)?'':`${i?'L':'M'}${xScale(i).toFixed(1)},${yM(v).toFixed(1)}`).filter(Boolean).join(' ');
-      html+=`<line x1="${L}" y1="${yM(0)}" x2="${W-R}" y2="${yM(0)}" stroke="color-mix(in srgb, currentColor 10%, transparent)"/>`;
+      html+=`<line x1="${L}" y1="${yM(0)}" x2="${W-R}" y2="${yM(0)}" stroke="rgba(148,163,184,0.22)"/>`;
       html+=`<path d="${lp(macd)}" fill="none" stroke="#60a5fa" stroke-width="1.7"/>`;
       html+=`<path d="${lp(macdSig)}" fill="none" stroke="#fbbf24" stroke-width="1.4"/>`;
       html+=`<text x="5" y="${sTop+12}" fill="#60a5fa" font-size="${fs(10)}" font-family="JetBrains Mono,monospace" font-weight="700">MACD 12/26/9</text>`;
@@ -13648,7 +13793,7 @@ function drawChartSVG(){
       const vmax=Math.max(...vals.map(v=>Math.abs(v)))||1;
       const yN=v=>sTop+h/2-(v/vmax)*(h/2-8);
       const bw=Math.max(1.2,plotW/plotted.length*0.6);
-      html+=`<line x1="${L}" y1="${sTop+h/2}" x2="${W-R}" y2="${sTop+h/2}" stroke="color-mix(in srgb, currentColor 10%, transparent)"/>`;
+      html+=`<line x1="${L}" y1="${sTop+h/2}" x2="${W-R}" y2="${sTop+h/2}" stroke="rgba(148,163,184,0.22)"/>`;
       netForeign.forEach((v,i)=>{ if(v==null)return; const y0=yN(0),y1=yN(v); html+=`<rect x="${(xScale(i)-bw/2).toFixed(1)}" y="${Math.min(y0,y1).toFixed(1)}" width="${bw.toFixed(1)}" height="${Math.max(1,Math.abs(y1-y0)).toFixed(1)}" fill="${v>=0?'rgba(16,185,129,.6)':'rgba(239,68,68,.6)'}"/>`; });
       html+=`<text x="5" y="${sTop+12}" fill="#22c55e" font-size="${fs(10)}" font-family="JetBrains Mono,monospace" font-weight="700">NET FOREIGN BUY/SELL</text>`;
       const ln=lastVal(netForeign); if(ln!=null)html+=`<text x="${W-R+7}" y="${sTop+12}" fill="${ln>=0?'#22c55e':'#ef4444'}" font-size="${fs(10)}" font-family="JetBrains Mono,monospace">${fmtRp(ln)}</text>`;
@@ -13657,10 +13802,10 @@ function drawChartSVG(){
   });
 
   // Label tanggal di bawah panel paling bawah
-  [0,Math.floor((plotted.length-1)/2),plotted.length-1].forEach(i=>{ if(plotted[i]) html+=`<text x="${xScale(i)}" y="${Htot-8}" text-anchor="middle" fill="var(--muted)" font-size="${fs(10)}" font-family="JetBrains Mono,monospace">${fmtDateID(plotted[i].date)}</text>`; });
+  [0,Math.floor((plotted.length-1)/2),plotted.length-1].forEach(i=>{ if(plotted[i]) html+=`<text x="${xScale(i)}" y="${Htot-8}" text-anchor="middle" fill="#94a3b8" font-size="${fs(10)}" font-family="JetBrains Mono,monospace">${fmtDateID(plotted[i].date)}</text>`; });
 
   // Crosshair + titik harga saat hover
-  html += `<line id="chartCrossV" x1="0" y1="${T}" x2="0" y2="${T+mainH+(subKeys.length?gap+subKeys.reduce((a,k)=>a+subH[k],0):0)}" stroke="color-mix(in srgb, currentColor 22%, transparent)" stroke-dasharray="3,3" style="display:none"/><circle id="chartCrossDot" r="4" fill="var(--gold)" stroke="#0f172a" stroke-width="1.5" style="display:none"/>`;
+  html += `<line id="chartCrossV" x1="0" y1="${T}" x2="0" y2="${T+mainH+(subKeys.length?gap+subKeys.reduce((a,k)=>a+subH[k],0):0)}" stroke="rgba(226,232,240,0.45)" stroke-dasharray="3,3" style="display:none"/><circle id="chartCrossDot" r="4" fill="var(--gold)" stroke="#0f172a" stroke-width="1.5" style="display:none"/>`;
 
   svg.setAttribute('viewBox',`0 0 ${W} ${Htot}`);
   svg.innerHTML=html;
@@ -13875,7 +14020,7 @@ const ABOUT_TAB_GUIDE = [
   { icon:"💼", title:"Portofolio", tone:"up",
     desc:"Pencatatan transaksi beli/jual saham nyata beserta kalkulasi P&amp;L. Bisa diisi otomatis dari saham yang lolos Screener atau dari item Backtest." },
   { icon:"📈", title:"Grafik", tone:"teal",
-    desc:"Chart harga per saham (digambar langsung di aplikasi ini, tanpa library chart eksternal), plus tautan cepat ke TradingView dan Stockbit untuk analisis lebih lanjut." },
+    desc:"Chart harga per saham (digambar langsung di aplikasi ini, tanpa library chart eksternal) — bisa dipilih tampilan Line atau Candlestick ala Stockbit/TradingView, dengan pengaturan warna &amp; model garis Close sendiri untuk mode Line, plus tautan cepat ke TradingView dan Stockbit untuk analisis lebih lanjut." },
   { icon:"📊", title:"Broker Summary", tone:"gold",
     desc:"Top 5 broker beli/jual per saham per hari — diketik manual atau ditempel dari CSV berdasarkan data akun Stockbit Anda sendiri, lalu disimpan supaya bisa dipakai fitur lain (Target Bandar, Entry Price Scanner).",
     catatan:"BUKAN hasil scraping otomatis dari Stockbit — datanya sepenuhnya bergantung pada apa yang Anda masukkan sendiri, jadi seakurat dan serutin Anda mengisinya." },
@@ -13906,10 +14051,13 @@ const ABOUT_INTEGRATION_GUIDE = [
 // (ABOUT_TAB_GUIDE & ABOUT_INTEGRATION_GUIDE di atas) sekarang jadi
 // bagian "🗂️ Panduan Fitur — Ringkasan Semua Tab" dan "🔌 Sumber Data
 // & Integrasi" di dalam Panduan Lengkap (lihat renderPanduan()), supaya
-// tidak ada dua halaman terpisah yang isinya tumpang tindih. Kalau masih
-// ada tombol nav "Info" (data-tab="about") di index.html, hapus juga
-// elemen tombolnya di sana — dispatch di bawah cuma jaring pengaman
-// supaya tidak error kalau tombolnya kelewatan kehapus.
+// tidak ada dua halaman terpisah yang isinya tumpang tindih. Tombol nav
+// "Info" (data-tab="about") sekarang DIHAPUS OTOMATIS dari DOM lewat
+// script inisialisasi di dekat akhir file ini (removeLegacyInfoTab) —
+// tidak perlu edit index.html manual lagi, tapi kalau mau tetap boleh
+// dihapus juga elemennya di sana. Dispatch di baris atas (state.tab===
+// "about") tetap dipertahankan sebagai jaring pengaman untuk bookmark/
+// URL lama yang masih menyimpan #about.
 
 
 // ==========================================
@@ -14478,10 +14626,11 @@ function emptyBsRow(side, rank){ return { side, rank, broker_code:"", lot:"", va
 function renderBrokerSummary(){
   // Default Periode Dari–Sampai (dipakai kalau user belum pernah mengubahnya) —
   // meniru default lama "10 hari bursa terakhir" supaya perilaku awal tetap sama.
+  // "Sampai" SELALU tanggal hari ini — lihat catatan di renderBulkPullToolbar().
   if(!state.bsAutoBulkFrom || !state.bsAutoBulkTo){
     const defaultDates = tradingDaysBack(state.bsAutoBulkDays || 10);
     state.bsAutoBulkFrom = defaultDates[0];
-    state.bsAutoBulkTo = defaultDates[defaultDates.length - 1];
+    state.bsAutoBulkTo = todayLocalISO();
   }
   const editRows = state.bsEditRows && state.bsEditRows.length ? state.bsEditRows : [];
   const buyEdit = [0,1,2,3,4].map(i => editRows.find(r=>r.side==="buy" && r.rank===i+1) || emptyBsRow("buy", i+1));
@@ -17384,6 +17533,38 @@ function attachContentEvents(){
       drawChartSVG();
     };
   });
+  // Pengaturan warna & model/ketebalan garis Close -- disimpan ke
+  // localStorage supaya nyangkut walau halaman di-reload, lalu cukup
+  // gambar ulang SVG-nya saja (tidak perlu render() ulang seluruh tab).
+  // Toggle Tipe Chart (Line/Candlestick) -- pakai render() penuh (bukan cuma
+  // drawChartSVG) karena grup kontrol "Garis Close" ikut disembunyikan/
+  // dimunculkan tergantung tipe yang aktif.
+  document.querySelectorAll("[data-chart-type]").forEach(btn=>{
+    btn.onclick = () => {
+      if(state.chartType === btn.dataset.chartType) return;
+      state.chartType = btn.dataset.chartType;
+      localStorage.setItem("ihsg_chart_type", state.chartType);
+      render();
+    };
+  });
+  const chartLineColorInput = document.getElementById("chartLineColorInput");
+  if(chartLineColorInput) chartLineColorInput.oninput = () => {
+    state.chartLineColor = chartLineColorInput.value;
+    localStorage.setItem("ihsg_chart_line_color", state.chartLineColor);
+    drawChartSVG();
+  };
+  const chartLineStyleSelect = document.getElementById("chartLineStyleSelect");
+  if(chartLineStyleSelect) chartLineStyleSelect.onchange = () => {
+    state.chartLineStyle = chartLineStyleSelect.value;
+    localStorage.setItem("ihsg_chart_line_style", state.chartLineStyle);
+    drawChartSVG();
+  };
+  const chartLineWidthSelect = document.getElementById("chartLineWidthSelect");
+  if(chartLineWidthSelect) chartLineWidthSelect.onchange = () => {
+    state.chartLineWidth = +chartLineWidthSelect.value;
+    localStorage.setItem("ihsg_chart_line_width", state.chartLineWidth);
+    drawChartSVG();
+  };
   // Timeframe harian/mingguan -- reset zoom biar tidak nyangkut di jendela
   // sempit dari timeframe sebelumnya.
   document.querySelectorAll("[data-chart-timeframe]").forEach(btn=>{
@@ -18207,6 +18388,14 @@ function selectMainTab(tab){
   if(state.tab === "kraken") ensureOrcaHistoryLoaded();
   render();
 }
+
+// Tombol nav "ℹ️ Info" (data-tab="about") sudah tidak dipakai — Panduan
+// Lengkap (tab "panduan") sekarang jadi satu-satunya sumber. Dihapus di
+// SINI (bukan hanya mengandalkan edit manual index.html) supaya
+// tombolnya hilang otomatis walau markup lama/ter-cache di browser user.
+document.querySelectorAll('#tabs .tab-btn[data-tab="about"]').forEach(btn=>{
+  (btn.closest("li") || btn).remove();
+});
 
 // Pasang handler langsung pada setiap tombol (bukan hanya delegation di parent).
 // Ini tetap bekerja jika ada elemen/overlay lain yang menghentikan bubbling click.

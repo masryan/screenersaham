@@ -134,6 +134,179 @@ function qhTradingDaysBack(n){
   return days.reverse();
 }
 
+/* ==========================================
+   STYLE QUANT HUB — gradasi biru tipis, disuntik langsung dari file ini
+   (tidak bergantung ke quant-hub.css eksternal yang bisa saja belum
+   lengkap/ketinggalan). Semua selector di-scope di bawah #qhPage supaya
+   TIDAK bocor ke tab lain di aplikasi utama. Palet sengaja kontras kuat
+   (teks navy tua di atas gradasi biru sangat muda) supaya kebalik dari
+   sebelumnya (teks abu-abu di atas kotak abu-abu yang nyaris tak
+   terbaca, lihat kartu Bandarmology yang datanya sempat kosong/rusak).
+   ========================================== */
+const QH_STYLE_ID = "qhInjectedStyles";
+function qhInjectStyles(){
+  if(document.getElementById(QH_STYLE_ID)) return;
+  const style = document.createElement("style");
+  style.id = QH_STYLE_ID;
+  style.textContent = `
+#qhPage{
+  --qh-bg1:#eaf1fc; --qh-bg2:#f8fbff; --qh-card1:#ffffff; --qh-card2:#eaf2fe;
+  --qh-border:#d3e3fb; --qh-text:#132a4d; --qh-soft:#5c7396; --qh-accent:#2563eb;
+  --qh-up:#16a34a; --qh-down:#dc2626; --qh-gold:#b98900;
+  background:linear-gradient(180deg,var(--qh-bg1) 0%,var(--qh-bg2) 55%,#ffffff 100%);
+  min-height:100%; padding-bottom:40px;
+}
+#qhPage, #qhPage *{ color:var(--qh-text); }
+#qhPage .qh-topbar{ display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px; margin-bottom:8px; }
+#qhPage .qh-page-title{ font-size:19px; font-weight:800; letter-spacing:.04em; color:var(--qh-text); }
+#qhPage .qh-topbtns{ display:flex; gap:8px; }
+#qhPage .qh-badge{ background:linear-gradient(135deg,var(--qh-card1),var(--qh-card2)); border:1px solid var(--qh-border); color:var(--qh-accent); border-radius:20px; padding:2px 10px; font-size:11px; font-weight:700; }
+
+#qhPage .qh-subtabs{ display:flex; gap:8px; flex-wrap:wrap; margin:14px 0; }
+#qhPage .qh-subtab{ background:linear-gradient(135deg,var(--qh-card1),var(--qh-card2)); border:1px solid var(--qh-border); color:var(--qh-soft); border-radius:8px; padding:8px 14px; font-weight:700; font-size:12.5px; cursor:pointer; }
+#qhPage .qh-subtab.active{ background:linear-gradient(135deg,#3b82f6,#2563eb); border-color:#2563eb; }
+#qhPage .qh-subtab.active, #qhPage .qh-subtab.active *{ color:#ffffff; }
+#qhPage .qh-subtab.small{ padding:5px 10px; font-size:11px; }
+#qhPage .qh-subtabs.small{ margin:0 0 12px; }
+
+#qhPage .qh-metric-grid{ display:grid; grid-template-columns:repeat(auto-fit,minmax(140px,1fr)); gap:12px; margin-bottom:16px; }
+#qhPage .qh-metric{ background:linear-gradient(135deg,var(--qh-card1) 0%,var(--qh-card2) 100%); border:1px solid var(--qh-border); border-radius:12px; padding:14px 16px; cursor:pointer; box-shadow:0 1px 3px rgba(37,99,235,.06); }
+#qhPage .qh-lbl{ font-size:10.5px; font-weight:700; letter-spacing:.05em; color:var(--qh-soft) !important; }
+#qhPage .qh-val{ font-size:22px; font-weight:800; color:var(--qh-text); margin:4px 0 2px; display:block; }
+#qhPage .qh-hint{ font-size:11px; color:var(--qh-soft) !important; }
+#qhPage .qh-metric.tone-up .qh-val{ color:var(--qh-up) !important; }
+#qhPage .qh-metric.tone-down .qh-val{ color:var(--qh-down) !important; }
+#qhPage .qh-metric.tone-gold .qh-val{ color:var(--qh-gold) !important; }
+#qhPage .qh-metric.tone-teal .qh-val{ color:var(--qh-accent) !important; }
+
+#qhPage .qh-ihsg-panel, #qhPage .qh-tape-box, #qhPage .panel{ background:linear-gradient(135deg,var(--qh-card1),var(--qh-card2)); border:1px solid var(--qh-border); border-radius:12px; padding:14px; margin-bottom:14px; }
+#qhPage .qh-ihsg-head{ display:flex; justify-content:space-between; align-items:center; margin-bottom:10px; flex-wrap:wrap; gap:8px; }
+#qhPage .qh-ihsg-title{ font-weight:800; font-size:12.5px; display:flex; align-items:center; gap:8px; }
+#qhPage .qh-dot{ width:8px;height:8px;border-radius:50%;background:var(--qh-up); display:inline-block; }
+#qhPage .qh-market-status{ font-size:11px; font-weight:800; padding:4px 10px; border-radius:8px; background:var(--qh-down); text-align:center; line-height:1.3; }
+#qhPage .qh-market-status, #qhPage .qh-market-status *{ color:#ffffff !important; }
+#qhPage .qh-market-status.open{ background:var(--qh-up); }
+#qhPage .qh-tv-box{ border-radius:10px; overflow:hidden; }
+
+#qhPage .qh-searchbar{ display:flex; gap:8px; flex-wrap:wrap; align-items:center; margin-bottom:10px; }
+#qhPage .qh-input{ background:#ffffff; border:1px solid var(--qh-border); border-radius:8px; padding:8px 10px; font-size:12px; color:var(--qh-text); }
+#qhPage .qh-input::placeholder{ color:#93a9c9; }
+#qhPage select.qh-input{ text-transform:none; }
+#qhPage .qh-count{ font-size:11px; color:var(--qh-soft) !important; }
+#qhPage .qh-minibtn{ background:linear-gradient(135deg,var(--qh-card1),var(--qh-card2)); border:1px solid var(--qh-border); border-radius:7px; padding:6px 12px; font-size:11.5px; font-weight:700; cursor:pointer; }
+#qhPage .qh-minibtn, #qhPage .qh-minibtn *{ color:var(--qh-accent) !important; }
+#qhPage .qh-minibtn.danger, #qhPage .qh-minibtn.danger *{ color:var(--qh-down) !important; border-color:#fecaca; }
+
+#qhPage .qh-section-title{ font-size:12px; font-weight:800; letter-spacing:.04em; margin:18px 0 10px; display:flex; align-items:baseline; gap:8px; flex-wrap:wrap; }
+#qhPage .qh-section-title small{ font-weight:500; color:var(--qh-soft) !important; font-size:10.5px; }
+
+#qhPage .qh-us-grid{ display:grid; grid-template-columns:repeat(auto-fill,minmax(220px,1fr)); gap:12px; }
+#qhPage .qh-us-card{ background:linear-gradient(135deg,var(--qh-card1),var(--qh-card2)); border:1px solid var(--qh-border); border-radius:12px; padding:14px; cursor:pointer; }
+#qhPage .qh-us-card:hover{ border-color:var(--qh-accent); }
+#qhPage .qh-us-rank{ font-size:10px; font-weight:700; color:var(--qh-soft) !important; margin-bottom:4px; }
+#qhPage .qh-us-ticker{ font-size:16px; font-weight:800; }
+#qhPage .qh-us-name{ font-size:11px; color:var(--qh-soft) !important; margin-bottom:6px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+#qhPage .qh-us-score{ font-size:26px; font-weight:800; color:var(--qh-gold); }
+#qhPage .qh-us-mini{ display:flex; gap:10px; flex-wrap:wrap; font-size:10.5px; color:var(--qh-soft); margin:8px 0; }
+#qhPage .qh-us-mini span{ color:var(--qh-soft) !important; }
+#qhPage .qh-us-mini b{ color:var(--qh-text); }
+
+#qhPage .qh-chips{ display:flex; gap:6px; flex-wrap:wrap; margin:6px 0; }
+#qhPage .qh-chip{ font-size:9.5px; font-weight:700; padding:3px 8px; border-radius:20px; background:#eef2ff; border:1px solid #dbe4ff; }
+#qhPage .qh-chip, #qhPage .qh-chip *{ color:var(--qh-accent) !important; }
+#qhPage .qh-chip.g{ background:#ecfdf3; border-color:#bbf1cf; }
+#qhPage .qh-chip.g, #qhPage .qh-chip.g *{ color:var(--qh-up) !important; }
+#qhPage .qh-chip.r{ background:#fef2f2; border-color:#fecaca; }
+#qhPage .qh-chip.r, #qhPage .qh-chip.r *{ color:var(--qh-down) !important; }
+#qhPage .qh-upside{ display:flex; justify-content:space-between; font-size:11px; color:var(--qh-soft); border-top:1px dashed var(--qh-border); padding-top:8px; margin-top:4px; }
+#qhPage .qh-upside span{ color:var(--qh-soft) !important; }
+#qhPage .qh-upside b{ color:var(--qh-text); }
+
+#qhPage .qh-info-note{ font-size:11px; color:var(--qh-soft) !important; background:linear-gradient(135deg,var(--qh-card2),var(--qh-card1)); border:1px dashed var(--qh-border); border-radius:8px; padding:10px 12px; margin-top:12px; }
+
+#qhPage .qh-grid-2{ display:grid; grid-template-columns:1fr 1fr; gap:16px; }
+@media (max-width:860px){ #qhPage .qh-grid-2{ grid-template-columns:1fr; } }
+#qhPage .qh-cand-list{ display:flex; flex-direction:column; gap:8px; }
+#qhPage .qh-cand-row{ display:flex; align-items:center; gap:12px; background:linear-gradient(135deg,var(--qh-card1),var(--qh-card2)); border:1px solid var(--qh-border); border-radius:10px; padding:10px 14px; cursor:pointer; }
+#qhPage .qh-cand-row:hover{ border-color:var(--qh-accent); }
+#qhPage .qh-cand-rank{ flex:0 0 auto; width:22px; height:22px; border-radius:6px; background:#eef2ff; color:var(--qh-accent) !important; font-weight:800; font-size:11px; display:flex; align-items:center; justify-content:center; }
+#qhPage .qh-cand-id{ flex:1 1 auto; min-width:0; }
+#qhPage .qh-cand-ticker{ font-weight:800; font-size:13px; }
+#qhPage .qh-cand-name{ font-size:10.5px; color:var(--qh-soft) !important; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+#qhPage .qh-cand-row .qh-chips{ flex:1 1 auto; margin:0; }
+#qhPage .qh-cand-price{ flex:0 0 auto; text-align:right; font-size:12px; font-weight:700; min-width:76px; }
+#qhPage .qh-cand-score{ flex:0 0 auto; text-align:center; min-width:44px; }
+#qhPage .qh-cand-score b{ display:block; font-size:15px; color:var(--qh-gold); }
+#qhPage .qh-cand-score small{ font-size:8.5px; color:var(--qh-soft) !important; }
+#qhPage .qh-empty{ font-size:12px; color:var(--qh-soft) !important; padding:16px; text-align:center; }
+
+#qhPage .qh-net-pos{ color:var(--qh-up) !important; }
+#qhPage .qh-net-neg{ color:var(--qh-down) !important; }
+
+#qhPage .qh-toolbar{ display:flex; gap:14px; flex-wrap:wrap; align-items:flex-end; margin-bottom:10px; }
+#qhPage .qh-toolbar .field label{ display:block; font-size:9.5px; font-weight:700; color:var(--qh-soft) !important; margin-bottom:4px; }
+#qhPage .btn{ border-radius:8px; padding:8px 14px; font-size:12px; font-weight:700; cursor:pointer; border:1px solid var(--qh-border); text-decoration:none; display:inline-block; }
+#qhPage .btn-primary{ background:linear-gradient(135deg,#3b82f6,#2563eb); border-color:#2563eb; }
+#qhPage .btn-primary, #qhPage .btn-primary *{ color:#ffffff !important; }
+#qhPage .btn-tradingview{ background:#131722; border-color:#131722; }
+#qhPage .btn-tradingview, #qhPage .btn-tradingview *{ color:#ffffff !important; }
+#qhPage .btn-stockbit{ background:#00baf2; border-color:#00baf2; }
+#qhPage .btn-stockbit, #qhPage .btn-stockbit *{ color:#ffffff !important; }
+#qhPage .qh-code-chip{ background:#ffffff; border:1px solid var(--qh-border); border-radius:16px; padding:4px 10px; font-size:11px; font-weight:700; cursor:pointer; margin:2px; }
+#qhPage .qh-code-chip.active{ background:linear-gradient(135deg,#3b82f6,#2563eb); border-color:#2563eb; }
+#qhPage .qh-code-chip.active, #qhPage .qh-code-chip.active *{ color:#ffffff !important; }
+#qhPage .qh-group-lbl{ font-size:10px; color:var(--qh-soft) !important; margin-right:6px; font-weight:700; }
+#qhPage .qh-broker-quick{ margin-bottom:8px; }
+
+#qhPage .qh-stat-grid{ display:grid; grid-template-columns:repeat(auto-fit,minmax(120px,1fr)); gap:10px; margin:10px 0; }
+#qhPage .qh-stat{ background:linear-gradient(135deg,var(--qh-card1),var(--qh-card2)); border:1px solid var(--qh-border); border-radius:10px; padding:10px 12px; }
+#qhPage .qh-weight-list{ display:flex; flex-direction:column; gap:6px; }
+#qhPage .qh-weight-row{ display:flex; align-items:center; gap:10px; cursor:pointer; padding:6px 4px; }
+#qhPage .qh-weight-tk{ flex:0 0 90px; font-weight:700; font-size:12px; }
+#qhPage .qh-weight-track{ flex:1 1 auto; height:8px; background:#eef2ff; border-radius:6px; overflow:hidden; }
+#qhPage .qh-weight-fill{ height:100%; border-radius:6px; }
+#qhPage .qh-weight-fill.buy{ background:var(--qh-up); }
+#qhPage .qh-weight-fill.sell{ background:var(--qh-down); }
+#qhPage .qh-weight-net{ flex:0 0 90px; text-align:right; font-size:12px; font-weight:700; }
+#qhPage .qh-acc-badge{ color:var(--qh-down) !important; font-weight:800; }
+#qhPage .qh-dis-badge{ color:var(--qh-up) !important; font-weight:800; }
+
+#qhPage table{ width:100%; border-collapse:collapse; font-size:12px; }
+#qhPage thead th{ text-align:left; font-size:10px; color:var(--qh-soft) !important; font-weight:800; padding:8px; border-bottom:1px solid var(--qh-border); }
+#qhPage tbody td{ padding:8px; border-bottom:1px solid #eef2fb; }
+#qhPage .mono{ font-family:'JetBrains Mono',monospace; }
+#qhPage .ticker-link{ background:none; border:none; color:var(--qh-accent) !important; font-weight:800; cursor:pointer; padding:0; }
+#qhPage .empty-box{ text-align:center; padding:20px; color:var(--qh-soft) !important; font-size:12px; }
+#qhPage .table-wrap{ border-radius:10px; overflow:auto; }
+
+#qhPage .qh-status-badge{ font-size:9.5px; font-weight:800; padding:3px 8px; border-radius:14px; }
+#qhPage .qh-st-uv{ background:#ecfdf3; }
+#qhPage .qh-st-uv, #qhPage .qh-st-uv *{ color:var(--qh-up) !important; }
+#qhPage .qh-st-danger{ background:#fef2f2; }
+#qhPage .qh-st-danger, #qhPage .qh-st-danger *{ color:var(--qh-down) !important; }
+#qhPage .qh-st-fair{ background:#fff7ed; }
+#qhPage .qh-st-fair, #qhPage .qh-st-fair *{ color:var(--qh-gold) !important; }
+
+#qhPage .qh-pnl-total{ display:flex; align-items:center; gap:12px; flex-wrap:wrap; background:linear-gradient(135deg,var(--qh-card1),var(--qh-card2)); border:1px solid var(--qh-border); border-radius:12px; padding:14px 16px; margin-bottom:14px; }
+#qhPage .qh-big{ font-size:22px; font-weight:800; }
+#qhPage .qh-table-note{ font-size:10.5px; color:var(--qh-soft) !important; }
+
+#qhPage .qh-loading, #qhPage .qh-error{ padding:16px; text-align:center; font-size:12.5px; }
+#qhPage .qh-loading{ color:var(--qh-soft) !important; }
+#qhPage .qh-error{ color:var(--qh-down) !important; }
+
+#qhPage .qh-modal-overlay{ position:fixed; inset:0; background:rgba(15,32,64,.45); display:flex; align-items:center; justify-content:center; z-index:999; padding:16px; }
+#qhPage .qh-modal{ background:linear-gradient(160deg,#ffffff,#eaf2fe); border:1px solid var(--qh-border); border-radius:16px; padding:20px; max-width:440px; width:100%; max-height:88vh; overflow:auto; }
+#qhPage .qh-modal-head{ display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:14px; }
+#qhPage .qh-modal-price{ display:flex; justify-content:space-between; align-items:center; margin-bottom:10px; flex-wrap:wrap; gap:10px; }
+#qhPage .qh-modal-big{ font-size:24px; font-weight:800; }
+#qhPage .qh-detail-grid{ display:grid; grid-template-columns:repeat(2,1fr); gap:8px; margin-bottom:14px; }
+#qhPage .qh-stat .qh-val{ font-size:15px !important; }
+#qhPage .qh-modal-actions{ display:flex; gap:8px; flex-wrap:wrap; }
+  `;
+  document.head.appendChild(style);
+}
+
 /* ───────────── ULTIMATE SCORE (formula transparan sendiri) ─────────────
    0-100 = Fundamental (50) + Valuasi (25) + Momentum teknikal (25).
    Semua komponen bisa diaudit; tidak meniru formula ihsgscreener.      */
@@ -443,7 +616,8 @@ QH.render = function(){
   const stocks = qhStocks();
   const tabs = [
     ["dashboard","◧ Dashboard"],["bandar","🔥 Bandarmology"],
-    ["broker","◉ Broker Stalker"],["bpjs","🌅 BPJS"],["fav","◈ Favorit P&L"]
+    ["broker","◉ Broker Stalker"],["bpjs","🌅 BPJS"],["bsjp","🌆 BSJP"],["fav","◈ Favorit P&L"],
+    ["info","📖 Info"]
   ];
   let html = `
   <div class="qh-topbar">
@@ -456,13 +630,15 @@ QH.render = function(){
   <div class="qh-subtabs">
     ${tabs.map(([id,l])=>`<button class="qh-subtab ${QH.subtab===id?"active":""}" onclick="qhSetTab('${id}')">${l}</button>`).join("")}
   </div>
-  <div id="qhBody">${ !stocks.length
+  <div id="qhBody">${ (!stocks.length && QH.subtab!=="info")
       ? '<div class="qh-loading">⏳ Menunggu data stocks_screener dari Supabase… (buka dulu tab Screener di aplikasi bila perlu)</div>'
       : (
     QH.subtab==="dashboard" ? QH.renderDashboard(stocks) :
     QH.subtab==="bandar"    ? QH.renderBandar(stocks) :
     QH.subtab==="broker"    ? QH.renderBroker(stocks) :
     QH.subtab==="bpjs"      ? QH.renderBpjs(stocks) :
+    QH.subtab==="bsjp"      ? QH.renderBsjpEmbed() :
+    QH.subtab==="info"      ? QH.renderInfo() :
                               QH.renderFav(stocks)
   )}</div>
   ${QH.modalTicker ? QH.modalHtml(stocks.find(s=>s.ticker===QH.modalTicker)) : ""}`;
@@ -470,6 +646,15 @@ QH.render = function(){
   if(QH.subtab==="dashboard" && stocks.length){
     QH.mountTradingView();
     window.qhSearchDash && null;
+  }
+  // BSJP (2026-09, dipindah dari tab utama app.js ke Quant Hub -- lihat
+  // QH.renderBsjpEmbed): reuse langsung renderBsjp() global dari app.js
+  // (BUKAN duplikat engine-nya), lalu panggil attachContentEvents() global
+  // supaya semua tombol/preset di dalamnya (yang di-wire lewat
+  // document.getElementById/querySelectorAll, bukan onclick inline) tetap
+  // berfungsi walau markup-nya sekarang ada di #qhPage, bukan #content.
+  if(QH.subtab==="bsjp" && typeof attachContentEvents==="function"){
+    try{ attachContentEvents(); }catch(e){ console.error("BSJP attachContentEvents:", e); }
   }
   // BPJS: lazy-load sekali saat tab dibuka pertama kali (bukan tiap render,
   // supaya tidak spam request tiap auto-refresh 5 detik dari state.stocks).
@@ -618,14 +803,33 @@ QH.mountTradingView = function(){
 QH.renderBandar = function(stocks){
   const ara = qhAraCandidates(stocks);
   const swing = qhSwingBigCap(stocks);
-  const row = (i,c)=>`
+  // PENTING: parameter (c,i) di sini HARUS mengikuti urutan yang dikirim
+  // Array.map() sendiri, yaitu (elemen, index) — bukan (index, elemen).
+  // Sebelumnya fungsi ini bernama `row(i,c)` dan dipanggil lewat `.map(row)`,
+  // sehingga `i` menerima objek kandidat & `c` menerima angka index → semua
+  // baris tampil "[object Object]" / "undefined". ARA Candidate & Swing Big
+  // Cap juga punya BENTUK DATA BERBEDA (qhAraCandidates vs qhSwingBigCap),
+  // jadi sekarang dipisah jadi 2 fungsi render, bukan 1 fungsi `row` yang
+  // dipaksa dipakai untuk keduanya.
+  const rowAra = (c,i)=>`
     <div class="qh-cand-row" onclick="qhOpenModal('${qhEsc(c.ticker)}')">
       <div class="qh-cand-rank">${i+1}</div>
-      <div><div class="qh-cand-ticker">${qhEsc(c.ticker)}</div><div class="qh-cand-name">${qhEsc(c.name||"")}</div></div>
+      <div class="qh-cand-id"><div class="qh-cand-ticker">${qhEsc(c.ticker)}</div><div class="qh-cand-name">${qhEsc(c.name||"")}</div></div>
       <div class="qh-chips">
         ${c.bigBuy?`<span class="qh-chip g">BIG BUY +${qhCompact(c.bigBuyVal)}</span>`:""}
         ${c.vr?`<span class="qh-chip">VOL ${qhPct((c.vr-1)*100)}</span>`:""}
         <span class="qh-chip ${c.offKosong?"g":""}">${c.offKosong?"OFF KOSONG":"OFF "+c.off}</span>
+      </div>
+      <div class="qh-cand-price">${qhRp(c.price)}<br><span class="${qhChgTone(c.chg)}">${qhChgArrow(c.chg)} ${qhPct(c.chg,true)}</span></div>
+      <div class="qh-cand-score"><b>${c.score}</b><small>SCORE</small></div>
+    </div>`;
+  const rowSwing = (c,i)=>`
+    <div class="qh-cand-row" onclick="qhOpenModal('${qhEsc(c.ticker)}')">
+      <div class="qh-cand-rank">${i+1}</div>
+      <div class="qh-cand-id"><div class="qh-cand-ticker">${qhEsc(c.ticker)}</div><div class="qh-cand-name">${qhEsc(c.name||"")}</div></div>
+      <div class="qh-chips">
+        <span class="qh-chip g">ASING +${qhCompact(c.fn1)}</span>
+        ${c.fud>=2?`<span class="qh-chip g">KONSISTEN ${c.fud}H</span>`:""}
       </div>
       <div class="qh-cand-price">${qhRp(c.price)}<br><span class="${qhChgTone(c.chg)}">${qhChgArrow(c.chg)} ${qhPct(c.chg,true)}</span></div>
       <div class="qh-cand-score"><b>${c.score}</b><small>SCORE</small></div>
@@ -635,11 +839,11 @@ QH.renderBandar = function(stocks){
   <div class="qh-grid-2" style="margin-top:16px">
     <div>
       <div class="qh-section-title">ARA CANDIDATE <small>small-mid · close di high · offer tipis · belum ARA</small></div>
-      <div class="qh-cand-list">${ara.length ? ara.map(row).join("") : '<div class="qh-empty">Tidak ada kandidat hari ini.</div>'}</div>
+      <div class="qh-cand-list">${ara.length ? ara.map(rowAra).join("") : '<div class="qh-empty">Tidak ada kandidat hari ini.</div>'}</div>
     </div>
     <div>
       <div class="qh-section-title">SWING BIG CAP <small>cap ≥ 10T · net foreign buy · konsisten</small></div>
-      <div class="qh-cand-list">${swing.length ? swing.map(row).join("") : '<div class="qh-empty">Tidak ada kandidat hari ini.</div>'}</div>
+      <div class="qh-cand-list">${swing.length ? swing.map(rowSwing).join("") : '<div class="qh-empty">Tidak ada kandidat hari ini.</div>'}</div>
     </div>
   </div>`;
 };
@@ -848,6 +1052,23 @@ QH.renderFav = function(stocks){
 };
 
 /* ---------- BPJS — BELI PAGI, JUAL SORE ---------- */
+/* ───────────── BSJP (dipindah dari tab utama app.js) ─────────────
+   SENGAJA tidak diimplementasi ulang di sini (beda dengan BPJS di atas
+   yang murni native Quant Hub) -- BSJP adalah engine momentum yang besar
+   (computeBsjpEngine, BSJP_PRESETS, dst di app.js) yang juga masih
+   dipakai fitur lain (backtest, checklist). Duplikat logikanya di sini
+   berisiko dua sumber kebenaran yang bisa divergen. Jadi cukup panggil
+   renderBsjp() global (sudah theme-aware, pakai var(--...) yang berlaku
+   di mana saja termasuk #qhPage) dan sambungkan wiring tombolnya lewat
+   attachContentEvents() (lihat pemanggilannya di QH.render di atas). */
+QH.renderBsjpEmbed = function(){
+  try{
+    if(typeof renderBsjp !== "function") return '<div class="qh-error">BSJP tidak tersedia (renderBsjp() tidak ditemukan di app.js).</div>';
+    return renderBsjp();
+  }catch(e){
+    return '<div class="qh-error">BSJP error: '+qhEsc(e.message)+'</div>';
+  }
+};
 QH.renderBpjs = function(){
   if(QH.bpjsLoading) return '<div class="qh-loading">⏳ Menarik sesi_snapshots dari Supabase…</div>';
 
@@ -931,6 +1152,87 @@ QH.renderBpjs = function(){
   <div class="qh-info-note">ℹ️ Harga Pagi & Sore adalah snapshot live (Yahoo Finance) via <code>snapshot-sesi.mjs</code> pada jam yang tertera — bukan Open/Close resmi bursa. "-" berarti snapshot sesi itu belum jalan hari ini.</div>`;
 };
 
+/* ---------- INFO — logika & formula semua fitur Quant Hub ---------- */
+function qhiCard(icon, title, tone, bodyHtml){
+  return `
+  <div class="panel qhi-card">
+    <div class="qhi-card-head"><span class="qhi-card-icon">${icon}</span><span class="qhi-card-title">${title}</span>${tone?`<span class="qh-chip ${tone}">${tone==="g"?"TRANSPARAN":tone}</span>`:""}</div>
+    <div class="qhi-card-body">${bodyHtml}</div>
+  </div>`;
+}
+function qhiKv(term, desc){ return `<div class="qhi-kv"><span class="qhi-kv-term">${term}</span><span class="qhi-kv-desc">${desc}</span></div>`; }
+function qhiNote(html, tone){ return `<div class="qh-info-note qhi-note-${tone||"info"}">${html}</div>`; }
+
+QH.renderInfo = function(){
+  return `
+  <div class="qhi-wrap">
+  ${qhiNote(`Semua formula di bawah ini <b>terbuka &amp; bisa diaudit</b> — bisa dibaca langsung di kode sumber <code>quant-hub.js</code>. Semuanya dihitung dari data yang sudah ada di database Anda sendiri (fundamental/teknikal via Screener, broker_summary, sesi_snapshots) — <b>bukan</b> API/formula rahasia pihak ketiga, dan <b>bukan</b> saran investasi.`, "info")}
+
+  ${qhiCard("◧", "Ultimate Score — Dashboard", "g", `
+    <p>Skor 0–100 gabungan tiga komponen, dihitung ulang tiap kali data live berubah (fungsi <code>qhUltimateScore</code>):</p>
+    ${qhiKv("Fundamental (maks 50)", "ROE (maks 12, penuh di ROE≥25%) + NPM (maks 8, penuh di NPM≥20%) + DER (maks 10, penuh di DER≤0 — makin kecil utang makin tinggi; tanpa data dapat nilai netral 5) + Current Ratio (maks 5, penuh di CR≥1,5) + Dividend Yield (maks 5, penuh di yield≥4%) + Konsistensi (maks 10: +5 jika EPS positif, +5 jika label valuasi \"murah/undervalued\").")}
+    ${qhiKv("Valuasi (maks 25)", "PER (maks 15, penuh di PER≤5x, nol di PER≥30x) + PBV (maks 10, penuh di PBV≤0,5x, nol di PBV≥3x). Kedua komponen ini <b>terbalik</b> — makin murah, makin tinggi skornya.")}
+    ${qhiKv("Momentum (maks 25)", "+8 jika harga &gt; MA50, +7 jika harga &gt; MA200, +5 jika RSI14 di rentang sehat 40–70 (atau +2 jika RSI14&gt;70/overbought), +5 jika label tren harga \"bullish\".")}
+    ${qhiKv("Grade", "Total ≥75 = <b>Potensi Besar</b> · 60–74 = <b>Menarik</b> · 40–59 = <b>Biasa</b> · &lt;40 = <b>Lemah</b>.")}
+    ${qhiKv("Badge otomatis", "PER&lt;10 · ROE&gt;15% · DER&lt;1 · PBV&lt;1 (hijau, sinyal bagus) — PER&gt;30 · DER&gt;1,5 (merah, perlu hati-hati). Bisa muncul beberapa sekaligus.")}
+    ${qhiKv("Est. Upside / Fair Value", "Kalau ada PER &amp; ROE: <code>fairPER = clamp(ROE×0,8, 5, 20)</code>, lalu <code>fairPrice = harga × (fairPER ÷ PER)</code>. Kalau PER tidak tersedia tapi ada PBV &amp; ROE: <code>fairPBV = clamp(ROE÷10×1,2, 0.4, 2.5)</code>, <code>fairPrice = harga × (fairPBV ÷ PBV)</code>. Upside % = <code>(fairPrice ÷ harga − 1) × 100</code>.")}
+    ${qhiNote(`Ini estimasi kasar berbasis rasio historis, <b>bukan</b> valuasi DCF/analis. Kalau salah satu komponen (PER/PBV/ROE) tidak ada datanya, Est. Upside otomatis kosong ("data kurang").`, "warn")}
+  `)}
+
+  ${qhiCard("🔥", "ARA Candidate & Swing Big Cap — Bandarmology", "g", `
+    <p><b>ARA Candidate</b> (fungsi <code>qhAraCandidates</code>) — saham small–mid cap (kapitalisasi &lt;Rp5T, atau tanpa data cap dianggap masuk) yang HARUS memenuhi ketiganya:</p>
+    <ul class="qhi-list">
+      <li><b>Close di high</b> — harga penutupan ≥ 99% dari harga tertinggi hari itu.</li>
+      <li><b>Offer tipis/kosong</b> — antrian offer kosong (volume offer = 0), atau harga offer ≥ 103% dari harga close.</li>
+      <li><b>Belum ARA</b> — kenaikan hari ini masih di bawah (batas ARA − 3%). Batas ARA otomatis mengikuti rentang harga: &lt;Rp50 = 35% · &lt;Rp200 = 25% · ≤Rp5.000 = 20% · &gt;Rp5.000 = 15%.</li>
+    </ul>
+    ${qhiKv("Skor ARA (maks 100)", "+30 (close di high) + hingga 25×min(1, rasio volume÷2) (kekuatan volume) + 25 jika net asing 1 hari positif / 10 jika netral atau data kosong / 0 jika net asing negatif + 20 jika offer benar-benar kosong (10 jika hanya tipis).")}
+    <p style="margin-top:10px"><b>Swing Big Cap</b> (fungsi <code>qhSwingBigCap</code>) — saham big/mega cap (kapitalisasi ≥Rp10T) yang net asing 1 harinya <b>positif</b> (syarat mutlak, kalau tidak langsung tidak lolos):</p>
+    ${qhiKv("Skor Swing (maks 100)", "Dasar 50 + 20 jika net asing konsisten positif ≥2 hari berturut (atau +8 kalau belum konsisten) + 10 jika harga &gt; MA21 + 10 jika harga &gt; MA50 + 10 jika hari ini hijau (perubahan &gt;0%).")}
+    ${qhiNote(`Kedua daftar menampilkan top 10 skor tertinggi. Ini murni proxy perilaku harga/order EOD — <b>bukan jaminan ARA/breakout terjadi</b>, selalu cek berita &amp; risiko masing-masing saham.`, "warn")}
+  `)}
+
+  ${qhiCard("◉", "Broker Stalker — Lacak Broker & Lacak Saham", "g", `
+    <p>Sumbernya sama persis dengan tabel yang diisi fitur Broker Summary di tab utama: <code>broker_summary</code> (top-5 broker beli/jual per saham per hari). Bedanya, versi Quant Hub menarik &amp; mengagregasi langsung dari Supabase untuk rentang tanggal yang dipilih (Today ≈1 hari, 1W ≈5 hari, 1M ≈22 hari, 3M ≈66 hari bursa).</p>
+    ${qhiKv("Mode Lacak Broker", "Jumlah semua baris buy/sell broker terpilih per saham dalam periode → <b>Net</b> = Total Buy − Total Sell, <b>Share</b> = Net ÷ (Buy+Sell) × 100%.")}
+    ${qhiKv("Status ACC / DIS / NET", "<b>ACC</b> (akumulasi) jika Net &gt; 0 dan nilai Buy ≥ 55% dari total transaksi broker itu di saham tsb. <b>DIS</b> (distribusi) jika Net &lt; 0 dan nilai Sell ≥ 55%. Selain itu <b>NET</b> (campuran/netral).")}
+    ${qhiKv("Mode Lacak Saham", "Kebalikannya — jumlah buy/sell tiap broker yang aktif di satu saham terpilih, diurutkan dari Net tertinggi, plus jumlah hari broker itu muncul di data.")}
+    ${qhiNote(`Data top-5 saja per hari (bukan seluruh transaksi pasar) — jadi angka agregat di sini lebih kecil dari total transaksi saham yang sebenarnya. Seakurat &amp; serutin data Broker Summary diisi.`, "info")}
+  `)}
+
+  ${qhiCard("🌅", "BPJS — Beli Pagi, Jual Sore", "g", `
+    <p>Membandingkan harga <b>pagi</b> (snapshot ~09:05 WIB) dengan harga <b>sore</b> (~15:45 WIB) di hari yang sama, dari tabel <code>sesi_snapshots</code>.</p>
+    ${qhiKv("Return %", "<code>(harga_sore ÷ harga_pagi − 1) × 100</code>, dihitung &amp; disimpan langsung di kolom <code>return_pct</code> tabel <code>sesi_snapshots</code>.")}
+    ${qhiKv("Sumber snapshot", "Otomatis 2×/hari lewat script <code>snapshot-sesi.mjs</code> (cron pagi &amp; sore), ATAU manual lewat tombol Snapshot PAGI/SORE di halaman ini — menarik harga live Stockbit untuk semua saham di Watchlist, lalu upsert ke tabel yang sama.")}
+    ${qhiKv("Avg Return Pagi→Sore", "Rata-rata sederhana <code>return_pct</code> dari semua saham yang SUDAH punya kedua snapshot (pagi &amp; sore) hari itu.")}
+    ${qhiNote(`Harga Pagi/Sore adalah snapshot live sesaat, <b>bukan</b> harga Open/Close resmi bursa (yang biasanya dibentuk lewat pre-opening/pre-closing auction). Jangan tertukar dengan <b>BSJP</b> (Beli Sore, Jual Pagi) di tab utama — arahnya kebalikan.`, "warn")}
+  `)}
+
+  ${qhiCard("◈", "Favorit P&L", "g", `
+    <p>Dibangun di atas Watchlist (⭐) yang sama dengan tab utama.</p>
+    ${qhiKv("Harga entry otomatis", "Saat sebuah saham pertama kali masuk Watchlist, harga penutupan saat itu langsung tersimpan sebagai harga entry (localStorage perangkat ini). Bisa diubah manual kapan saja lewat tombol \"set\".")}
+    ${qhiKv("P&L per saham", "<code>(harga kini ÷ harga entry − 1) × 100</code>.")}
+    ${qhiKv("P&L portofolio (berbobot modal)", "<code>invested = Σ(harga entry × 100 lembar)</code> untuk tiap saham yang punya entry, <code>currentValue = Σ(harga kini × 100 lembar)</code> saham yang sama, lalu <code>(currentValue ÷ invested − 1) × 100</code>. Ini yang ditampilkan sebagai angka besar utama; versi equal-weight (rata-rata sederhana tiap saham) ditampilkan sebagai pembanding kecil di sampingnya.")}
+    ${qhiKv("Status badge", "UV = label valuasi \"murah/undervalued\". OV/DANGER = label \"over/mahal\" (jadi DANGER kalau P&L ≤ −15% atau RSI14 &gt;75). FAIR = label \"wajar/fair\". Kalau labelnya tidak ada: PROFIT jika P&L ≥15%, DANGER jika P&L ≤ −10%, selain itu NEUTRAL.")}
+  `)}
+  </div>
+  <style>
+  .qhi-wrap{ display:flex; flex-direction:column; gap:12px; }
+  .qhi-card-head{ display:flex; align-items:center; gap:8px; margin-bottom:8px; flex-wrap:wrap; }
+  .qhi-card-icon{ font-size:16px; }
+  .qhi-card-title{ font-weight:800; font-size:13.5px; }
+  .qhi-card-body p{ font-size:12.5px; line-height:1.7; margin:0 0 8px; }
+  .qhi-card-body ul.qhi-list{ margin:0 0 8px; padding-left:18px; font-size:12.5px; line-height:1.8; }
+  .qhi-kv{ display:flex; gap:12px; padding:7px 0; border-bottom:1px dashed var(--qh-border); font-size:12px; flex-wrap:wrap; }
+  .qhi-kv:last-child{ border-bottom:none; }
+  .qhi-kv-term{ flex:0 0 190px; font-weight:700; color:var(--qh-accent) !important; }
+  .qhi-kv-desc{ flex:1 1 240px; line-height:1.6; }
+  .qhi-note-warn{ border-color:#f3b93f !important; }
+  code{ background:#eef4ff; border:1px solid var(--qh-border); border-radius:4px; padding:1px 5px; font-family:'JetBrains Mono',monospace; font-size:11px; }
+  @media (max-width:640px){ .qhi-kv-term{ flex-basis:100%; } }
+  </style>`;
+};
+
 /* ---------- MODAL DETAIL ---------- */
 QH.modalHtml = function(s){
   if(!s) return "";
@@ -1005,6 +1307,7 @@ QH.ensureDom = function(){
   const sidebar = document.getElementById("sidebarNav");
   const appBody = document.querySelector(".app-body") || document.body;
   if(!sidebar || !appBody) return false;
+  qhInjectStyles();
 
   // Tombol sidebar (class sendiri supaya tidak konflik handler app.js)
   if(!document.getElementById("qhNavBtn")){
