@@ -2469,6 +2469,13 @@ let state = {
     ytdPct:{min:"",max:""}
   },
   openDropdown: null, 
+  // Teks ketikan per-filter di dalam dropdown multi-select (key = nama filter,
+  // mis. "keyakinanNaik") -- dipakai buat fitur "ketik buat cari" di
+  // renderMultiSelect(), supaya opsi berlabel panjang (Keyakinan Naik, Sektor,
+  // dst) tidak perlu di-scroll manual satu-satu. Disimpan di state (bukan
+  // variabel lokal) supaya teks pencarian tetap ada walau ada render() ulang
+  // (mis. abis centang checkbox di dropdown yang sama).
+  dropdownSearch: {},
   sort: { col: null, asc: true },
   page: 1, limit: 10,
   expanded: new Set(),
@@ -9115,13 +9122,30 @@ function renderMultiSelect(key, label, options) {
   const selected = state.filters[key];
   const btnText = selected.length === 0 ? "(Semua)" : `${selected.length} dipilih`;
   const isOpen = state.openDropdown === key;
-  
-  const itemsHtml = options.map(o => `
+
+  // Kotak "ketik buat cari" -- cuma dimunculkan kalau opsinya cukup banyak
+  // (>6) supaya dropdown pendek seperti LQ45 (Ya/Tidak/Tidak tersedia) tidak
+  // kebagian input yang tidak perlu. Filter Keyakinan Naik (label panjang² &
+  // >10 opsi) adalah alasan utama fitur ini dibuat.
+  const showSearch = options.length > 6;
+  const q = String(state.dropdownSearch[key] || "").trim().toLowerCase();
+  const filteredOptions = q ? options.filter(o => String(o).toLowerCase().includes(q)) : options;
+
+  const esc = (s) => String(s).replace(/&/g,"&amp;").replace(/"/g,"&quot;").replace(/</g,"&lt;");
+
+  const searchHtml = showSearch ? `
+    <div class="select-search-wrap" onclick="event.stopPropagation()" style="position:sticky;top:0;padding:6px;background:var(--panel,var(--bg));border-bottom:1px solid var(--border);">
+      <input type="text" class="select-search-input" data-filter-search="${key}" autocomplete="off"
+        placeholder="Ketik untuk cari ${esc(label).toLowerCase()}..." value="${esc(state.dropdownSearch[key] || "")}"
+        style="width:100%;box-sizing:border-box;background:color-mix(in srgb, currentColor 6%, transparent);border:1px solid var(--border);color:var(--text);font-size:12px;border-radius:6px;padding:7px 8px;">
+    </div>` : "";
+
+  const itemsHtml = filteredOptions.length ? filteredOptions.map(o => `
     <label class="select-item" onclick="event.stopPropagation()">
-      <input type="checkbox" value="${o}" data-filter="${key}" ${selected.includes(o) ? 'checked' : ''}>
+      <input type="checkbox" value="${esc(o)}" data-filter="${key}" ${selected.includes(o) ? 'checked' : ''}>
       <span>${o}</span>
     </label>
-  `).join("");
+  `).join("") : `<div class="select-empty" style="padding:10px 12px;font-size:12px;color:var(--muted);">Tidak ada opsi yang cocok</div>`;
 
   return `
     <div class="field">
@@ -9132,6 +9156,7 @@ function renderMultiSelect(key, label, options) {
           <span style="font-size:9px;color:var(--muted)">▼</span>
         </button>
         <div class="select-dropdown ${isOpen ? 'open' : ''}" onclick="event.stopPropagation()">
+          ${searchHtml}
           ${itemsHtml}
         </div>
       </div>
@@ -17393,6 +17418,49 @@ function attachContentEvents(){
       state.page = 1;
       render(); 
     };
+  });
+
+  // Kotak "ketik buat cari" di dalam dropdown multi-select (renderMultiSelect).
+  // SENGAJA tidak memanggil render() tiap ketikan -- kalau innerHTML ditimpa
+  // ulang tiap keystroke, fokus/kursor di <input> ikut hilang (browser
+  // membuat elemen baru). Jadi di sini cuma nyaring baris .select-item yang
+  // sudah ada di DOM lewat style.display (instan, fokus tetap terjaga),
+  // sekalian simpan teksnya ke state.dropdownSearch supaya kalau render()
+  // penuh terjadi karena sebab lain (mis. centang salah satu checkbox),
+  // renderMultiSelect() generate ulang dropdown ini dalam keadaan sudah
+  // tersaring & teks pencarian tidak balik kosong.
+  document.querySelectorAll(".select-search-input").forEach(inp => {
+    inp.oninput = (e) => {
+      const key = e.target.dataset.filterSearch;
+      const q = e.target.value;
+      state.dropdownSearch[key] = q;
+      const qLower = q.trim().toLowerCase();
+      const panel = e.target.closest(".select-dropdown");
+      if (!panel) return;
+      let visibleCount = 0;
+      panel.querySelectorAll(".select-item").forEach(item => {
+        const text = (item.textContent || "").trim().toLowerCase();
+        const match = !qLower || text.includes(qLower);
+        item.style.display = match ? "" : "none";
+        if (match) visibleCount++;
+      });
+      let emptyEl = panel.querySelector(".select-empty");
+      if (visibleCount === 0) {
+        if (!emptyEl) {
+          emptyEl = document.createElement("div");
+          emptyEl.className = "select-empty";
+          emptyEl.style.cssText = "padding:10px 12px;font-size:12px;color:var(--muted);";
+          emptyEl.textContent = "Tidak ada opsi yang cocok";
+          panel.appendChild(emptyEl);
+        }
+        emptyEl.style.display = "";
+      } else if (emptyEl) {
+        emptyEl.style.display = "none";
+      }
+    };
+    // Cegah dropdown ketutup & cegah spasi/tombol lain di-tangkap shortcut lain.
+    inp.onclick = (e) => e.stopPropagation();
+    inp.onkeydown = (e) => e.stopPropagation();
   });
 
   document.querySelectorAll(".range-filter-input").forEach(inp => {
