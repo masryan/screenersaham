@@ -2777,6 +2777,17 @@ let state = {
   // lewat tombol "✕" di sebelah label jumlah ticker.
   uploadedBulkTickers: [], uploadedBulkTickersFileName: null,
   // ==========================================
+  // 📥 Impor Data Harian IDX (flows) — alternatif manual utk sync-idx-full.mjs
+  // yang selama ini WAJIB dijalankan dari PC (curl ke idx.co.id kena block
+  // Cloudflare kalau bukan dari koneksi rumah). Di sini user mengunduh
+  // sendiri file Excel/CSV "Ringkasan Saham" dari idx.co.id lewat browser
+  // (sesi browser biasa lolos Cloudflare, curl/server tidak), lalu upload
+  // file itu ke sini -- diupsert ke tabel `flows` (on_conflict ticker,date),
+  // SAMA seperti yang ditulis sync-idx-full.mjs. Lihat handleFlowsImportFile().
+  flowsImporting: false, flowsImportMsg: "", flowsImportMsgError: false,
+  flowsImportDate: "", // tanggal perdagangan utk file yg diupload (YYYY-MM-DD); auto-coba dari nama file, bisa diedit manual
+  flowsImportedTickers: [], flowsImportedDate: null, // hasil impor sukses terakhir -- dipakai tombol "Update Teknikal" susulan (updateTechnicalIndicatorsBulk(tickers,{source:'flows'}), pakai tiBulkLoading/tiBulkResults yang sama dengan tombol "📊 Update Teknikal" biasa)
+  // ==========================================
   // 🧪 WS DEBUG — buffer traffic WebSocket Stockbit yang direkam ekstensi
   // Chrome (inject.js -> content_stockbit.js -> background.js ->
   // content_screener.js -> window.postMessage 'FROM_EXTENSION_WS_TRAFFIC').
@@ -6411,6 +6422,30 @@ async function ti_fetchExistingSharesOutstanding(ticker) {
   } catch (e) { return null; }
 }
 
+// Sama seperti ti_fetchBarsFromDb(), tapi sumbernya tabel `flows` (data
+// resmi IDX, diisi lewat impor manual "Ringkasan Saham" atau dulu lewat
+// sync-idx-full.mjs) -- dipakai updateTechnicalIndicatorsBulk(...,{source:'flows'}).
+// Beda dgn price_history_stockbit: `flows` juga punya listed_shares per
+// bar, jadi market_cap tidak perlu nunggu kolom shares_outstanding di
+// `stocks` terisi duluan -- diambil fallback ke nilai TERAKHIR yang
+// tersedia (bar terbaru bisa saja null), sama seperti sync-idx-full.mjs.
+async function ti_fetchBarsFromFlows(ticker) {
+  const qs = new URLSearchParams({
+    ticker: `eq.${ticker}`,
+    select: "date,open_price,high,low,close,volume,value,frequency,listed_shares",
+    order: "date.desc", limit: "450",
+  });
+  const res = await fetch(`${SUPABASE_URL}/flows?${qs}`, { headers: getSupaHeaders(), cache: "no-store" });
+  if (!res.ok) throw new Error(`HTTP ${res.status} saat baca flows`);
+  const rows = await res.json();
+  const bars = rows
+    .filter(r => r.close != null)
+    .map(r => ({ date: r.date, open: r.open_price, high: r.high, low: r.low, close: r.close, volume: r.volume, value: r.value, frequency: r.frequency, listedShares: r.listed_shares }))
+    .reverse(); // kembali urut lama -> baru
+  const listedShares = [...bars].reverse().find(b => b.listedShares != null)?.listedShares ?? null;
+  return { bars, listedShares };
+}
+
 // Sisipkan quote live Stockbit sebagai "bar hari ini yang masih berjalan"
 // ke deretan bar harian dari DB (yang cuma sampai hari bursa terakhir yang
 // SUDAH final). Kalau bar terakhir di DB tanggalnya sudah hari ini (mis.
@@ -6467,10 +6502,11 @@ function ti_stripNulls(obj) {
 
 async function updateTechnicalIndicatorsBulk(tickers, opts) {
   const live = !!(opts && opts.live);
+  const fromFlows = !!(opts && opts.source === "flows"); // true = hitung dari tabel `flows` (impor IDX manual), bukan price_history_stockbit
   if (state.tiBulkLoading) return;
   if (!tickers || !tickers.length) {
     if (live) return; // siklus auto-refresh: diam-diam skip kalau belum ada yang dicentang
-    state.tiBulkResults = [{ ticker: "-", ok: false, msg: "Centang minimal 1 saham di tab Screener dulu." }];
+    state.tiBulkResults = [{ ticker: "-", ok: false, msg: fromFlows ? "Tidak ada ticker hasil impor untuk dihitung." : "Centang minimal 1 saham di tab Screener dulu." }];
     render(); return;
   }
   if (!SUPABASE_URL || !SUPABASE_KEY) { if (!live) openSettings(); return; }
@@ -6483,7 +6519,13 @@ async function updateTechnicalIndicatorsBulk(tickers, opts) {
 
   for (const ticker of tickers) {
     try {
-      let bars = await ti_fetchBarsFromDb(ticker);
+      let bars, listedSharesFromFlows = null;
+      if (fromFlows) {
+        const r = await ti_fetchBarsFromFlows(ticker);
+        bars = r.bars; listedSharesFromFlows = r.listedShares;
+      } else {
+        bars = await ti_fetchBarsFromDb(ticker);
+      }
       let liveNote = "";
       if (live) {
         const res = await stockbitFetch(state.stockbitQuoteEndpoint, ticker);
@@ -6495,9 +6537,11 @@ async function updateTechnicalIndicatorsBulk(tickers, opts) {
         liveNote = ` [LIVE ${quote.last}]`;
       }
       if (bars.length < TI_MIN_BARS_FOR_CALC) {
-        state.tiBulkResults.push({ ticker, ok: false, msg: `Baru ${bars.length} hari data di database (butuh >= ${TI_MIN_BARS_FOR_CALC}) — tarik dulu "📅 Historical (Daily)" untuk rentang tanggal yang lebih panjang.` });
+        state.tiBulkResults.push({ ticker, ok: false, msg: fromFlows
+          ? `Baru ${bars.length} hari data di tabel flows (butuh >= ${TI_MIN_BARS_FOR_CALC}) — impor lebih banyak hari dulu (upload file "Ringkasan Saham" utk tanggal-tanggal sebelumnya).`
+          : `Baru ${bars.length} hari data di database (butuh >= ${TI_MIN_BARS_FOR_CALC}) — tarik dulu "📅 Historical (Daily)" untuk rentang tanggal yang lebih panjang.` });
       } else {
-        const listedShares = await ti_fetchExistingSharesOutstanding(ticker);
+        const listedShares = fromFlows ? (listedSharesFromFlows ?? await ti_fetchExistingSharesOutstanding(ticker)) : await ti_fetchExistingSharesOutstanding(ticker);
         const technical = ti_buildStockRowFromBars(ticker, bars, listedShares);
         const ext = ti_computeExtendedIndicators(bars);
         const prevExt = bars.length > 1 ? ti_computeExtendedIndicators(bars.slice(0, -1)) : {};
@@ -6540,7 +6584,7 @@ async function updateTechnicalIndicatorsBulk(tickers, opts) {
           body: JSON.stringify([ti_stripNulls(extRow)]),
         });
 
-        state.tiBulkResults.push({ ticker, ok: true, msg: `${live ? "Live" : "Terhitung"} dari ${bars.length} hari data (${bars[0].date}..${bars[bars.length-1].date})${liveNote}. price=${technical.price} trend=${technical.trend_harga}` });
+        state.tiBulkResults.push({ ticker, ok: true, msg: `${live ? "Live" : (fromFlows ? "Terhitung (flows/IDX)" : "Terhitung")} dari ${bars.length} hari data (${bars[0].date}..${bars[bars.length-1].date})${liveNote}. price=${technical.price} trend=${technical.trend_harga}` });
       }
     } catch (e) {
       state.tiBulkResults.push({ ticker, ok: false, msg: e.message });
@@ -8045,6 +8089,170 @@ async function handlePortoImportFile(fileInput){
     state.portoImportMsgError = true;
   }
   state.portoImporting = false;
+  render();
+}
+
+// ==========================================
+// 📥 Impor Data Harian IDX (flows) — alternatif manual utk sync-idx-full.mjs.
+//
+// idx.co.id memblokir request dari server/curl (Cloudflare, lihat catatan
+// di kepala sync-idx-full.mjs) -- makanya data harian selama ini WAJIB
+// ditarik dari PC (koneksi rumah). Tapi sesi BROWSER BIASA (bukan curl/
+// server) lolos Cloudflare, jadi user bisa login/buka sendiri halaman
+//   https://www.idx.co.id/id/data-pasar/ringkasan-perdagangan/ringkasan-saham/
+// lalu unduh file Excel/CSV "Ringkasan Saham" hari itu dari sana, dan
+// upload file itu ke sini. Baris-barisnya diupsert ke tabel `flows`
+// (on_conflict ticker,date) -- SAMA PERSIS skema kolom yang ditulis
+// sync-idx-full.mjs (lihat blok `payload` di fungsi utamanya), jadi
+// tombol "📊 Update Teknikal (dari flows)" di bawah bisa langsung
+// menghitung ulang stocks/stock_indicators_ext dari data ini, tanpa
+// perlu jalan apa pun dari PC.
+//
+// Alias nama kolom yang diterima -- toleran terhadap variasi header file
+// unduhan IDX (label ID/EN, spasi/underscore, huruf besar-kecil) supaya
+// file yang formatnya sedikit beda tidak langsung ditolak semua barisnya.
+// pickFlowsCol() menormalisasi header (lowercase, spasi dirapikan) dulu
+// sebelum dicocokkan ke daftar alias di bawah.
+const FLOWS_IMPORT_COLUMNS = {
+  ticker: ["kode saham", "kode", "stock code", "stockcode", "kode emiten", "ticker"],
+  open: ["open price", "openprice", "open"],
+  high: ["tertinggi", "high"],
+  low: ["terendah", "low"],
+  close: ["penutupan", "close", "closing price", "close price"],
+  volume: ["volume"],
+  value: ["nilai", "value"],
+  frequency: ["frekuensi", "frequency"],
+  foreignBuy: ["foreign buy", "foreignbuy", "asing beli"],
+  foreignSell: ["foreign sell", "foreignsell", "asing jual"],
+  nonRegVolume: ["non regular volume", "nonregular volume", "nonregularvolume", "volume non reguler", "non reguler volume"],
+  nonRegValue: ["non regular value", "nonregular value", "nonregularvalue", "nilai non reguler", "non reguler nilai"],
+  listedShares: ["listed shares", "listedshares", "saham tercatat", "jumlah saham tercatat"],
+  offer: ["offer", "offer price"],
+  offerVolume: ["offer volume", "offervolume", "volume offer"],
+  bid: ["bid", "bid price"],
+  bidVolume: ["bid volume", "bidvolume", "volume bid"],
+  date: ["tanggal perdagangan terakhir", "tanggal", "date", "trade date", "last trading date"],
+};
+
+// Header file Excel dirapikan dulu (lowercase + spasi/underscore dirapikan
+// jadi 1 spasi) sebelum dicocokkan ke FLOWS_IMPORT_COLUMNS -- supaya
+// "Foreign_Buy", "foreign  buy", "FOREIGN BUY" semua kena alias yang sama.
+function normFlowsHeader(k){
+  return String(k).trim().toLowerCase().replace(/[_\.]+/g, " ").replace(/\s+/g, " ");
+}
+function pickFlowsCol(norm, aliases){
+  for(const a of aliases){ if(norm[a] != null && norm[a] !== "") return norm[a]; }
+  return "";
+}
+// Angka dari Excel/IDX kadang string berformat "1,234,567" atau pakai spasi
+// -- dirapikan dulu sebelum parseFloat, sama pola dengan num() di
+// sync-idx-full.mjs supaya hasil impor manual & hasil sync-idx-full.mjs
+// konsisten.
+function numFlowsImport(v){
+  if(v === null || v === undefined || v === "") return null;
+  const n = Number(typeof v === "string" ? v.replace(/,/g, "").trim() : v);
+  return Number.isFinite(n) ? n : null;
+}
+
+// Baca satu baris hasil XLSX.utils.sheet_to_json -> objek siap upsert ke
+// `flows`. `fallbackDate` dipakai kalau file tidak punya kolom tanggal per
+// baris (lazim -- file "Ringkasan Saham" IDX isinya 1 hari utk semua
+// ticker, tanggalnya dipilih user lewat input tanggal di UI, bukan per baris).
+function mapFlowsImportRow(rawRow, fallbackDate){
+  const norm = {};
+  Object.entries(rawRow).forEach(([k,v]) => { norm[normFlowsHeader(k)] = v; });
+  const pick = (aliases) => pickFlowsCol(norm, aliases);
+  const dateRaw = pick(FLOWS_IMPORT_COLUMNS.date);
+  return {
+    ticker: String(pick(FLOWS_IMPORT_COLUMNS.ticker) || "").trim().toUpperCase().replace(".JK", ""),
+    date: (dateRaw ? normImportDate(dateRaw) : "") || fallbackDate || "",
+    open_price: numFlowsImport(pick(FLOWS_IMPORT_COLUMNS.open)),
+    high: numFlowsImport(pick(FLOWS_IMPORT_COLUMNS.high)),
+    low: numFlowsImport(pick(FLOWS_IMPORT_COLUMNS.low)),
+    close: numFlowsImport(pick(FLOWS_IMPORT_COLUMNS.close)),
+    volume: numFlowsImport(pick(FLOWS_IMPORT_COLUMNS.volume)),
+    value: numFlowsImport(pick(FLOWS_IMPORT_COLUMNS.value)),
+    frequency: numFlowsImport(pick(FLOWS_IMPORT_COLUMNS.frequency)),
+    foreign_buy: numFlowsImport(pick(FLOWS_IMPORT_COLUMNS.foreignBuy)),
+    foreign_sell: numFlowsImport(pick(FLOWS_IMPORT_COLUMNS.foreignSell)),
+    nonreg_volume: numFlowsImport(pick(FLOWS_IMPORT_COLUMNS.nonRegVolume)),
+    nonreg_value: numFlowsImport(pick(FLOWS_IMPORT_COLUMNS.nonRegValue)),
+    listed_shares: numFlowsImport(pick(FLOWS_IMPORT_COLUMNS.listedShares)),
+    offer: numFlowsImport(pick(FLOWS_IMPORT_COLUMNS.offer)),
+    offer_volume: numFlowsImport(pick(FLOWS_IMPORT_COLUMNS.offerVolume)),
+    bid: numFlowsImport(pick(FLOWS_IMPORT_COLUMNS.bid)),
+    bid_volume: numFlowsImport(pick(FLOWS_IMPORT_COLUMNS.bidVolume)),
+  };
+}
+
+function triggerFlowsImportFile(){
+  document.getElementById("flowsImportFileInput")?.click();
+}
+
+// Dipanggil dari <input type="file" id="flowsImportFileInput" onchange=...>.
+// Menerima .xlsx/.xls/.csv hasil unduhan "Ringkasan Saham" idx.co.id.
+// Baris tanpa ticker/close/tanggal valid DILEWATI (bukan gagal fatal),
+// supaya baris judul/kosong di file IDX tidak menghentikan baris lain.
+async function handleFlowsImportFile(fileInput){
+  const file = fileInput.files && fileInput.files[0];
+  fileInput.value = ""; // reset supaya file yang sama bisa dipilih lagi
+  if(!file) return;
+  if(!SUPABASE_URL || !SUPABASE_KEY){ openSettings(); return; }
+
+  // Tanggal perdagangan: pakai input tanggal di UI kalau sudah diisi user,
+  // kalau belum coba tebak dari nama file (pola umum unduhan IDX:
+  // "...20260922..." atau "...22092026...", DD-MM-YYYY, dst), fallback
+  // hari ini. User tetap bisa koreksi manual sebelum/steelah upload lewat
+  // input tanggal -- import berikutnya akan pakai tanggal itu.
+  let fallbackDate = state.flowsImportDate || "";
+  if(!fallbackDate){
+    const m8 = file.name.match(/(20\d{2})[-_]?(\d{2})[-_]?(\d{2})/); // YYYYMMDD / YYYY-MM-DD
+    if(m8) fallbackDate = `${m8[1]}-${m8[2]}-${m8[3]}`;
+    else {
+      const mDmy = file.name.match(/(\d{2})[-_](\d{2})[-_](20\d{2})/); // DD-MM-YYYY
+      if(mDmy) fallbackDate = `${mDmy[3]}-${mDmy[2]}-${mDmy[1]}`;
+    }
+    if(!fallbackDate) fallbackDate = todayLocalISO();
+    state.flowsImportDate = fallbackDate;
+  }
+
+  state.flowsImporting = true; state.flowsImportMsg = ""; state.flowsImportMsgError = false; render();
+  try{
+    const buf = await file.arrayBuffer();
+    const wb = XLSX.read(buf, { type: "array", cellDates: false });
+    const sheet = wb.Sheets[wb.SheetNames[0]];
+    const json = XLSX.utils.sheet_to_json(sheet, { defval: "" });
+    if(!json.length) throw new Error('File kosong atau format tidak terbaca (pastikan baris pertama adalah header kolom, mis. "Kode Saham", "Penutupan", dst).');
+
+    const rows = [];
+    let skipped = 0;
+    json.forEach(rawRow => {
+      const r = mapFlowsImportRow(rawRow, fallbackDate);
+      if(!r.ticker || !r.date || r.close == null){ skipped++; return; }
+      rows.push(r);
+    });
+    if(!rows.length) throw new Error(`Tidak ada baris valid untuk diimpor (${skipped} baris dilewati — pastikan kolom Kode Saham & Penutupan terisi, dan tanggal sudah dipilih di atas).`);
+
+    // Upsert BATCH per 200 baris (sama pola dengan sync-idx-full.mjs) --
+    // PostgREST terima array JSON di body POST + Prefer: merge-duplicates.
+    for(const part of chunkArray(rows, 200)){
+      await supaFetch(`${SUPABASE_URL}/flows?on_conflict=ticker,date`, {
+        method: "POST",
+        headers: { ...getSupaHeaders(), "Prefer": "resolution=merge-duplicates,return=minimal" },
+        body: JSON.stringify(part),
+      });
+    }
+
+    const tickers = [...new Set(rows.map(r => r.ticker))];
+    state.flowsImportedTickers = tickers;
+    state.flowsImportedDate = fallbackDate;
+    state.flowsImportMsg = `✅ ${rows.length} saham berhasil diimpor ke flows untuk tanggal ${fallbackDate}${skipped ? ` (${skipped} baris dilewati karena kolom wajib kosong)` : ""}. Klik "📊 Update Teknikal (dari flows)" di tab Screener untuk menghitung ulang indikator.`;
+    state.flowsImportMsgError = false;
+  } catch(e){
+    state.flowsImportMsg = "Gagal impor: " + e.message;
+    state.flowsImportMsgError = true;
+  }
+  state.flowsImporting = false;
   render();
 }
 
@@ -10529,6 +10737,27 @@ function renderScreener(){
               ? `📊 Menghitung ${state.tiBulkProgress?.done||0}/${state.tiBulkProgress?.total||0}...`
               : (state.uploadedBulkTickers.length ? `📊 Update Teknikal (${state.uploadedBulkTickers.length} dari file)` : (state.selectedForBacktest.size>0 ? `📊 Update Teknikal (${state.selectedForBacktest.size} dicentang)` : `📊 Update Teknikal (${sorted.length} lolos)`))}
           </button>
+        </div>
+        <div class="field" style="flex:0 0 auto;">
+          <label>&nbsp;</label>
+          <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap; background:rgba(251,191,36,0.06); border:1px solid rgba(251,191,36,0.25); border-radius:8px; padding:6px 10px;"
+            title="Alternatif manual utk sync-idx-full.mjs (yang WAJIB dijalankan dari PC karena idx.co.id memblokir curl/server). Unduh file Excel/CSV 'Ringkasan Saham' dari idx.co.id lewat browser, lalu upload di sini -- diupsert ke tabel flows.">
+            <input type="date" id="flowsImportDateInput" value="${escapeHtml(state.flowsImportDate||"")}" ${state.flowsImporting?"disabled":""}
+              style="padding:9.5px 8px; border-radius:8px; border:1px solid var(--border); background:color-mix(in srgb, currentColor 6%, transparent); color:var(--text); font-size:12px;"
+              title="Tanggal perdagangan utk file yang akan diupload (auto-coba ditebak dari nama file kalau dikosongkan)">
+            <button type="button" class="btn btn-outline" id="flowsImportBtn" ${state.flowsImporting?"disabled":""}
+              style="color:#fbbf24;border-color:rgba(251,191,36,0.4);white-space:nowrap;">
+              ${state.flowsImporting ? "Mengimpor..." : "📥 Impor Ringkasan Saham IDX"}
+            </button>
+            <input type="file" id="flowsImportFileInput" accept=".xlsx,.xls,.csv" style="display:none;">
+            ${state.flowsImportedTickers.length ? `
+            <button type="button" class="btn btn-outline" id="tiFlowsBulkBtn" ${state.tiBulkLoading?"disabled":""}
+              style="color:#22d3ee;border-color:rgba(34,211,238,0.4);white-space:nowrap;"
+              title="Hitung ulang indikator teknikal dari data flows yang baru diimpor (${state.flowsImportedTickers.length} saham, tanggal ${escapeHtml(state.flowsImportedDate||"")}) -- hasil ditulis ke stocks & stock_indicators_ext.">
+              📊 Update Teknikal (dari flows, ${state.flowsImportedTickers.length})
+            </button>` : ""}
+          </div>
+          ${state.flowsImportMsg ? `<div class="bs-msg ${state.flowsImportMsgError?"bs-msg-error":"bs-msg-ok"}" style="margin-top:6px; max-width:420px;">${escapeHtml(state.flowsImportMsg)}</div>` : ""}
         </div>
         <div class="field" style="flex:0 0 auto;">
           <label>&nbsp;</label>
@@ -17859,6 +18088,16 @@ function attachContentEvents(){
   const tiBulkBtn = document.getElementById("tiBulkBtn");
   if(tiBulkBtn) tiBulkBtn.onclick = () => {
     updateTechnicalIndicatorsBulk(resolveBulkTickers());
+  };
+  const flowsImportDateInput = document.getElementById("flowsImportDateInput");
+  if(flowsImportDateInput) flowsImportDateInput.onchange = (e) => { state.flowsImportDate = e.target.value || ""; };
+  const flowsImportBtn = document.getElementById("flowsImportBtn");
+  if(flowsImportBtn) flowsImportBtn.onclick = triggerFlowsImportFile;
+  const flowsImportFileInput = document.getElementById("flowsImportFileInput");
+  if(flowsImportFileInput) flowsImportFileInput.onchange = () => handleFlowsImportFile(flowsImportFileInput);
+  const tiFlowsBulkBtn = document.getElementById("tiFlowsBulkBtn");
+  if(tiFlowsBulkBtn) tiFlowsBulkBtn.onclick = () => {
+    updateTechnicalIndicatorsBulk(state.flowsImportedTickers, { source: "flows" });
   };
 
   const tiAutoRefreshChk = document.getElementById("tiAutoRefreshChk");
