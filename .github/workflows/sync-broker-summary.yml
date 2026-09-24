@@ -6,18 +6,18 @@ on:
       dry_run:
         description: "Dry run (tarik data tapi jangan tulis ke DB)"
         type: boolean
-        default: true
+        default: false
       from:
-        description: "Tanggal mulai (YYYY-MM-DD)"
-        type: string
+        description: "Tanggal mulai (YYYY-MM-DD). Jika mau tarik 1 hari saja (misal saat retry gagal), isi ini saja"
         required: false
       to:
-        description: "Tanggal akhir (YYYY-MM-DD)"
-        type: string
+        description: "Tanggal akhir (YYYY-MM-DD). Jika dikosongkan, otomatis disamakan dengan 'from'"
         required: false
   schedule:
-    # 09:35 UTC = 16:35 WIB (Senin-Jumat)
-    - cron: "35 9 * * 1-5"
+    # 12:00 UTC = 19:00 WIB (Senin - Jumat)
+    - cron: "0 12 * * 1-5"
+    # 16:00 UTC = 23:00 WIB (Senin - Jumat)
+    - cron: "0 16 * * 1-5"
 
 jobs:
   sync:
@@ -33,9 +33,24 @@ jobs:
       - name: Run sync-broker-summary.mjs
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
-          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+          # Opsional -- isi kalau endpoint di Pengaturan app.js beda dari default:
+          # STOCKBIT_BROKER_ENDPOINT: ${{ secrets.STOCKBIT_BROKER_ENDPOINT }}
         run: |
           ARGS=""
-          if [ "${{ inputs.dry_run }}" = "true" ]; then ARGS="$ARGS --dry-run"; fi
-          if [ -n "${{ inputs.from }}" ]; then ARGS="$ARGS --from=${{ inputs.from }} --to=${{ inputs.to }}"; fi
+          if [ "${{ github.event.inputs.dry_run }}" = "true" ]; then 
+            ARGS="$ARGS --dry-run"
+          fi
+
+          FROM="${{ github.event.inputs.from }}"
+          TO="${{ github.event.inputs.to }}"
+
+          if [ -n "$FROM" ]; then
+            # Jika 'to' kosong, gunakan tanggal 'from' (menarik 1 hari spesifik)
+            if [ -z "$TO" ]; then
+              TO="$FROM"
+            fi
+            ARGS="$ARGS --from=$FROM --to=$TO"
+          fi
+
           node sync-broker-summary.mjs $ARGS
