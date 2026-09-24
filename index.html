@@ -17,6 +17,20 @@
     } catch(e) {}
   })();
 </script>
+<!-- Cek status login LEBIH DULU (sebelum CSS/body dirender), supaya kalau
+     user sudah pernah login sebelumnya, overlay login tidak sempat
+     "berkedip" tampil sebentar lalu hilang lagi. Sama pola-nya dengan
+     script tema di atas. Lihat auth.js untuk logika login sesungguhnya. -->
+<script>
+  (function(){
+    try {
+      var savedRole = localStorage.getItem("ihsg_auth_role");
+      if (savedRole === "user" || savedRole === "admin") {
+        document.documentElement.setAttribute("data-authed", "1");
+      }
+    } catch(e) {}
+  })();
+</script>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Sora:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
 
@@ -28,6 +42,26 @@
 <link rel="stylesheet" href="mobile-responsive-fix.css">
 </head>
 <body>
+
+<!-- Overlay Login — lihat auth.js. Tampil default (lewat CSS), otomatis
+     disembunyikan kalau atribut data-authed="1" sudah ada di <html>
+     (dicek oleh script FOUC di <head> untuk yang sudah pernah login). -->
+<div class="auth-overlay" id="authOverlay">
+  <form class="auth-card" id="authForm" autocomplete="off">
+    <h2>🔐 Masuk ke IHSG Screener Pro</h2>
+    <p class="auth-sub">Akses dibatasi — silakan login untuk melanjutkan.</p>
+    <div class="field">
+      <label for="authUsername">Username</label>
+      <input type="text" id="authUsername" name="username" autocomplete="username" required autofocus>
+    </div>
+    <div class="field">
+      <label for="authPassword">Password</label>
+      <input type="password" id="authPassword" name="password" autocomplete="current-password" required>
+    </div>
+    <div class="auth-error" id="authError"></div>
+    <button type="submit" class="btn btn-primary">Masuk</button>
+  </form>
+</div>
 
 <div class="header">
   <div class="header-row">
@@ -53,9 +87,13 @@
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" aria-hidden="true" focusable="false"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0114.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0020.49 15"/></svg>
         Refresh Data
       </button>
-      <button class="btn btn-outline" onclick="openSettings()">
+      <button class="btn btn-outline" id="settingsBtn" onclick="openSettings()">
         <span aria-hidden="true">⚙️</span> Pengaturan
       </button>
+      <div class="user-chip" id="userChip" style="display:none;">
+        <span>Login: <b id="userChipName">-</b></span>
+        <button type="button" id="logoutBtn" title="Keluar dari aplikasi">Keluar</button>
+      </div>
     </div>
   </div>
   <div class="error-msg" id="errorMsg" style="display:none;"></div>
@@ -441,5 +479,6 @@
 <script src="config.js"></script>
 <script src="app.js"></script>
 <script src="quant-hub.js"></script>
+<script src="auth.js"></script>
 </body>
 </html>

@@ -1,210 +1,139 @@
+// ==========================================================
+// LOGIN SEDERHANA — 2 ROLE (user / admin), UNTUK TESTER SEMENTARA
 //
-===========================================
-===============
-// auth.js — Login & Approval Gate
-(Supabase Auth)
+// ⚠️ PENTING SOAL KEAMANAN: file ini (termasuk daftar username/password
+// di bawah) berjalan 100% di browser dan bisa dibaca siapa pun lewat
+// "View Source" / DevTools — sama seperti app.js. Jadi ini BUKAN
+// keamanan sesungguhnya, cuma "gerbang" UI supaya role "user" tidak
+// sengaja mengklik fitur admin. Kalau nanti mau serius (data benar-benar
+// dilindungi per role), pembatasan harus dipindah ke sisi server, mis.
+// Supabase Auth + Row Level Security per role, bukan cuma di sini.
 //
-// File ini WAJIB dimuat di index.html:
-//   1. SETELAH SDK @supabase/supabase-js
-(CDN)
-//   2. SEBELUM app.js
-//
-// Tugasnya:
-//   - Menampilkan layar login/daftar kalau
-belum ada sesi.
-//   - Setelah login, cek tabel `profiles`:
-kalau status belum 'approved'
-//     (masih pending / sudah expired),
-tampilkan layar "menunggu approval"
-//     dan TIDAK memuat aplikasi/data sama
-sekali.
-//   - Kalau approved, sembunyikan layar
-ini, tampilkan aplikasi, lalu
-//     resolve window.authReady supaya
-app.js lanjut jalan (loadLive(), dst).
-//   - Menyediakan window.getAuthHeader()
-dipakai app.js untuk mengganti
-//     header Authorization dari "anon key
-untuk semua orang" menjadi
-//     "token JWT user yang login" — ini
-KUNCI supaya RLS di Supabase bisa
-//     membedakan siapa yang sedang akses
-(auth.uid()).
-//
-===========================================
-===============
-(function () {
-  const AUTH_SUPA_URL = (window.APP_CONFIG
-&& window.APP_CONFIG.SUPABASE_URL) ||
-localStorage.getItem("ihsg_supa_url") ||
-"";
-  const AUTH_SUPA_KEY = (window.APP_CONFIG
-&& window.APP_CONFIG.SUPABASE_ANON_KEY) ||
-localStorage.getItem("ihsg_supa_key") ||
-"";
-  let resolveAuthReady;
-  window.authReady = new Promise((res) => {
-resolveAuthReady = res; });
-  window.authProfile = null; //
-{id,email,role,status,expires_at} setelah
-lolos gate
-  if (!AUTH_SUPA_URL || !AUTH_SUPA_KEY ||
-!window.supabase) {
-   
-document.getElementById("authGateMsg").text
-Content =
-      "Konfigurasi Supabase belum diisi di
-config.js. Login tidak bisa berjalan.";
-   
-document.getElementById("authGateOverlay").
-style.display = "flex";
+// Load order: file ini SENGAJA dimuat PALING TERAKHIR (setelah app.js &
+// quant-hub.js di index.html) supaya bisa "membungkus" fungsi yang sudah
+// didefinisikan di sana (openSettings) dan elemen yang sudah ada
+// (#refreshBtn, #settingsBtn).
+// ==========================================================
+
+// Ganti/tambah akun di sini kalau perlu. Username dicocokkan tanpa
+// peduli huruf besar/kecil.
+const APP_USERS = {
+  "user":  { password: "123456",   role: "user"  },
+  "admin": { password: "admin123", role: "admin" } // TODO: ganti password default ini
+};
+
+const AUTH_ROLE_KEY = "ihsg_auth_role";
+const AUTH_NAME_KEY = "ihsg_auth_username";
+
+function getAuthRole(){
+  try { return localStorage.getItem(AUTH_ROLE_KEY) || null; } catch(e){ return null; }
+}
+function getAuthUsername(){
+  try { return localStorage.getItem(AUTH_NAME_KEY) || null; } catch(e){ return null; }
+}
+function isAdminUser(){ return getAuthRole() === "admin"; }
+
+function doLogin(usernameRaw, password){
+  const username = String(usernameRaw || "").trim().toLowerCase();
+  const u = APP_USERS[username];
+  if(!u || u.password !== password) return false;
+  try {
+    localStorage.setItem(AUTH_ROLE_KEY, u.role);
+    localStorage.setItem(AUTH_NAME_KEY, username);
+  } catch(e){}
+  return true;
+}
+
+function doLogout(){
+  try {
+    localStorage.removeItem(AUTH_ROLE_KEY);
+    localStorage.removeItem(AUTH_NAME_KEY);
+  } catch(e){}
+  // Reload penuh: cara paling aman supaya semua state di memori (yang
+  // mungkin sempat dimuat) ikut bersih, dan overlay login muncul lagi
+  // dari awal (data-authed dicek ulang oleh script di <head>).
+  location.reload();
+}
+
+// Terapkan pembatasan tampilan berdasarkan role yang sedang login.
+// Dipanggil sekali saat halaman dibuka (kalau sudah login sebelumnya)
+// dan sekali lagi tepat setelah submit form login berhasil.
+function applyRolePermissions(){
+  const role = getAuthRole();
+  const name = getAuthUsername();
+
+  const chip = document.getElementById("userChip");
+  const chipName = document.getElementById("userChipName");
+  if(chip && chipName){
+    chip.style.display = "flex";
+    chipName.textContent = (name || "-") + (role === "admin" ? " · admin" : " · user");
+  }
+
+  const refreshBtn = document.getElementById("refreshBtn");
+  const settingsBtn = document.getElementById("settingsBtn");
+
+  if(role === "admin"){
+    // Admin: pastikan semua tombol terlihat (misalnya setelah logout lalu
+    // login lagi sebagai admin di tab yang sama, walau reload harusnya
+    // sudah membuat ini tidak diperlukan).
+    if(refreshBtn) refreshBtn.style.display = "";
+    if(settingsBtn) settingsBtn.style.display = "";
     return;
   }
-  const sb =
-window.supabase.createClient(AUTH_SUPA_URL,
-AUTH_SUPA_KEY);
-  window.sbAuthClient = sb;
-  // window.__currentAccessToken diisi/direfresh oleh runGate() dan
-  // onAuthStateChange() di bawah — dibaca
-langsung oleh getSupaHeaders()
-  // di app.js supaya tiap request ke
-Supabase membawa JWT user yang login.
-  window.__currentAccessToken = null;
-  const overlay =
-document.getElementById("authGateOverlay");
-  const els = {
-    msg:
-document.getElementById("authGateMsg"),
-    loginBox:
-document.getElementById("authLoginBox"),
-    pendingBox:
-document.getElementById("authPendingBox"),
-    email:
-document.getElementById("authEmail"),
-    password:
-document.getElementById("authPassword"),
-    loginBtn:
-document.getElementById("authLoginBtn"),
-    signupBtn:
-document.getElementById("authSignupBtn"),
-    error:
-document.getElementById("authError"),
-    pendingText:
-document.getElementById("authPendingText"),
-    logoutFromPendingBtn:
-document.getElementById("authLogoutFromPend
-ing"),
-  };
-  function showLoginForm() {
-    els.loginBox.style.display = "block";
-    els.pendingBox.style.display = "none";
-    overlay.style.display = "flex";
+
+  // --- Role "user": sembunyikan tombol Refresh Data (manual) & Pengaturan.
+  // Refresh OTOMATIS (saat halaman pertama dibuka & auto-refresh berkala)
+  // TIDAK ikut diblokir — itu bagian dari "memakai aplikasi", yang
+  // dibatasi cuma tombol tarik-data MANUAL di header.
+  if(refreshBtn) refreshBtn.style.display = "none";
+  if(settingsBtn) settingsBtn.style.display = "none";
+
+  // Jaga-jaga: openSettings() dipanggil dari banyak tempat di app.js
+  // (bukan cuma tombol Pengaturan) — mis. otomatis kebuka kalau token
+  // belum diisi. Timpa fungsinya juga supaya role "user" tetap tidak
+  // bisa membuka modal Pengaturan lewat jalur manapun.
+  if(typeof window.openSettings === "function" && !window.openSettings.__authWrapped){
+    const original = window.openSettings;
+    const wrapped = function(){
+      if(typeof showToast === "function"){
+        showToast("⚠️ Pengaturan hanya bisa diakses oleh admin.", "down");
+      } else {
+        alert("Pengaturan hanya bisa diakses oleh admin.");
+      }
+    };
+    wrapped.__authWrapped = true;
+    window.openSettings = wrapped;
   }
-  function showPending(status, expiresAt) {
-    els.loginBox.style.display = "none";
-    els.pendingBox.style.display = "block";
-    overlay.style.display = "flex";
-    if (status === "expired" || (expiresAt
-&& new Date(expiresAt) < new Date())) {
-      els.pendingText.textContent =
-        "Paket langganan kamu sudah
-berakhir. Silakan lakukan pembayaran ulang,
-lalu tunggu admin mengaktifkan kembali
-akunmu.";
-    } else {
-      els.pendingText.textContent =
-        "Akun berhasil dibuat. Akun kamu
-sedang menunggu approval admin setelah
-pembayaran diterima. Silakan cek kembali
-beberapa saat lagi.";
-    }
+}
+
+(function initAuth(){
+  // Kalau sudah pernah login (role tersimpan di localStorage), langsung
+  // terapkan pembatasan tampilannya begitu skrip ini jalan.
+  if(getAuthRole()){
+    applyRolePermissions();
   }
-  function hideOverlayAndEnterApp(profile)
-{
-    window.authProfile = profile;
-    overlay.style.display = "none";
-    document.body.classList.add("authapproved");
-    resolveAuthReady(profile);
-  }
-  async function fetchProfile(userId) {
-    const { data, error } = await
-sb.from("profiles").select("*").eq("id",
-userId).single();
-    if (error) return null;
-    return data;
-  }
-  async function runGate() {
-    const { data: { session } } = await
-sb.auth.getSession();
-    window.__currentAccessToken = session ?
-session.access_token : null;
-    if (!session) {
-      showLoginForm();
-      return;
-    }
-    const profile = await
-fetchProfile(session.user.id);
-    if (!profile || profile.status !==
-"approved" ||
-        (profile.expires_at && new
-Date(profile.expires_at) < new Date())) {
-      showPending(profile ? profile.status
-: "pending", profile ? profile.expires_at :
-null);
-      return;
-    }
-    hideOverlayAndEnterApp(profile);
-  }
-  els.loginBtn.addEventListener("click",
-async () => {
-    els.error.textContent = "";
-    const { error } = await
-sb.auth.signInWithPassword({
-      email: els.email.value.trim(),
-      password: els.password.value,
+
+  const form = document.getElementById("authForm");
+  const errorEl = document.getElementById("authError");
+  if(form){
+    form.addEventListener("submit", function(e){
+      e.preventDefault();
+      const uEl = document.getElementById("authUsername");
+      const pEl = document.getElementById("authPassword");
+      const ok = doLogin(uEl ? uEl.value : "", pEl ? pEl.value : "");
+      if(ok){
+        document.documentElement.setAttribute("data-authed", "1");
+        if(errorEl) errorEl.textContent = "";
+        applyRolePermissions();
+      } else {
+        if(errorEl) errorEl.textContent = "Username atau password salah.";
+        if(pEl){ pEl.value = ""; pEl.focus(); }
+      }
     });
-    if (error) { els.error.textContent =
-"Login gagal: " + error.message; return; }
-    runGate();
-  });
-  els.signupBtn.addEventListener("click",
-async () => {
-    els.error.textContent = "";
-    const { error } = await
-sb.auth.signUp({
-      email: els.email.value.trim(),
-      password: els.password.value,
-    });
-    if (error) { els.error.textContent =
-"Daftar gagal: " + error.message; return; }
-    els.error.style.color = "var(--up)";
-    els.error.textContent = "Akun dibuat!
-Silakan lakukan pembayaran, lalu tunggu
-admin approve akunmu.";
-    runGate();
-  });
-els.logoutFromPendingBtn.addEventListener("
-click", async () => {
-    await sb.auth.signOut();
-    location.reload();
-  });
-  // Tombol logout di header aplikasi
-(ditambahkan lewat index.html)
-document.addEventListener("DOMContentLoaded
-", () => {
-    const logoutBtn =
-document.getElementById("authLogoutBtn");
-    if (logoutBtn)
-logoutBtn.addEventListener("click", async
-() => {
-      await sb.auth.signOut();
-      location.reload();
-    });
-  });
-  sb.auth.onAuthStateChange((_event,
-session) => {
-    window.__currentAccessToken = session ?
-session.access_token : null;
-  });
-  runGate();
+  }
+
+  const logoutBtn = document.getElementById("logoutBtn");
+  if(logoutBtn){
+    logoutBtn.addEventListener("click", doLogout);
+  }
 })();
