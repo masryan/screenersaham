@@ -17,20 +17,6 @@
     } catch(e) {}
   })();
 </script>
-<!-- Cek status login LEBIH DULU (sebelum CSS/body dirender), supaya kalau
-     user sudah pernah login sebelumnya, overlay login tidak sempat
-     "berkedip" tampil sebentar lalu hilang lagi. Sama pola-nya dengan
-     script tema di atas. Lihat auth.js untuk logika login sesungguhnya. -->
-<script>
-  (function(){
-    try {
-      var savedRole = localStorage.getItem("ihsg_auth_role");
-      if (savedRole === "user" || savedRole === "admin") {
-        document.documentElement.setAttribute("data-authed", "1");
-      }
-    } catch(e) {}
-  })();
-</script>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Sora:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
 
@@ -42,26 +28,6 @@
 <link rel="stylesheet" href="mobile-responsive-fix.css">
 </head>
 <body>
-
-<!-- Overlay Login — lihat auth.js. Tampil default (lewat CSS), otomatis
-     disembunyikan kalau atribut data-authed="1" sudah ada di <html>
-     (dicek oleh script FOUC di <head> untuk yang sudah pernah login). -->
-<div class="auth-overlay" id="authOverlay">
-  <form class="auth-card" id="authForm" autocomplete="off">
-    <h2>🔐 Masuk ke IHSG Screener Pro</h2>
-    <p class="auth-sub">Akses dibatasi — silakan login untuk melanjutkan.</p>
-    <div class="field">
-      <label for="authUsername">Username</label>
-      <input type="text" id="authUsername" name="username" autocomplete="username" required autofocus>
-    </div>
-    <div class="field">
-      <label for="authPassword">Password</label>
-      <input type="password" id="authPassword" name="password" autocomplete="current-password" required>
-    </div>
-    <div class="auth-error" id="authError"></div>
-    <button type="submit" class="btn btn-primary">Masuk</button>
-  </form>
-</div>
 
 <div class="header">
   <div class="header-row">
@@ -87,13 +53,9 @@
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" aria-hidden="true" focusable="false"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0114.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0020.49 15"/></svg>
         Refresh Data
       </button>
-      <button class="btn btn-outline" id="settingsBtn" onclick="openSettings()">
+      <button class="btn btn-outline" onclick="openSettings()">
         <span aria-hidden="true">⚙️</span> Pengaturan
       </button>
-      <div class="user-chip" id="userChip" style="display:none;">
-        <span>Login: <b id="userChipName">-</b></span>
-        <button type="button" id="logoutBtn" title="Keluar dari aplikasi">Keluar</button>
-      </div>
     </div>
   </div>
   <div class="error-msg" id="errorMsg" style="display:none;"></div>
@@ -123,9 +85,11 @@
         </button>
         <div class="tab-group-items">
           <a class="tab-btn active" href="#/screener" data-tab="screener" title="Screener" aria-label="Screener"><span class="tab-icon" aria-hidden="true">📋</span><span class="tab-label">Screener</span></a>
+          <a class="tab-btn" href="#/rekap" data-tab="rekap" title="Rekap Saham" aria-label="Rekap Saham"><span class="tab-icon" aria-hidden="true">🧭</span><span class="tab-label">Rekap Saham</span></a>
           <a class="tab-btn" href="#/bagger" data-tab="bagger" title="Skor Bagger" aria-label="Skor Bagger"><span class="tab-icon" aria-hidden="true">🎯</span><span class="tab-label">Skor Bagger</span></a>
           <a class="tab-btn" href="#/smartpick" data-tab="smartpick" title="Smart Pick" aria-label="Smart Pick"><span class="tab-icon" aria-hidden="true">✨</span><span class="tab-label">Smart Pick</span></a>
           <a class="tab-btn" href="#/sektoral" data-tab="sektoral" title="Sektoral" aria-label="Sektoral"><span class="tab-icon" aria-hidden="true">🏢</span><span class="tab-label">Sektoral</span></a>
+          <a class="tab-btn" href="#/fundamental" data-tab="fundamental" title="Fundamental Screener" aria-label="Fundamental Screener"><span class="tab-icon" aria-hidden="true">💰</span><span class="tab-label">Fundamental Screener</span></a>
         </div>
       </div>
       <div class="tab-group" data-group="tracking">
@@ -334,6 +298,29 @@
     </div>
 
     <div style="border-top:1px solid var(--border); padding-top:14px; margin-bottom:8px;">
+      <h3 style="font-size:14px; margin:0 0 4px;">💰 Fundamental Screener (IDX Edge PRO / arjum.com)</h3>
+      <div style="font-size:11.5px; color:var(--muted); margin-bottom:10px; line-height:1.5;">
+        Sumber data untuk tab "💰 Fundamental Screener" (Laporan Keuangan, Seasonality, Transaksi Insider) —
+        API pihak ketiga <b>IDX Edge PRO</b> di <code>stock.arjum.com</code>, BUKAN produk Anthropic/Supabase.
+        Daftar gratis di <a href="https://stock.arjum.com" target="_blank" rel="noopener" style="color:var(--teal);">stock.arjum.com</a>
+        (kuota 1000 request/hari). Dipanggil langsung dari browser pakai API key milik Anda sendiri.
+      </div>
+    </div>
+    <div class="field">
+      <label>Arjum API Key</label>
+      <input id="setArjumApiKey" type="password" placeholder="sk_live_...">
+    </div>
+    <div class="field">
+      <label>Proxy URL (opsional — isi kalau permintaan langsung gagal karena CORS)</label>
+      <input id="setArjumProxyUrl" type="text" placeholder="https://xxxx.supabase.co/functions/v1/arjum-proxy">
+    </div>
+    <div style="margin-bottom:16px; font-size: 11.5px; color: var(--gold); background: color-mix(in srgb, var(--gold) 14%, transparent); padding: 10px; border-radius: 8px; border: 1px solid color-mix(in srgb, var(--gold) 38%, transparent);">
+      ⚠️ API key disimpan HANYA di Local Storage browser ini. Skema response API ini baru diverifikasi dari
+      contoh terbatas (belum dokumentasi lengkap resmi) — kalau ada field yang tidak muncul rapi, itu karena
+      belum semua bentuk response tercakup, bukan bug tampilan.
+    </div>
+
+    <div style="border-top:1px solid var(--border); padding-top:14px; margin-bottom:8px;">
       <h3 style="font-size:14px; margin:0 0 4px;">🔔 Notifikasi Telegram (Rules Kustom)</h3>
       <div style="font-size:11.5px; color:var(--muted); margin-bottom:10px; line-height:1.5;">
         Kirim notifikasi Telegram otomatis kalau ada saham baru yang lolos preset Rules Kustom pilihanmu —
@@ -479,6 +466,5 @@
 <script src="config.js"></script>
 <script src="app.js"></script>
 <script src="quant-hub.js"></script>
-<script src="auth.js"></script>
 </body>
 </html>

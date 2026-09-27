@@ -19,15 +19,16 @@
    - Bandarmology: ARA Candidate & Swing Big Cap (deteksi saham
                   berpotensi ARA dari perilaku close/off/asing/volume).
    - Broker Stalker: 2 mode — Lacak Broker (satu broker → semua saham,
-                  agregat dari tabel broker_summary Supabase) & Lacak
-                  Saham (satu saham → broker aktifnya).
+                  agregat dari tabel broker_activity Supabase, dipindah dari
+                  broker_summary) & Lacak Saham (satu saham → broker
+                  aktifnya).
    - Favorit P&L: watchlist + harga entry tersimpan (localStorage) +
                   P/L unrealized + status FAIR/UV/DANGER.
 
    Desain integrasi: file ini SENGAJA tidak menyentuh render() app.js.
    Halaman punya container sendiri (#qhPage) di luar #content, jadi
    tidak ikut terhapus tiap app.js menggambar ulang layar. Data dibaca
-   langsung dari state.stocks (global app.js) & tabel broker_summary.
+   langsung dari state.stocks (global app.js) & tabel broker_activity.
    Formula Ultimate Score adalah formula transparan milik sendiri —
    BUKAN tiruan formula ihsgscreener (yang tidak dipublikasikan).
    ================================================================ */
@@ -432,11 +433,18 @@ function qhSwingBigCap(stocks){
   }).filter(Boolean).sort((a,b)=>b.score-a.score).slice(0,10);
 }
 
-/* ───────────── BROKER STALKER (dari tabel broker_summary) ───────────── */
+/* ───────────── BROKER STALKER (dari tabel broker_activity, dipindah dari
+   broker_summary — tabel/RPC lama tidak diubah/dihapus). Skemanya sama
+   (stock_code, trade_date, side, broker_code, lot, value_idr, investor_type),
+   jadi query di bawah cuma ganti nama tabel. KETERBATASAN baru: broker_activity
+   cuma terisi per-broker yang sudah ditarik lewat "Lacak Broker" (bukan lagi
+   top-5 otomatis per-saham/hari seperti broker_summary dulu) — kalau hasil
+   agregat tampak tipis untuk suatu saham, tarik lebih banyak kode broker
+   dulu di tab utama. ───────────── */
 async function qhFetchLatestDate(){
   const c = qhSupa(); if(!c) throw new Error("Koneksi Supabase belum diatur.");
-  const res = await fetch(c.url+"/broker_summary?select=trade_date&order=trade_date.desc&limit=1", {headers:c.headers});
-  if(!res.ok) throw new Error("Gagal baca broker_summary: HTTP "+res.status);
+  const res = await fetch(c.url+"/broker_activity?select=trade_date&order=trade_date.desc&limit=1", {headers:c.headers});
+  if(!res.ok) throw new Error("Gagal baca broker_activity: HTTP "+res.status);
   const rows = await res.json();
   return rows && rows[0] ? rows[0].trade_date : null;
 }
@@ -450,8 +458,8 @@ async function qhFetchBrokerRows(days){
   while(true){
     const qs = new URLSearchParams({select:"stock_code,trade_date,side,broker_code,value_idr",
       trade_date:"gte."+from, order:"trade_date.asc", limit:String(page), offset:String(offset)});
-    const res = await fetch(c.url+"/broker_summary?"+qs, {headers:c.headers});
-    if(!res.ok) throw new Error("Gagal baca broker_summary: HTTP "+res.status);
+    const res = await fetch(c.url+"/broker_activity?"+qs, {headers:c.headers});
+    if(!res.ok) throw new Error("Gagal baca broker_activity: HTTP "+res.status);
     const rows = await res.json();
     all = all.concat(rows);
     if(rows.length < page || all.length >= 60000) break;
@@ -504,13 +512,13 @@ async function qhLoadBroker(){
   try{
     const {latest, rows} = await qhFetchBrokerRows(days);
     QH.bdRaw=rows; QH.bdLatestDate=latest;
-    if(!rows.length) QH.bdError="Tidak ada baris broker_summary di rentang ini (cek tanggal terakhir sync).";
+    if(!rows.length) QH.bdError="Tidak ada baris broker_activity di rentang ini (tarik dulu kode broker lewat Lacak Broker di tab utama).";
   }catch(e){ QH.bdError=e.message; QH.bdRaw=null; }
   QH.bdLoading=false; QH.qhRenderSafe();
 }
 
 /* ───────────── BPJS — Beli Pagi, Jual Sore (tabel sesi_snapshots) ─────────────
-   Beda dengan broker_summary/flows (EOD, 1x/hari), tabel ini diisi INTRADAY
+   Beda dengan broker_activity/flows (EOD, 1x/hari), tabel ini diisi INTRADAY
    2x/hari oleh script snapshot-sesi.mjs (mode "pagi" ~09:05 WIB & "sore"
    ~15:45 WIB) — lihat 08_sesi_snapshots.sql. Dibaca langsung lewat qhSupa()
    (fallback yang sama dipakai qhFetchBrokerRows), TIDAK lewat state.stocks. */
@@ -852,9 +860,9 @@ QH.renderBandar = function(stocks){
 QH.renderBroker = function(stocks){
   const periods=[["today","Today"],["1w","1W"],["1m","1M"],["3m","3M"]];
   let body="";
-  if(QH.bdLoading) body='<div class="qh-loading">⏳ Menarik broker_summary dari Supabase (rentang '+QH.bdRangeDays+' hari bursa)…</div>';
+  if(QH.bdLoading) body='<div class="qh-loading">⏳ Menarik broker_activity dari Supabase (rentang '+QH.bdRangeDays+' hari bursa)…</div>';
   else if(QH.bdError) body='<div class="qh-error">'+qhEsc(QH.bdError)+'</div>';
-  else if(!QH.bdRaw) body='<div class="qh-loading">Klik "Lacak" untuk menarik data broker_summary.</div>';
+  else if(!QH.bdRaw) body='<div class="qh-loading">Klik "Lacak" untuk menarik data broker_activity.</div>';
   else if(QH.bdTab==="broker") body=QH.renderBrokerView();
   else body=QH.renderStockView();
 
@@ -886,7 +894,7 @@ QH.renderBroker = function(stocks){
         <div class="field"><label>&nbsp;</label><button class="btn btn-primary" onclick="qhRunBroker()">◈ LACAK SAHAM</button></div>
       </div>
     `}
-    <div class="qh-table-note">Sumber: tabel broker_summary Supabase (top-5 buy/sell per hari hasil tarikan Stockbit). Data terakhir: <b>${qhEsc(QH.bdLatestDate||"-")}</b>. Top-5 saja = angka agregat lebih kecil dari total pasar.</div>
+    <div class="qh-table-note">Sumber: tabel broker_activity Supabase (semua transaksi broker yang sudah ditarik lewat Lacak Broker). Data terakhir: <b>${qhEsc(QH.bdLatestDate||"-")}</b>. Hanya mencakup broker yang sudah ditarik — angka agregat bisa lebih kecil dari total transaksi saham sebenarnya kalau belum semua broker aktif ditarik.</div>
   </div>
   ${body}`;
 };
@@ -1166,7 +1174,7 @@ function qhiNote(html, tone){ return `<div class="qh-info-note qhi-note-${tone||
 QH.renderInfo = function(){
   return `
   <div class="qhi-wrap">
-  ${qhiNote(`Semua formula di bawah ini <b>terbuka &amp; bisa diaudit</b> — bisa dibaca langsung di kode sumber <code>quant-hub.js</code>. Semuanya dihitung dari data yang sudah ada di database Anda sendiri (fundamental/teknikal via Screener, broker_summary, sesi_snapshots) — <b>bukan</b> API/formula rahasia pihak ketiga, dan <b>bukan</b> saran investasi.`, "info")}
+  ${qhiNote(`Semua formula di bawah ini <b>terbuka &amp; bisa diaudit</b> — bisa dibaca langsung di kode sumber <code>quant-hub.js</code>. Semuanya dihitung dari data yang sudah ada di database Anda sendiri (fundamental/teknikal via Screener, broker_activity, sesi_snapshots) — <b>bukan</b> API/formula rahasia pihak ketiga, dan <b>bukan</b> saran investasi.`, "info")}
 
   ${qhiCard("◧", "Ultimate Score — Dashboard", "g", `
     <p>Skor 0–100 gabungan tiga komponen, dihitung ulang tiap kali data live berubah (fungsi <code>qhUltimateScore</code>):</p>
@@ -1193,11 +1201,11 @@ QH.renderInfo = function(){
   `)}
 
   ${qhiCard("◉", "Broker Stalker — Lacak Broker & Lacak Saham", "g", `
-    <p>Sumbernya sama persis dengan tabel yang diisi fitur Broker Summary di tab utama: <code>broker_summary</code> (top-5 broker beli/jual per saham per hari). Bedanya, versi Quant Hub menarik &amp; mengagregasi langsung dari Supabase untuk rentang tanggal yang dipilih (Today ≈1 hari, 1W ≈5 hari, 1M ≈22 hari, 3M ≈66 hari bursa).</p>
+    <p>Sumbernya sama dengan tabel <code>broker_activity</code> yang dipakai fitur Broker Stalker &amp; Target Bandar di tab utama (dipindah dari <code>broker_summary</code>) — semua transaksi broker yang sudah ditarik lewat Lacak Broker, tidak dibatasi top-5/hari. Versi Quant Hub menarik &amp; mengagregasi langsung dari Supabase untuk rentang tanggal yang dipilih (Today ≈1 hari, 1W ≈5 hari, 1M ≈22 hari, 3M ≈66 hari bursa).</p>
     ${qhiKv("Mode Lacak Broker", "Jumlah semua baris buy/sell broker terpilih per saham dalam periode → <b>Net</b> = Total Buy − Total Sell, <b>Share</b> = Net ÷ (Buy+Sell) × 100%.")}
     ${qhiKv("Status ACC / DIS / NET", "<b>ACC</b> (akumulasi) jika Net &gt; 0 dan nilai Buy ≥ 55% dari total transaksi broker itu di saham tsb. <b>DIS</b> (distribusi) jika Net &lt; 0 dan nilai Sell ≥ 55%. Selain itu <b>NET</b> (campuran/netral).")}
     ${qhiKv("Mode Lacak Saham", "Kebalikannya — jumlah buy/sell tiap broker yang aktif di satu saham terpilih, diurutkan dari Net tertinggi, plus jumlah hari broker itu muncul di data.")}
-    ${qhiNote(`Data top-5 saja per hari (bukan seluruh transaksi pasar) — jadi angka agregat di sini lebih kecil dari total transaksi saham yang sebenarnya. Seakurat &amp; serutin data Broker Summary diisi.`, "info")}
+    ${qhiNote(`Karena broker_activity terisi per-broker (bukan otomatis top-5/hari per saham seperti broker_summary dulu), angka agregat di sini hanya selengkap kode broker yang sudah pernah ditarik lewat Lacak Broker di tab utama — makin banyak broker ditarik, makin lengkap.`, "info")}
   `)}
 
   ${qhiCard("🌅", "BPJS — Beli Pagi, Jual Sore", "g", `

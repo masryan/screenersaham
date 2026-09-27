@@ -58,11 +58,32 @@
   --glass-overlay: rgba(255, 255, 255, 0.92);
   --freeze-bg: rgba(248, 250, 252, 0.97);
   --modal-grad: linear-gradient(180deg, #ffffff 0%, #f3f6fb 100%);
+  /* Gradasi biru tipis khusus modal Detail Emiten (.detail-modal) — sengaja
+     dipisah dari --modal-grad supaya modal lain (form, konfirmasi, dll)
+     tidak ikut berubah warnanya. */
+  --detail-modal-grad: linear-gradient(165deg, #eff6ff 0%, #dbeafe 55%, #eef2ff 100%);
   --card-wash-strong: linear-gradient(180deg, rgba(255,255,255,0.75) 0%, rgba(241,245,249,0.9) 100%);
   --card-wash-soft: linear-gradient(180deg, rgba(255,255,255,0.65) 0%, rgba(241,245,249,0.85) 100%);
   --scrollbar-track: rgba(15,23,42,0.05);
   --scrollbar-thumb: rgba(15,23,42,0.22);
   --scrollbar-thumb-hover: rgba(15,23,42,0.35);
+
+  /* Palet gradasi tipis untuk kartu di modal Detail Emiten — tiap kartu
+     kebagian satu warna dari sini secara bergilir (lihat .detail-item
+     nth-of-type di bawah), supaya grid metrik yang panjang tidak
+     monoton satu warna tapi tetap ringan/tidak ramai (alpha rendah). */
+  --card-c1: rgba(37, 99, 235, 0.07);   /* biru */
+  --card-c2: rgba(124, 58, 237, 0.07);  /* ungu */
+  --card-c3: rgba(219, 39, 119, 0.06);  /* pink */
+  --card-c4: rgba(217, 119, 6, 0.08);   /* emas */
+  --card-c5: rgba(5, 150, 105, 0.07);   /* hijau */
+  --card-c6: rgba(8, 145, 178, 0.08);   /* teal */
+  --card-b1: rgba(37, 99, 235, 0.18);
+  --card-b2: rgba(124, 58, 237, 0.18);
+  --card-b3: rgba(219, 39, 119, 0.16);
+  --card-b4: rgba(217, 119, 6, 0.20);
+  --card-b5: rgba(5, 150, 105, 0.18);
+  --card-b6: rgba(8, 145, 178, 0.20);
 }
 
 /* ==========================================
@@ -97,11 +118,27 @@
   --glass-overlay: rgba(15, 23, 42, 0.95);
   --freeze-bg: rgba(15, 23, 42, 0.95);
   --modal-grad: linear-gradient(180deg, #1e293b 0%, #0f172a 100%);
+  --detail-modal-grad: linear-gradient(165deg, #1e2a4d 0%, #172038 55%, #0f172a 100%);
   --card-wash-strong: linear-gradient(180deg, rgba(30,41,59,0.7) 0%, rgba(15,23,42,0.8) 100%);
   --card-wash-soft: linear-gradient(180deg, rgba(30,41,59,0.5) 0%, rgba(15,23,42,0.7) 100%);
   --scrollbar-track: rgba(0,0,0,0.1);
   --scrollbar-thumb: rgba(255,255,255,0.2);
   --scrollbar-thumb-hover: rgba(255,255,255,0.3);
+
+  /* Sama seperti versi terang, tapi alpha dinaikkan sedikit supaya warna
+     tetap kelihatan di atas latar gelap tanpa jadi mencolok. */
+  --card-c1: rgba(96, 165, 250, 0.14);
+  --card-c2: rgba(167, 139, 250, 0.14);
+  --card-c3: rgba(244, 114, 182, 0.12);
+  --card-c4: rgba(251, 191, 36, 0.14);
+  --card-c5: rgba(52, 211, 153, 0.14);
+  --card-c6: rgba(34, 211, 238, 0.14);
+  --card-b1: rgba(96, 165, 250, 0.30);
+  --card-b2: rgba(167, 139, 250, 0.30);
+  --card-b3: rgba(244, 114, 182, 0.26);
+  --card-b4: rgba(251, 191, 36, 0.30);
+  --card-b5: rgba(52, 211, 153, 0.30);
+  --card-b6: rgba(34, 211, 238, 0.30);
 }
 /* Transisi halus saat toggle, tanpa bikin animasi berlebihan di elemen lain. */
 body, .header, .sidebar, .card, .modal { transition: background-color .2s ease, border-color .2s ease, color .2s ease; }
@@ -464,6 +501,28 @@ body, .header, .sidebar, .card, .modal { transition: background-color .2s ease, 
   .select-item input { margin-top: 2px; cursor: pointer; accent-color: var(--gold); flex-shrink: 0; width: 14px; height: 14px;}
 
   .count-badge{color:var(--text); font-weight: 500; font-size:12px; background: rgba(0,0,0,0.2); padding: 6px 12px; border-radius: 20px; border: 1px solid var(--border);}
+
+  /* ARJUM FUNDAMENTAL SCREENER — data tree (laporan keuangan & summary
+     seasonality). Dulu dirender pakai <table> dengan label nowrap, yang
+     bikin nama akun panjang mendorong kolom nilai keluar panel sampai
+     kepotong. Sekarang pakai flex row yang boleh wrap + nested item jadi
+     <details> selebar baris sendiri, jadi tidak pernah melebihi lebar
+     panel apa pun panjang labelnya. */
+  .arjum-tree{ display:flex; flex-direction:column; width:100%; }
+  .arjum-tree-row{ display:flex; align-items:baseline; gap:14px; padding:5px 0; border-bottom:1px solid var(--border); }
+  .arjum-tree-row:last-child{ border-bottom:0; }
+  .arjum-tree-label{ flex:1 1 auto; min-width:0; font-size:11.5px; color:var(--muted); line-height:1.45; overflow-wrap:anywhere; }
+  .arjum-tree-value{ flex:0 0 auto; max-width:52%; text-align:right; font-size:11.5px; overflow-wrap:anywhere; }
+  .arjum-tree-empty{ color:var(--muted); }
+  .arjum-tree-details{ width:100%; padding:5px 0; border-bottom:1px solid var(--border); }
+  .arjum-tree-details:last-child{ border-bottom:0; }
+  .arjum-tree-details[open]{ padding-bottom:8px; }
+  .arjum-tree-summary{ cursor:pointer; color:var(--teal); font-size:11.5px; line-height:1.45; list-style:none; }
+  .arjum-tree-summary::-webkit-details-marker{ display:none; }
+  .arjum-tree-summary::before{ content:"▸ "; display:inline-block; width:12px; }
+  .arjum-tree-details[open] > .arjum-tree-summary::before{ content:"▾ "; }
+  .arjum-tree-count{ color:var(--muted); font-weight:400; }
+  .arjum-tree-nested{ margin:6px 0 0 12px; padding-left:12px; border-left:2px solid var(--border); }
 
   /* MODERN TABLE */
   table{width:100%;border-collapse:separate; border-spacing: 0; font-size:12.5px;}
@@ -845,7 +904,7 @@ body, .header, .sidebar, .card, .modal { transition: background-color .2s ease, 
   .status-win{color:#34d399;} .status-loss{color:#f87171;} .status-open{color:#fbbf24;}
 
   /* DETAIL MODAL */
-  .detail-modal{max-width:860px;}
+  .detail-modal{max-width:1040px; max-height:94vh; background: var(--detail-modal-grad);}
   .detail-head{
     display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;
     background: var(--card-wash-strong);
@@ -863,11 +922,34 @@ body, .header, .sidebar, .card, .modal { transition: background-color .2s ease, 
   .detail-tab-btn.active{background: rgba(5,150,105,0.15); color:var(--up); box-shadow: inset 0 0 0 1px rgba(5,150,105,0.35);}
   .detail-tab-btn:hover:not(.active){color:var(--goldDim); background: rgba(217, 119, 6, 0.16);}
   
-  .detail-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:12px;}
-  .detail-item{background: rgba(0,0,0,0.2); border:1px solid var(--border);border-radius:10px;padding:12px 14px; box-shadow: inset 0 2px 4px rgba(0,0,0,0.1);}
-  .detail-item .lbl{color:var(--muted);font-size:10.5px;text-transform:uppercase;letter-spacing:.04em;margin-bottom:6px; font-weight: 600;}
-  .detail-item .val{font-family:'JetBrains Mono',monospace;font-size:15px;font-weight:700; color: var(--text);}
-  .detail-item .val.text{font-family:'Sora',sans-serif;font-size:13.5px;font-weight:600;}
+  .detail-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:14px;}
+  /* Kartu metrik: dasarnya tetap netral (card-wash) supaya teks angka
+     tetap kontras, lalu ditumpuk gradasi warna tipis di atasnya yang
+     bergilir per kartu (6 warna, berulang tiap 6 kartu) — "warna-warni"
+     tapi tetap halus karena alpha rendah (lihat --card-c1..6 di :root). */
+  .detail-item{
+    background-color: var(--card-wash-soft);
+    background-image: linear-gradient(135deg, var(--card-c1) 0%, transparent 75%);
+    border:1px solid var(--border);
+    border-radius:12px;
+    padding:13px 15px;
+    box-shadow: var(--shadow-sm);
+    transition: transform .15s ease, box-shadow .15s ease, border-color .15s ease;
+  }
+  .detail-item:nth-of-type(6n+2){background-image: linear-gradient(135deg, var(--card-c2) 0%, transparent 75%);}
+  .detail-item:nth-of-type(6n+3){background-image: linear-gradient(135deg, var(--card-c3) 0%, transparent 75%);}
+  .detail-item:nth-of-type(6n+4){background-image: linear-gradient(135deg, var(--card-c4) 0%, transparent 75%);}
+  .detail-item:nth-of-type(6n+5){background-image: linear-gradient(135deg, var(--card-c5) 0%, transparent 75%);}
+  .detail-item:nth-of-type(6n+6){background-image: linear-gradient(135deg, var(--card-c6) 0%, transparent 75%);}
+  .detail-item:hover{transform: translateY(-1px); box-shadow: var(--shadow-md); border-color: var(--card-b1);}
+  .detail-item:nth-of-type(6n+2):hover{border-color: var(--card-b2);}
+  .detail-item:nth-of-type(6n+3):hover{border-color: var(--card-b3);}
+  .detail-item:nth-of-type(6n+4):hover{border-color: var(--card-b4);}
+  .detail-item:nth-of-type(6n+5):hover{border-color: var(--card-b5);}
+  .detail-item:nth-of-type(6n+6):hover{border-color: var(--card-b6);}
+  .detail-item .lbl{color:var(--muted);font-size:10.5px;text-transform:uppercase;letter-spacing:.045em;margin-bottom:7px; font-weight: 600; line-height:1.3;}
+  .detail-item .val{font-family:'JetBrains Mono',monospace;font-size:15px;font-weight:700; color: var(--text); line-height:1.35; word-break:break-word;}
+  .detail-item .val.text{font-family:'Sora',sans-serif;font-size:13.5px;font-weight:600; line-height:1.4;}
   
   .detail-narrative{
     background: var(--card-wash-soft);
@@ -875,7 +957,7 @@ body, .header, .sidebar, .card, .modal { transition: background-color .2s ease, 
     padding:16px 20px;margin-bottom:16px;font-size:13.5px;line-height:1.7;color:var(--text);
     box-shadow: var(--shadow-sm);
   }
-  .detail-subtitle{color:var(--gold);font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;margin:24px 0 12px; display: flex; align-items: center; gap: 8px;}
+  .detail-subtitle{color:var(--gold);font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;margin:26px 0 13px; display: flex; align-items: center; gap: 8px; line-height:1.4;}
   .detail-subtitle::after { content: ""; flex: 1; height: 1px; background: linear-gradient(90deg, rgba(245,158,11,0.3), transparent); }
   .detail-subtitle:first-child{margin-top:0;}
   
@@ -981,7 +1063,7 @@ body, .header, .sidebar, .card, .modal { transition: background-color .2s ease, 
        jadi baris ini DIHAPUS — jangan ditambahkan lagi. */
     /* Modal detail: grid 1 kolom pada layar sangat sempit sudah diatur di
        bawah; pastikan isinya tidak melebihi lebar */
-    .detail-item{min-width:0;}
+    .detail-item{min-width:0;padding:11px 13px;}
     .sp-toolbar{flex-wrap:wrap;}
     .sp-toolbar .bs-input{flex:1 1 110px;min-width:0;width:auto;}
     /* Checkbox baris "Auto-refresh" + select interval tetap sejajar rapi */
@@ -1041,12 +1123,12 @@ body, .header, .sidebar, .card, .modal { transition: background-color .2s ease, 
       padding:18px 16px calc(18px + env(safe-area-inset-bottom));
       max-height:88vh;
     }
-    .detail-modal{max-width:100%;}
+    .detail-modal{max-width:100%; max-height:94vh; background: var(--detail-modal-grad);}
     .detail-head{padding:14px;gap:10px;}
     .detail-head-price{font-size:22px;}
     .detail-tabs{gap:4px;overflow-x:auto;padding-bottom:6px;}
     .detail-tab-btn{padding:7px 12px;font-size:12px;white-space:nowrap;}
-    .detail-grid{grid-template-columns:repeat(2,1fr);gap:8px;}
+    .detail-grid{grid-template-columns:repeat(2,1fr);gap:10px;}
     .detail-item{padding:10px 12px;}
     .detail-item .val{font-size:13.5px;}
     .detail-narrative{padding:12px 14px;font-size:12.5px;}

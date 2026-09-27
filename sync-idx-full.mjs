@@ -1375,6 +1375,10 @@ try {
         .map((r) => ({
           ticker: pickIdx(r, IDX_FIELDS.code),
           date: dateStr,
+          src: "idx", // wajib eksplisit: upsert merge-duplicates cuma menimpa
+                      // kolom yang dikirim -- tanpa ini, baris yang paginya
+                      // sempat diisi Stockbit (src='stockbit') tetap berlabel
+                      // 'stockbit' walau datanya sudah ditimpa resmi IDX sore ini
           open_price: num(pickIdx(r, IDX_FIELDS.open)),
           high: num(pickIdx(r, IDX_FIELDS.high)),
           low: num(pickIdx(r, IDX_FIELDS.low)),
