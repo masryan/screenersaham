@@ -2601,7 +2601,27 @@ function renderSettingsTab(){
   `;
 }
 
+// ------------------------------------------------------------------
+// PENGAMAN TERHADAP "KERESET": field Bot Token / Chat ID / centang Telegram
+// baru terisi SESUDAH beberapa await (sync token Stockbit + fetch
+// telegram_settings) di initSettingsTabUI(). Kalau user (atau render ulang
+// tab) menekan Simpan / Uji Kirim sebelum itu selesai, field masih kosong
+// -> dulu nilai kosong itu ikut ditulis ke database & menimpa token/chat id
+// asli. state.telegramFieldsPopulated = true HANYA setelah field benar-benar
+// diisi dari state; selama false, nilai state dipertahankan (DOM diabaikan).
+// ------------------------------------------------------------------
+function tgFieldFromDom(id, current){
+  const el = document.getElementById(id);
+  if(!el || !state.telegramFieldsPopulated) return current;
+  return (el.value || "").trim();
+}
+function tgCheckFromDom(id, current){
+  const el = document.getElementById(id);
+  if(!el || !state.telegramFieldsPopulated) return current;
+  return !!el.checked;
+}
 async function initSettingsTabUI() {
+  state.telegramFieldsPopulated = false; // form Telegram di bawah belum terisi
   let urlDisp = SUPABASE_URL;
   if(urlDisp.endsWith("/rest/v1")) urlDisp = urlDisp.replace("/rest/v1", "");
   document.getElementById("setSupaUrl").value = urlDisp;
@@ -2672,6 +2692,7 @@ async function initSettingsTabUI() {
   if(tgEnabledEl) tgEnabledEl.checked = !!state.telegramEnabled;
   const tgHoursEl = document.getElementById("setTelegramOnlyMarketHours");
   if(tgHoursEl) tgHoursEl.checked = state.telegramOnlyMarketHours !== false;
+  if(tgTokenEl) state.telegramFieldsPopulated = true; // form sudah terisi -> aman dibaca saat Simpan
   renderTelegramPresetChecklist();
   const tgLastRunEl = document.getElementById("telegramLastRunStatus");
   if(tgLastRunEl){
@@ -2765,10 +2786,10 @@ function saveSettings() {
 
   state.telegramFunctionUrl = (document.getElementById("setTelegramFunctionUrl")?.value || "").trim();
   localStorage.setItem(LS_TELEGRAM_FUNCTION_URL, state.telegramFunctionUrl);
-  state.telegramBotToken = (document.getElementById("setTelegramBotToken")?.value || "").trim();
-  state.telegramChatId = (document.getElementById("setTelegramChatId")?.value || "").trim();
-  state.telegramEnabled = !!document.getElementById("setTelegramEnabled")?.checked;
-  state.telegramOnlyMarketHours = !!document.getElementById("setTelegramOnlyMarketHours")?.checked;
+  state.telegramBotToken = tgFieldFromDom("setTelegramBotToken", state.telegramBotToken);
+  state.telegramChatId = tgFieldFromDom("setTelegramChatId", state.telegramChatId);
+  state.telegramEnabled = tgCheckFromDom("setTelegramEnabled", state.telegramEnabled);
+  state.telegramOnlyMarketHours = tgCheckFromDom("setTelegramOnlyMarketHours", state.telegramOnlyMarketHours);
   saveTelegramSettingsToSupabase();
   // Token Stockbit TIDAK ikut di telegram_settings — tabelnya sendiri
   // (stockbit_session) yang juga dipakai extension. Lihat catatan di sana.
@@ -2799,6 +2820,7 @@ async function loadTelegramSettingsFromSupabase(){
     const rows = await res.json();
     const row = Array.isArray(rows) ? rows[0] : null;
     if(!row) return;
+    state.telegramSettingsLoaded = true; // baris DB berhasil dibaca -> state boleh dianggap cerminan DB
     state.telegramBotToken = row.bot_token || "";
     state.telegramChatId = row.chat_id || "";
     state.telegramEnabled = !!row.enabled;
@@ -2816,6 +2838,19 @@ async function loadTelegramSettingsFromSupabase(){
     if(row.gemini_model){
       state.geminiModel = row.gemini_model;
       try{ localStorage.setItem(LS_GEMINI_MODEL, state.geminiModel); }catch(e){}
+    }
+    // API key & Proxy URL Arjum (IDX Edge PRO) -- sama seperti Gemini di atas:
+    // ikut disimpan di telegram_settings (kolom arjum_api_key/arjum_proxy_url)
+    // supaya tidak hilang saat ganti device/browser. Key: kalau kolom masih
+    // kosong (null/""), pakai nilai localStorage lama. Proxy URL boleh sengaja
+    // dikosongkan user, jadi string kosong dari DB tetap menimpa (non-null).
+    if(row.arjum_api_key){
+      state.arjumApiKey = row.arjum_api_key;
+      try{ localStorage.setItem(LS_ARJUM_API_KEY, state.arjumApiKey); }catch(e){}
+    }
+    if(Object.prototype.hasOwnProperty.call(row, "arjum_proxy_url") && row.arjum_proxy_url !== null){
+      state.arjumProxyUrl = row.arjum_proxy_url;
+      try{ localStorage.setItem(LS_ARJUM_PROXY, state.arjumProxyUrl); }catch(e){}
     }
     // function_url disimpan di Supabase (kolom telegram_settings.function_url)
     // supaya tidak perlu diisi ulang tiap buka Pengaturan di device/browser lain.
@@ -2866,10 +2901,7 @@ async function loadTelegramSettingsFromSupabase(){
 async function saveTelegramSettingsToSupabase(){
   if(!SUPABASE_URL || !SUPABASE_KEY) return;
   try{
-    await supaFetch(`${SUPABASE_URL}/telegram_settings?id=eq.1`, {
-      method: "PATCH",
-      headers: { ...getSupaHeaders(), "Prefer": "return=minimal" },
-      body: JSON.stringify({
+    const tgBody = {
         bot_token: state.telegramBotToken,
         chat_id: state.telegramChatId,
         enabled: state.telegramEnabled,
@@ -2878,6 +2910,8 @@ async function saveTelegramSettingsToSupabase(){
         function_url: state.telegramFunctionUrl,
         gemini_api_key: state.geminiApiKey,
         gemini_model: state.geminiModel,
+        arjum_api_key: state.arjumApiKey,
+        arjum_proxy_url: state.arjumProxyUrl,
         // Field tambahan supaya ikut tersimpan di Supabase (lihat catatan
         // di loadTelegramSettingsFromSupabase() di atas) — tanpa ini,
         // 5 field berikut cuma hidup di localStorage dan hilang tiap
@@ -2890,7 +2924,21 @@ async function saveTelegramSettingsToSupabase(){
         stockbit_orderbook_ep: state.stockbitOrderbookEndpoint,
         stockbit_proxy_url: state.stockbitProxyUrl,
         updated_at: new Date().toISOString()
-      })
+      };
+    // Kalau isi tabel BELUM berhasil dibaca di sesi ini (fetch gagal / belum
+    // selesai), state cuma berisi default kosong -- jangan kirim nilai kosong/
+    // false/[] karena itu menimpa token, chat id, preset, dll. yang asli.
+    if(!state.telegramSettingsLoaded){
+      Object.keys(tgBody).forEach(k => {
+        if(k === "updated_at") return;
+        const v = tgBody[k];
+        if(v === "" || v == null || v === false || (Array.isArray(v) && !v.length)) delete tgBody[k];
+      });
+    }
+    await supaFetch(`${SUPABASE_URL}/telegram_settings?id=eq.1`, {
+      method: "PATCH",
+      headers: { ...getSupaHeaders(), "Prefer": "return=minimal" },
+      body: JSON.stringify(tgBody)
     });
   }catch(e){
     showError("Gagal menyimpan Pengaturan Notifikasi Telegram: " + e.message + " — pastikan sudah menjalankan sql/06_telegram_notifikasi.sql di Supabase.");
@@ -3010,8 +3058,8 @@ async function testTelegramNotification(){
   // Simpan dulu token/chat_id/preset yang sedang diketik supaya Edge
   // Function di server (yang membaca dari Supabase, bukan dari body
   // request ini) memakai nilai terbaru saat mengirim test.
-  state.telegramBotToken = (document.getElementById("setTelegramBotToken")?.value || "").trim();
-  state.telegramChatId = (document.getElementById("setTelegramChatId")?.value || "").trim();
+  state.telegramBotToken = tgFieldFromDom("setTelegramBotToken", state.telegramBotToken);
+  state.telegramChatId = tgFieldFromDom("setTelegramChatId", state.telegramChatId);
   state.telegramFunctionUrl = fnUrl;
   localStorage.setItem(LS_TELEGRAM_FUNCTION_URL, state.telegramFunctionUrl);
   await saveTelegramSettingsToSupabase();
@@ -3093,7 +3141,8 @@ const LS_GEMINI_API_KEY = "ihsg_gemini_api_key", LS_GEMINI_MODEL = "ihsg_gemini_
 // Fitur "💰 Laporan Keuangan & Seasonality" — sumber data tambahan API pihak
 // ketiga IDX Edge PRO (stock.arjum.com), BUKAN Anthropic/Supabase. Dipanggil
 // langsung dari browser pakai API key milik user sendiri (localStorage, pola
-// sama dengan Gemini/Stockbit). Base URL & auth dari contoh kode resmi
+// sama dengan Gemini/Stockbit; sekarang juga dicerminkan ke tabel
+// telegram_settings -- lihat loadTelegramSettingsFromSupabase()). Base URL & auth dari contoh kode resmi
 // produk (header X-API-Key, path /api/<endpoint>); bentuk response tiap
 // endpoint dikonfirmasi dari contoh nyata yang diberikan user, BUKAN
 // dokumentasi lengkap (halaman docs-nya SPA, tidak bisa di-scrape otomatis)
@@ -3789,7 +3838,7 @@ let state = {
   // chartSearch milik tab Chart & state.search milik tab Screener) supaya
   // pindah-pindah tab tidak saling menimpa nilai pencarian satu sama lain.
   cariTickerSearch: "",
-  chartRange: "all", chartSeries: { close:true, support:true, resistance:true, fib:true, bb:false, emaHL:false, ema89:false, ema921:false, sar:false, supertrend:false, pc:false, bandar:false, vol:false, stochrsi:false, rsi721:false, foreignflow:false, macd:false, netforeign:false },
+  chartRange: "all", chartSeries: { close:true, support:true, resistance:true, fib:true, tpsl:true, bb:false, emaHL:false, ema89:false, ema921:false, sar:false, supertrend:false, pc:false, bandar:false, vol:false, stochrsi:false, rsi721:false, foreignflow:false, macd:false, netforeign:false },
   // Overlay "Broker Accum" di chart -- lihat loadChartBrokerAccum() &
   // renderLwcChart(). `on` = toggle aktif/nonaktif, `codes` = input kode
   // broker (dipisah koma), `data` = hasil agregasi per broker per tanggal
@@ -3812,6 +3861,10 @@ let state = {
   // serta status minimize/fullscreen kotak chart. Lihat drawChartSVG() &
   // renderChart() untuk pemakaiannya.
   chartTimeframe: "daily", chartZoom: 1, chartMinimized: false, chartExpanded: false,
+  // chartPaneFocus: key panel chart (price/vol/macd/dst) yang sedang di-expand
+  // lewat ikon ⛶ di pojok kanan-atas panel -> layar penuh KHUSUS panel itu,
+  // panel lain dihapus dari chart & toolbar/kontrol disembunyikan.
+  chartPaneFocus: null,
   detailTicker: null, detailTab: "teknikal", detailNavList: null, // detailNavList = urutan ticker hasil screener saat modal dibuka (untuk tombol Sebelumnya/Berikutnya)
   // Modal "detail metrik Dashboard": dibuka saat kartu ringkasan (Total
   // Saham, Undervalued, dst) diklik. key = metrik, lihat DASH_METRIC_DEFS.
@@ -3853,6 +3906,8 @@ let state = {
   // Filter aktif di tab mandiri "🧭 Rekap Saham" (lihat renderRekapSaham())
   // -- id salah satu def dari rekapScreenerDefs(), atau "" untuk semua saham.
   rekapFilterId: "",
+  // Filter jumlah preset/screener yang lolos di tabel Rekap Saham: "" = semua, "none" = tidak lolos satupun, "N" = lolos minimal N.
+  rekapMinCount: "",
   // Harga IHSG live dari tabel market_index (diisi Edge Function
   // fetch-ihsg-index yang dijadwalkan cron -- lihat supabase/functions/
   // fetch-ihsg-index/). null kalau tabel belum dibuat/kosong/gagal fetch;
@@ -4259,7 +4314,9 @@ let state = {
   rekapTargetPct: Number(localStorage.getItem(LS_REKAP_TARGET_PCT)) || 10,
   rekapFinalizing: false, rekapMsg: "", rekapMsgError: false,
   rekapHistory: [], rekapHistoryLoading: false,
-  rekapHistFilterDefId: "", rekapHistFrom: "", rekapHistTo: ""
+  rekapHistFilterDefId: "", rekapHistFrom: "", rekapHistTo: "",
+  // Filter status target di tabel Riwayat per Saham: "" = semua, "yes" = sudah capai target, "no" = belum.
+  rekapHistTargetFilter: ""
 };
 
 function fmtNum(n){ if(n===null||n===undefined) return "-"; return new Intl.NumberFormat("id-ID").format(n); }
@@ -9999,7 +10056,7 @@ async function loadChart(ticker){
   state.chartTimeframe = "daily";
   state.chartZoom = 1;
   state.chartSeries = {
-    close:true, support:true, resistance:true, fib:false, bb:false,
+    close:true, support:true, resistance:true, fib:false, tpsl:true, bb:false,
     emaHL:true, ema89:true, ema921:false, sar:false, supertrend:false, pc:false,
     bandar:true, vol:true, stochrsi:true, rsi721:true, foreignflow:true, macd:true, netforeign:true
   };
@@ -12121,6 +12178,61 @@ function rekapScreenerDefs(){
   return defs;
 }
 
+// Teks formula/kriteria tiap preset DSI (diringkas dari presetPass()), dipakai
+// filter "nama preset / formula" di tab Rekap Saham. Kalau logika presetPass()
+// diubah, ubah juga teks di sini.
+function dsiFormulaText(key){
+  const bagger = state.baggerParams && state.baggerParams.strongCutoff;
+  const T = {
+    bagger: `Skor Bagger total ≥ ${bagger ?? "cutoff kandidat kuat"} (Fundamental + Momentum + Volume/Smart Money)`,
+    eri: "RSI7 58–70, RSI21 50–70, RSI7 > RSI21; Close > EMA21 High (maks 3% di atasnya) dan > EMA89; High, Low, Volume naik dari kemarin; Stoch K cross up D",
+    rsicross: "RSI7 58–75, RSI21 50–75, RSI7 > RSI21; Low < EMA21 Low, Close > EMA21 High, Close > Open; Close ≥ tengah High-Low; Turnover > 200 juta; Close > MA100",
+    golden: "MACD histogram kemarin ≤ 0 lalu hari ini > 0 (golden cross MACD); Stoch K cross up D",
+    ema921cross: state.ema921Mode === "all" ? "EMA9 > EMA21 sekarang (termasuk cross beberapa hari lalu)" : "EMA9 cross up EMA21 tepat di hari data terakhir (fresh cross)",
+    uptrend: "Close > MA21 > MA50 > MA100 > MA200 (susunan MA menaik rapi)",
+    breakout: "BB Squeeze Ya; rasio volume ≥ 1.5×; Close > EMA21 High; perubahan harga hari ini > 0",
+    pullback: "Trend harga Bullish; Close maks 3% di atas EMA21 Low; Close tidak di bawah Support −2%; Stoch K cross up D",
+    custom_bandar: "BPJS proxy volume: Open > MA21, MA50, MA100, MA200; rasio volume > 2×; Turnover ≥ Rp10 miliar; tone bandar naik atau uang gede masuk (akumulasi)",
+    asing_akumulasi: "Net asing 20 hari ≥ Rp50 miliar; hari net asing positif ≥ 12 dari 20; Turnover ≥ Rp5 miliar",
+    freq_spike: "Rasio frekuensi ≥ 1.5× rata-rata (atau flag freq_spike = Ya dari database)",
+    freq_up_vol_down: "Rasio frekuensi ≥ 1.3× dan rasio volume < 0.8× (transaksi lebih sering, lembar lebih sedikit); Turnover ≥ Rp1 miliar",
+    deepvalue: "PER 0–15; PBV 0–1.5; ROE ≥ 8; DER ≤ 2",
+    multibagger: "PER 0–20; ROE ≥ 12; DER ≤ 1.5; NPM ≥ 5",
+    growth: "ROE ≥ 15; NPM ≥ 10",
+    defensive: "ROE ≥ 8; DER ≤ 1.5; NPM ≥ 5",
+    smallcap: "ROE ≥ 8; PER 0–25; Market Cap < Rp1 triliun",
+  };
+  return T[key] || "";
+}
+
+// Peta id def -> teks formula/kriteria (untuk semua sumber di rekapScreenerDefs()).
+function rekapDefFormulaMap(){
+  const m = {};
+  DSI_PRESET_META.forEach(d => { m[`dsi_${d.key}`] = dsiFormulaText(d.key); });
+  (state.customPresets||[]).forEach(p => {
+    if(!Array.isArray(p.rules) || !p.rules.length) return;
+    m[`custom_${p.id}`] = p.rules.map(r => { try{ return ruleDescription(r); }catch(e){ return ""; } }).filter(Boolean).join("; ");
+  });
+  BSJP_PRESETS.forEach(p => { if(p.key !== "all") m[`bsjp_${p.key}`] = p.desc || ""; });
+  SMART_PICK_DEFS.forEach(d => {
+    m[`sp_${d.id}`] = [d.definisi, d.filter].filter(Boolean).join(" ").replace(/&gt;/g, ">").replace(/&lt;/g, "<").replace(/&amp;/g, "&");
+  });
+  return m;
+}
+
+// Cocokkan teks filter ke nama preset, sumber, dan formulanya. Beberapa kata dipisah
+// spasi dan SEMUA harus ada (mis. "rsi ema"); huruf besar/kecil tidak dibedakan.
+function rekapPresetMatch(query, label, source, formula){
+  const terms = String(query || "").toLowerCase().split(/\s+/).filter(Boolean);
+  if(!terms.length) return true;
+  const hay = `${label || ""} ${source || ""} ${formula || ""}`.toLowerCase();
+  return terms.every(t => hay.includes(t));
+}
+function rekapPresetFilterInputHtml(tableId, placeholder){
+  const v = getTableUI(tableId).presetFilter || "";
+  return `<input type="text" class="input" id="rekapPresetQ-${tableId}" placeholder="${escapeHtml(placeholder || "Filter nama preset / formula...")}" value="${escapeHtml(v)}" style="max-width:280px;" title="Cari berdasarkan nama preset, sumber, atau isi formula/kriterianya. Beberapa kata = semuanya harus cocok.">`;
+}
+
 // `defs` opsional -- kalau tidak diteruskan (dipanggil sendiri di luar
 // enrichOne/enriched, mis. dari tempat lain), dibangun sendiri di sini.
 function computeStockRekap(s, defs){
@@ -12343,8 +12455,11 @@ function rekapHistoryRowsWithLive(){
   state.stocks.forEach(s => { priceByTicker[s.ticker] = s.cClose; });
   const today = new Date();
   const targetPct = Number(state.rekapTargetPct) || 0;
+  const histPresetQ = (getTableUI("rekapHistDetail").presetFilter || "").trim();
+  const histFormulaMap = histPresetQ ? rekapDefFormulaMap() : null;
   return state.rekapHistory
     .filter(h => !state.rekapHistFilterDefId || h.def_id === state.rekapHistFilterDefId)
+    .filter(h => !histPresetQ || rekapPresetMatch(histPresetQ, h.def_label, h.source, histFormulaMap[h.def_id]))
     .map(h => {
       const now = priceByTicker[h.stock_code];
       const entry = Number(h.entry_price);
@@ -12357,6 +12472,14 @@ function rekapHistoryRowsWithLive(){
       const muncul = new Date(h.muncul_date + "T00:00:00");
       const hari = Math.max(0, Math.round((today - muncul) / 86400000));
       return { ...h, nowPrice: now, chgPct, plRp, highestPrice, highestPct, targetAchieved, hari };
+    })
+    // Filter status target (state.rekapHistTargetFilter). Baris dengan targetAchieved == null
+    // (Target 0%) tidak masuk "yes" maupun "no".
+    .filter(r => {
+      const f = state.rekapHistTargetFilter;
+      if(f === "yes") return r.targetAchieved === true;
+      if(f === "no") return r.targetAchieved === false;
+      return true;
     });
 }
 
@@ -13837,8 +13960,9 @@ window.addEventListener("resize", () => repositionRuleDropdown());
 ["fullscreenchange","webkitfullscreenchange"].forEach(evt=>{
   document.addEventListener(evt, () => {
     const isFs = !!(document.fullscreenElement || document.webkitFullscreenElement);
-    if(!isFs && state.chartExpanded){
+    if(!isFs && (state.chartExpanded || state.chartPaneFocus)){
       state.chartExpanded = false;
+      state.chartPaneFocus = null; // keluar layar penuh (Esc) = semua panel tampil lagi
       render();
       setTimeout(()=>drawChartSVG(), 60);
     }
@@ -18698,6 +18822,7 @@ function renderChart(){
       ${toggle('support','Support','var(--down)')}
       ${toggle('resistance','Resisten','var(--up)')}
       ${toggle('fib','Fibonacci','#94a3b8')}
+      ${toggle('tpsl','TP &amp; SL (EMA21 Low, 1:1)','#facc15')}
       ${toggle('bb','Bollinger Bands','#c084fc')}
       ${toggle('emaHL','EMA21 High/Low','#2dd4bf')}
       ${toggle('ema89','EMA89 Close','#f472b6')}
@@ -18747,8 +18872,9 @@ function renderChart(){
   // #chartTabWrap + class chart-fullscreen (lihat styles.css) menangani
   // mode layar-penuh; dipicu lewat tombol [data-chart-fullscreen-toggle]
   // di attachContentEvents().
-  return `<div id="chartTabWrap" class="${state.chartExpanded?'chart-fullscreen':''}">
+  return `<div id="chartTabWrap" class="${state.chartExpanded?'chart-fullscreen':''}${(state.chartExpanded && state.chartPaneFocus)?' chart-pane-focus':''}">
     ${state.chartExpanded ? '' : picker}
+    ${state.chartExpanded ? `<button type="button" data-chart-fullscreen-close title="Tutup layar penuh" aria-label="Tutup layar penuh" style="position:fixed;top:6px;right:6px;z-index:1000;width:24px;height:24px;padding:0;display:flex;align-items:center;justify-content:center;background:rgba(15,23,42,0.85);color:#e2e8f0;border:1px solid rgba(148,163,184,0.5);border-radius:5px;font-size:13px;line-height:1;cursor:pointer;">✕</button>` : ''}
     ${chartToolbar}
     ${sectionAndControls}
     <div class="chart-box chart-box-expanded${boxTallClass}" style="border:none;box-shadow:none;border-radius:0;background:transparent;">${chartBoxInner}</div>
@@ -19426,6 +19552,43 @@ function lwcZip(times, arr){
   return out;
 }
 
+// Masuk/keluar layar penuh untuk tab Chart. Dipakai ikon ⛶/⤡ di pojok
+// kanan-atas tiap panel: state.chartPaneFocus sudah di-set pemanggil, di
+// sini tinggal set state.chartExpanded (class CSS .chart-fullscreen +
+// .chart-pane-focus menyembunyikan toolbar/kontrol), render ulang, dan
+// minta Fullscreen API asli browser di #content (node stabil -- lihat
+// catatan di handler [data-chart-fullscreen-toggle]). Harus dipanggil
+// langsung dari event klik supaya izin user-gesture untuk fullscreen valid.
+function chartSetFullscreen(enter){
+  state.chartExpanded = !!enter;
+  if(!enter) state.chartPaneFocus = null;
+  render();
+  setTimeout(()=>drawChartSVG(), 60);
+  const wrapEl = document.getElementById("content") || document.getElementById("chartTabWrap");
+  const alreadyFs = !!(document.fullscreenElement || document.webkitFullscreenElement);
+  if(enter){
+    // Kalau browser sudah fullscreen (mis. dari tombol Fullscreen di toolbar
+    // atau dari fokus panel sebelumnya), tidak perlu minta lagi.
+    if(!alreadyFs){
+      if(wrapEl && wrapEl.requestFullscreen) wrapEl.requestFullscreen().catch(()=>{});
+      else if(wrapEl && wrapEl.webkitRequestFullscreen) wrapEl.webkitRequestFullscreen();
+    }
+  } else if(alreadyFs){
+    if(document.exitFullscreen) document.exitFullscreen().catch(()=>{});
+    else if(document.webkitExitFullscreen) document.webkitExitFullscreen();
+  }
+}
+
+// Fokus/lepas fokus satu panel chart TANPA mengubah status fullscreen:
+//  - key diisi  -> layar penuh khusus panel itu (panel lain disembunyikan)
+//  - key null   -> kembali ke tampilan semua panel, TETAP fullscreen
+// Keluar dari fullscreen hanya lewat tombol silang (✕) / tombol
+// "Keluar Fullscreen" di toolbar / Esc -> chartSetFullscreen(false).
+function chartSetPaneFocus(key){
+  state.chartPaneFocus = key || null;
+  chartSetFullscreen(true);
+}
+
 // Dispatcher: dipanggil dari SEMUA tempat yang dulu manggil drawChartSVG()
 // langsung (attachContentEvents, resize, toggle indikator, dst) -- jadi
 // TIDAK ADA pemanggil lain di file ini yang perlu diubah. Coba muat library
@@ -19510,14 +19673,78 @@ function renderLwcChart(){
     priceSeries.setData(allData.map((d,i)=>({ time: times[i], value: d.close })));
   }
 
-  // Level horizontal: Support/Resisten/Fibonacci (dulu garis putus2 lebar
-  // penuh + label kanan, sekarang priceLine bawaan library -- efeknya sama).
-  if(lv){
-    if(on("support") && lv.support!=null) priceSeries.createPriceLine({ price:lv.support, color:DOWN, lineWidth:1, lineStyle:LC.LineStyle.Solid, title:"Support" });
-    if(on("resistance") && lv.resistance!=null) priceSeries.createPriceLine({ price:lv.resistance, color:UP, lineWidth:1, lineStyle:LC.LineStyle.Solid, title:"Resisten" });
-    if(on("fib") && lv.fib){
-      [["f382","Fib38"],["f50","Fib50"],["f618","Fib61"]].forEach(([k,label])=>{ if(lv.fib[k]!=null) priceSeries.createPriceLine({ price:lv.fib[k], color:"#94a3b8", lineWidth:1, lineStyle:LC.LineStyle.Dashed, title:label }); });
+  // Level horizontal: Support/Resisten/Fibonacci + TP/SL (priceLine bawaan library).
+  //
+  // FIX Fibonacci tidak tampil: (1) priceLine TIDAK ikut dihitung autoscale
+  // library, jadi level yang di luar rentang harga jendela tampil tidak
+  // kelihatan -> sekarang priceSeries dipasang autoscaleInfoProvider yang
+  // melebarkan skala supaya semua level aktif (Fib, TP, SL) masuk layar;
+  // (2) state.selectedLevels di-snapshot saat loadChart(), bisa null/tanpa
+  // fib kalau data screener belum siap atau kolom fibonacci berupa string
+  // JSON -> sekarang di-parse, dan kalau tetap kosong dihitung ulang dari
+  // data chart (window 20 bar terakhir, rumus sama dgn ti_ di indikator).
+  const lastIdx = allData.length - 1;
+  const numOk = v => v != null && v !== "" && !isNaN(Number(v));
+  const lvSupport = numOk(lv?.support) ? Number(lv.support) : Math.min(...lows.slice(-20));
+  const lvResistance = numOk(lv?.resistance) ? Number(lv.resistance) : Math.max(...highs.slice(-20));
+  let fibLv = lv?.fib;
+  if(typeof fibLv === "string"){ try{ fibLv = JSON.parse(fibLv); }catch(e){ fibLv = null; } }
+  if(!fibLv || !numOk(fibLv.f382) || !numOk(fibLv.f50) || !numOk(fibLv.f618)){
+    const rg = lvResistance - lvSupport;
+    fibLv = { f236: lvResistance - rg*0.236, f382: lvResistance - rg*0.382, f50: lvResistance - rg*0.5, f618: lvResistance - rg*0.618 };
+  }
+  const extraLevels = [];   // harga level aktif -> dipakai melebarkan autoscale
+  if(on("support") && numOk(lvSupport)){
+    priceSeries.createPriceLine({ price:lvSupport, color:DOWN, lineWidth:1, lineStyle:LC.LineStyle.Solid, title:"Support" });
+    extraLevels.push(lvSupport);
+  }
+  if(on("resistance") && numOk(lvResistance)){
+    priceSeries.createPriceLine({ price:lvResistance, color:UP, lineWidth:1, lineStyle:LC.LineStyle.Solid, title:"Resisten" });
+    extraLevels.push(lvResistance);
+  }
+  if(on("fib")){
+    [["f236","Fib 23.6"],["f382","Fib 38.2"],["f50","Fib 50"],["f618","Fib 61.8"]].forEach(([k,label])=>{
+      if(!numOk(fibLv[k])) return;
+      const price = Number(fibLv[k]);
+      priceSeries.createPriceLine({ price, color:"#94a3b8", lineWidth:1, lineStyle:LC.LineStyle.Dashed, axisLabelVisible:true, title:label });
+      extraLevels.push(price);
+    });
+  }
+
+  // --- TP & SL berdasarkan kriteria "Cek Kriteria EMA21 & RSI" (sama persis
+  // dgn kartu Target TP & SL Versi RSI di Detail Emiten): harga > EMA21 Low,
+  // SL = EMA21 Low, TP = harga sekarang + jarak (harga - EMA21 Low) => rasio
+  // 1:1. Garis SL/TP muncul kalau harga di atas EMA21 Low (syarat minimal
+  // setup); label diberi tanda "(belum full)" kalau 4 kriteria belum semua
+  // hijau (Harga > EMA21 High, Harga > EMA21 Low, RSI 7 > RSI 21). ---
+  if(on("tpsl")){
+    const entryPx = closes[lastIdx];
+    const emaLNow = numOk(lv?.ema21L) ? Number(lv.ema21L) : emaL[lastIdx];
+    const emaHNow = numOk(lv?.ema21H) ? Number(lv.ema21H) : emaH[lastIdx];
+    const r7 = rsi7[lastIdx], r21 = rsi21[lastIdx];
+    if(numOk(entryPx) && numOk(emaLNow) && entryPx > emaLNow){
+      const jarak = entryPx - emaLNow;
+      const slPx = emaLNow, tpPx = entryPx + jarak;
+      const full = numOk(emaHNow) && entryPx > emaHNow && numOk(r7) && numOk(r21) && r7 > r21;
+      const tag = full ? "" : " (belum full)";
+      priceSeries.createPriceLine({ price:entryPx, color:"#facc15", lineWidth:1, lineStyle:LC.LineStyle.Dotted, axisLabelVisible:true, title:"Entry" });
+      priceSeries.createPriceLine({ price:tpPx, color:UP, lineWidth:2, lineStyle:LC.LineStyle.Dashed, axisLabelVisible:true, title:"TP 1:1"+tag });
+      priceSeries.createPriceLine({ price:slPx, color:DOWN, lineWidth:2, lineStyle:LC.LineStyle.Dashed, axisLabelVisible:true, title:"SL EMA21L"+tag });
+      extraLevels.push(entryPx, tpPx, slPx);
     }
+  }
+
+  // Lebarkan autoscale supaya semua level aktif (Fib/TP/SL/Support/Resisten)
+  // pasti terlihat walau di luar rentang harga jendela tampil.
+  if(extraLevels.length){
+    const lo = Math.min(...extraLevels), hi = Math.max(...extraLevels);
+    priceSeries.applyOptions({
+      autoscaleInfoProvider: (orig) => {
+        const r = orig();
+        if(!r || !r.priceRange) return { priceRange:{ minValue:lo, maxValue:hi } };
+        return { ...r, priceRange:{ minValue:Math.min(r.priceRange.minValue, lo), maxValue:Math.max(r.priceRange.maxValue, hi) } };
+      },
+    });
   }
 
   const addLine = (arr, color, opts={}) => {
@@ -19660,14 +19887,22 @@ function renderLwcChart(){
   // masing2 panel -- lihat blok "Ikon ⛶" tepat di bawah blok ini): panel itu
   // diperbesar penuh, sisanya diciutkan ke tinggi minimum (30px, batas
   // bawaan library) alih-alih dihapus, supaya toggle checkbox-nya tetap ada.
-  const panes = lwcChart.panes();
-  const focusIdx = state.chartPaneFocus ? paneKeyByIndex.indexOf(state.chartPaneFocus) : -1;
+  let panes = lwcChart.panes();
+  let focusIdx = state.chartPaneFocus ? paneKeyByIndex.indexOf(state.chartPaneFocus) : -1;
   try{
-    if(focusIdx >= 0 && panes[focusIdx] && panes.length > 1){
-      const MIN_H = 30;
-      const totalH = container.clientHeight || (panes.length * 160);
-      panes.forEach((p,i)=>{ if(i!==focusIdx) p.setHeight(MIN_H); });
-      panes[focusIdx].setHeight(Math.max(MIN_H, totalH - MIN_H*(panes.length-1)));
+    if(focusIdx >= 0 && panes.length > 1){
+      // MODE FOKUS (klik ikon ⛶): panel lain DIHAPUS dari chart (bukan
+      // sekadar diciutkan) supaya cuma panel yang di-expand yang tampil
+      // memenuhi layar. Hapus dari index terbesar ke kecil supaya index
+      // sisanya tidak bergeser selama loop. Checkbox indikator lain tidak
+      // berubah -- begitu user klik "⤡ Kembali", chart digambar ulang
+      // lengkap dari state.chartSeries seperti biasa.
+      for(let i = panes.length - 1; i >= 0; i--){
+        if(i !== focusIdx) lwcChart.removePane(i);
+      }
+      paneKeyByIndex.splice(0, paneKeyByIndex.length, state.chartPaneFocus);
+      panes = lwcChart.panes();
+      focusIdx = 0;
     } else {
       // Key fokus lama sudah tidak ada pane-nya lagi (mis. checkbox indikator
       // itu dimatikan) -- bersihkan state-nya & pakai proporsi default.
@@ -19745,13 +19980,14 @@ function renderLwcChart(){
       const btn = document.createElement("button");
       btn.type = "button";
       btn.setAttribute("data-pane-maximize-btn", "1");
-      btn.title = thisFocused ? "Kembali ke tampilan semua panel" : "Perbesar panel ini ke layar penuh";
+      btn.title = thisFocused ? "Kembali ke tampilan semua panel (tetap layar penuh)" : "Perbesar panel ini saja (panel lain disembunyikan)";
       btn.textContent = thisFocused ? "⤡" : "⛶";
       btn.style.cssText = "position:absolute;top:4px;right:4px;z-index:25;background:rgba(15,23,42,0.78);color:#e2e8f0;border:1px solid rgba(148,163,184,0.4);border-radius:5px;width:22px;height:22px;font-size:12px;line-height:1;cursor:pointer;display:flex;align-items:center;justify-content:center;padding:0;";
+      if(state.chartExpanded && i === 0) btn.style.right = "34px"; // sisakan ruang untuk tombol ✕
       btn.onclick = (e) => {
         e.stopPropagation();
-        state.chartPaneFocus = (state.chartPaneFocus === key) ? null : key;
-        drawChartSVG();
+        const entering = state.chartPaneFocus !== key;
+        chartSetPaneFocus(entering ? key : null); // kembali = lepas fokus saja, tetap fullscreen
       };
       el.appendChild(btn);
     });
@@ -20001,6 +20237,17 @@ function renderRekapSaham(){
     ? list.filter(s => (s.rekapPassed||[]).some(p=>p.id===activeFilter))
     : list;
 
+  const countFilter = state.rekapMinCount || "";
+  const totalBeforeCount = filtered.length;
+  if(countFilter === "none") filtered = filtered.filter(s => !((s.rekapCount || 0) > 0));
+  else if(Number(countFilter) > 0) filtered = filtered.filter(s => (s.rekapCount || 0) >= Number(countFilter));
+
+  const sahamPresetQ = (getTableUI("rekapSaham").presetFilter || "").trim();
+  if(sahamPresetQ){
+    const fm = rekapDefFormulaMap();
+    filtered = filtered.filter(s => (s.rekapPassed||[]).some(p => rekapPresetMatch(sahamPresetQ, p.label, p.source, fm[p.id])));
+  }
+
   filtered = tableFilterRows("rekapSaham", filtered, s => [s.ticker, s.name, s.sektor]);
   filtered = tableSortRows("rekapSaham", filtered, {
     ticker: s=>s.ticker, name: s=>s.name, sektor: s=>s.sektor,
@@ -20056,6 +20303,16 @@ function renderRekapSaham(){
         <span>📋 Tabel Rekap per Saham${activeDef ? ` — lolos: ${escapeHtml(activeDef.label)}` : ""}</span>
       </div>
       ${tableFilterBoxHtml("rekapSaham", "Cari ticker, nama, atau sektor...")}
+      <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:10px;">
+        ${rekapPresetFilterInputHtml("rekapSaham", "Filter nama preset / formula yang lolos...")}
+        <span style="font-size:11px;color:var(--muted);">Jumlah preset/screener yang lolos</span>
+        <select id="rekapMinCountSelect" class="bs-input">
+          <option value="" ${!countFilter?"selected":""}>Semua</option>
+          <option value="none" ${countFilter==="none"?"selected":""}>Tidak lolos satupun (0)</option>
+          ${[1,2,3,4,5,7,10].filter(n => n <= defs.length).map(n => `<option value="${n}" ${countFilter===String(n)?"selected":""}>Lolos ≥ ${n}</option>`).join("")}
+        </select>
+        <span style="font-size:11px;color:var(--muted);">Menampilkan <b class="mono">${filtered.length}</b> dari <b class="mono">${totalBeforeCount}</b> saham</span>
+      </div>
       <div class="table-wrap">
         <table class="data-table">
           <thead><tr>
@@ -20084,7 +20341,12 @@ function renderRekapSaham(){
 // ==========================================
 function renderRekapWinRatePanel(defs){
   const stats = computeRekapPresetStats().sort((a,b) => (b.winRate ?? -1) - (a.winRate ?? -1));
-  const statsSorted = tableSortRows("rekapPresetStats", stats, {
+  const formulaMap = rekapDefFormulaMap();
+  const statsPresetQ = (getTableUI("rekapPresetStats").presetFilter || "").trim();
+  const statsFiltered = statsPresetQ
+    ? stats.filter(b => rekapPresetMatch(statsPresetQ, b.label, b.source, formulaMap[b.id]))
+    : stats;
+  const statsSorted = tableSortRows("rekapPresetStats", statsFiltered, {
     label: r=>r.label, source: r=>r.source, total: r=>r.total,
     winrate: r=>r.winRate, avg: r=>r.avgChg, target: r=>r.achievedRate,
   });
@@ -20100,6 +20362,7 @@ function renderRekapWinRatePanel(defs){
       <td class="mono" style="font-weight:700;color:${b.winRate==null?'var(--muted)':(b.winRate>=50?'var(--up)':'var(--down)')};">${b.winRate!=null?b.winRate.toFixed(0)+"%":"-"}</td>
       <td class="mono" style="font-weight:700;color:${b.avgChg==null?'var(--muted)':(b.avgChg>=0?'var(--up)':'var(--down)')};">${b.avgChg!=null?(b.avgChg>=0?"+":"")+b.avgChg.toFixed(1)+"%":"-"}</td>
       <td class="mono" style="font-weight:700;color:${b.achievedRate==null?'var(--muted)':'var(--gold)'};">${b.achievedRate!=null?b.achievedRate.toFixed(0)+"%":"-"}</td>
+      <td style="white-space:normal;max-width:340px;font-size:11px;color:var(--muted);" title="${escapeHtml(formulaMap[b.id] || "")}">${formulaMap[b.id] ? escapeHtml(formulaMap[b.id].length > 120 ? formulaMap[b.id].slice(0,120) + "…" : formulaMap[b.id]) : "-"}</td>
     </tr>`).join("");
 
   let detailRows = rekapHistoryRowsWithLive();
@@ -20160,23 +20423,40 @@ function renderRekapWinRatePanel(defs){
 
         ${state.rekapHistoryLoading ? `<div class="empty-box" style="margin-top:14px;">Memuat riwayat...</div>` :
           stats.length ? `
-          <div class="table-wrap" style="margin-top:14px;">
+          <div style="margin-top:14px;display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
+            ${rekapPresetFilterInputHtml("rekapPresetStats", "Filter nama preset / formula...")}
+            <span style="font-size:11px;color:var(--muted);">Menampilkan <b class="mono">${statsFiltered.length}</b> dari <b class="mono">${stats.length}</b> preset</span>
+          </div>
+          <div class="table-wrap" style="margin-top:8px;">
             <table class="mono">
-              <thead><tr>${tableSortTh("rekapPresetStats","Preset/Screener","label")}${tableSortTh("rekapPresetStats","Sumber","source")}${tableSortTh("rekapPresetStats","Total Sinyal","total")}${tableSortTh("rekapPresetStats","Win Rate","winrate")}${tableSortTh("rekapPresetStats","Rata-rata Δ%","avg")}${tableSortTh("rekapPresetStats",`Capai Target ${targetPct}%`,"target")}</tr></thead>
-              <tbody>${statsRows}</tbody>
+              <thead><tr>${tableSortTh("rekapPresetStats","Preset/Screener","label")}${tableSortTh("rekapPresetStats","Sumber","source")}${tableSortTh("rekapPresetStats","Total Sinyal","total")}${tableSortTh("rekapPresetStats","Win Rate","winrate")}${tableSortTh("rekapPresetStats","Rata-rata Δ%","avg")}${tableSortTh("rekapPresetStats",`Capai Target ${targetPct}%`,"target")}<th>Formula / Kriteria</th></tr></thead>
+              <tbody>${statsRows || `<tr><td colspan="7"><div class="empty-box">Tidak ada preset yang cocok dengan filter nama/formula.</div></td></tr>`}</tbody>
             </table>
           </div>
           <div style="font-size:11px;color:var(--muted);margin-top:6px;">Klik salah satu baris preset di atas untuk lihat riwayat per saham di bawah. "Win Rate" = persentase sinyal yang harga sekarang masih di atas harga entry. "Capai Target" = persentase sinyal yang harga TERTINGGI-nya sejak muncul sudah menyentuh target di atas.</div>
 
-          <div class="filter-section-title" style="margin-top:16px;margin-bottom:8px;">📋 Riwayat per Saham${detailFilterLabel ? ` — ${escapeHtml(detailFilterLabel)}` : ""}</div>
+          <div class="filter-section-title" style="margin-top:16px;margin-bottom:8px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;">
+            <span>📋 Riwayat per Saham${detailFilterLabel ? ` — ${escapeHtml(detailFilterLabel)}` : ""}</span>
+            <button type="button" class="btn btn-outline" id="rekapHistExportBtn2" style="text-transform:none;" title="Export riwayat per saham yang sedang tampil (sudah kefilter) ke Excel">📥 Export Excel</button>
+          </div>
           ${detailFilterLabel ? `<button type="button" class="btn btn-outline" id="rekapHistClearFilterBtn" style="font-size:11px;padding:4px 10px;margin-bottom:8px;">✕ Batalkan filter preset</button>` : ""}
+          <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:8px;">
+            ${rekapPresetFilterInputHtml("rekapHistDetail", "Filter nama preset / formula...")}
+            <span style="font-size:11px;color:var(--muted);">Status target ${targetPct}%</span>
+            <select id="rekapHistTargetFilterSelect" class="bs-input">
+              <option value="" ${!state.rekapHistTargetFilter?"selected":""}>Semua</option>
+              <option value="yes" ${state.rekapHistTargetFilter==="yes"?"selected":""}>Sudah capai target</option>
+              <option value="no" ${state.rekapHistTargetFilter==="no"?"selected":""}>Belum capai target</option>
+            </select>
+            <span style="font-size:11px;color:var(--muted);">Menampilkan <b class="mono">${detailRows.length}</b> sinyal${targetPct<=0 ? " · isi Target &gt; 0% supaya filter ini berfungsi" : ""}</span>
+          </div>
           ${detailRows.length ? `
           <div class="table-wrap">
             <table class="mono">
               <thead><tr>${tableSortTh("rekapHistDetail","Kode","kode")}${tableSortTh("rekapHistDetail","Preset/Screener","preset")}${tableSortTh("rekapHistDetail","Muncul","muncul")}${tableSortTh("rekapHistDetail","Entry","entry")}${tableSortTh("rekapHistDetail","Now","now")}${tableSortTh("rekapHistDetail","Tertinggi","tertinggi")}${tableSortTh("rekapHistDetail","Δ%","chg")}${tableSortTh("rekapHistDetail","Target","target")}${tableSortTh("rekapHistDetail","Hari","hari")}</tr></thead>
               <tbody>${detailTableRows}</tbody>
             </table>
-          </div>` : `<div class="empty-box">Tidak ada riwayat untuk preset ini di rentang tanggal yang dipilih.</div>`}
+          </div>` : `<div class="empty-box">Tidak ada riwayat untuk preset ini di rentang tanggal, filter status target, dan filter nama/formula yang dipilih.</div>`}
           ` : `<div class="empty-box" style="margin-top:14px;">Belum ada riwayat sinyal${!SUPABASE_URL?" (Supabase belum dikonfigurasi)":""}. Klik "✓ Finalisasi Sinyal (EOD)" di atas -- idealnya setelah market close -- untuk mulai melacak win rate &amp; target per preset.</div>`}
       </div>
     </div>`;
@@ -24112,10 +24392,16 @@ function attachContentEvents(){
   document.querySelectorAll("[data-chart-minimize-toggle]").forEach(btn=>{
     btn.onclick = () => { state.chartMinimized = !state.chartMinimized; render(); };
   });
+  // Tombol silang (✕) di pojok kanan-atas saat fullscreen: SATU-SATUNYA
+  // tombol di dalam chart yang menutup layar penuh (selain Esc/toolbar).
+  document.querySelectorAll("[data-chart-fullscreen-close]").forEach(btn=>{
+    btn.onclick = () => chartSetFullscreen(false);
+  });
   document.querySelectorAll("[data-chart-fullscreen-toggle]").forEach(btn=>{
     btn.onclick = () => {
       const enteringFullscreen = !state.chartExpanded;
       state.chartExpanded = enteringFullscreen;
+      if(!enteringFullscreen) state.chartPaneFocus = null;
       render();
       // Ukuran kontainer .chart-box baru pasti (fullscreen atau normal)
       // setelah layout sempat reflow -- gambar ulang sekali lagi supaya
@@ -24523,6 +24809,8 @@ function attachContentEvents(){
   if(rekapHistRefreshBtn) rekapHistRefreshBtn.onclick = loadRekapHistory;
   const rekapHistExportBtn = document.getElementById("rekapHistExportBtn");
   if(rekapHistExportBtn) rekapHistExportBtn.onclick = exportRekapHistoryToExcel;
+  const rekapHistExportBtn2 = document.getElementById("rekapHistExportBtn2");
+  if(rekapHistExportBtn2) rekapHistExportBtn2.onclick = exportRekapHistoryToExcel;
   // Klik baris preset di tabel ringkasan -> filter tabel detail riwayat per
   // saham di bawahnya ke preset itu saja; klik baris yang sama lagi = batal.
   document.querySelectorAll("[data-rekap-stat-def]").forEach(tr => tr.onclick = () => {
@@ -24532,6 +24820,13 @@ function attachContentEvents(){
   });
   const rekapHistClearFilterBtn = document.getElementById("rekapHistClearFilterBtn");
   if(rekapHistClearFilterBtn) rekapHistClearFilterBtn.onclick = () => { state.rekapHistFilterDefId = ""; render(); };
+  const rekapHistTargetFilterSelect = document.getElementById("rekapHistTargetFilterSelect");
+  if(rekapHistTargetFilterSelect) rekapHistTargetFilterSelect.onchange = (e) => { state.rekapHistTargetFilter = e.target.value; render(); };
+  ["rekapSaham", "rekapPresetStats", "rekapHistDetail"].forEach(tid => {
+    bindSearchInputPreservingCursor(`rekapPresetQ-${tid}`, (val) => { getTableUI(tid).presetFilter = val; });
+  });
+  const rekapMinCountSelect = document.getElementById("rekapMinCountSelect");
+  if(rekapMinCountSelect) rekapMinCountSelect.onchange = (e) => { state.rekapMinCount = e.target.value; render(); };
 
   // --- Tab BSJP (Beli Sore, Jual Pagi) ---
   bindSearchInputPreservingCursor("bsjpSearchInput", (val) => { state.bsjpSearch = val; });
@@ -25276,6 +25571,25 @@ function ensureAppStyles(){
        di styles.css pada spesifisitas yang sama; flex-wrap dipaksa "wrap"
        (bukan dibiarkan overflow ke samping) supaya kontrol yang tidak muat
        turun ke baris baru alih-alih kepotong di kanan/kiri. */
+    /* Fokus panel (klik ikon ⛶ di pojok kanan-atas panel chart): layar
+       penuh KHUSUS panel itu -- toolbar, judul & kontrol disembunyikan,
+       kotak chart memenuhi seluruh layar. Panel lain sudah dihapus dari
+       chart di renderLwcChart(). */
+    #chartTabWrap.chart-pane-focus{
+      padding:0 !important;
+      margin:0 !important;
+    }
+    #chartTabWrap.chart-pane-focus .chart-toolbar,
+    #chartTabWrap.chart-pane-focus .chart-section-title,
+    #chartTabWrap.chart-pane-focus .chart-controls{
+      display:none !important;
+    }
+    #chartTabWrap.chart-pane-focus .chart-box{
+      height:100vh !important;
+      height:100dvh !important;
+      max-height:none !important;
+      min-height:0 !important;
+    }
     #chartTabWrap.chart-fullscreen .chart-controls{
       display:flex !important;
       flex-wrap:wrap !important;
