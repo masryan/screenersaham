@@ -3856,7 +3856,7 @@ let state = {
   // (lanjutan) -- lihat toggle di sebelah pill preset & filter di getFiltered().
   ema921Mode: "fresh",
   visibleCols: new Set(), // diisi loadSettings() dari localStorage atau DEFAULT_VISIBLE_COLS
-  colPickerOpen: false,
+  colPickerOpen: false, colDraft: null, /* colDraft = pilihan kolom sementara di panel 🧩 Kolom, baru berlaku & tersimpan setelah klik "Terapkan" */
   filters: {sektor:[], syariahLabel:[], cekHarga:[], cekRsi:[], statusRsi:[], cekMacd:[], band:[], sinyalVolume:[], sinyalFrekuensi:[], keyakinanNaik:[], trendHarga:[], polaCandle:[], uangGedeMasuk:[], isBBSqueeze:[], valuasi:[], capTier:[], lq45:[],
     // Status notasi khusus & perdagangan BEI (Suspend/Unsuspend/FCA/FCA
     // Out) — sama seperti lq45, sumbernya tabel index_membership hasil sync
@@ -4637,15 +4637,50 @@ function loadSettings(){
   loadLiveAlertSettings(); // function declaration di-hoist, aman dipanggil di sini walau definisinya jauh di bawah (dekat handleLiveTick)
 }
 function saveVisibleCols(){ localStorage.setItem(LS_VISIBLE_COLS, JSON.stringify([...state.visibleCols])); }
-function toggleColumn(key){
-  if(state.visibleCols.has(key)) state.visibleCols.delete(key); else state.visibleCols.add(key);
-  saveVisibleCols(); render();
+// Panel 🧩 Kolom bekerja dengan DRAFT: centang/preset hanya mengubah pilihan
+// sementara (state.colDraft); tabel & localStorage baru berubah setelah klik
+// "Terapkan". Kolom yang diterapkan tersimpan dan dipakai tiap kali tab Screener dibuka.
+function colDraftSet(){
+  if(!state.colDraft) state.colDraft = new Set(state.visibleCols);
+  return state.colDraft;
+}
+function colDraftDirty(){
+  const d = state.colDraft, v = state.visibleCols;
+  if(!d) return false;
+  if(d.size !== v.size) return true;
+  for(const k of d) if(!v.has(k)) return true;
+  return false;
+}
+function updateColApplyBar(){
+  const btn = document.getElementById("colApplyBtn");
+  const hint = document.getElementById("colApplyHint");
+  const n = colDraftSet().size;
+  if(btn) btn.textContent = `✔ Terapkan (${n} kolom)`;
+  if(hint) hint.textContent = colDraftDirty() ? "Ada perubahan yang belum diterapkan" : "Pilihan sama dengan yang sedang dipakai";
+}
+function toggleColumn(key, checked){
+  const d = colDraftSet();
+  const want = typeof checked === "boolean" ? checked : !d.has(key);
+  if(want) d.add(key); else d.delete(key);
+  updateColApplyBar();
 }
 function setColumnPreset(preset){
-  if(preset === "ringkas") state.visibleCols = new Set(DEFAULT_VISIBLE_COLS);
-  else if(preset === "semua") state.visibleCols = new Set(SCREENER_COLUMNS.map(c=>c.key));
-  else if(preset === "kosong") state.visibleCols = new Set();
-  saveVisibleCols(); render();
+  if(preset === "ringkas") state.colDraft = new Set(DEFAULT_VISIBLE_COLS);
+  else if(preset === "semua") state.colDraft = new Set(SCREENER_COLUMNS.map(c=>c.key));
+  else if(preset === "kosong") state.colDraft = new Set();
+  render(); // panel tetap terbuka (state.colPickerOpen) dan centang ikut ter-refresh
+}
+function applyColumnDraft(){
+  if(!state.colDraft){ state.colPickerOpen = false; render(); return; }
+  const valid = new Set(SCREENER_COLUMNS.map(c=>c.key));
+  state.visibleCols = new Set([...state.colDraft].filter(k => valid.has(k)));
+  state.colDraft = null; state.colPickerOpen = false;
+  saveVisibleCols();
+  render();
+  if(typeof showToast === "function") showToast(`Kolom diterapkan & disimpan (${state.visibleCols.size} kolom)`, "up");
+}
+function cancelColumnDraft(){
+  state.colDraft = null; state.colPickerOpen = false; render();
 }
 function saveWatchlist(){ localStorage.setItem(LS_WATCHLIST, JSON.stringify([...state.watchlist])); }
 function saveBacktests(){ localStorage.setItem(LS_BACKTEST, JSON.stringify(state.backtests)); }
@@ -14376,6 +14411,7 @@ function renderScreener(){
   const getOpts = (key) => uniqueOpts(list,key);
   const allFilteredChecked = filtered.length > 0 && filtered.every(s => state.selectedForBacktest.has(s.ticker));
   const visibleColumns = SCREENER_COLUMNS.filter(c => state.visibleCols.has(c.key));
+  const colDraftView = (state.colPickerOpen && state.colDraft) ? state.colDraft : state.visibleCols;
   // Disimpan supaya tombol "Ekspor Excel" (di-wire lewat attachContentEvents,
   // terpisah dari closure render ini) tetap bisa mengambil data hasil
   // filter/sort/kolom-tampil yang PALING BARU tanpa menghitung ulang.
@@ -14760,10 +14796,17 @@ function renderScreener(){
           return `<div class="col-picker-group">
             <div class="col-picker-group-title">${group}</div>
             <div class="col-picker-grid">
-              ${cols.map(c=>`<label class="col-picker-item"><input type="checkbox" data-col-toggle="${c.key}" ${state.visibleCols.has(c.key)?'checked':''}> ${c.label}</label>`).join("")}
+              ${cols.map(c=>`<label class="col-picker-item"><input type="checkbox" data-col-toggle="${c.key}" ${colDraftView.has(c.key)?'checked':''}> ${c.label}</label>`).join("")}
             </div>
           </div>`;
         }).join("")}
+        <div class="col-picker-apply" style="position:sticky;bottom:0;background:inherit;border-top:1px solid var(--border);margin-top:10px;padding:10px 0 2px;display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;">
+          <span id="colApplyHint" style="font-size:11px;color:var(--muted);">${colDraftView !== state.visibleCols && colDraftDirty() ? "Ada perubahan yang belum diterapkan" : "Centang kolom lalu klik Terapkan — pilihan tersimpan dan dipakai tiap buka tab Screener"}</span>
+          <span style="display:flex;gap:8px;">
+            <button type="button" class="btn btn-outline" id="colCancelBtn" style="padding:6px 12px;font-size:12px;">Batal</button>
+            <button type="button" class="btn btn-primary" id="colApplyBtn" style="padding:6px 14px;font-size:12px;font-weight:800;">✔ Terapkan (${colDraftView.size} kolom)</button>
+          </span>
+        </div>
       </div>
     </div>
     
@@ -24675,7 +24718,16 @@ function attachContentEvents(){
   if(ruleSortClearBtn) ruleSortClearBtn.onclick = () => { state.sort.col = null; state.sort.asc = true; state.page = 1; render(); };
 
   const colPickerBtn = document.getElementById("colPickerBtn");
-  if(colPickerBtn) colPickerBtn.onclick = (e) => { e.stopPropagation(); state.colPickerOpen = !state.colPickerOpen; render(); };
+  if(colPickerBtn) colPickerBtn.onclick = (e) => {
+    e.stopPropagation();
+    state.colPickerOpen = !state.colPickerOpen;
+    state.colDraft = state.colPickerOpen ? new Set(state.visibleCols) : null; // buka = mulai dari kolom yang sedang diterapkan; tutup tanpa Terapkan = buang perubahan
+    render();
+  };
+  const colApplyBtn = document.getElementById("colApplyBtn");
+  if(colApplyBtn) colApplyBtn.onclick = (e) => { e.stopPropagation(); applyColumnDraft(); };
+  const colCancelBtn = document.getElementById("colCancelBtn");
+  if(colCancelBtn) colCancelBtn.onclick = (e) => { e.stopPropagation(); cancelColumnDraft(); };
 
   document.querySelectorAll("[data-col-preset]").forEach(btn => {
     btn.onclick = (e) => { e.stopPropagation(); setColumnPreset(btn.dataset.colPreset); };
@@ -24683,7 +24735,7 @@ function attachContentEvents(){
 
   document.querySelectorAll("[data-col-toggle]").forEach(chk => {
     chk.onclick = (e) => e.stopPropagation();
-    chk.onchange = (e) => { e.stopPropagation(); toggleColumn(chk.dataset.colToggle); };
+    chk.onchange = (e) => { e.stopPropagation(); toggleColumn(chk.dataset.colToggle, chk.checked); };
   });
 
   if(state.colPickerOpen){
@@ -24693,7 +24745,7 @@ function attachContentEvents(){
     // tidak langsung menutup panel yang baru saja dibuka oleh klik yang sama.
     setTimeout(() => {
       document.addEventListener("click", function closeColPicker(){
-        state.colPickerOpen = false; render();
+        state.colPickerOpen = false; state.colDraft = null; render(); // klik di luar = batal (perubahan yang belum diterapkan dibuang)
         document.removeEventListener("click", closeColPicker);
       }, { once:true });
     }, 0);
