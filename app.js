@@ -1246,7 +1246,7 @@ async function fetchAndSaveBrokerActivityBulk(brokerCodes, rangeFrom, rangeTo){
   state.brokerActivityBulkLoading = false;
   render();
   // Refresh tampilan Broker Stalker kalau sedang menampilkan broker yang baru ditarik ini.
-  if(state.brokerStalkerMode === 'broker' && codes.includes(String(state.brokerStalkerQuery||'').trim().toUpperCase())) searchBrokerStalker();
+  if(state.brokerStalkerMode === 'broker' && parseBrokerCodesInput(state.brokerStalkerQuery).some(c => codes.includes(c))) searchBrokerStalker();
 }
 
 // Parse isi file .txt daftar ticker -- terima format bebas: satu ticker per
@@ -3933,7 +3933,7 @@ let state = {
   // lewat ikon ⛶ di pojok kanan-atas panel -> layar penuh KHUSUS panel itu,
   // panel lain dihapus dari chart & toolbar/kontrol disembunyikan.
   chartPaneFocus: null,
-  detailTicker: null, detailTab: "teknikal", detailNavList: null, // detailNavList = urutan ticker hasil screener saat modal dibuka (untuk tombol Sebelumnya/Berikutnya)
+  detailTicker: null, detailTab: "teknikal", detailNavList: null, chartNavList: null, /* chartNavList = urutan ticker hasil screener saat Grafik dibuka (untuk tombol Sebelumnya/Berikutnya di tab Grafik) */ // detailNavList = urutan ticker hasil screener saat modal dibuka (untuk tombol Sebelumnya/Berikutnya)
   // Modal "detail metrik Dashboard": dibuka saat kartu ringkasan (Total
   // Saham, Undervalued, dst) diklik. key = metrik, lihat DASH_METRIC_DEFS.
   dashMetricKey: null, dashMetricSort: {key:"score", asc:false}, dashMetricSearch: "",
@@ -4049,6 +4049,7 @@ let state = {
   // Mode "🛰️ Pindai Akumulasi" (semua saham / hidden gems) — lihat runBsScan()/renderBsScan().
   bsScan: {
     loading: false, msg: "", err: false, data: null, view: "saham", limit: 100,
+    ffImporting: false, ffMsg: "", ffErr: false,
     filters: { period: "1w", minAkum: 1e9, capMax: null, serapFF: 0, brokerType: null, sort: "akum", statuses: [], code: "" },
   },
   // Mode "🧪 Uji Sinyal" (event study net beli broker N hari berturut-turut) — lihat runBsSignal()/renderBsSignal().
@@ -4261,7 +4262,7 @@ let state = {
   // {ticker}+{period}), jadi tiap ticker cukup 1x request lalu hasilnya
   // disaring ke rentang Dari-Sampai yang dipilih di UI.
   stockbitHistoricalBulkLoading: false, stockbitHistoricalBulkProgress: null, stockbitHistoricalBulkResults: [],
-  hdAutoBulkFrom: null, hdAutoBulkTo: null,
+  hdAutoBulkFrom: null, hdAutoBulkTo: null, hdScreenerDate: null, /* hdScreenerDate = tanggal tunggal tombol Historical di toolbar Screener; null = hari ini */
   hdBulkResultsOpen: true,
   // Update Indikator Teknikal (client-side) HANYA untuk ticker yang dicentang
   // di tab Screener — lihat updateTechnicalIndicatorsBulk(). Beda dengan
@@ -5309,6 +5310,7 @@ function supabaseFetchJson(path, label, retries = 2){
 // ==========================================
 const LIVE_STATIC_TTL_MS = 10 * 60 * 1000;
 const LIVE_TOP5_TTL_MS = 30 * 60 * 1000;
+let _ffMapCache = null; // {TICKER: free_float_pct} dari tabel stock_free_float (diisi lewat impor daftar BEI)
 let _liveStaticReady = false, _liveStaticAt = 0, _liveFlowsCache = [], _top5At = 0, lastLiveLoadAt = 0;
 
 async function loadLive(opts){
@@ -5405,6 +5407,23 @@ async function loadLive(opts){
         orcaFlowSnap[t] = fr;
       });
     }
+
+    // Free float (%) per saham dari tabel stock_free_float (impor daftar BEI).
+    // Opsional: kalau tabel belum dibuat/kosong, hasilnya {} dan filter Serap FF
+    // tetap nonaktif — tidak menggagalkan loadLive().
+    if (!_ffMapCache || !(opts && opts.auto)) {
+      try {
+        const ffRes = await fetch(`${SUPABASE_URL}/stock_free_float?select=ticker,free_float_pct&limit=5000`, { headers: getSupaHeaders(), cache: "no-store" });
+        const ffRows = ffRes.ok ? await ffRes.json() : [];
+        const m = {};
+        if (Array.isArray(ffRows)) ffRows.forEach(x => {
+          const t = String(x.ticker || "").toUpperCase(), v = numOrNull(x.free_float_pct);
+          if (t && v != null && v > 0) m[t] = v;
+        });
+        _ffMapCache = m;
+      } catch (e) { _ffMapCache = _ffMapCache || {}; }
+    }
+    const ffMap = _ffMapCache || {};
 
     state.stocks = stocksRes.map(r => {
       // Fallback ORCA: kalau kolom ringkasan (avg_ticket/crossing_pct/
@@ -5539,7 +5558,11 @@ async function loadLive(opts){
       marketCap: numOrNull(r.market_cap) ?? (numOrNull(r.shares_outstanding) != null ? numOrNull(r.shares_outstanding) * (numOrNull(r.price) || 0) : null),
       // Free float (%) — opsional, hanya terisi kalau kolomnya ada di stocks_screener.
       // Dipakai filter "Serap FF" di Broker Stalker > Pindai Akumulasi.
-      freeFloatPct: (() => { const v = numOrNull(r.free_float_pct ?? r.free_float ?? r.ff_pct); return v == null ? null : (v > 0 && v <= 1 ? v * 100 : v); })(),
+      freeFloatPct: (() => {
+        let v = numOrNull(r.free_float_pct ?? r.free_float ?? r.ff_pct);
+        if (!(v > 0)) v = ffMap[String(r.ticker || "").toUpperCase()] ?? v;
+        return v == null ? null : (v > 0 && v <= 1 ? v * 100 : v);
+      })(),
       vsMa50Pct: numOrNull(r.vs_ma50_pct), vsMa200Pct: numOrNull(r.vs_ma200_pct),
       avgTicket: numOrNull(r.avg_ticket) ?? flowAvgTicket,
       crossingPct: numOrNull(r.crossing_pct) ?? flowCrossingPct,
@@ -10217,7 +10240,31 @@ function renderDetailModalContent(){
 }
 
 
-async function loadChart(ticker){
+// Pindah ke saham sebelumnya (-1) / berikutnya (+1) di hasil screener dari tab Grafik.
+function navigateChart(delta){
+  const list = state.chartNavList;
+  if(!list || !list.length) return;
+  const i = list.indexOf(state.selectedTicker);
+  if(i < 0) return;
+  const next = list[i + delta];
+  if(!next) return;
+  loadChart(next, { keepNav: true, keepView: true });
+}
+async function loadChart(ticker, opts){
+  const prevTab = state.tab;
+  const keepView = !!(opts && opts.keepView);
+  // Daftar navigasi Sebelumnya/Berikutnya di tab Grafik (sama seperti di Detail
+  // Emiten): dibekukan dari hasil Screener (filter+urut yang sama dengan tabel)
+  // saat Grafik dibuka dari Screener / dari Detail Emiten yang dibuka dari
+  // Screener. Pindah ticker lewat chip/pencarian di tab Grafik: daftar dipakai
+  // terus selama ticker barunya masih ada di daftar itu.
+  try{
+    if(opts && opts.nav) state.chartNavList = opts.nav;
+    else if(opts && opts.keepNav) { /* pakai daftar yang sudah ada */ }
+    else if(prevTab === "screener") state.chartNavList = getSorted(getFiltered()).map(x => x.ticker);
+    else if(prevTab === "chart" && state.chartNavList && state.chartNavList.indexOf(ticker) >= 0) { /* tetap */ }
+    else state.chartNavList = null;
+  }catch(e){ state.chartNavList = null; }
   state.selectedTicker=ticker; state.tab="chart";
   syncHashFromState();
   // Setiap kali buka/ganti ticker, reset tampilan chart ke default yang
@@ -10227,14 +10274,19 @@ async function loadChart(ticker){
   // bawah (Bandar Volume, Volume 20, Stoch RSI, RSI 7&21, Foreign Flow,
   // MACD, Net Foreign Buy/Sell) aktif. User tetap bisa toggle manual
   // sesudahnya lewat checkbox — ini cuma titik awal tiap ganti ticker.
-  state.chartRange = "1m";
-  state.chartTimeframe = "daily";
+  // Kalau pindah lewat tombol Sebelumnya/Berikutnya (keepView), rentang, timeframe
+  // & overlay/panel yang sudah diatur user dipertahankan supaya bisa membandingkan
+  // banyak saham dengan tampilan yang sama; zoom tetap di-reset karena jumlah bar beda.
+  if(!keepView || !state.chartSeries){
+    state.chartRange = "1m";
+    state.chartTimeframe = "daily";
+    state.chartSeries = {
+      close:true, support:true, resistance:true, fib:false, tpsl:true, bb:false,
+      emaHL:true, ema89:true, ema921:false, sar:false, supertrend:false, pc:false,
+      bandar:true, vol:true, stochrsi:true, rsi721:true, foreignflow:true, macd:true, netforeign:true
+    };
+  }
   state.chartZoom = 1;
-  state.chartSeries = {
-    close:true, support:true, resistance:true, fib:false, tpsl:true, bb:false,
-    emaHL:true, ema89:true, ema921:false, sar:false, supertrend:false, pc:false,
-    bandar:true, vol:true, stochrsi:true, rsi721:true, foreignflow:true, macd:true, netforeign:true
-  };
   const stock = enriched().find(s=>s.ticker===ticker);
   state.selectedLevels = stock ? {
     support:stock.support, resistance:stock.resistance,
@@ -12978,7 +13030,7 @@ function render(){
     document.querySelectorAll("[data-arjum-analysis-run]").forEach(btn=>{
       btn.onclick = () => loadArjumAnalysis(btn.dataset.arjumAnalysisRun);
     });
-    document.querySelectorAll("#detailModalContent [data-chart]").forEach(b=> bindInternalLink(b, ()=>{ closeDetail(); loadChart(b.dataset.chart); }));
+    document.querySelectorAll("#detailModalContent [data-chart]").forEach(b=> bindInternalLink(b, ()=>{ const nav = state.detailNavList; closeDetail(); loadChart(b.dataset.chart, nav ? { nav } : undefined); }));
 
     // Orderbook Depth 10-level (lihat renderOrderbookDepthCard) -- HARUS
     // di-wire DI SINI (setelah detailModalContent.innerHTML diisi), BUKAN
@@ -14499,19 +14551,15 @@ function renderScreener(){
         <div class="field" style="flex:0 0 auto;">
           <label>&nbsp;</label>
           <div class="screener-date-action-row" style="display:flex; align-items:center; gap:6px;">
-            <input type="date" id="screenerHdFromInput"
-              value="${state.hdAutoBulkFrom||""}"
+            <input type="date" id="screenerHdDateInput"
+              value="${state.hdScreenerDate || todayLocalISO()}"
               ${state.stockbitHistoricalBulkLoading ? "disabled" : ""}
-              style="padding:9.5px 8px; border-radius:8px; border:1px solid var(--border); background:color-mix(in srgb, currentColor 6%, transparent); color:var(--text); font-size:12px;">
-            <span style="color:var(--muted); font-size:11px;">&ndash;</span>
-            <input type="date" id="screenerHdToInput"
-              value="${state.hdAutoBulkTo||""}"
-              ${state.stockbitHistoricalBulkLoading ? "disabled" : ""}
+              title="Tanggal data historical yang ditarik (default hari ini)"
               style="padding:9.5px 8px; border-radius:8px; border:1px solid var(--border); background:color-mix(in srgb, currentColor 6%, transparent); color:var(--text); font-size:12px;">
             <button type="button" class="btn btn-outline" id="screenerHdBulkBtn"
               ${state.stockbitHistoricalBulkLoading ? "disabled" : ""}
               style="color:#a78bfa;border-color:rgba(167,139,250,0.4);white-space:nowrap;"
-              title="Tarik Historical Data (Daily) Stockbit ${state.uploadedBulkTickers.length ? `untuk ${state.uploadedBulkTickers.length} ticker dari file yang diupload` : "untuk saham yang dicentang (atau semua hasil filter kalau tidak ada yang dicentang)"}, disaring ke periode tanggal di samping">
+              title="Tarik Historical Data (Daily) Stockbit ${state.uploadedBulkTickers.length ? `untuk ${state.uploadedBulkTickers.length} ticker dari file yang diupload` : "untuk saham yang dicentang (atau semua hasil filter kalau tidak ada yang dicentang)"}, untuk tanggal di samping (default hari ini)">
               ${state.stockbitHistoricalBulkLoading
                 ? `Menarik ${state.stockbitHistoricalBulkProgress?.done||0}/${state.stockbitHistoricalBulkProgress?.total||0}...`
                 : (state.uploadedBulkTickers.length ? `📅 Historical (${state.uploadedBulkTickers.length} dari file)` : (state.selectedForBacktest.size>0 ? `📅 Historical (${state.selectedForBacktest.size} dicentang)` : `📅 Historical (${sorted.length} lolos)`))}
@@ -16631,6 +16679,140 @@ function bsScanChipHtml(p, opts){
   return `<span style="display:inline-flex;align-items:center;gap:1px;">${mainEl}<button type="button" title="Lihat tanggal transaksi" onclick="var d=document.getElementById('${uid}');if(d)d.style.display=d.style.display==='none'?'block':'none';" style="border:none;background:transparent;color:var(--muted);cursor:pointer;font-size:10px;padding:0 3px;line-height:1;">📅</button></span><div id="${uid}" style="display:none;width:100%;">${bsScanDatesHtml(p, o.cur)}</div>`;
 }
 
+// ---------- Impor daftar Free Float (BEI/KSEI) -> tabel stock_free_float ----------
+// Menerima .xlsx/.xls/.csv. Header dikenali fleksibel (kode saham + kolom
+// persen free float). Kalau file hanya punya jumlah saham free float dan
+// jumlah saham tercatat, persennya dihitung dari keduanya.
+function bsFfNum(v, isCount){
+  if(v === null || v === undefined || v === "") return null;
+  if(typeof v === "number") return Number.isFinite(v) ? v : null;
+  let t = String(v).replace(/%/g, "").replace(/\s/g, "");
+  if(!t || t === "-") return null;
+  if(isCount && /^\d{1,3}(\.\d{3})+$/.test(t)) t = t.replace(/\./g, ""); // 250.000 = dua ratus lima puluh ribu
+  if(t.includes(",") && t.includes(".")) t = t.replace(/\./g, "").replace(",", ".");
+  else if(t.includes(",")) t = /,\d{3}$/.test(t) ? t.replace(/,/g, "") : t.replace(",", ".");
+  const n = Number(t);
+  return Number.isFinite(n) ? n : null;
+}
+function bsFfNormHeader(k){ return String(k || "").toLowerCase().replace(/[^a-z0-9%]+/g, " ").trim(); }
+function bsFfParseRows(json){
+  const A = {
+    ticker: ["kode", "kode saham", "ticker", "code", "stock code", "kode emiten"],
+    pct: ["free float", "free float %", "% free float", "free float pct", "persentase free float", "persen free float", "% saham free float", "ff", "ff %", "% ff", "free float (%)"],
+    ffShares: ["saham free float", "jumlah saham free float", "free float saham", "jumlah free float", "free float shares"],
+    listed: ["saham tercatat", "jumlah saham tercatat", "listed shares", "jumlah saham", "total saham", "saham beredar"],
+  };
+  const find = (norm, list) => { for(const a of list){ const k = Object.keys(norm).find(x => x === bsFfNormHeader(a)); if(k) return norm[k]; } return null; };
+  const out = [];
+  json.forEach(raw => {
+    const norm = {};
+    Object.entries(raw).forEach(([k, v]) => { norm[bsFfNormHeader(k)] = v; });
+    const ticker = String(find(norm, A.ticker) || "").trim().toUpperCase().replace(".JK", "");
+    if(!/^[A-Z0-9]{2,6}$/.test(ticker)) return;
+    let pct = bsFfNum(find(norm, A.pct));
+    if(pct == null){
+      const ff = bsFfNum(find(norm, A.ffShares), true), ls = bsFfNum(find(norm, A.listed), true);
+      if(ff != null && ls != null && ls > 0) pct = ff / ls * 100;
+    }
+    if(pct != null) out.push({ ticker, pct });
+  });
+  if(out.length && Math.max(...out.map(r => r.pct)) <= 1) out.forEach(r => { r.pct *= 100; }); // file berformat pecahan (0.25 = 25%)
+  return out.filter(r => r.pct > 0 && r.pct <= 100)
+    .map(r => ({ ticker: r.ticker, free_float_pct: Math.round(r.pct * 100) / 100, source: "idx" }));
+}
+async function handleBsFfImportFile(fileInput){
+  const file = fileInput.files && fileInput.files[0];
+  fileInput.value = "";
+  if(!file) return;
+  if(!SUPABASE_URL || !SUPABASE_KEY){ openSettings(); return; }
+  const sc = state.bsScan;
+  sc.ffImporting = true; sc.ffMsg = "Membaca file…"; sc.ffErr = false; render();
+  try{
+    const buf = await file.arrayBuffer();
+    // raw:true = teks CSV tidak diparse otomatis (tanpa ini "19,3%" terbaca 1.93)
+    const wb = XLSX.read(buf, { type: "array", cellDates: false, raw: true });
+    let rows = [];
+    for(const name of wb.SheetNames){
+      const json = XLSX.utils.sheet_to_json(wb.Sheets[name], { defval: "" });
+      rows = bsFfParseRows(json);
+      if(rows.length) break;
+    }
+    if(!rows.length) throw new Error('Tidak ada baris valid. Pastikan header memuat kolom kode saham (mis. "Kode") dan persen free float (mis. "Free Float (%)").');
+    const uniq = [...new Map(rows.map(r => [r.ticker, r])).values()];
+    for(const part of chunkArray(uniq, 200)){
+      await supaFetch(`${SUPABASE_URL}/stock_free_float?on_conflict=ticker`, {
+        method: "POST",
+        headers: { ...getSupaHeaders(), "Prefer": "resolution=merge-duplicates,return=minimal" },
+        body: JSON.stringify(part),
+      });
+    }
+    const m = {}; uniq.forEach(r => { m[r.ticker] = r.free_float_pct; });
+    _ffMapCache = { ...(_ffMapCache || {}), ...m };
+    (state.stocks || []).forEach(st => { const v = m[String(st.ticker || "").toUpperCase()]; if(v != null) st.freeFloatPct = v; });
+    const matched = (state.stocks || []).filter(st => m[String(st.ticker || "").toUpperCase()] != null).length;
+    sc.ffMsg = `✅ ${uniq.length} saham diimpor (${matched} cocok dengan daftar saham di aplikasi). Filter Serap FF sekarang aktif.`;
+    sc.ffErr = false;
+  }catch(e){
+    sc.ffMsg = "Gagal impor free float: " + e.message +
+      (/stock_free_float/.test(String(e.message)) ? " — tabel stock_free_float belum dibuat, jalankan SQL-nya dulu." : "");
+    sc.ffErr = true;
+  }
+  sc.ffImporting = false;
+  render();
+}
+
+// ---------- Ekspor hasil Pindai Akumulasi ke Excel ----------
+// Mengekspor SEMUA baris yang lolos filter (bukan hanya yang tampil di layar),
+// sesuai tab aktif (Per Saham / Per Broker), plus sheet detail pasangan
+// broker–saham.
+function exportBsScanToExcel(){
+  const sc = state.bsScan;
+  const res = sc.data ? bsScanCompute() : null;
+  if(!res){ alert("Belum ada data. Klik SCAN dulu."); return; }
+  const isSaham = sc.view !== "broker";
+  const periode = res.cur.length ? `${res.cur[0]} s/d ${res.cur[res.cur.length - 1]}` : "";
+  const bList = (list, showStock) => list.map(p => `${showStock ? p.stock : p.broker} (${fmtRp(p.net)})`).join(", ");
+  let data;
+  if(isSaham){
+    data = res.stockRows.map((r, i) => ({
+      "#": i + 1, "Kode": r.stock, "Nama Emiten": r.name || "",
+      "Market Cap (Rp)": r.marketCap, "Akumulasi (Rp)": r.totalNet,
+      "% Market Cap": r.pctMC != null ? +r.pctMC.toFixed(3) : "",
+      "Free Float (%)": (state.stocks.find(s => s.ticker === r.stock) || {}).freeFloatPct ?? "",
+      "Serap FF (%)": r.serapFF != null ? +r.serapFF.toFixed(2) : "",
+      "Jumlah Broker": r.brokerCount, "Status": r.statuses.join(", "),
+      "Broker yang Akumulasi": bList(r.list, false), "Periode": periode,
+    }));
+  }else{
+    data = res.brokerRows.map((r, i) => ({
+      "#": i + 1, "Broker": r.broker, "Nama Broker": r.name || "",
+      "Tipe": r.type === "asing" ? "Asing" : "Lokal", "Jumlah Saham": r.stockCount,
+      "Total Akumulasi (Rp)": r.totalNet, "Win Rate Rata-rata (%)": +r.avgWin.toFixed(1),
+      "Status": r.statuses.join(", "), "Saham yang Diakumulasi": bList(r.list, true), "Periode": periode,
+    }));
+  }
+  if(!data.length){ alert("Tidak ada hasil untuk diekspor dengan filter saat ini."); return; }
+
+  const keep = new Set(res.stockRows.map(r => r.stock));
+  const pairs = [];
+  res.stockRows.forEach(r => r.list.forEach(p => { if(keep.has(p.stock)) pairs.push({
+    "Saham": p.stock, "Broker": p.broker, "Tipe": p.type === "asing" ? "Asing" : "Lokal",
+    "Akumulasi (Rp)": p.net, "Win Rate (%)": +p.winRate.toFixed(1), "Hari Aktif": p.active, "Hari Net Beli": p.win,
+    "Beruntun (hari)": p.streak, "Status": p.statuses.join(", "),
+  }); }));
+
+  const wb = XLSX.utils.book_new();
+  const ws = XLSX.utils.json_to_sheet(data);
+  ws["!cols"] = Object.keys(data[0]).map(h => ({ wch: /Broker yang|Saham yang/.test(h) ? 60 : Math.max(11, h.length + 2) }));
+  XLSX.utils.book_append_sheet(wb, ws, isSaham ? "Per Saham" : "Per Broker");
+  if(pairs.length){
+    const ws2 = XLSX.utils.json_to_sheet(pairs);
+    ws2["!cols"] = Object.keys(pairs[0]).map(h => ({ wch: Math.max(11, h.length + 2) }));
+    XLSX.utils.book_append_sheet(wb, ws2, "Detail Broker-Saham");
+  }
+  XLSX.writeFile(wb, `Pindai_Akumulasi_${isSaham ? "Saham" : "Broker"}_${sc.filters.period}_${todayLocalISO()}.xlsx`);
+}
+
 function renderBsScan(){
   const sc = state.bsScan, f = sc.filters;
   const res = sc.data ? bsScanCompute() : null;
@@ -16658,10 +16840,14 @@ function renderBsScan(){
           <span class="pill pill-teal" style="font-size:9px;">${f.brokerType === "asing" ? "BROKER ASING" : f.brokerType === "lokal" ? "BROKER LOKAL" : "SEMUA BROKER"}</span></div>
         <div style="display:flex;gap:8px;flex-wrap:wrap;">
           <button type="button" class="bs2-chip" id="bsScanPresetGem" title="Min 1 M · Per Saham · baru diakumulasi · market cap ≤ 1 T · urut market cap terkecil">💎 Preset Hidden Gems</button>
+          <button type="button" class="bs2-chip" id="bsScanExportBtn" ${sc.data ? "" : "disabled"} title="Ekspor semua hasil yang lolos filter (sesuai tab Per Saham / Per Broker) ke Excel">📊 Ekspor Excel</button>
+          <button type="button" class="bs2-chip" id="bsScanFfBtn" ${sc.ffImporting ? "disabled" : ""} title="Impor daftar free float (.xlsx/.csv dari BEI) ke tabel stock_free_float">${sc.ffImporting ? "Mengimpor…" : "📥 Impor Free Float"}</button>
+          <input type="file" id="bsScanFfFile" accept=".xlsx,.xls,.csv" style="display:none;">
           <button type="button" class="bs2-chip active" id="bsScanRunBtn" ${sc.loading ? "disabled" : ""}>${sc.loading ? "Memuat…" : (sc.data ? "⟳ SCAN ULANG" : "⟳ SCAN")}</button>
         </div>
       </div>
       <div style="font-size:11px;color:var(--muted);margin:8px 0 2px;line-height:1.5;">${escapeHtml(dateLine)}</div>
+      ${sc.ffMsg ? `<div style="font-size:11.5px;margin-top:4px;color:${sc.ffErr ? "var(--down)" : "var(--muted)"};">${escapeHtml(sc.ffMsg)}</div>` : ""}
       ${sc.loading ? `<div id="bsScanProgress" style="font-size:11.5px;margin-top:6px;">${escapeHtml(sc.msg)}</div>` : (sc.msg ? `<div style="font-size:11.5px;margin-top:6px;color:${sc.err ? "var(--down)" : "var(--muted)"};">${escapeHtml(sc.msg)}</div>` : "")}
 
       <div class="bsx-grid">
@@ -16669,7 +16855,7 @@ function renderBsScan(){
         <div><label class="bs2-label">MIN AKUMULASI</label><div class="bs2-chipset">${chips("minAkum", [[1e8, "100 jt"], [1e9, "1 M"], [1e10, "10 M"]], f.minAkum)}</div></div>
         <div><label class="bs2-label">KAPITALISASI</label><div class="bs2-chipset">${chips("capMax", [["null", "Semua"], [1e12, "≤ 1 T"], [5e11, "≤ 500 M"], [1e11, "≤ 100 M"]], f.capMax == null ? "null" : f.capMax)}</div></div>
         <div><label class="bs2-label">SERAP FF</label>
-          <div class="bsx-hint">${ffAvailable ? "bagian free float yang sudah terserap" : "butuh kolom free_float_pct di database"}</div>
+          <div class="bsx-hint">${ffAvailable ? "bagian free float yang sudah terserap" : "belum ada data free float — klik 📥 Impor Free Float"}</div>
           <div class="bs2-chipset">${chips("serapFF", [[0, "Semua"], [15, "≥ 15%"], [30, "≥ 30%"], [50, "≥ 50%"]], f.serapFF, ffAvailable ? "" : "disabled")}</div></div>
         <div><label class="bs2-label">BROKER</label><div class="bs2-chipset">${chips("brokerType", [["null", "Semua"], ["asing", "Asing"], ["lokal", "Lokal"]], f.brokerType == null ? "null" : f.brokerType)}</div></div>
         <div><label class="bs2-label">URUTKAN</label><div class="bs2-chipset">${chips("sort", [["akum", "Akumulasi"], ["winrate", "Win Rate"], ["capAsc", "Mkt Cap ↑"], ["capDesc", "Mkt Cap ↓"], ["pctmc", "% Mkt Cap"]], f.sort)}</div></div>
@@ -16711,7 +16897,7 @@ function renderBsScan(){
     table = `<div class="empty-box">Tidak ada hasil untuk filter ini. Coba turunkan Min Akumulasi, lebarkan Kapitalisasi, atau kosongkan Status.</div>`;
   }else if(isSaham){
     table = `<div class="table-wrap"><table class="bsx-table"><thead><tr>
-      <th>#</th><th>KODE</th><th>MKT CAP</th><th>AKUMULASI</th><th>% MC</th>${res.ffAvailable ? "<th>SERAP FF</th>" : ""}<th>BROKER</th><th>BROKER YANG SEDANG AKUMULASI</th></tr></thead><tbody>
+      <th>#</th><th>KODE</th><th>MKT CAP</th><th>AKUMULASI</th><th title="% Market Cap = total akumulasi ÷ market cap saham">% MC</th>${res.ffAvailable ? '<th title="Serap FF = total akumulasi ÷ (market cap × free float)">SERAP FF</th>' : ""}<th>BROKER</th><th>BROKER YANG SEDANG AKUMULASI</th></tr></thead><tbody>
       ${shown.map((r, i) => `<tr>
         <td class="mono" style="color:var(--muted);">${i + 1}</td>
         <td><button type="button" class="ticker-link" data-detail="${escapeHtml(r.stock)}" style="font-weight:800;font-size:14px;">${escapeHtml(r.stock)}</button>${r.gem ? ` <span title="Market cap ≤ 1 T, baru diakumulasi, akumulasi ≥ 1 M">💎</span>` : ""}
@@ -16752,6 +16938,10 @@ function wireBsScanControls(){
   const sc = state.bsScan;
   const runBtn = document.getElementById("bsScanRunBtn");
   if(runBtn) runBtn.onclick = () => runBsScan();
+  const expBtn = document.getElementById("bsScanExportBtn");
+  if(expBtn) expBtn.onclick = () => exportBsScanToExcel();
+  const ffBtn = document.getElementById("bsScanFfBtn"), ffFile = document.getElementById("bsScanFfFile");
+  if(ffBtn && ffFile){ ffBtn.onclick = () => ffFile.click(); ffFile.onchange = () => handleBsFfImportFile(ffFile); }
 
   document.querySelectorAll("[data-bsscan]").forEach(btn => btn.onclick = () => {
     const [k, ...rest] = btn.dataset.bsscan.split(":");
@@ -17149,8 +17339,9 @@ function computeBrokerStalkerAggregation(rawRows, mode){
     const isBuy = String(r.side).toLowerCase()==='buy';
     if(isBuy){ g.buyLot+=lot; g.buyValue+=val; } else { g.sellLot+=lot; g.sellValue+=val; }
     if(r.trade_date){
-      const dd = dailyMap[r.trade_date] || (dailyMap[r.trade_date] = { date:r.trade_date, net:0 });
+      const dd = dailyMap[r.trade_date] || (dailyMap[r.trade_date] = { date:r.trade_date, net:0, netAsing:0 });
       dd.net += isBuy ? val : -val;
+      if(mode==='stock' && epsBrokerType(r.broker_code)==='asing') dd.netAsing += isBuy ? val : -val;
     }
   });
   // PENTING (performa): enriched() memproses ULANG seluruh emiten (enrichOne x ~900)
@@ -17171,7 +17362,12 @@ function computeBrokerStalkerAggregation(rawRows, mode){
       status: net>=0 ? 'AKUMULASI' : 'DISTRIBUSI'
     };
   });
-  const dailyNet = Object.values(dailyMap).sort((a,b)=> a.date<b.date?-1:(a.date>b.date?1:0));
+  // Mode Lacak Saham: total beli semua broker == total jual semua broker di hari yang
+  // sama, jadi net gabungan SELALU ~0 (grafik kosong). Yang informatif untuk grafik
+  // adalah net broker ASING per hari (asing vs lokal tidak saling meniadakan).
+  const dailyNet = Object.values(dailyMap)
+    .map(d => mode==='stock' ? { date:d.date, net:d.netAsing } : { date:d.date, net:d.net })
+    .sort((a,b)=> a.date<b.date?-1:(a.date>b.date?1:0));
   return { rows, dailyNet };
 }
 
@@ -17220,15 +17416,23 @@ function brokerStalkerSummary(rows){
 // brokerStalkerDailyNet (net GABUNGAN semua broker/saham hari itu), hijau
 // kalau net beli, merah kalau net jual, tinggi proporsional ke net
 // terbesar (absolut) dalam periode yang sedang dilihat.
-function renderBrokerStalkerChartHtml(dailyNet){
+function renderBrokerStalkerChartHtml(dailyNet, mode){
   if(!dailyNet || dailyNet.length < 2) return '<div class="empty-box" style="margin:8px 0 14px;">Perlu lebih dari 1 hari data untuk grafik akumulasi — coba periode 1W/1M/3M/Range.</div>';
-  const maxAbs = Math.max(1, ...dailyNet.map(d=>Math.abs(d.net)));
+  const maxAbs = Math.max(0, ...dailyNet.map(d=>Math.abs(d.net)));
+  if(maxAbs <= 0) return '<div class="empty-box" style="margin:8px 0 14px;">Tidak ada net broker asing pada periode ini, jadi grafik tidak punya batang untuk digambar. Coba periode yang lebih panjang atau tarik data broker asing (mis. AK, BK, KZ, CS, DB) dulu.</div>';
+  const modeStock = mode === 'stock';
+  const caption = modeStock ? 'Net broker ASING per hari (beli − jual) · hijau = akumulasi, merah = distribusi' : 'Net gabungan per hari (beli − jual) · hijau = akumulasi, merah = distribusi';
   const bars = dailyNet.map(d=>{
-    const pct = Math.max(4, Math.round(Math.abs(d.net)/maxAbs*100));
-    const color = d.net>=0 ? 'var(--up)' : 'var(--down)';
-    return `<div class="bs2-chart-bar" title="${fmtDateID(d.date)}: ${fmtRp(d.net)}"><div class="bs2-chart-bar-fill" style="height:${pct}%;background:${color};"></div></div>`;
+    const pct = d.net === 0 ? 0 : Math.max(4, Math.round(Math.abs(d.net)/maxAbs*100));
+    const fill = (color) => `<div class="bs2-chart-bar-fill" style="height:${pct}%;background:${color};"></div>`;
+    return `<div class="bs2-chart-bar" title="${fmtDateID(d.date)}: ${fmtRp(d.net)}" style="flex-direction:column;align-items:stretch;background:transparent;">
+      <div style="height:50%;display:flex;align-items:flex-end;border-bottom:1px solid var(--border);">${d.net>0 ? fill('var(--up)') : ''}</div>
+      <div style="height:50%;display:flex;align-items:flex-start;">${d.net<0 ? fill('var(--down)') : ''}</div>
+    </div>`;
   }).join('');
-  return `<div class="bs2-chart">${bars}</div>`;
+  return `<div style="font-size:10.5px;color:var(--muted);margin:8px 0 2px;">${caption} · skala maks ±${fmtRp(maxAbs)}</div>
+    <div class="bs2-chart" style="height:120px;margin:4px 0 4px;">${bars}</div>
+    <div style="display:flex;justify-content:space-between;font-size:10px;color:var(--muted);margin-bottom:16px;"><span>${fmtDateID(dailyNet[0].date)}</span><span>${fmtDateID(dailyNet[dailyNet.length-1].date)}</span></div>`;
 }
 
 // ==========================================================================
@@ -17858,7 +18062,8 @@ function renderBrokerStalker(){
     <div class="bs2-card">
       <div class="bs2-card-title"><span>${modeStock?'LACAK SAHAM':'LACAK BROKER'}</span><span class="pill pill-teal" style="font-size:9px;">BROKER SCAN</span></div>
       <label class="bs2-label">${modeStock?'KODE SAHAM':'KODE BROKER'}</label>
-      <input class="bs2-input-big" id="stalkerQuery" value="${escapeHtml(state.brokerStalkerQuery)}" placeholder="${modeStock?'Mis. BBCA':'Mis. AK'}" maxlength="${modeStock?12:60}">
+      <input class="bs2-input-big" id="stalkerQuery" value="${escapeHtml(state.brokerStalkerQuery)}" placeholder="${modeStock?'Mis. BBCA':'Mis. AK atau AK, BK'}" maxlength="${modeStock?12:60}" ${modeStock ? 'list="stalkerQueryList" autocomplete="off" autocapitalize="characters" spellcheck="false"' : ''}>
+      ${modeStock ? `<datalist id="stalkerQueryList">${(state.stocks||[]).filter(st=>st && st.ticker).slice().sort((a,b)=>a.ticker<b.ticker?-1:a.ticker>b.ticker?1:0).map(st=>`<option value="${escapeHtml(st.ticker)}">${escapeHtml(st.name||"")}</option>`).join("")}</datalist>` : ''}
       ${modeStock ? '' : renderBrokerCodeChips()}
 
       <div class="bs2-row">
@@ -17899,7 +18104,7 @@ function renderBrokerStalker(){
       ${!modeStock ? `
       <div style="margin-top:14px;padding-top:14px;border-top:1px solid var(--border);">
         <div class="bs2-label" style="margin-bottom:8px;">DATA BELUM LENGKAP? TARIK DARI STOCKBIT</div>
-        <div class="bsx-hint" style="margin-bottom:8px;">Broker Summary (Top 5) bisa saja tidak menangkap broker ini kalau dia bukan top-5 buyer/seller di suatu saham. Tombol ini menarik langsung dari endpoint Broker Activity Stockbit (SEMUA saham broker ini, sesuai kode + periode di atas; boleh beberapa kode sekaligus dipisah koma, mis. <code>AK, YP, CC</code> — tombol Lacak Broker tetap 1 kode per pencarian) lalu menyimpannya ke tabel <code>broker_activity</code>.</div>
+        <div class="bsx-hint" style="margin-bottom:8px;">Broker Summary (Top 5) bisa saja tidak menangkap broker ini kalau dia bukan top-5 buyer/seller di suatu saham. Tombol ini menarik langsung dari endpoint Broker Activity Stockbit (SEMUA saham broker ini, sesuai kode + periode di atas; boleh beberapa kode sekaligus dipisah koma, mis. <code>AK, YP, CC</code> — tombol Lacak Broker juga boleh beberapa kode, hasilnya digabung per saham) lalu menyimpannya ke tabel <code>broker_activity</code>.</div>
         <button type="button" class="btn btn-outline" id="stalkerPullActivityBtn" ${state.brokerActivityBulkLoading?'disabled':''} style="width:100%;">
           ${state.brokerActivityBulkLoading
             ? `⏳ Menarik… broker ${Math.min((state.brokerActivityBulkProgress?.done||0)+1, state.brokerActivityBulkProgress?.total||1)}/${state.brokerActivityBulkProgress?.total||0}`
@@ -17935,7 +18140,7 @@ function renderBrokerStalker(){
         <div style="display:flex;justify-content:space-between;font-size:9px;color:var(--muted);margin-bottom:6px;"><span>◂ AKUMULASI</span><span>DISTRIBUSI ▸</span></div>
 
         <button class="bs2-chart-toggle" id="stalkerChartToggle">${state.brokerStalkerChartOpen?'▲ Sembunyikan':'▾ Tampilkan'} Grafik Akumulasi Broker</button>
-        ${state.brokerStalkerChartOpen ? renderBrokerStalkerChartHtml(state.brokerStalkerDailyNet) : ''}
+        ${state.brokerStalkerChartOpen ? renderBrokerStalkerChartHtml(state.brokerStalkerDailyNet, state.brokerStalkerMode) : ''}
 
         ${rows.length ? rows.map((r,i)=>{
           const buyPct = r.volTotal>0 ? Math.round(r.buyLot/r.volTotal*100) : 0;
@@ -17946,9 +18151,9 @@ function renderBrokerStalker(){
           // Kalender harian broker×saham (mis. AK@UNTR): di mode Lacak Saham,
           // baris = broker (r.code) & saham = query yang dicari; di mode Lacak
           // Broker, baris = saham (r.code) & broker = query yang dicari.
-          const calBroker = modeStock ? r.code : String(state.brokerStalkerQuery||'').trim().toUpperCase();
+          const calBroker = modeStock ? r.code : (parseBrokerCodesInput(state.brokerStalkerQuery).length === 1 ? parseBrokerCodesInput(state.brokerStalkerQuery)[0] : "");
           const calTicker = modeStock ? String(state.brokerStalkerQuery||'').trim().toUpperCase() : r.code;
-          const calBtn = `<button type="button" class="link-btn" data-bs-cal-broker="${escapeHtml(calBroker)}" data-bs-cal-ticker="${escapeHtml(calTicker)}" title="Kalender transaksi harian ${escapeHtml(calBroker)}@${escapeHtml(calTicker)}" style="font-size:13px;margin-left:2px;vertical-align:middle;">📅</button>`;
+          const calBtn = !calBroker ? "" : `<button type="button" class="link-btn" data-bs-cal-broker="${escapeHtml(calBroker)}" data-bs-cal-ticker="${escapeHtml(calTicker)}" title="Kalender transaksi harian ${escapeHtml(calBroker)}@${escapeHtml(calTicker)}" style="font-size:13px;margin-left:2px;vertical-align:middle;">📅</button>`;
           return `<div class="bs2-broker-row ${r.net<0?'bs2-row-down':''}">
             <div class="bs2-broker-rank">${i+1}</div>
             <div class="bs2-broker-code">
@@ -18073,11 +18278,10 @@ async function loadBrokerLeaderboard(){
 async function searchBrokerStalker(){
   let q = String(state.brokerStalkerQuery||'').trim().toUpperCase();
   if(state.brokerStalkerMode === 'broker'){
+    // Boleh beberapa kode sekaligus (mis. "AK, BK"): transaksi semua kode itu
+    // digabung per saham (net = total beli semua kode - total jual semua kode).
     const codes = parseBrokerCodesInput(q);
-    if(codes.length > 1){
-      state.brokerStalkerMsg = 'Lacak Broker hanya bisa 1 kode per pencarian (kode ganda hanya untuk tombol Tarik Data). Sisakan satu kode, mis. '+codes[0]+'.';
-      state.brokerStalkerRawRows=[]; state.brokerStalkerRows=[]; render(); return;
-    }
+    if(codes.length) q = codes.join(',');
   }
   if(!q || !SUPABASE_URL || !SUPABASE_KEY){
     state.brokerStalkerMsg = 'Isi pencarian dan pastikan koneksi Supabase tersedia.';
@@ -18105,7 +18309,8 @@ async function searchBrokerStalker(){
     const table = 'broker_activity';
     const field = modeBroker ? 'broker_code' : 'stock_code';
     const qs = new URLSearchParams();
-    qs.append(field, `eq.${q}`);
+    const fieldFilter = (modeBroker && q.indexOf(',') >= 0) ? `in.(${q})` : `eq.${q}`;
+    qs.append(field, fieldFilter);
     qs.append('select', 'stock_code,trade_date,side,broker_code,lot,value_idr,investor_type');
     const todayMode = state.brokerStalkerPeriod === 'today';
     if(todayMode){
@@ -18114,7 +18319,7 @@ async function searchBrokerStalker(){
       // di browser; sekarang cukup 1 request ringan untuk tahu tanggal terbarunya,
       // lalu hanya tanggal itu yang ditarik.
       const lq = new URLSearchParams();
-      lq.append(field, `eq.${q}`); lq.append('select', 'trade_date'); lq.append('order', 'trade_date.desc'); lq.append('limit', '1');
+      lq.append(field, fieldFilter); lq.append('select', 'trade_date'); lq.append('order', 'trade_date.desc'); lq.append('limit', '1');
       const lres = await fetch(`${SUPABASE_URL}/${table}?${lq}`, { headers: getSupaHeaders(), cache: 'no-store' });
       const lrows = await lres.json();
       if(!lres.ok || !Array.isArray(lrows)) throw new Error((lrows && lrows.message) || `HTTP ${lres.status}`);
@@ -18935,8 +19140,17 @@ function renderChart(){
   // vertikal yang kebebas dari blok kontrol yang disembunyikan.
   const controlsHidden = !!state.chartMinimized;
 
+  const chNavList = state.chartNavList;
+  const chNavIdx = chNavList ? chNavList.indexOf(t) : -1;
+  const chartNavRow = chNavIdx >= 0 ? `
+      <div class="chart-nav" style="display:flex;align-items:center;justify-content:space-between;gap:8px;flex:1 1 100%;margin-bottom:8px;">
+        <button type="button" class="btn btn-outline" data-chart-nav="-1" ${chNavIdx<=0?"disabled":""} title="Saham sebelumnya di hasil screener" style="padding:6px 12px;font-size:12px;">‹ ${chNavIdx>0 ? escapeHtml(chNavList[chNavIdx-1]) : "Sebelumnya"}</button>
+        <span class="mono" style="font-size:12px;color:var(--muted);text-align:center;">${escapeHtml(t)} · ${chNavIdx+1} / ${chNavList.length} di hasil screener</span>
+        <button type="button" class="btn btn-outline" data-chart-nav="1" ${chNavIdx>=chNavList.length-1?"disabled":""} title="Saham berikutnya di hasil screener" style="padding:6px 12px;font-size:12px;">${chNavIdx<chNavList.length-1 ? escapeHtml(chNavList[chNavIdx+1]) : "Berikutnya"} ›</button>
+      </div>` : "";
   const chartToolbar = `
-    <div class="chart-toolbar" style="margin-top: 24px;">
+    <div class="chart-toolbar" style="margin-top: 24px;flex-wrap:wrap;">
+      ${chartNavRow}
       <div class="chart-external-links">
         <a class="btn btn-outline btn-tradingview" href="${tvChartPageUrl(t)}" target="_blank" rel="noopener">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 13v6a2 2 0 01-2 2H5a2 2 0 01-2-2V8a2 2 0 012-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
@@ -24868,10 +25082,8 @@ function attachContentEvents(){
     state.stockbitAutoRefreshIntervalSec = (Number.isFinite(sec) && sec >= STOCKBIT_AUTOREFRESH_MIN_SEC) ? sec : 60;
     localStorage.setItem(LS_STOCKBIT_AUTOREFRESH_SEC, String(state.stockbitAutoRefreshIntervalSec));
   };
-  const screenerHdFromInput = document.getElementById("screenerHdFromInput");
-  if(screenerHdFromInput) screenerHdFromInput.onchange = (e) => { state.hdAutoBulkFrom = e.target.value || state.hdAutoBulkFrom; };
-  const screenerHdToInput = document.getElementById("screenerHdToInput");
-  if(screenerHdToInput) screenerHdToInput.onchange = (e) => { state.hdAutoBulkTo = e.target.value || state.hdAutoBulkTo; };
+  const screenerHdDateInput = document.getElementById("screenerHdDateInput");
+  if(screenerHdDateInput) screenerHdDateInput.onchange = (e) => { state.hdScreenerDate = e.target.value || null; };
   const tiBulkBtn = document.getElementById("tiBulkBtn");
   if(tiBulkBtn) tiBulkBtn.onclick = () => {
     updateTechnicalIndicatorsBulk(resolveBulkTickers());
@@ -24894,7 +25106,8 @@ function attachContentEvents(){
 
   const screenerHdBulkBtn = document.getElementById("screenerHdBulkBtn");
   if(screenerHdBulkBtn) screenerHdBulkBtn.onclick = () => {
-    fetchAndSaveHistoricalBulk(resolveBulkTickers(), state.hdAutoBulkFrom, state.hdAutoBulkTo);
+    const hdDate = state.hdScreenerDate || todayLocalISO();
+    fetchAndSaveHistoricalBulk(resolveBulkTickers(), hdDate, hdDate);
   };
   const hdBulkResultsPanel = document.getElementById("hdBulkResultsPanel");
   if(hdBulkResultsPanel) hdBulkResultsPanel.ontoggle = (e) => { state.hdBulkResultsOpen = e.target.open; };
@@ -25083,6 +25296,7 @@ function attachContentEvents(){
   });
   document.querySelectorAll("[data-fav]").forEach(b=> b.onclick=()=>toggleFav(b.dataset.fav));
   document.querySelectorAll("[data-chart]").forEach(b=> bindInternalLink(b, () => loadChart(b.dataset.chart)));
+  document.querySelectorAll("[data-chart-nav]").forEach(b=> b.onclick = () => navigateChart(parseInt(b.dataset.chartNav, 10)));
   document.querySelectorAll("[data-stockbit-live]").forEach(b=> b.onclick=(e)=>{ e.stopPropagation(); fetchStockbitLive(b.dataset.stockbitLive); });
   document.querySelectorAll("[data-expand]").forEach(b=> b.onclick=()=>{
     const t = b.dataset.expand;
@@ -25352,7 +25566,11 @@ function attachContentEvents(){
     searchBrokerStalker();
   });
   const stalkerQuery = document.getElementById("stalkerQuery");
-  if(stalkerQuery) stalkerQuery.oninput = e => { state.brokerStalkerQuery=e.target.value; };
+  if(stalkerQuery){
+    stalkerQuery.oninput = e => { state.brokerStalkerQuery=e.target.value; };
+    // Enter = cari (praktis setelah memilih saran autocomplete)
+    stalkerQuery.onkeydown = e => { if(e.key === "Enter"){ e.preventDefault(); state.brokerStalkerQuery = e.target.value; searchBrokerStalker(); } };
+  }
   const stalkerSearchBtn = document.getElementById("stalkerSearchBtn");
   if(stalkerSearchBtn) stalkerSearchBtn.onclick = searchBrokerStalker;
   document.querySelectorAll("[data-bs-code]").forEach(btn => btn.onclick = (e) => {
