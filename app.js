@@ -2578,6 +2578,33 @@ function renderSettingsTab(){
             <input type="checkbox" id="setTelegramOnlyMarketHours" class="custom-checkbox" style="margin:0;justify-self:start;">
             <span style="text-align:left;">Hanya kirim di jam bursa (≈09:00–17:00 WIB, Senin–Jumat)</span>
           </label>
+          <label style="display:grid;grid-template-columns:16px 1fr;align-items:center;gap:8px;font-size:12.5px;padding:0 0 10px;cursor:pointer;">
+            <input type="checkbox" id="setTelegramOnlySyariah" class="custom-checkbox" style="margin:0;justify-self:start;">
+            <span style="text-align:left;">Hanya saham Syariah (butuh kolom only_syariah — lihat sql/07_telegram_only_syariah.sql)</span>
+          </label>
+          <label style="display:grid;grid-template-columns:16px 1fr;align-items:center;gap:8px;font-size:12.5px;padding:0 0 10px;cursor:pointer;">
+            <input type="checkbox" id="setTelegramExitAlerts" class="custom-checkbox" style="margin:0;justify-self:start;">
+            <span style="text-align:left;">Alert exit: kabari kalau posisi Open di Portofolio menyentuh Target TP / Cut Loss (sql/09_telegram_exit_alerts.sql)</span>
+          </label>
+          <label style="display:grid;grid-template-columns:16px 1fr;align-items:center;gap:8px;font-size:12.5px;padding:0 0 4px;cursor:pointer;">
+            <input type="checkbox" id="setTelegramRekapAlert" class="custom-checkbox" style="margin:0;justify-self:start;">
+            <span style="text-align:left;">Notif Konfluensi Rekap: saham lolos banyak preset sekaligus, 5 teratas (sql/11_telegram_rekap_alert.sql)</span>
+          </label>
+          <div style="display:flex;gap:8px;align-items:center;padding:0 0 10px 24px;font-size:12.5px;">
+            <span>minimal lolos</span> <input id="setTelegramRekapMin" type="number" step="1" min="2" style="width:64px;"> <span>preset/screener (server memakai subset sumber, lihat catatan di pesan)</span>
+          </div>
+          <div class="field">
+            <label>Guard IHSG (butuh kolom ihsg_guard_mode & ihsg_guard_drop_pct — sql/08_telegram_ihsg_guard.sql)</label>
+            <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+              <select id="setTelegramIhsgGuardMode">
+                <option value="off">Nonaktif</option>
+                <option value="warn">Beri peringatan di pesan</option>
+                <option value="skip">Tahan notifikasi</option>
+              </select>
+              <span style="font-size:12.5px;">jika IHSG turun ≥</span>
+              <input id="setTelegramIhsgGuardDrop" type="number" step="0.1" min="0.1" style="width:70px;"> <span style="font-size:12.5px;">% hari ini</span>
+            </div>
+          </div>
           <div class="field">
             <label>Preset yang dipantau (Rules Kustom tersimpan)</label>
             <div id="telegramPresetChecklist" style="background:color-mix(in srgb, currentColor 3%, transparent);border:1px solid var(--border);border-radius:8px;padding:8px 12px;max-height:160px;overflow-y:auto;">
@@ -2692,6 +2719,18 @@ async function initSettingsTabUI() {
   if(tgEnabledEl) tgEnabledEl.checked = !!state.telegramEnabled;
   const tgHoursEl = document.getElementById("setTelegramOnlyMarketHours");
   if(tgHoursEl) tgHoursEl.checked = state.telegramOnlyMarketHours !== false;
+  const tgSyariahEl = document.getElementById("setTelegramOnlySyariah");
+  if(tgSyariahEl) tgSyariahEl.checked = !!state.telegramOnlySyariah;
+  const tgRekapEl = document.getElementById("setTelegramRekapAlert");
+  if(tgRekapEl) tgRekapEl.checked = !!state.telegramRekapAlert;
+  const tgRekapMinEl = document.getElementById("setTelegramRekapMin");
+  if(tgRekapMinEl) tgRekapMinEl.value = state.telegramRekapMin || 7;
+  const tgExitEl = document.getElementById("setTelegramExitAlerts");
+  if(tgExitEl) tgExitEl.checked = !!state.telegramExitAlerts;
+  const tgGuardModeEl = document.getElementById("setTelegramIhsgGuardMode");
+  if(tgGuardModeEl) tgGuardModeEl.value = state.telegramIhsgGuardMode || "off";
+  const tgGuardDropEl = document.getElementById("setTelegramIhsgGuardDrop");
+  if(tgGuardDropEl) tgGuardDropEl.value = state.telegramIhsgGuardDrop || 1.5;
   if(tgTokenEl) state.telegramFieldsPopulated = true; // form sudah terisi -> aman dibaca saat Simpan
   renderTelegramPresetChecklist();
   const tgLastRunEl = document.getElementById("telegramLastRunStatus");
@@ -2790,6 +2829,19 @@ function saveSettings() {
   state.telegramChatId = tgFieldFromDom("setTelegramChatId", state.telegramChatId);
   state.telegramEnabled = tgCheckFromDom("setTelegramEnabled", state.telegramEnabled);
   state.telegramOnlyMarketHours = tgCheckFromDom("setTelegramOnlyMarketHours", state.telegramOnlyMarketHours);
+  state.telegramOnlySyariah = tgCheckFromDom("setTelegramOnlySyariah", state.telegramOnlySyariah);
+  state.telegramExitAlerts = tgCheckFromDom("setTelegramExitAlerts", state.telegramExitAlerts);
+  state.telegramRekapAlert = tgCheckFromDom("setTelegramRekapAlert", state.telegramRekapAlert);
+  if(state.telegramFieldsPopulated){
+    const rm = parseInt(document.getElementById("setTelegramRekapMin")?.value, 10);
+    if(Number.isFinite(rm) && rm >= 2) state.telegramRekapMin = rm;
+  }
+  if(state.telegramFieldsPopulated){
+    const gm = document.getElementById("setTelegramIhsgGuardMode")?.value;
+    if(gm) state.telegramIhsgGuardMode = gm;
+    const gd = parseFloat(document.getElementById("setTelegramIhsgGuardDrop")?.value);
+    if(Number.isFinite(gd) && gd > 0) state.telegramIhsgGuardDrop = gd;
+  }
   saveTelegramSettingsToSupabase();
   // Token Stockbit TIDAK ikut di telegram_settings — tabelnya sendiri
   // (stockbit_session) yang juga dipakai extension. Lihat catatan di sana.
@@ -2825,6 +2877,18 @@ async function loadTelegramSettingsFromSupabase(){
     state.telegramChatId = row.chat_id || "";
     state.telegramEnabled = !!row.enabled;
     state.telegramOnlyMarketHours = row.only_market_hours !== false;
+    // Kolom only_syariah baru (sql/07). Kalau belum ada di tabel, jangan ikut
+    // dikirim saat simpan — PostgREST menolak seluruh PATCH kalau ada kolom asing.
+    state.telegramSyariahColExists = Object.prototype.hasOwnProperty.call(row, "only_syariah");
+    state.telegramOnlySyariah = row.only_syariah === true;
+    state.telegramRekapColExists = Object.prototype.hasOwnProperty.call(row, "rekap_alert");
+    state.telegramRekapAlert = row.rekap_alert === true;
+    state.telegramRekapMin = Number(row.rekap_min_count) >= 2 ? Number(row.rekap_min_count) : 7;
+    state.telegramExitColExists = Object.prototype.hasOwnProperty.call(row, "exit_alerts");
+    state.telegramExitAlerts = row.exit_alerts === true;
+    state.telegramIhsgGuardColExists = Object.prototype.hasOwnProperty.call(row, "ihsg_guard_mode");
+    state.telegramIhsgGuardMode = row.ihsg_guard_mode || "off";
+    state.telegramIhsgGuardDrop = Number(row.ihsg_guard_drop_pct) > 0 ? Number(row.ihsg_guard_drop_pct) : 1.5;
     state.telegramPresetIds = Array.isArray(row.preset_ids) ? row.preset_ids.map(String) : [];
     state.telegramLastRunAt = row.last_run_at || null;
     state.telegramLastRunNote = row.last_run_note || null;
@@ -2906,6 +2970,10 @@ async function saveTelegramSettingsToSupabase(){
         chat_id: state.telegramChatId,
         enabled: state.telegramEnabled,
         only_market_hours: state.telegramOnlyMarketHours,
+        ...(state.telegramSyariahColExists ? { only_syariah: !!state.telegramOnlySyariah } : {}),
+        ...(state.telegramRekapColExists ? { rekap_alert: !!state.telegramRekapAlert, rekap_min_count: state.telegramRekapMin || 7 } : {}),
+        ...(state.telegramExitColExists ? { exit_alerts: !!state.telegramExitAlerts } : {}),
+        ...(state.telegramIhsgGuardColExists ? { ihsg_guard_mode: state.telegramIhsgGuardMode || "off", ihsg_guard_drop_pct: state.telegramIhsgGuardDrop || 1.5 } : {}),
         preset_ids: state.telegramPresetIds,
         function_url: state.telegramFunctionUrl,
         gemini_api_key: state.geminiApiKey,
@@ -4246,7 +4314,7 @@ let state = {
   // tabel telegram_settings.
   // ==========================================
   telegramBotToken: "", telegramChatId: "", telegramEnabled: false,
-  telegramOnlyMarketHours: true, telegramPresetIds: [],
+  telegramOnlyMarketHours: true, telegramOnlySyariah: false, telegramSyariahColExists: false, telegramIhsgGuardMode: "off", telegramIhsgGuardDrop: 1.5, telegramIhsgGuardColExists: false, telegramRekapAlert: false, telegramRekapMin: 7, telegramRekapColExists: false, telegramExitAlerts: false, telegramExitColExists: false, telegramPresetIds: [],
   telegramFunctionUrl: "", telegramLoading: false,
   // ==========================================
   // ALERT LIVE (browser, BUKAN Cron server) — lihat catatan panjang di
@@ -13058,7 +13126,7 @@ const FILTER_LABELS = {
   capTier:"Market Cap", lq45:"LQ45", marketCap:"Market Cap (Rp)", week52ChangePct:"52W Change (%)", ytdPct:"YTD (%)",
   suspendedLabel:"Suspend", unsuspendedLabel:"Unsuspend", fcaLabel:"FCA", fcaOutLabel:"FCA Out"
 };
-const PRESET_LABELS = { bagger:"Skor Bagger ≥75", eri:"Momentum Kuat Berlanjut", rsicross:"RSI & Harga Cross", golden:"Golden Cross DSI", uptrend:"Super Uptrend", breakout:"Volatility Breakout", pullback:"Pullback Uptrend", custom_bandar:"BPJS", asing_akumulasi:"Akumulasi Asing (IDX)", freq_spike:"Lonjakan Frekuensi", freq_up_vol_down:"Freq↑ Vol↓ (Divergensi)", deepvalue:"Deep Value", multibagger:"Multibagger", growth:"Growth", defensive:"Defensive", smallcap:"Small Cap (<1T)" };
+const PRESET_LABELS = { bagger:"Skor Bagger ≥75", eri:"Momentum Kuat Berlanjut", rsicross:"RSI & Harga Cross", golden:"Golden Cross DSI", ema921cross:"🟢 EMA9×21 Golden Cross (Fresh Cross)", uptrend:"Super Uptrend", breakout:"Volatility Breakout", pullback:"Pullback Uptrend", custom_bandar:"BPJS", asing_akumulasi:"Akumulasi Asing (IDX)", freq_spike:"Lonjakan Frekuensi", freq_up_vol_down:"Freq↑ Vol↓ (Divergensi)", deepvalue:"Deep Value", multibagger:"Multibagger", growth:"Growth", defensive:"Defensive", smallcap:"Small Cap (<1T)" };
 function clearChip(kind, key, value){
   if(kind==="search") state.search="";
   else if(kind==="preset") state.activePresets = key ? state.activePresets.filter(k=>k!==key) : [];
