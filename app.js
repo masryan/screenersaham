@@ -4429,11 +4429,103 @@ function trendTone(t){
 function polaTone(p){
   p = String(p||"");
   if(p==="-"||!p) return "muted";
+  if(p.indexOf("Dragonfly")===0) return "up";
+  if(p.indexOf("Gravestone")===0) return "down";
   if(p.indexOf("Bullish")>=0 || p.indexOf("Hammer")===0 || p.indexOf("Inverted Hammer")>=0) return "up";
   if(p.indexOf("Bearish")>=0 || p.indexOf("Shooting Star")>=0 || p.indexOf("Hanging Man")>=0) return "down";
   if(p.indexOf("Doji")>=0) return "gold";
   return "muted";
 }
+// Arah/kegunaan pola sesuai tabel referensi 10 pola candle (Best For / Direction).
+function polaArah(p){
+  p = String(p||"");
+  if(!p || p==="-") return null;
+  if(p.indexOf("Bullish Marubozu")===0) return {label:"Strong Bullish Continuation", tone:"up"};
+  if(p.indexOf("Bearish Marubozu")===0) return {label:"Strong Bearish Continuation", tone:"down"};
+  if(p.indexOf("Dragonfly")===0 || p.indexOf("Hammer")===0 || p.indexOf("Inverted Hammer")===0 || p.indexOf("Bullish")===0) return {label:"Bullish Reversal", tone:"up"};
+  if(p.indexOf("Gravestone")===0 || p.indexOf("Hanging Man")===0 || p.indexOf("Shooting Star")===0 || p.indexOf("Bearish")===0) return {label:"Bearish Reversal", tone:"down"};
+  if(p.indexOf("Doji")>=0 || p.indexOf("Long-Legged")===0) return {label:"Neutral / Indecision", tone:"gold"};
+  return null;
+}
+// Pill untuk panel detail: boleh turun baris (teks pola panjang) supaya tidak
+// meluber ke kartu sebelahnya.
+function polaPillWrap(text, tone){
+  return `<span class="pill pill-${tone}" style="display:inline-block;max-width:100%;white-space:normal;word-break:break-word;line-height:1.35;text-align:left;box-sizing:border-box;">${text}</span>`;
+}
+// Diagram skema tiap pola (skala 0-100, 0 = paling atas). h=high, l=low, o=open, c=close.
+const POLA_DIAGRAMS = {
+  "Hammer": [{h:10,c:22,o:38,l:92,k:"up"}],
+  "Inverted Hammer": [{h:6,c:60,o:76,l:88,k:"up"}],
+  "Hanging Man": [{h:8,o:16,c:32,l:92,k:"down"}],
+  "Shooting Star": [{h:6,o:60,c:76,l:88,k:"down"}],
+  "Doji": [{h:6,o:50,c:50,l:94,k:"doji"}],
+  "Dragonfly Doji": [{h:8,o:8,c:8,l:92,k:"doji"}],
+  "Gravestone Doji": [{h:8,o:92,c:92,l:92,k:"doji"}],
+  "Long-Legged Doji": [{h:5,o:48,c:52,l:95,k:"doji"}],
+  "Bullish Marubozu": [{h:8,c:8,o:92,l:92,k:"up"}],
+  "Bearish Marubozu": [{h:8,o:8,c:92,l:92,k:"down"}],
+  "Bullish Engulfing": [{h:30,o:40,c:68,l:76,k:"down",cap:"Kemarin"},{h:14,c:20,o:86,l:92,k:"up",cap:"Hari ini"}],
+  "Bearish Engulfing": [{h:30,c:40,o:68,l:76,k:"up",cap:"Kemarin"},{h:14,o:20,c:86,l:92,k:"down",cap:"Hari ini"}],
+  "Bullish Harami": [{h:8,o:14,c:86,l:92,k:"down",cap:"Kemarin"},{h:34,c:44,o:62,l:70,k:"up",cap:"Hari ini"}],
+  "Bearish Harami": [{h:8,c:14,o:86,l:92,k:"up",cap:"Kemarin"},{h:34,o:44,c:62,l:70,k:"down",cap:"Hari ini"}]
+};
+function polaDiagramKey(p){
+  p = String(p||"");
+  const keys = Object.keys(POLA_DIAGRAMS).sort((a,b)=>b.length-a.length);
+  return keys.find(k => p.indexOf(k)===0) || null;
+}
+function polaDiagramSvg(p){
+  const key = polaDiagramKey(p);
+  if(!key) return "";
+  const cs = POLA_DIAGRAMS[key];
+  const Y0=12, SC=1.0; // 0..100 -> 12..112
+  const y = v => Y0 + v*SC;
+  const col = {up:["#22c55e","#15803d"], down:["#ef4444","#b91c1c"], doji:["#475569","#334155"]};
+  const single = cs.length===1;
+  const cx0 = single ? 36 : 34, gap = 62;
+  let out = "";
+  cs.forEach((c,i)=>{
+    const cx = cx0 + i*gap, [fill,stroke] = col[c.k];
+    out += `<line x1="${cx}" x2="${cx}" y1="${y(c.h)}" y2="${y(c.l)}" stroke="${stroke}" stroke-width="2"/>`;
+    const top = Math.min(c.o,c.c), bot = Math.max(c.o,c.c);
+    if(bot-top < 2){
+      out += `<line x1="${cx-12}" x2="${cx+12}" y1="${y(top)}" y2="${y(top)}" stroke="${stroke}" stroke-width="2.5"/>`;
+    } else {
+      out += `<rect x="${cx-12}" y="${y(top)}" width="24" height="${(bot-top)*SC}" fill="${fill}" stroke="${stroke}" stroke-width="1.5" rx="1.5"/>`;
+    }
+    if(c.cap) out += `<text x="${cx}" y="${Y0+112+12}" text-anchor="middle" font-size="9.5" fill="currentColor" opacity=".7">${c.cap}</text>`;
+  });
+  if(single){
+    // label High/Close/Open/Low; nilai yang sama digabung ("Close = Open")
+    const c = cs[0];
+    const items = [["High",c.h],["Close",c.c],["Open",c.o],["Low",c.l]];
+    const groups = [];
+    items.slice().sort((a,b)=>a[1]-b[1] || items.indexOf(a)-items.indexOf(b)).forEach(it=>{
+      const g = groups.find(g=>Math.abs(g.v-it[1])<1.5);
+      if(g) g.n.push(it[0]); else groups.push({v:it[1], n:[it[0]]});
+    });
+    let last = -99;
+    groups.forEach(g=>{
+      let ty = y(g.v); if(ty-last < 15) ty = last+15; last = ty;
+      const lbl = g.n.join(" = ");
+      out += `<line x1="${cx0+16}" x2="${cx0+46}" y1="${y(g.v)}" y2="${ty}" stroke="currentColor" stroke-width="1" opacity=".55"/>`;
+      out += `<path d="M${cx0+16} ${y(g.v)} l6 -3 v6 z" fill="currentColor" opacity=".55" transform="rotate(0)"/>`;
+      out += `<text x="${cx0+50}" y="${ty+3.5}" font-size="10.5" fill="currentColor">${lbl}</text>`;
+    });
+  }
+  const w = single ? 250 : 34 + gap*(cs.length-1) + 40;
+  return `<svg viewBox="0 0 ${w} 140" width="${w}" height="140" role="img" aria-label="Diagram pola ${key}" style="display:block;color:var(--text,#334155);max-width:100%;">${out}</svg>`;
+}
+const POLA_CANDLE_OPTIONS = [
+  "Hammer (potensi reversal naik setelah downtrend)", "Inverted Hammer (potensi reversal naik, perlu konfirmasi)",
+  "Hanging Man (waspada reversal turun setelah uptrend)", "Shooting Star (waspada reversal turun)",
+  "Doji (keraguan pasar / potensi pembalikan)", "Dragonfly Doji (potensi reversal naik)",
+  "Gravestone Doji (potensi reversal turun)", "Long-Legged Doji (pasar sangat ragu)",
+  "Bullish Marubozu (kelanjutan naik kuat)", "Bearish Marubozu (kelanjutan turun kuat)",
+  "Bullish Engulfing (potensi reversal naik)", "Bearish Engulfing (potensi reversal turun)",
+  "Bullish Harami (tekanan jual mulai melemah)", "Bearish Harami (tekanan beli mulai melemah)",
+  "Tidak ada pola signifikan"
+];
 function valuasiTone(v){
   v = String(v||"");
   if(/murah|undervalued/i.test(v)) return "up";
@@ -4695,7 +4787,7 @@ function computeBaggerScore(s, params){
     flags.push("Volume breakout tapi Net Asing negatif terus → kemungkinan cuma ritel/bandar lokal, lebih rawan distribusi.");
   }
   const pola = String(s.polaCandle||"");
-  if (/bearish|shooting star|hanging man/i.test(pola) && s.resistance != null && s.cClose != null && s.cClose >= s.resistance*0.98) {
+  if (/bearish (engulfing|harami)|shooting star|hanging man|gravestone/i.test(pola) && s.resistance != null && s.cClose != null && s.cClose >= s.resistance*0.98) {
     flags.push("Pola candle bearish reversal di area resisten kuat → tunda entry meski skor fundamental tinggi.");
   }
 
@@ -6205,7 +6297,9 @@ function renderDetailTeknikal(s){
     <div class="detail-grid">
       ${dItem("Candle Kemarin", s.candleKemarin||"-", true)}
       ${dItem("Candle Hari Ini", s.candleHariIni||"-", true)}
-      ${dItem("Pola Candle", pillHtml(s.polaCandle||"-", polaTone(s.polaCandle)), true)}
+      ${dItem("Pola Candle", polaPillWrap(s.polaCandle||"-", polaTone(s.polaCandle)), true)}
+      ${dItem("Arah Pola", (()=>{ const a = polaArah(s.polaCandle); return a ? polaPillWrap(a.label, a.tone) : "-"; })(), true)}
+      ${(()=>{ const svg = polaDiagramSvg(s.polaCandle); return svg ? `<div class="detail-item" style="grid-column:1 / -1;"><div class="lbl">Diagram Pola</div><div class="val text">${svg}</div></div>` : ""; })()}
       ${dItem("BB Squeeze (6B)", pillHtml(s.isBBSqueeze||"-", s.isBBSqueeze==="Ya"?"gold":"muted"), true)}
     </div>
   `;
@@ -8815,11 +8909,24 @@ function ti_deteksiPolaCandle(y, t) {
   const lowerShadowT = Math.min(t.o, t.c) - t.l;
   const yBullish = y.c > y.o, yBearish = y.c < y.o;
   const tBullish = t.c > t.o, tBearish = t.c < t.o;
+  // Marubozu: badan >= 90% range (nyaris tanpa shadow). Syarat range >= 1% harga
+  // supaya saham gocap/1-tick tidak salah terbaca Marubozu (silakan ubah angkanya).
+  if (rangeT > 0 && t.c > 0 && rangeT >= t.c * 0.01 && bodyT >= rangeT * 0.9) {
+    if (tBullish) return { text: "Bullish Marubozu (kelanjutan naik kuat)", bias: "bullish" };
+    if (tBearish) return { text: "Bearish Marubozu (kelanjutan turun kuat)", bias: "bearish" };
+  }
+  // Keluarga Doji (badan <= 10% range), dibedakan lewat posisi shadow.
+  if (rangeT > 0 && bodyT <= rangeT * 0.1) {
+    const upR = upperShadowT / rangeT, loR = lowerShadowT / rangeT;
+    if (upR <= 0.1 && loR >= 0.6) return { text: "Dragonfly Doji (potensi reversal naik)", bias: "bullish" };
+    if (loR <= 0.1 && upR >= 0.6) return { text: "Gravestone Doji (potensi reversal turun)", bias: "bearish" };
+    if (upR >= 0.35 && loR >= 0.35) return { text: "Long-Legged Doji (pasar sangat ragu)", bias: "netral" };
+    return { text: "Doji (keraguan pasar / potensi pembalikan)", bias: "netral" };
+  }
   if (yBearish && tBullish && t.o <= y.c && t.c >= y.o && bodyT > bodyY) return { text: "Bullish Engulfing (potensi reversal naik)", bias: "bullish" };
   if (yBullish && tBearish && t.o >= y.c && t.c <= y.o && bodyT > bodyY) return { text: "Bearish Engulfing (potensi reversal turun)", bias: "bearish" };
   if (yBearish && tBullish && t.o >= y.c && t.c <= y.o && bodyT < bodyY) return { text: "Bullish Harami (tekanan jual mulai melemah)", bias: "bullish" };
   if (yBullish && tBearish && t.o <= y.c && t.c >= y.o && bodyT < bodyY) return { text: "Bearish Harami (tekanan beli mulai melemah)", bias: "bearish" };
-  if (rangeT > 0 && bodyT <= rangeT * 0.1) return { text: "Doji (keraguan pasar / potensi pembalikan)", bias: "netral" };
   if (rangeT > 0 && bodyT <= rangeT * 0.35 && lowerShadowT >= bodyT * 2 && upperShadowT <= bodyT * 0.5) {
     return tBullish ? { text: "Hammer (potensi reversal naik setelah downtrend)", bias: "bullish" } : { text: "Hanging Man (waspada reversal turun setelah uptrend)", bias: "bearish" };
   }
@@ -13448,7 +13555,11 @@ const RULE_METRICS = [
     "Bullish Engulfing (potensi reversal naik)", "Tidak ada pola signifikan", "Doji (keraguan pasar / potensi pembalikan)",
     "Bearish Engulfing (potensi reversal turun)", "Bearish Harami (tekanan beli mulai melemah)",
     "Hanging Man (waspada reversal turun setelah uptrend)", "Shooting Star (waspada reversal turun)",
-    "Bullish Harami (tekanan jual mulai melemah)"
+    "Bullish Harami (tekanan jual mulai melemah)",
+    "Hammer (potensi reversal naik setelah downtrend)", "Inverted Hammer (potensi reversal naik, perlu konfirmasi)",
+    "Dragonfly Doji (potensi reversal naik)", "Gravestone Doji (potensi reversal turun)",
+    "Long-Legged Doji (pasar sangat ragu)", "Bullish Marubozu (kelanjutan naik kuat)",
+    "Bearish Marubozu (kelanjutan turun kuat)"
   ]},
   { key:"uangGedeMasuk", label:"Uang Gede Masuk", type:"category", options:[
     "Normal", "Akumulasi Kuat (RVOL>2 & CLV>0.7)", "Guyuran (RVOL>2 & CLV Negatif)"
@@ -14521,7 +14632,7 @@ function renderScreener(){
             ${renderMultiSelect("cekHarga", "Sinyal Harga (EMA)", getOpts("cekHarga"), "Posisi Close terhadap EMA21 High/Low: 'crossup EMA21 H dan L' = di atas keduanya (kuat) · 'diatas EMA21 L dibawah EMA21 H' = di tengah (transisi) · selain itu belum cross up")}
             ${renderMultiSelect("cekRsi", "Sinyal RSI", getOpts("cekRsi"), "'RSI7 cross up RSI21' = momentum RSI jangka pendek menguat melewati RSI jangka menengah · selain itu belum cross up")}
             ${renderMultiSelect("statusRsi", "Status RSI", getOpts("statusRsi"), "Berdasarkan RSI7: &le;30 Over Sold · 31–45 Bearish · 46–55 Netral · 56–70 Bullish · &gt;70 Over Bought")}
-            ${renderMultiSelect("polaCandle", "Pola Candle", getOpts("polaCandle"), "Pola candle 2 hari (kemarin vs hari ini): Bullish/Bearish Engulfing, Bullish/Bearish Harami, Doji, Hammer/Hanging Man, Shooting Star/Inverted Hammer — butuh data candle kemarin lengkap, kalau tidak tampil 'Data candle kemarin tidak lengkap'")}
+            ${renderMultiSelect("polaCandle", "Pola Candle", [...new Set([...POLA_CANDLE_OPTIONS, ...getOpts("polaCandle")])], "Pola candle (kemarin vs hari ini): Hammer, Inverted Hammer, Hanging Man, Shooting Star, Doji, Dragonfly/Gravestone/Long-Legged Doji, Bullish/Bearish Marubozu, Engulfing, Harami — butuh data candle kemarin lengkap. Setelah update kode ini, jalankan ulang 'Update Teknikal' supaya pola baru terisi.")}
           </div>
         </div>
       </div>
