@@ -29,6 +29,51 @@ const SYARIAH_TICKERS = new Set([
 ]);
 function isSyariah(ticker){ return SYARIAH_TICKERS.has(String(ticker||"").toUpperCase()); }
 
+// ==========================================================================
+// KATEGORI SAHAM (tema/komoditas) & GRUP KEPEMILIKAN — dipakai filter Screener
+// ("Klasifikasi Emiten") dan kolom "Kategori Saham" / "Grup Kepemilikan".
+// Daftar ini STATIS & disusun sebisanya (bukan data resmi BEI): kepemilikan
+// grup bisa berubah (akuisisi, divestasi, saham baru IPO), jadi mohon
+// diverifikasi & disesuaikan. Cukup edit array ticker di bawah — satu saham
+// boleh masuk beberapa kategori/grup (mis. ANTM = Emas + Nikel). Ticker yang
+// tidak ada di database screener otomatis diabaikan.
+// ==========================================================================
+const KATEGORI_SAHAM = {
+  "Batu Bara": ["ADRO","ADMR","AADI","PTBA","ITMG","BUMI","BYAN","INDY","HRUM","GEMS","KKGI","DOID","TOBA","MBAP","BSSR","DEWA","GTBO","FIRE","SMMT","CNKO"],
+  "Emas": ["ANTM","MDKA","BRMS","PSAB","HRTA","ARCI","AMMN"],
+  "Nikel": ["INCO","NCKL","MBMA","ANTM","HRUM","NICL"],
+  "Tembaga": ["AMMN","MDKA"],
+  "Timah & Logam Lain": ["TINS","ZINC","CITA"],
+  "Minyak & Gas": ["MEDC","ENRG","ELSA","PGAS","RAJA","BIPI","APEX","ARTI"],
+  "Energi Terbarukan": ["PGEO","KEEN","BREN"],
+  "CPO & Perkebunan": ["AALI","LSIP","SIMP","SSMS","TAPG","DSNG","SGRO","BWPT","PALM","SMAR","TBLA","ANJT","JAWA","MGRO","STAA","PGUN"],
+  "Semen & Bahan Bangunan": ["SMGR","INTP","SMCB","SMBR"],
+  "Baja": ["KRAS","ISSP","GDST","BAJA"],
+  "Unggas & Pakan": ["CPIN","JPFA","MAIN","SIPD"],
+  "Rokok": ["GGRM","HMSP","WIIM","RMBA"],
+  "Telekomunikasi & Menara": ["TLKM","EXCL","ISAT","TOWR","MTEL","TBIG"],
+};
+const GRUP_SAHAM = {
+  "Bakrie": ["BUMI","BRMS","ENRG","DEWA","ELTY","UNSP","BNBR","VIVA"],
+  "Prajogo Pangestu (Barito)": ["BRPT","BREN","TPIA","CUAN","PTRO","CDIA"],
+  "Salim": ["INDF","ICBP","LSIP","SIMP","DNET","IMAS","META"],
+  "Sinar Mas": ["SMAR","INKP","TKIM","BSDE","DUTI","SMMA","DSSA","GEMS"],
+  "Lippo": ["LPKR","LPCK","LPPF","MLPL","SILO","MPPA","BIPP"],
+  "MNC (Hary Tanoe)": ["MNCN","BHIT","BMTR","MSKY","IPTV","KPIG","MSIN","BCAP","BABP"],
+  "Astra": ["ASII","UNTR","AUTO","AALI","ASGR"],
+  "Emtek": ["EMTK","SCMA","BUKA"],
+  "Hartono (Djarum)": ["BBCA","TOWR"],
+  "Thohir": ["ADRO","ADMR","AADI","MBMA","MDKA"],
+  "Panigoro (Medco)": ["MEDC","AMMN"],
+  "BUMN / Danantara": ["BBRI","BMRI","BBNI","BBTN","BRIS","TLKM","PGAS","PTBA","ANTM","TINS","SMGR","JSMR","PTPP","WIKA","WSKT","ADHI","KRAS","INAF","KAEF","PGEO","MTEL","GIAA"],
+};
+const _tagIndex = def => { const m = new Map();
+  for(const [name, list] of Object.entries(def)) for(const t of list){ const k = String(t).toUpperCase(); if(!m.has(k)) m.set(k, []); m.get(k).push(name); }
+  return m; };
+const KATEGORI_BY_TICKER = _tagIndex(KATEGORI_SAHAM), GRUP_BY_TICKER = _tagIndex(GRUP_SAHAM);
+const kategoriOf = t => KATEGORI_BY_TICKER.get(String(t||"").toUpperCase()) || [];
+const grupOf = t => GRUP_BY_TICKER.get(String(t||"").toUpperCase()) || [];
+
 // ==========================================
 // PETA KODE BROKER -> NAMA PERUSAHAAN SEKURITAS
 //
@@ -3857,7 +3902,7 @@ let state = {
   ema921Mode: "fresh",
   visibleCols: new Set(), // diisi loadSettings() dari localStorage atau DEFAULT_VISIBLE_COLS
   colPickerOpen: false, colDraft: null, /* colDraft = pilihan kolom sementara di panel 🧩 Kolom, baru berlaku & tersimpan setelah klik "Terapkan" */
-  filters: {sektor:[], syariahLabel:[], cekHarga:[], cekRsi:[], statusRsi:[], cekMacd:[], band:[], sinyalVolume:[], sinyalFrekuensi:[], keyakinanNaik:[], trendHarga:[], polaCandle:[], uangGedeMasuk:[], isBBSqueeze:[], valuasi:[], capTier:[], lq45:[],
+  filters: {sektor:[], syariahLabel:[], cekHarga:[], cekRsi:[], statusRsi:[], cekMacd:[], band:[], sinyalVolume:[], sinyalFrekuensi:[], keyakinanNaik:[], trendHarga:[], polaCandle:[], uangGedeMasuk:[], isBBSqueeze:[], valuasi:[], capTier:[], lq45:[], kategori:[], grup:[],
     // Status notasi khusus & perdagangan BEI (Suspend/Unsuspend/FCA/FCA
     // Out) — sama seperti lq45, sumbernya tabel index_membership hasil sync
     // klasifikasi Stockbit (lihat syncUnsuspendMembership() dkk di dekat
@@ -4262,7 +4307,7 @@ let state = {
   // {ticker}+{period}), jadi tiap ticker cukup 1x request lalu hasilnya
   // disaring ke rentang Dari-Sampai yang dipilih di UI.
   stockbitHistoricalBulkLoading: false, stockbitHistoricalBulkProgress: null, stockbitHistoricalBulkResults: [],
-  hdAutoBulkFrom: null, hdAutoBulkTo: null, hdScreenerDate: null, /* hdScreenerDate = tanggal tunggal tombol Historical di toolbar Screener; null = hari ini */
+  hdAutoBulkFrom: null, hdAutoBulkTo: null, hdScreenerFrom: null, hdScreenerTo: null, hdScreenerPreset: "today", hdScreenerForce: false, /* periode tombol Historical di toolbar Screener; from/to null = hari ini */
   hdBulkResultsOpen: true,
   // Update Indikator Teknikal (client-side) HANYA untuk ticker yang dicentang
   // di tab Screener — lihat updateTechnicalIndicatorsBulk(). Beda dengan
@@ -8233,7 +8278,27 @@ async function fetchExistingHistoricalDates(ticker, dates){
   }
 }
 
-async function fetchAndSaveHistoricalBulk(tickers, rangeFrom, rangeTo){
+// Periode tombol "Historical" di toolbar Screener. from/to null = hari ini.
+function screenerHdRange(){
+  const t = todayLocalISO();
+  return { from: state.hdScreenerFrom || t, to: state.hdScreenerTo || t };
+}
+const SCREENER_HD_PRESETS = [
+  ["today","Hari ini",0], ["w1","1 minggu",7], ["m1","1 bulan",30], ["m3","3 bulan",90],
+  ["m6","6 bulan",180], ["y1","1 tahun",365], ["custom","Kustom",null],
+];
+function screenerHdApplyPreset(key){
+  state.hdScreenerPreset = key;
+  const p = SCREENER_HD_PRESETS.find(x => x[0]===key);
+  if(!p || p[2]==null) return; // kustom: biarkan tanggal apa adanya
+  const d = new Date(todayLocalISO() + "T00:00:00");
+  d.setDate(d.getDate() - p[2]);
+  state.hdScreenerFrom = p[2] ? toLocalISODate(d) : null;
+  state.hdScreenerTo = null; // null = selalu sampai hari ini
+}
+// opts.force = true: tarik ulang SEMUA hari di rentang (timpa baris yang sudah ada di flows),
+// tidak melewati hari yang sudah tersimpan. Dipakai untuk memperbaiki data lama (mis. open_price = 0).
+async function fetchAndSaveHistoricalBulk(tickers, rangeFrom, rangeTo, opts = {}){
   if(state.stockbitHistoricalBulkLoading) return;
   if(!tickers || !tickers.length){
     state.stockbitHistoricalBulkResults = [{ ticker:"-", date:"-", ok:false, msg:"Centang minimal 1 saham di tab Screener dulu." }];
@@ -8261,8 +8326,8 @@ async function fetchAndSaveHistoricalBulk(tickers, rangeFrom, rangeTo){
   render();
 
   for(const ticker of tickers){
-    const existingDates = await fetchExistingHistoricalDates(ticker, tradingDates);
-    const neededDates = tradingDates.filter(d => !existingDates.has(d) || d === latestDate);
+    const existingDates = opts.force ? new Set() : await fetchExistingHistoricalDates(ticker, tradingDates);
+    const neededDates = opts.force ? tradingDates : tradingDates.filter(d => !existingDates.has(d) || d === latestDate);
 
     if(!neededDates.length){
       state.stockbitHistoricalBulkResults.push({ ticker, date: `${fromDate}..${toDate}`, ok:true, msg: `Semua ${tradingDates.length} hari sudah ada di database, dilewati (tidak ada request ke Stockbit).` });
@@ -8954,7 +9019,7 @@ function ti_tentukanTrendHarga(cClose, ma21, ma50, ma100, ma200) {
   return "Sideways/Mixed";
 }
 function ti_formatCandle(open, high, low, close) {
-  if (open == null || close == null) return "";
+  if (open == null || open <= 0 || close == null) return "";
   const o = ti_round2(open), h = ti_round2(high), l = ti_round2(low), c = ti_round2(close);
   const arah = c >= o ? "Bullish" : "Bearish";
   return `O:${o} H:${h} L:${l} C:${c} (${arah})`;
@@ -9126,7 +9191,7 @@ function ti_buildStockRowFromBars(ticker, bars, listedShares) {
   const vsMa200Pct = (cClose != null && ma200 != null && ma200 !== 0) ? ti_round2(((cClose - ma200) / ma200) * 100) : null;
   const trendHarga = ti_tentukanTrendHarga(cClose, ma21, ma50, ma100, ma200);
 
-  const yOpen = opens[n - 2], yHigh = highs[n - 2], yLow = lows[n - 2], yClose = closes[n - 2];
+  const yOpen = opens[n - 2] > 0 ? opens[n - 2] : (n > 2 ? closes[n - 3] : null), yHigh = highs[n - 2], yLow = lows[n - 2], yClose = closes[n - 2];
   const candleKemarin = ti_formatCandle(yOpen, yHigh, yLow, yClose);
   const candleHariIni = ti_formatCandle(cOpen, cHigh, cLow, cClose);
   let polaCandle = "Data candle kemarin tidak lengkap", polaBias = "netral";
@@ -9324,7 +9389,7 @@ async function ti_fetchBarsFromFlows(ticker) {
   const rows = await res.json();
   const bars = rows
     .filter(r => r.close != null)
-    .map(r => ({ date: r.date, open: r.open_price, high: r.high, low: r.low, close: r.close, volume: r.volume, value: r.value, frequency: r.frequency, listedShares: r.listed_shares }))
+    .map(r => ({ date: r.date, open: Number(r.open_price) > 0 ? Number(r.open_price) : null, high: r.high, low: r.low, close: r.close, volume: r.volume, value: r.value, frequency: r.frequency, listedShares: r.listed_shares }))
     .reverse(); // kembali urut lama -> baru
   const listedShares = [...bars].reverse().find(b => b.listedShares != null)?.listedShares ?? null;
   return { bars, listedShares };
@@ -10364,7 +10429,7 @@ async function loadChart(ticker, opts){
         .filter(r => r.close != null)
         .map(r => ({
           date: r.date,
-          open: r.open_price == null ? null : Number(r.open_price),
+          open: Number(r.open_price) > 0 ? Number(r.open_price) : null, // open 0 = data kosong dari sumber, bukan harga
           high: r.high == null ? null : Number(r.high),
           low: r.low == null ? null : Number(r.low),
           close: Math.round(r.close),
@@ -10781,6 +10846,7 @@ function wireBacktestSaveControls(scopeEl){
         eps: "Entry Price Scanner",
         orca: "Kraken Flow (ORCA)",
         bsjp: "BSJP (Beli Sore, Jual Pagi)",
+        patternscan: "Chart Pattern Scanner",
         smartpick: `Smart Pick — ${spTitleFor(state.spListOpenDefId)}`
       };
       saveGenericListToBacktest(ns, labelByNs[ns] || ns);
@@ -11876,6 +11942,8 @@ function enrichOne(s, rekapDefs){
       rekomendasi, rekTone,
       bagger, baggerScoreTotal: bagger.total, baggerScoreMax: bagger.maxTotal, baggerTier: bagger.tier, baggerTone: bagger.tone,
       capTier: marketCapTier(s.marketCap),
+      kategoriList: kategoriOf(s.ticker), grupList: grupOf(s.ticker),
+      kategoriSaham: kategoriOf(s.ticker).join(", "), grupSaham: grupOf(s.ticker).join(", "),
       fundTech, fundScore60: fundTech.fund, techScore40: fundTech.tech, fundTechScore: fundTech.total,
       ema921BullishNow, ema921FreshCross, ema921Status, ema921Tone,
       ema921TrendOk, ema921VolOk, ema921RsiOk, ema921ConfirmedCount
@@ -12029,6 +12097,8 @@ function getFiltered(){
 
     const f=state.filters;
     if(f.sektor.length && !f.sektor.includes(s.sektor)) return false;
+    if(f.kategori.length && !f.kategori.some(k => s.kategoriList.includes(k))) return false;
+    if(f.grup.length && !f.grup.some(k => s.grupList.includes(k))) return false;
     if(f.syariahLabel.length && !f.syariahLabel.includes(s.syariahLabel)) return false;
     if(f.cekHarga.length && !f.cekHarga.includes(s.cekHarga)) return false;
     if(f.cekRsi.length && !f.cekRsi.includes(s.cekRsi)) return false;
@@ -13019,6 +13089,7 @@ function render(){
     else if(state.tab==="kraken") content.innerHTML = renderKrakenFlow();
     else if(state.tab==="bsjp") content.innerHTML = renderBsjp();
     else if(state.tab==="wsdebug") content.innerHTML = renderWsDebug();
+    else if(state.tab==="patternscan") content.innerHTML = renderPatternScanner();
     else if(state.tab==="about") content.innerHTML = renderPanduan(); // alias lama, redirect ke Panduan
     else if(state.tab==="panduan") content.innerHTML = renderPanduan();
     else if(state.tab==="settings") content.innerHTML = renderSettingsTab();
@@ -13033,6 +13104,7 @@ function render(){
   }
 
   attachContentEvents();
+  if(state.tab==="patternscan" && typeof psBind==="function") psBind();
   if(state.tab==="chart" && state.selectedTicker) drawChartSVG();
   // Isi ulang field Pengaturan (token, endpoint, Telegram, dll.) setiap kali
   // tab "settings" ini dirender — mencakup baik lewat openSettings() maupun
@@ -13313,7 +13385,7 @@ function renderRangeFilter(key, label, opts){
 }
 
 const FILTER_LABELS = {
-  sektor:"Sektor", syariahLabel:"Syariah", trendHarga:"Trend", cekMacd:"MACD", polaCandle:"Pola Candle",
+  sektor:"Sektor", kategori:"Kategori Saham", grup:"Grup", syariahLabel:"Syariah", trendHarga:"Trend", cekMacd:"MACD", polaCandle:"Pola Candle",
   sinyalVolume:"Sinyal Volume", sinyalFrekuensi:"Sinyal Frekuensi", keyakinanNaik:"Keyakinan Naik", cekHarga:"Sinyal Harga", cekRsi:"Sinyal RSI",
   statusRsi:"Status RSI", band:"Bandarmologi", uangGedeMasuk:"Uang Gede", isBBSqueeze:"BB Squeeze", valuasi:"Valuasi",
   bbWidth:"BB Width", atr14:"ATR 14", clv:"CLV", rsi7:"RSI 7", rsi21:"RSI 21", frequency:"Frekuensi",
@@ -13445,6 +13517,8 @@ const SCREENER_COLUMNS = [
     } },
   { key:"marketCap", label:"Market Cap", group:"Fundamental", cell:s=>`<td class="mono">${s.marketCap!=null?fmtCap(s.marketCap):"-"}</td>` },
   { key:"capTier", label:"Kategori Cap (Tier)", group:"Umum", cell:s=>`<td>${pillHtml(marketCapTier(s.marketCap), s.marketCap!=null?"teal":"muted")}</td>` },
+  { key:"kategoriSaham", label:"Kategori Saham", group:"Umum", cell:s=>`<td>${s.kategoriList && s.kategoriList.length ? s.kategoriList.map(k=>pillHtml(k,"teal")).join(" ") : "-"}</td>` },
+  { key:"grupSaham", label:"Grup Kepemilikan", group:"Umum", cell:s=>`<td>${s.grupList && s.grupList.length ? s.grupList.map(k=>pillHtml(k,"muted")).join(" ") : "-"}</td>` },
   { key:"lq45", label:"LQ45", group:"Umum", cell:s=>`<td>${s.indexLq45!=null ? (isLq45(s)?"✅":"-") : "-"}</td>` },
   { key:"ytdPct", label:"YTD%", group:"Teknikal", cell:s=>`<td class="mono" style="color:${(s.ytdPct??0)>=0?'var(--up)':'var(--down)'}">${s.ytdPct!=null?((s.ytdPct>=0?'+':'')+s.ytdPct.toFixed(2)+'%'):'-'}</td>` },
   { key:"stockbitLive", label:"🔴 Live Stockbit", group:"Analisa", sortable:false, cell:s=>{
@@ -14587,15 +14661,23 @@ function renderScreener(){
         <div class="field" style="flex:0 0 auto;">
           <label>&nbsp;</label>
           <div class="screener-date-action-row" style="display:flex; align-items:center; gap:6px;">
-            <input type="date" id="screenerHdDateInput"
-              value="${state.hdScreenerDate || todayLocalISO()}"
-              ${state.stockbitHistoricalBulkLoading ? "disabled" : ""}
-              title="Tanggal data historical yang ditarik (default hari ini)"
-              style="padding:9.5px 8px; border-radius:8px; border:1px solid var(--border); background:color-mix(in srgb, currentColor 6%, transparent); color:var(--text); font-size:12px;">
+            ${(() => {
+              const r = screenerHdRange(), dis = state.stockbitHistoricalBulkLoading ? "disabled" : "";
+              const inpCss = "padding:9.5px 8px; border-radius:8px; border:1px solid var(--border); background:color-mix(in srgb, currentColor 6%, transparent); color:var(--text); font-size:12px;";
+              return `<select id="screenerHdPresetSel" ${dis} title="Pilih cepat periode historical" style="${inpCss}">
+                ${SCREENER_HD_PRESETS.map(p => `<option value="${p[0]}" ${state.hdScreenerPreset===p[0] ? "selected" : ""}>${p[1]}</option>`).join("")}
+              </select>
+              <input type="date" id="screenerHdFromInput" value="${r.from}" ${dis} title="Dari tanggal" style="${inpCss}">
+              <span style="color:var(--muted);font-size:11px;">&ndash;</span>
+              <input type="date" id="screenerHdToInput" value="${r.to}" ${dis} title="Sampai tanggal" style="${inpCss}">
+              <label style="display:flex;align-items:center;gap:4px;font-size:11.5px;white-space:nowrap;cursor:pointer;margin:0;" title="Tarik ulang SEMUA hari di rentang dan timpa data yang sudah ada di tabel flows (mis. untuk memperbaiki open_price = 0). Nilai kosong dari Stockbit ikut menimpa, dan src berubah jadi 'stockbit'.">
+                <input type="checkbox" id="screenerHdForceChk" class="custom-checkbox" style="margin:0;" ${state.hdScreenerForce ? "checked" : ""} ${dis}> Timpa
+              </label>`;
+            })()}
             <button type="button" class="btn btn-outline" id="screenerHdBulkBtn"
               ${state.stockbitHistoricalBulkLoading ? "disabled" : ""}
               style="color:#a78bfa;border-color:rgba(167,139,250,0.4);white-space:nowrap;"
-              title="Tarik Historical Data (Daily) Stockbit ${state.uploadedBulkTickers.length ? `untuk ${state.uploadedBulkTickers.length} ticker dari file yang diupload` : "untuk saham yang dicentang (atau semua hasil filter kalau tidak ada yang dicentang)"}, untuk tanggal di samping (default hari ini)">
+              title="Tarik Historical Data (Daily) Stockbit ${state.uploadedBulkTickers.length ? `untuk ${state.uploadedBulkTickers.length} ticker dari file yang diupload` : "untuk saham yang dicentang (atau semua hasil filter kalau tidak ada yang dicentang)"}, untuk periode tanggal di samping (default hari ini)">
               ${state.stockbitHistoricalBulkLoading
                 ? `Menarik ${state.stockbitHistoricalBulkProgress?.done||0}/${state.stockbitHistoricalBulkProgress?.total||0}...`
                 : (state.uploadedBulkTickers.length ? `📅 Historical (${state.uploadedBulkTickers.length} dari file)` : (state.selectedForBacktest.size>0 ? `📅 Historical (${state.selectedForBacktest.size} dicentang)` : `📅 Historical (${sorted.length} lolos)`))}
@@ -14690,6 +14772,8 @@ function renderScreener(){
         <div class="adv-body ${state.showFilterKlasifikasi ? 'open' : ''}">
           <div class="filter-grid">
             ${renderMultiSelect("sektor", "Sektor", getOpts("sektor"), "Sektor/industri emiten sesuai klasifikasi IDX (mis. Energi, Keuangan, Teknologi) — dari data referensi saham di DB")}
+            ${renderMultiSelect("kategori", "Kategori Saham", Object.keys(KATEGORI_SAHAM), "Tema/komoditas emiten (Batu Bara, Emas, Nikel, CPO, dst). Daftar statis di konstanta KATEGORI_SAHAM di app.js — satu saham bisa masuk beberapa kategori; filter memakai logika ATAU antar kategori terpilih")}
+            ${renderMultiSelect("grup", "Grup Kepemilikan", Object.keys(GRUP_SAHAM), "Kelompok pemilik/konglomerasi (Bakrie, Prajogo/Barito, Salim, dst). Daftar statis di konstanta GRUP_SAHAM di app.js dan bisa berubah karena akuisisi/divestasi — mohon diverifikasi")}
             ${renderMultiSelect("syariahLabel", "Syariah", getOpts("syariahLabel"), "Status kepatuhan Syariah (masuk Daftar Efek Syariah/DES) — dari data referensi OJK/IDX di DB, bukan dihitung dari harga")}
             ${renderMultiSelect("capTier", "Market Cap", ["Mega", "Big", "Mid", "Small", "Micro", "Tidak tersedia"], "Kategori ukuran market cap: Mega &gt;100T · Big 10–100T · Mid 1–10T · Small 100M–1T · Micro &lt;100M (Rp). 'Tidak tersedia' = market_cap belum ada di DB")}
             ${renderMultiSelect("lq45", "LQ45", ["Ya", "Tidak", "Tidak tersedia"], "Status keanggotaan indeks LQ45 (45 saham paling likuid & bermarket cap besar di IDX, dievaluasi berkala oleh Bursa) — dari data referensi di DB")}
@@ -14700,6 +14784,7 @@ function renderScreener(){
           </div>
           <div style="font-size:10.5px;color:var(--muted);margin-top:6px;line-height:1.5;" title="Mega >100T · Big 10–100T · Mid 1–10T · Small 100M–1T · Micro <100M">
             📐 Kategori Cap: Mega &gt;100T · Big 10–100T · Mid 1–10T · Small 100M–1T · Micro &lt;100M (Rp). Kolom "Tidak tersedia" muncul kalau market_cap belum ada di DB — saat itu filter Cap tidak bisa memilah.<br>
+            🏷️ Kategori Saham &amp; Grup Kepemilikan memakai daftar statis (konstanta <code>KATEGORI_SAHAM</code> / <code>GRUP_SAHAM</code> di app.js), bukan data resmi BEI — kepemilikan grup bisa berubah, mohon diverifikasi. Kolomnya bisa ditampilkan lewat 🧩 Kolom.<br>
             🛡️ Suspend/Unsuspend/FCA/FCA Out sumbernya klasifikasi Stockbit (tabel <code>index_membership</code>), sama seperti LQ45/Syariah di atas — kalau semua saham tampil "Tidak", jalankan dulu "🔄 Sync Klasifikasi Stockbit" di ⚙️ Pengaturan → Live Data Stockbit.
           </div>
         </div>
@@ -25134,8 +25219,14 @@ function attachContentEvents(){
     state.stockbitAutoRefreshIntervalSec = (Number.isFinite(sec) && sec >= STOCKBIT_AUTOREFRESH_MIN_SEC) ? sec : 60;
     localStorage.setItem(LS_STOCKBIT_AUTOREFRESH_SEC, String(state.stockbitAutoRefreshIntervalSec));
   };
-  const screenerHdDateInput = document.getElementById("screenerHdDateInput");
-  if(screenerHdDateInput) screenerHdDateInput.onchange = (e) => { state.hdScreenerDate = e.target.value || null; };
+  const screenerHdPresetSel = document.getElementById("screenerHdPresetSel");
+  if(screenerHdPresetSel) screenerHdPresetSel.onchange = (e) => { screenerHdApplyPreset(e.target.value); render(); };
+  const screenerHdFromInput = document.getElementById("screenerHdFromInput");
+  if(screenerHdFromInput) screenerHdFromInput.onchange = (e) => { state.hdScreenerFrom = e.target.value || null; state.hdScreenerPreset = "custom"; render(); };
+  const screenerHdToInput = document.getElementById("screenerHdToInput");
+  if(screenerHdToInput) screenerHdToInput.onchange = (e) => { state.hdScreenerTo = e.target.value || null; state.hdScreenerPreset = "custom"; render(); };
+  const screenerHdForceChk = document.getElementById("screenerHdForceChk");
+  if(screenerHdForceChk) screenerHdForceChk.onchange = (e) => { state.hdScreenerForce = !!e.target.checked; };
   const tiBulkBtn = document.getElementById("tiBulkBtn");
   if(tiBulkBtn) tiBulkBtn.onclick = () => {
     updateTechnicalIndicatorsBulk(resolveBulkTickers());
@@ -25158,8 +25249,13 @@ function attachContentEvents(){
 
   const screenerHdBulkBtn = document.getElementById("screenerHdBulkBtn");
   if(screenerHdBulkBtn) screenerHdBulkBtn.onclick = () => {
-    const hdDate = state.hdScreenerDate || todayLocalISO();
-    fetchAndSaveHistoricalBulk(resolveBulkTickers(), hdDate, hdDate);
+    const { from, to } = screenerHdRange();
+    const tickers = resolveBulkTickers();
+    const nDays = tradingDaysInRange(from, to).length;
+    // Stockbit dipaginasi 50 baris/request -> perkiraan jumlah request = saham x halaman
+    const estReq = tickers.length * Math.max(1, Math.ceil(nDays / 50));
+    if(estReq > 200 && !confirm(`Periode ${from} s/d ${to} (${nDays} hari bursa) untuk ${tickers.length} saham ≈ ${estReq} request ke Stockbit${state.hdScreenerForce ? " (mode Timpa: semua hari ditarik ulang)" : ""}. Lanjutkan?`)) return;
+    fetchAndSaveHistoricalBulk(tickers, from, to, { force: !!state.hdScreenerForce });
   };
   const hdBulkResultsPanel = document.getElementById("hdBulkResultsPanel");
   if(hdBulkResultsPanel) hdBulkResultsPanel.ontoggle = (e) => { state.hdBulkResultsOpen = e.target.open; };
@@ -26979,3 +27075,901 @@ window.calcAveraging = function(oldPrice, oldLot) {
 
     resEl.innerHTML = `Harga Rata-rata Baru: <span style="color:var(--up); font-size:18px;">Rp ${fmtNum(Math.round(avgPrice))}</span> <span style="font-size:12px;color:var(--muted); font-weight:normal;">(Total Kepemilikan: ${totalLot} Lot)</span>`;
 }
+
+
+// ==========================================================================
+// 📐 CHART PATTERN SCANNER (tab "patternscan")
+//
+// Terinspirasi hakahaki.my.id/tools/chart-pattern-scanner. Dua mode:
+//   1) Pattern Search — deteksi otomatis 18 pola klasik di seluruh saham
+//      (atau daftar ticker tertentu), lengkap dengan Match Score 0-100,
+//      status Developing / Confirmed / Failed, dan overlay di candlestick.
+//   2) Draw & Search — gambar bentuk grafik bebas (freehand), lalu cari
+//      saham yang pergerakan harganya paling mirip.
+//
+// SUMBER DATA: tabel `flows` (OHLC harian, ~450 hari) — sama dengan yang
+// dipakai loadChart(). Tidak ada tabel/kolom baru. Timeframe 1D & 1W
+// (mingguan dirakit dari harian). 1H TIDAK tersedia karena `flows` hanya
+// menyimpan data end-of-day.
+//
+// ALGORITMA (deterministik, bukan AI): swing-point (zigzag) -> pencocokan
+// geometri per pola -> skor 5 komponen. Semua hitungan dalam ruang
+// LOGARITMA harga (selisih ≈ persen). Pola bullish TIDAK ditulis ulang:
+// deret harga dibalik (dikali -1 di ruang log) lalu memakai detektor
+// bearish yang sama — Double Bottom = Double Top pada deret terbalik, dst.
+// Match Score = kecocokan bentuk, BUKAN probabilitas harga akan naik/turun.
+// ==========================================================================
+// @@PS_ENGINE_BEGIN — blok ini dimuat juga oleh scan-patterns.mjs (server). Jangan pakai API browser di top-level.
+const PS_LOWLIQ_IDR = 1e9; // rata-rata nilai transaksi 20 hari < Rp 1 M => badge "Likuiditas rendah" (asumsi kolom volume = lembar saham)
+const PS_WEIGHTS = { shape:35, trend:20, vol:15, time:15, brk:15 };
+const PS_PATTERNS = {
+  double_top:{label:"Double Top",bias:"bearish",cat:"Reversal"},
+  double_bottom:{label:"Double Bottom",bias:"bullish",cat:"Reversal"},
+  triple_top:{label:"Triple Top",bias:"bearish",cat:"Reversal"},
+  triple_bottom:{label:"Triple Bottom",bias:"bullish",cat:"Reversal"},
+  head_shoulders:{label:"Head & Shoulders",bias:"bearish",cat:"Reversal"},
+  inverse_head_shoulders:{label:"Inverse Head & Shoulders",bias:"bullish",cat:"Reversal"},
+  cup_handle:{label:"Cup & Handle",bias:"bullish",cat:"Reversal"},
+  inv_cup_handle:{label:"Inverted Cup & Handle",bias:"bearish",cat:"Reversal"},
+  asc_triangle:{label:"Ascending Triangle",bias:"bullish",cat:"Triangle"},
+  desc_triangle:{label:"Descending Triangle",bias:"bearish",cat:"Triangle"},
+  sym_triangle:{label:"Symmetrical Triangle",bias:"neutral",cat:"Triangle"},
+  rectangle:{label:"Rectangle",bias:"neutral",cat:"Triangle"},
+  rising_wedge:{label:"Rising Wedge",bias:"bearish",cat:"Wedge"},
+  falling_wedge:{label:"Falling Wedge",bias:"bullish",cat:"Wedge"},
+  bull_flag:{label:"Bull Flag",bias:"bullish",cat:"Continuation"},
+  bear_flag:{label:"Bear Flag",bias:"bearish",cat:"Continuation"},
+  bull_pennant:{label:"Bull Pennant",bias:"bullish",cat:"Continuation"},
+  bear_pennant:{label:"Bear Pennant",bias:"bearish",cat:"Continuation"},
+};
+// key detektor "orientasi bearish" -> key pola bullish saat deret dibalik
+const PS_FLIP = { double_top:"double_bottom", triple_top:"triple_bottom", head_shoulders:"inverse_head_shoulders",
+  inv_cup_handle:"cup_handle", desc_triangle:"asc_triangle", rising_wedge:"falling_wedge", bear_flag:"bull_flag", bear_pennant:"bull_pennant" };
+
+const PS = {
+  mode:"pattern", useServer:true, showN:200, bias:"all", sektor:"all", pattern:"all", tf:"1D", tickerInput:"", minScore:60, syariahOnly:false,
+  showFailed:false, showConfirmed:true, showDeveloping:true,
+  running:false, abort:false, results:[], drawResults:[], sel:null, draw:[], msg:"",
+  cache:{}, // ticker -> bar harian [{t,o,h,l,c,v}]
+};
+
+const psClamp = (x,a=0,b=1)=> Math.max(a, Math.min(b, x));
+
+// ---------- data ----------
+// --------------------------------------------------------------------------
+// LOADER DATA — cepat: (1) cache permanen di IndexedDB (bertahan antar
+// reload; localStorage terlalu kecil untuk ~900 saham x 320 bar), (2) update
+// INKREMENTAL: kalau cache sudah ada, cukup 1 query untuk semua saham sejak
+// tanggal terakhir di cache (bukan 900 request), (3) ticker yang belum ada
+// di cache ditarik per kelompok 10 saham dengan paginasi + Content-Range,
+// bukan 1 request per saham. Waktu deteksi polanya sendiri < 0,5 dtk untuk
+// 900 saham; yang lambat sebelumnya hampir seluruhnya jaringan.
+// --------------------------------------------------------------------------
+const PS_DB = { name:"ps_bars_v1", store:"bars", days:470, chunk:10, page:1000, par:8, overlap:6 };
+function psIdb(){
+  if(PS_DB.p) return PS_DB.p;
+  PS_DB.p = new Promise(res=>{
+    try{
+      const rq = indexedDB.open(PS_DB.name,1);
+      rq.onupgradeneeded = ()=> rq.result.createObjectStore(PS_DB.store,{ keyPath:"t" });
+      rq.onsuccess = ()=> res(rq.result); rq.onerror = ()=> res(null); rq.onblocked = ()=> res(null);
+    }catch(e){ res(null); }
+  });
+  return PS_DB.p;
+}
+async function psIdbAll(){
+  const db = await psIdb(); if(!db) return [];
+  return new Promise(res=>{ try{ const q = db.transaction(PS_DB.store).objectStore(PS_DB.store).getAll(); q.onsuccess = ()=> res(q.result||[]); q.onerror = ()=> res([]); }catch(e){ res([]); } });
+}
+async function psIdbPut(map){
+  const db = await psIdb(); if(!db) return;
+  return new Promise(res=>{ try{
+    const tx = db.transaction(PS_DB.store,"readwrite"), st = tx.objectStore(PS_DB.store);
+    for(const t in map) st.put({ t, bars:map[t] });
+    tx.oncomplete = tx.onerror = tx.onabort = ()=> res();
+  }catch(e){ res(); } });
+}
+async function psIdbClear(){
+  const db = await psIdb(); if(!db) return;
+  return new Promise(res=>{ try{ const tx = db.transaction(PS_DB.store,"readwrite"); tx.objectStore(PS_DB.store).clear(); tx.oncomplete = tx.onerror = ()=> res(); }catch(e){ res(); } });
+}
+function psRowToBar(r){
+  const c = Number(r.close); if(!(c>0)) return null;
+  const o = Number(r.open_price)>0 ? Number(r.open_price) : c;
+  const h = Math.max(Number(r.high)>0 ? Number(r.high) : c, o, c), l = Math.min(Number(r.low)>0 ? Number(r.low) : c, o, c);
+  return { t:r.date, o, h, l, c, v: r.volume==null ? null : Number(r.volume) };
+}
+const PS_COLS = "ticker,date,open_price,high,low,close,volume";
+// Tarik satu query (dengan filter) sampai habis, semua halaman. Total dibaca dari Content-Range.
+async function psFetchAll(filter){
+  const rows = []; let off = 0, total = null;
+  for(let guard=0; guard<400; guard++){
+    const r = await fetch(`${SUPABASE_URL}/flows?${filter}&select=${PS_COLS}&order=ticker.asc,date.asc&limit=${PS_DB.page}&offset=${off}`,
+      { headers:{ ...getSupaHeaders(), "Prefer":"count=exact" }, cache:"no-store" }).catch(()=>null);
+    if(!r || !r.ok) break;
+    const part = await r.json().catch(()=>[]); if(!Array.isArray(part) || !part.length) break;
+    rows.push(...part); off += part.length;
+    if(total==null){ const m = /\/(\d+)$/.exec(r.headers.get("Content-Range")||""); total = m ? Number(m[1]) : null; }
+    if(total!=null ? off>=total : part.length<PS_DB.page) break;
+  }
+  return rows;
+}
+function psMerge(old, add){
+  const m = new Map((old||[]).map(b=>[b.t,b]));
+  for(const b of add) m.set(b.t,b); // baris baru menimpa tanggal yang sama (data intraday/Stockbit bisa direvisi)
+  const cut = new Date(Date.now()-PS_DB.days*864e5).toISOString().slice(0,10);
+  return [...m.values()].filter(b=>b.t>=cut).sort((a,b)=> a.t<b.t ? -1 : 1);
+}
+async function psEnsureData(tickers, onProg){
+  const changed = {};
+  if(!PS.idbLoaded){
+    onProg("Membaca cache lokal…", 3);
+    (await psIdbAll()).forEach(x=>{ if(x && x.bars && !PS.cache[x.t]) PS.cache[x.t] = x.bars; });
+    PS.idbLoaded = true;
+  }
+  const have = tickers.filter(t=> PS.cache[t] && PS.cache[t].length), miss = tickers.filter(t=> !have.includes(t));
+  // (a) inkremental: satu query untuk semua saham yang sudah ada di cache
+  if(have.length && !PS.refreshedAt){
+    let maxD = ""; have.forEach(t=>{ const b = PS.cache[t]; const d = b[b.length-1].t; if(d>maxD) maxD = d; });
+    const from = new Date(new Date(maxD+"T00:00:00Z").getTime()-PS_DB.overlap*864e5).toISOString().slice(0,10);
+    onProg("Memperbarui data terbaru…", 10);
+    const rows = await psFetchAll(`date=gte.${from}`), by = {};
+    for(const r of rows){ const b = psRowToBar(r); if(!b) continue; const t = String(r.ticker).toUpperCase(); (by[t] = by[t]||[]).push(b); }
+    for(const t in by){ if(!PS.cache[t] && !tickers.includes(t)) continue; PS.cache[t] = psMerge(PS.cache[t], by[t]); changed[t] = PS.cache[t]; }
+    PS.refreshedAt = Date.now();
+  }
+  // (b) ticker yang belum pernah di-cache: tarik penuh per kelompok, paralel
+  if(miss.length){
+    const since = new Date(Date.now()-PS_DB.days*864e5).toISOString().slice(0,10);
+    const groups = []; for(let i=0;i<miss.length;i+=PS_DB.chunk) groups.push(miss.slice(i,i+PS_DB.chunk));
+    let gi = 0, done = 0;
+    const worker = async ()=>{
+      while(gi<groups.length && !PS.abort){
+        const g = groups[gi++];
+        const rows = await psFetchAll(`ticker=in.(${g.map(encodeURIComponent).join(",")})&date=gte.${since}`), by = {};
+        for(const r of rows){ const b = psRowToBar(r); if(!b) continue; const t = String(r.ticker).toUpperCase(); (by[t] = by[t]||[]).push(b); }
+        g.forEach(t=>{ PS.cache[t] = by[t] || []; if((by[t]||[]).length) changed[t] = PS.cache[t]; });
+        done += g.length; onProg(`Menarik histori harga ${Math.min(done,miss.length)}/${miss.length}…`, 15+done/miss.length*55);
+      }
+    };
+    await Promise.all(Array.from({length:Math.min(PS_DB.par,groups.length)}, worker));
+  }
+  if(Object.keys(changed).length) psIdbPut(changed); // simpan di latar belakang, tidak menahan scan
+}
+function psToWeekly(d){
+  const g = new Map();
+  for(const b of d){
+    const dt = new Date(b.t+"T00:00:00Z"), dow = (dt.getUTCDay()+6)%7;
+    const key = new Date(dt.getTime()-dow*864e5).toISOString().slice(0,10);
+    const w = g.get(key);
+    if(!w) g.set(key,{ t:b.t, o:b.o, h:b.h, l:b.l, c:b.c, v:b.v });
+    else { w.t=b.t; w.h=Math.max(w.h,b.h); w.l=Math.min(w.l,b.l); w.c=b.c; if(b.v!=null) w.v=(w.v||0)+b.v; }
+  }
+  return [...g.values()];
+}
+const psBarsFor = (t, tf)=> tf==="1W" ? psToWeekly(PS.cache[t]||[]) : (PS.cache[t]||[]);
+function psUniverse(){
+  const raw = PS.tickerInput.toUpperCase().split(/[\s,;]+/).filter(Boolean);
+  let all = (state.stocks||[]).map(s=>s.ticker).filter(Boolean);
+  if(raw.length) all = all.filter(t=> raw.some(q=> t===q || t.startsWith(q)));
+  if(PS.syariahOnly) all = all.filter(isSyariah);
+  return all;
+}
+
+// ---------- geometri ----------
+function psPrep(bars, flip){
+  const c=[],h=[],l=[],o=[], sg = flip ? -1 : 1;
+  for(const b of bars){
+    c.push(sg*Math.log(b.c)); o.push(sg*Math.log(b.o));
+    h.push(flip ? -Math.log(b.l) : Math.log(b.h));
+    l.push(flip ? -Math.log(b.h) : Math.log(b.l));
+  }
+  return { N:bars.length, c, o, h, l, v:bars.map(b=>b.v) };
+}
+function psZig(X, n, thr){
+  const { N, h, l } = X, raw = [];
+  for(let i=1;i<N-1;i++){
+    let isH = true, isL = true;
+    for(let k=Math.max(0,i-n); k<=Math.min(N-1,i+n); k++){
+      if(k===i) continue;
+      if(h[k]>h[i]) isH = false;
+      if(l[k]<l[i]) isL = false;
+      if(!isH && !isL) break;
+    }
+    if(isH) raw.push({ i, type:"H", p:h[i] });
+    if(isL) raw.push({ i, type:"L", p:l[i] });
+  }
+  raw.sort((a,b)=> a.i-b.i || (a.type==="H" ? -1 : 1));
+  const z = [];
+  for(const p of raw){
+    const q = z[z.length-1];
+    if(!q){ z.push(p); continue; }
+    if(q.type===p.type){ if((p.type==="H" && p.p>q.p) || (p.type==="L" && p.p<q.p)) z[z.length-1] = p; }
+    else if(Math.abs(p.p-q.p) >= thr) z.push(p);
+  }
+  return z;
+}
+function psFit(pts){
+  const n = pts.length; let sx=0,sy=0,sxx=0,sxy=0;
+  for(const q of pts){ sx+=q.i; sy+=q.p; sxx+=q.i*q.i; sxy+=q.i*q.p; }
+  const d = n*sxx - sx*sx; if(!d) return null;
+  const s = (n*sxy - sx*sy)/d, b0 = (sy - s*sx)/n;
+  return { s, at:i=> b0 + s*i };
+}
+
+// ---------- detektor (orientasi bearish) ----------
+function psDetTops(X, z){
+  const out = [], N = X.N, near = N-1-30;
+  const lastH = k=> z.slice(k+1).every(p=> p.type!=="H");
+  for(let k=0;k<z.length;k++){
+    const a = z[k]; if(a.type!=="H") continue;
+    // Double Top: H L H
+    const b1 = z[k+1], a2 = z[k+2];
+    if(b1 && a2 && a2.type==="H" && a2.i>=near && lastH(k+2)){
+      const tol = Math.abs(a.p-a2.p), depth = Math.min(a.p,a2.p)-b1.p, gap = a2.i-a.i;
+      if(tol<=0.035 && depth>=0.05 && gap>=7 && gap<=90){
+        out.push({ key:"double_top", startI:a.i, endI:a2.i, dur:[15,80],
+          shape: psClamp(1-tol/0.035)*0.6 + psClamp(depth/0.10)*0.4, trendKind:"up",
+          pts:[a,b1,a2], lines:[{ a:{i:a.i,p:b1.p}, b:{i:N-1,p:b1.p}, t:"neck" }],
+          lvl: ()=> b1.p, inv: Math.max(a.p,a2.p)+0.015, dir:-1 });
+      }
+    }
+    // Triple Top & Head and Shoulders: H L H L H
+    const l1 = z[k+1], h2 = z[k+2], l2 = z[k+3], h3 = z[k+4];
+    if(l1 && h2 && l2 && h3 && h3.type==="H" && h3.i>=near && lastH(k+4)){
+      const hs = [a.p,h2.p,h3.p], hr = Math.max(...hs)-Math.min(...hs), lr = Math.abs(l1.p-l2.p);
+      const neckY = Math.min(l1.p,l2.p), depth = Math.min(...hs)-Math.max(l1.p,l2.p);
+      if(hr<=0.04 && lr<=0.04 && depth>=0.04 && h3.i-a.i<=140){
+        out.push({ key:"triple_top", startI:a.i, endI:h3.i, dur:[25,120],
+          shape: psClamp(1-hr/0.04)*0.45 + psClamp(1-lr/0.04)*0.25 + psClamp(depth/0.09)*0.3, trendKind:"up",
+          pts:[a,l1,h2,l2,h3], lines:[{ a:{i:a.i,p:neckY}, b:{i:N-1,p:neckY}, t:"neck" }],
+          lvl: ()=> neckY, inv: Math.max(...hs)+0.015, dir:-1 });
+      }
+      const sh = Math.max(a.p,h3.p), headUp = h2.p-sh, shDiff = Math.abs(a.p-h3.p);
+      const sym = (h2.i-a.i)/Math.max(1,(h3.i-h2.i));
+      if(headUp>=0.02 && shDiff<=0.06 && lr<=0.05 && sym>=0.4 && sym<=2.5 && h3.i-a.i<=140){
+        const slope = (l2.p-l1.p)/Math.max(1,(l2.i-l1.i));
+        out.push({ key:"head_shoulders", startI:a.i, endI:h3.i, dur:[25,120],
+          shape: psClamp(1-shDiff/0.06)*0.35 + psClamp(headUp/0.06)*0.3 + psClamp(1-Math.abs(Math.log(sym))/0.9)*0.2 + psClamp(1-lr/0.05)*0.15, trendKind:"up",
+          pts:[a,l1,h2,l2,h3], lines:[{ a:{i:l1.i,p:l1.p}, b:{i:N-1,p:l2.p+slope*(N-1-l2.i)}, t:"neck" }],
+          lvl: i=> l2.p+slope*(i-l2.i), inv: h2.p+0.01, dir:-1 });
+      }
+    }
+  }
+  return out;
+}
+// Inverted Cup & Handle (lengkungan ∩ + bounce kecil). Versi bullish = deret terbalik.
+function psDetInvCup(X){
+  const { N, c, h, l } = X; let best = null;
+  for(const hd of [5,8,12,18]) for(const cl of [25,40,60,90]){
+    const s = N-1-hd-cl, e = N-1-hd; if(s<0) continue;
+    const rimL = c[s], rimR = c[e];
+    let pk = s; for(let i=s;i<=e;i++) if(h[i]>h[pk]) pk = i;
+    const peak = h[pk], rim = (rimL+rimR)/2, depth = peak-rim;
+    if(depth<0.10 || depth>0.6 || Math.abs(rimL-rimR)>0.06) continue;
+    const pos = (pk-s)/cl; if(pos<0.25 || pos>0.75) continue;
+    // kecocokan parabola (kuadratik) pada closes cup
+    const xs = [], ys = []; for(let i=s;i<=e;i++){ xs.push((i-s)/cl); ys.push(c[i]); }
+    const n = xs.length; let s1=0,s2=0,s3=0,s4=0,t0=0,t1=0,t2=0;
+    for(let k=0;k<n;k++){ const x=xs[k],y=ys[k]; s1+=x; s2+=x*x; s3+=x**3; s4+=x**4; t0+=y; t1+=x*y; t2+=x*x*y; }
+    const M = [[n,s1,s2,t0],[s1,s2,s3,t1],[s2,s3,s4,t2]];
+    for(let i=0;i<3;i++){ let mx=i; for(let r=i+1;r<3;r++) if(Math.abs(M[r][i])>Math.abs(M[mx][i])) mx=r; [M[i],M[mx]]=[M[mx],M[i]];
+      if(Math.abs(M[i][i])<1e-12) { mx=-1; break; } for(let r=i+1;r<3;r++){ const f=M[r][i]/M[i][i]; for(let k=i;k<4;k++) M[r][k]-=f*M[i][k]; } }
+    if(Math.abs(M[2][2])<1e-12) continue;
+    const q2 = M[2][3]/M[2][2], q1 = (M[1][3]-M[1][2]*q2)/M[1][1], q0 = (M[0][3]-M[0][2]*q2-M[0][1]*q1)/M[0][0];
+    if(!isFinite(q2) || !isFinite(q1) || !isFinite(q0) || q2>=0) continue; // harus cembung ke atas (arch)
+    const mean = t0/n; let ssT=0, ssR=0;
+    for(let k=0;k<n;k++){ const f=q0+q1*xs[k]+q2*xs[k]*xs[k]; ssT+=(ys[k]-mean)**2; ssR+=(ys[k]-f)**2; }
+    const r2 = 1-ssR/(ssT||1); if(r2<0.75) continue;
+    let hh = -Infinity; for(let i=e+1;i<N;i++) hh = Math.max(hh,h[i]);
+    const bounce = hh-rimR; if(bounce<=0 || bounce>0.5*depth) continue;
+    const shape = psClamp((r2-0.75)/0.2)*0.55 + psClamp(1-Math.abs(rimL-rimR)/0.06)*0.2 + psClamp(1-bounce/(0.5*depth))*0.25;
+    if(!best || shape>best.shape){
+      const lvl = Math.min(rimL,rimR);
+      best = { key:"inv_cup_handle", startI:s, endI:N-1, dur:[30,110], shape, trendKind:"up",
+        pts:[{i:s,p:rimL},{i:pk,p:peak},{i:e,p:rimR},{i:N-1,p:hh}], lines:[{ a:{i:s,p:lvl}, b:{i:N-1,p:lvl}, t:"neck" }],
+        lvl: ()=> lvl, inv: peak+0.01, dir:-1 };
+    }
+  }
+  return best ? [best] : [];
+}
+// Triangle / Wedge / Rectangle lewat dua garis tren hasil regresi pivot
+function psDetChannels(X, z, flip){
+  const out = [], N = X.N;
+  for(const len of [25,35,50,70,100]){
+    if(len>N-2) continue;
+    const st = N-len;
+    const H = z.filter(p=>p.type==="H"&&p.i>=st), L = z.filter(p=>p.type==="L"&&p.i>=st);
+    if(H.length<2 || L.length<2) continue;
+    const U = psFit(H), Lw = psFit(L); if(!U||!Lw) continue;
+    const a = Math.min(H[0].i, L[0].i);
+    const w0 = U.at(a)-Lw.at(a), w1 = U.at(N-1)-Lw.at(N-1);
+    if(w0<=0.02 || w1<=0.005) continue;
+    const span = N-1-a, nu = U.s*span/w0, nl = Lw.s*span/w0, conv = w1/w0;
+    let inside = 0, tot = 0;
+    for(let i=a;i<N;i++){ tot++; if(X.c[i]<=U.at(i)+0.01 && X.c[i]>=Lw.at(i)-0.01) inside++; }
+    if(inside/tot<0.88) continue;
+    const res = (H.reduce((s,q)=>s+Math.abs(q.p-U.at(q.i)),0)+L.reduce((s,q)=>s+Math.abs(q.p-Lw.at(q.i)),0))/(H.length+L.length);
+    const touches = H.length+L.length;
+    const shape = psClamp(1-res/(0.2*w0))*0.6 + psClamp(touches/6)*0.4;
+    const base = { startI:a, endI:N-1, shape, pts:[...H,...L],
+      lines:[{a:{i:a,p:U.at(a)},b:{i:N-1,p:U.at(N-1)},t:"up"},{a:{i:a,p:Lw.at(a)},b:{i:N-1,p:Lw.at(N-1)},t:"lo"}] };
+    const conv_ok = conv>=0.15 && conv<=0.8;
+    if(Math.abs(nl)<0.2 && nu<-0.35 && conv_ok)
+      out.push({ ...base, key:"desc_triangle", dur:[20,100], trendKind:"down", lvl:i=>Lw.at(i), inv:null, invFn:i=>U.at(i)+0.015, dir:-1 });
+    if(nu>0.15 && nl>0.15 && conv_ok)
+      out.push({ ...base, key:"rising_wedge", dur:[25,110], trendKind:"up", lvl:i=>Lw.at(i), inv:null, invFn:i=>U.at(i)+0.02, dir:-1 });
+    if(!flip){
+      if(nu<-0.2 && nl>0.2 && conv_ok)
+        out.push({ ...base, key:"sym_triangle", dur:[20,100], trendKind:"any", lvl:null, up:i=>U.at(i), lo:i=>Lw.at(i), dir:0 });
+      if(Math.abs(nu)<0.2 && Math.abs(nl)<0.2 && w0>=0.04 && w0<=0.35 && conv>=0.75 && conv<=1.3 && touches>=4)
+        out.push({ ...base, key:"rectangle", dur:[20,120], trendKind:"any", lvl:null, up:i=>U.at(i), lo:i=>Lw.at(i), dir:0 });
+    }
+  }
+  return out;
+}
+// Bear Flag / Bear Pennant: tiang turun tajam + konsolidasi kecil
+function psDetFlags(X, tf){
+  const { N, c, h, l } = X, minDrop = tf==="1W" ? 0.18 : 0.10, best = {};
+  for(const f of [5,8,12,16,20]) for(const pl of [5,8,12,18,25]){
+    const pe = N-1-f, ps = pe-pl; if(ps<0) continue;
+    const top = Math.max(...h.slice(ps,ps+3)), bot = Math.min(...l.slice(Math.max(ps,pe-2),pe+1)), drop = top-bot;
+    if(drop<minDrop) continue;
+    let path = 0; for(let i=ps+1;i<=pe;i++) path += Math.abs(c[i]-c[i-1]);
+    const eff = (c[ps]-c[pe])/(path||1); if(eff<0.55) continue;
+    const hp = [], lp = []; for(let i=pe;i<N;i++){ hp.push({i,p:h[i]}); lp.push({i,p:l[i]}); }
+    const U = psFit(hp), Lw = psFit(lp); if(!U||!Lw) continue;
+    const w0 = U.at(pe)-Lw.at(pe), w1 = U.at(N-1)-Lw.at(N-1);
+    if(w0<0.01 || w1<=0 || w0>0.6*drop) continue;
+    const bounce = Math.max(...h.slice(pe))-bot; if(bounce<=0 || bounce>0.5*drop) continue;
+    const conv = w1/w0, drift = (U.s+Lw.s)/2*f;
+    let kind = null;
+    if(conv>=0.1 && conv<=0.65) kind = "bear_pennant";
+    else if(conv>=0.75 && conv<=1.4 && drift>=-0.15*drop && drift<=0.5*drop) kind = "bear_flag";
+    if(!kind) continue;
+    let ok = 0; for(let i=pe;i<N;i++) if(l[i]>=Lw.at(i)-0.008 && h[i]<=U.at(i)+0.008) ok++;
+    const shape = psClamp((eff-0.55)/0.35)*0.3 + psClamp(drop/0.20)*0.25 + (ok/(f+1))*0.45;
+    if(!best[kind] || shape>best[kind].shape)
+      best[kind] = { key:kind, startI:ps, endI:N-1, dur:[8,45], shape, trendKind:"fixed", trendVal:psClamp(drop/0.2),
+        pts:[{i:ps,p:top},{i:pe,p:bot}], lines:[{a:{i:ps,p:top},b:{i:pe,p:bot},t:"pole"},
+          {a:{i:pe,p:U.at(pe)},b:{i:N-1,p:U.at(N-1)},t:"up"},{a:{i:pe,p:Lw.at(pe)},b:{i:N-1,p:Lw.at(N-1)},t:"lo"}],
+        lvl:i=>Lw.at(i), inv:top+0.005, dir:-1 };
+  }
+  return Object.values(best);
+}
+
+// ---------- skor & status ----------
+function psTrendScore(X, kind, s, fixed){
+  if(kind==="fixed") return fixed||0;
+  const from = Math.max(0,s-40); if(s-from<8) return 0.3;
+  const up = X.c[s]-Math.min(...X.l.slice(from,s+1)), down = Math.max(...X.h.slice(from,s+1))-X.c[s];
+  return psClamp((kind==="up" ? up : kind==="down" ? down : Math.max(up,down))/0.15);
+}
+function psFinalize(c, X, flip, bars, tf){
+  const N = X.N, last = X.c[N-1], toP = p=> Math.exp(flip ? -p : p);
+  let status = "developing", brkDir = 0, age = null;
+  const brkAt = j=> c.dir<0 ? X.c[j] < c.lvl(j)-0.003 : null;
+  if(c.dir<0){
+    let firstJ = -1;
+    for(let j=Math.max(c.endI,1); j<N; j++) if(brkAt(j)){ firstJ = j; break; }
+    if(firstJ>=0){
+      if(N-1-firstJ>10) return null; // sudah lama lewat -> basi
+      status = "confirmed"; age = N-1-firstJ;
+    }
+    const invLevel = c.inv!=null ? c.inv : c.invFn(N-1);
+    if(last>invLevel) status = "failed";
+  } else {
+    const upB = X.c[N-1] > c.up(N-1)+0.003, loB = X.c[N-1] < c.lo(N-1)-0.003;
+    if(upB || loB){ status = "confirmed"; brkDir = upB ? 1 : -1; age = 0; }
+  }
+  // 5 komponen skor
+  const W = PS_WEIGHTS, dur = c.endI-c.startI;
+  const trend = psTrendScore(X, c.trendKind, c.startI, c.trendVal);
+  // volume: menyusut selama pola + lonjakan saat breakout
+  let vol = 0.5;
+  const vs = X.v.slice(c.startI).filter(v=> v!=null && v>0);
+  if(vs.length>=6){
+    const m = vs.length>>1, a1 = vs.slice(0,m).reduce((s,v)=>s+v,0)/m, a2 = vs.slice(m).reduce((s,v)=>s+v,0)/(vs.length-m);
+    const decl = psClamp((1.2-a2/a1)/0.6);
+    const v20 = X.v.slice(-21,-1).filter(v=>v>0), avg20 = v20.length ? v20.reduce((s,v)=>s+v,0)/v20.length : 0;
+    const spike = status==="confirmed" && avg20>0 && X.v[N-1]>0 ? psClamp((X.v[N-1]/avg20-0.8)/0.7) : 0.5;
+    vol = 0.5*decl + 0.5*spike;
+  }
+  const lo = c.dur[0], hi = c.dur[1];
+  const durS = dur>=lo && dur<=hi ? 1 : psClamp(1-(dur<lo ? (lo-dur)/lo : (dur-hi)/hi));
+  const time = 0.5*durS + 0.5*psClamp(1-(N-1-c.endI)/15);
+  const level = c.dir<0 ? c.lvl(N-1) : (Math.abs(last-c.up(N-1)) < Math.abs(last-c.lo(N-1)) ? c.up(N-1) : c.lo(N-1));
+  const dist = Math.abs(last-level);
+  let brk = status==="failed" ? 0 : status==="confirmed" ? 0.8+0.2*psClamp(dist/0.02) : 0.7*psClamp(1-dist/0.08);
+  const parts = { shape:psClamp(c.shape)*W.shape, trend:trend*W.trend, vol:vol*W.vol, time:time*W.time, brk:brk*W.brk };
+  const score = Math.round(parts.shape+parts.trend+parts.vol+parts.time+parts.brk);
+  let key = flip ? PS_FLIP[c.key] : c.key; if(!key) return null;
+  let bias = PS_PATTERNS[key].bias;
+  if(bias==="neutral" && brkDir) bias = brkDir>0 ? "bullish" : "bearish";
+  const cv = pt=> ({ i:pt.i, price:toP(pt.p) });
+  const dbars = bars.slice(-21).map(b=>b.c*(b.v||0)), avgVal = dbars.reduce((s,v)=>s+v,0)/Math.max(1,dbars.length);
+  return { key, label:PS_PATTERNS[key].label, cat:PS_PATTERNS[key].cat, bias, status, age, score, parts,
+    startI:c.startI, endI:c.endI, pts:c.pts.map(cv),
+    lines:c.lines.map(L=>({ t:L.t, a:cv(L.a), b:cv(L.b) })),
+    brkPrice: c.dir<0 ? toP(c.lvl(N-1)) : { up:toP(c.up(N-1)), lo:toP(c.lo(N-1)) },
+    lastClose: bars[N-1].c, lastDate: bars[N-1].t, lowLiq: avgVal < PS_LOWLIQ_IDR };
+}
+function psScanBars(bars, tf){
+  if(bars.length<40) return [];
+  const res = [], thr = tf==="1W" ? 0.04 : 0.025, n = tf==="1W" ? 2 : 3;
+  for(const flip of [false,true]){
+    const X = psPrep(bars, flip), z = psZig(X, n, thr);
+    const cands = [...psDetTops(X,z), ...psDetChannels(X,z,flip), ...psDetFlags(X,tf), ...psDetInvCup(X)];
+    for(const c of cands){ const f = psFinalize(c, X, flip, bars, tf); if(f) res.push(f); }
+  }
+  const best = {};
+  res.forEach(r=>{ if(!best[r.key] || r.score>best[r.key].score) best[r.key] = r; });
+  return Object.values(best);
+}
+
+// Ubah hasil psScanBars -> 1 baris tabel `pattern_scan_results` (dipakai scan-patterns.mjs).
+// Titik/garis overlay disimpan dengan TANGGAL (bukan hanya indeks bar) supaya tetap valid saat bar bertambah.
+function psToRow(ticker, tf, r, bars){
+  const dt = i=> (i>=0 && i<bars.length) ? bars[i].t : null;
+  const pt = p=> ({ i:p.i, t:dt(p.i), price:p.price });
+  return {
+    ticker, tf, pattern:r.key, label:r.label, category:r.cat, bias:r.bias, status:r.status,
+    age:r.age==null ? null : r.age, score:r.score,
+    parts:{ shape:Math.round(r.parts.shape*10)/10, trend:Math.round(r.parts.trend*10)/10, vol:Math.round(r.parts.vol*10)/10, time:Math.round(r.parts.time*10)/10, brk:Math.round(r.parts.brk*10)/10 },
+    start_date:dt(r.startI), end_date:dt(r.endI),
+    pts:r.pts.map(pt),
+    lines:r.lines.map(L=>({ t:L.t, a:pt(L.a), b:pt(L.b) })),
+    brk:r.brkPrice, last_close:r.lastClose, last_date:r.lastDate, low_liq:!!r.lowLiq,
+  };
+}
+// @@PS_ENGINE_END
+
+// ---------- Draw & Search ----------
+function psResample(arr, M){
+  const out = [], n = arr.length;
+  for(let k=0;k<M;k++){
+    const x = k*(n-1)/(M-1), i = Math.floor(x), f = x-i;
+    out.push(i>=n-1 ? arr[n-1] : arr[i]*(1-f)+arr[i+1]*f);
+  }
+  return out;
+}
+function psNorm(a){ const mn = Math.min(...a), mx = Math.max(...a), r = (mx-mn)||1; return a.map(v=>(v-mn)/r); }
+function psSimilarity(q, w){
+  const M = q.length; let mq=0, mw=0; for(let i=0;i<M;i++){ mq+=q[i]; mw+=w[i]; } mq/=M; mw/=M;
+  let sxy=0,sxx=0,syy=0,d=0;
+  for(let i=0;i<M;i++){ const a=q[i]-mq, b=w[i]-mw; sxy+=a*b; sxx+=a*a; syy+=b*b; d+=Math.abs(q[i]-w[i]); }
+  const r = sxy/Math.sqrt((sxx*syy)||1);
+  return 100*(0.65*Math.max(0,r) + 0.35*Math.max(0,1-(d/M)/0.35));
+}
+function psDrawSearch(bars, q){
+  const N = bars.length; let best = null;
+  for(const len of [20,30,45,60,90]){
+    if(len>N) continue;
+    for(let e=N-1; e>=Math.max(len-1,N-6); e--){
+      const seg = bars.slice(e-len+1,e+1).map(b=>b.c);
+      const sim = psSimilarity(q, psNorm(psResample(seg, q.length)));
+      if(!best || sim>best.sim) best = { sim, a:e-len+1, b:e };
+    }
+  }
+  return best;
+}
+
+// ---------- hasil scan SERVER (tabel pattern_scan_results, diisi scan-patterns.mjs) ----------
+// Instan: tidak perlu menarik histori 963 saham. Chart baru menarik histori SATU saham saat baris diklik.
+async function psServerLoad(){
+  const rows = []; let off = 0, total = null;
+  let q = `pattern_scan_results?tf=eq.${PS.tf}&select=*&order=score.desc,ticker.asc`;
+  if(PS.pattern!=="all") q += `&pattern=eq.${encodeURIComponent(PS.pattern)}`;
+  for(let guard=0; guard<50; guard++){
+    const r = await fetch(`${SUPABASE_URL}/${q}&limit=1000&offset=${off}`, { headers:{ ...getSupaHeaders(), "Prefer":"count=exact" }, cache:"no-store" }).catch(()=>null);
+    if(!r || !r.ok) return null;
+    const part = await r.json().catch(()=>null); if(!Array.isArray(part)) return null; if(!part.length) break;
+    rows.push(...part); off += part.length;
+    if(total==null){ const m = /\/(\d+)$/.exec(r.headers.get("Content-Range")||""); total = m ? Number(m[1]) : null; }
+    if(total!=null ? off>=total : part.length<1000) break;
+  }
+  return rows;
+}
+function psFromServer(x){
+  const z = { shape:0, trend:0, vol:0, time:0, brk:0 };
+  return { ticker:String(x.ticker).toUpperCase(), key:x.pattern, label:x.label, cat:x.category, bias:x.bias, status:x.status,
+    age:x.age==null ? null : Number(x.age), score:Number(x.score), parts:{ ...z, ...(x.parts||{}) }, pts:x.pts||[], lines:x.lines||[],
+    brkPrice:x.brk, startDate:x.start_date, endDate:x.end_date, startI:0, endI:0,
+    lastClose:Number(x.last_close), lastDate:x.last_date, lowLiq:!!x.low_liq, scannedAt:x.scanned_at, fromServer:true };
+}
+// Petakan titik/garis (disimpan dengan tanggal) ke indeks bar di browser; tarik histori 1 saham bila belum ada di cache.
+async function psPrepServerRow(r){
+  let daily = PS.cache[r.ticker];
+  if(!daily || !daily.length){
+    const since = new Date(Date.now()-PS_DB.days*864e5).toISOString().slice(0,10);
+    const rows = await psFetchAll(`ticker=eq.${encodeURIComponent(r.ticker)}&date=gte.${since}`);
+    daily = rows.map(psRowToBar).filter(Boolean);
+    if(daily.length) PS.cache[r.ticker] = daily;
+  }
+  const bars = psBarsFor(r.ticker, PS.tf);
+  const idx = d=>{ let lo = 0, hi = bars.length-1, ans = -1;
+    while(lo<=hi){ const m = (lo+hi)>>1; if(bars[m].t>=d){ ans = m; hi = m-1; } else lo = m+1; }
+    return ans<0 ? bars.length-1 : ans; };
+  const mp = (q, ref)=> ({ ...q, i: q.t ? idx(q.t) : (ref && ref.t ? idx(ref.t)+(q.i-ref.i) : q.i) });
+  r.pts = (r.pts||[]).map(q=> mp(q));
+  r.lines = (r.lines||[]).map(L=> ({ t:L.t, a:mp(L.a,L.b), b:mp(L.b,L.a) }));
+  r.startI = r.startDate ? idx(r.startDate) : 0; r.endI = r.endDate ? idx(r.endDate) : 0;
+  r._m = true;
+}
+
+// ---------- eksekusi scan ----------
+function psSetProg(txt, pct){
+  const t = document.getElementById("psProgTxt"), b = document.getElementById("psProgBar");
+  if(t) t.textContent = txt;
+  if(b) b.style.width = (pct||0)+"%";
+}
+async function psRun(){
+  if(PS.running){ PS.abort = true; return; }
+  const tickers = psUniverse();
+  if(!tickers.length){ PS.msg = "Tidak ada saham yang cocok. Pastikan data screener sudah dimuat, atau kosongkan kolom Saham."; psRefresh(); return; }
+  PS.running = true; PS.abort = false; PS.msg = ""; PS.results = []; PS.drawResults = []; PS.sel = null;
+  psRefresh();
+  try{
+    if(PS.mode==="pattern" && PS.useServer){
+      psSetProg("Membaca hasil scan server…", 40);
+      const srv = await psServerLoad(), uni = new Set(tickers);
+      if(srv && srv.length){
+        PS.results = srv.map(psFromServer).filter(r=> uni.has(r.ticker));
+        const last = srv.reduce((m,x)=> x.scanned_at>m ? x.scanned_at : m, "");
+        PS.msg = PS.results.length
+          ? `Hasil scan server · ${PS.results.length} pola dimuat${last ? " · dipindai "+new Date(last).toLocaleString("id-ID") : ""}. Jalankan scan-patterns.mjs untuk memperbarui.`
+          : "Tidak ada pola server yang cocok dengan filter ini. Coba turunkan Min. skor atau ganti pola/timeframe.";
+        return;
+      }
+      psSetProg("Hasil server kosong/tidak terbaca — memindai lokal…", 5);
+    }
+    await psEnsureData(tickers, (txt,pct)=> psSetProg(txt, pct));
+    if(PS.abort){ PS.msg = "Scan dibatalkan."; return; }
+    const out = [], want = PS.pattern;
+    for(let i=0;i<tickers.length;i++){
+      const t = tickers[i], bars = psBarsFor(t, PS.tf);
+      if(PS.mode==="pattern"){
+        for(const r of psScanBars(bars, PS.tf)){
+          if(want!=="all" && r.key!==want) continue;
+          out.push({ ticker:t, ...r });
+        }
+      } else if(PS.draw.length>=8 && bars.length>=30){
+        const best = psDrawSearch(bars, PS.drawSeries);
+        if(best) out.push({ ticker:t, ...best, label:"Kemiripan bentuk", key:"draw", score:Math.round(best.sim), status:"developing", bias:"neutral", cat:"Draw", startI:best.a, endI:best.b, pts:[], lines:[], lastClose:bars[bars.length-1].c, lastDate:bars[bars.length-1].t });
+      }
+      if(i%25===0){ psSetProg(`Memindai ${i+1}/${tickers.length}…`, 70+i/tickers.length*30); await new Promise(r=>setTimeout(r,0)); }
+    }
+    PS.results = out;
+    if(!out.length) PS.msg = "Tidak ada pola yang cocok dengan filter ini. Coba turunkan Min. skor atau ganti pola/timeframe.";
+  }catch(e){
+    console.error("[PatternScanner]", e); PS.msg = "Scan gagal: "+e.message;
+  }finally{
+    PS.running = false; PS.abort = false; psRefresh();
+  }
+}
+
+// ---------- tampilan ----------
+function psCss(){
+  if(document.getElementById("psStyle")) return;
+  const s = document.createElement("style"); s.id = "psStyle";
+  s.textContent = `
+  .ps-row{display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end;margin-bottom:10px}
+  .ps-f{display:flex;flex-direction:column;gap:4px;font-size:11px;color:var(--muted)}
+  .ps-f select,.ps-f input[type=text],.ps-f input[type=number]{background:color-mix(in srgb, currentColor 6%, transparent);border:1px solid var(--border);color:var(--text);font-size:12.5px;border-radius:6px;padding:7px 8px;min-width:120px}
+  .ps-seg{display:inline-flex;border:1px solid var(--border);border-radius:8px;overflow:hidden}
+  .ps-seg button{background:transparent;border:0;color:var(--muted);padding:7px 14px;font-size:12.5px;cursor:pointer}
+  .ps-seg button.on{background:color-mix(in srgb, var(--gold) 18%, transparent);color:var(--text);font-weight:600}
+  .ps-seg button:disabled{opacity:.4;cursor:not-allowed}
+  .ps-prog{height:4px;background:color-mix(in srgb, currentColor 10%, transparent);border-radius:4px;overflow:hidden;margin:8px 0}
+  .ps-prog>div{height:100%;width:0;background:var(--gold);transition:width .2s}
+  .ps-grid{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.25fr);gap:14px}
+  @media(max-width:980px){.ps-grid{grid-template-columns:1fr}}
+  .ps-tr{cursor:pointer}.ps-tr.sel td{background:color-mix(in srgb, var(--gold) 12%, transparent)}
+  .ps-score{font-weight:700;font-variant-numeric:tabular-nums}
+  .ps-canvas{width:100%;max-width:640px;height:220px;border:1px dashed var(--border);border-radius:8px;touch-action:none;cursor:crosshair;display:block;background:color-mix(in srgb, currentColor 3%, transparent)}
+  .ps-bars{display:grid;grid-template-columns:auto 1fr auto;gap:4px 8px;font-size:11.5px;align-items:center}
+  .ps-bars i{display:block;height:6px;border-radius:3px;background:var(--gold)}
+  .ps-note{font-size:11.5px;color:var(--muted);line-height:1.55}`;
+  document.head.appendChild(s);
+}
+function psTone(t){ return t==="bullish"?"up":t==="bearish"?"down":"muted"; }
+// Peringatan untuk breakout "Confirmed": (1) candle breakout berlawanan arah (mis. Bearish Marubozu
+// pada breakout bullish), (2) harga sudah terlalu jauh dari level breakout (extended).
+// Dihitung saat tampil (tanpa kolom DB baru). bars opsional; tanpa bars hanya cek extended.
+const PS_EXT_WARN = 0.15;
+function psCandleWarn(r, bars){
+  if(!r || r.status!=="confirmed" || r.bias==="neutral") return null;
+  const out = [];
+  let lvl = r.brkPrice;
+  if(lvl && typeof lvl==="object") lvl = Math.abs(r.lastClose-lvl.up) < Math.abs(r.lastClose-lvl.lo) ? lvl.up : lvl.lo;
+  if(lvl>0){
+    const ext = Math.abs(r.lastClose-lvl)/lvl;
+    if(ext>=PS_EXT_WARN) out.push(`harga sudah ${(ext*100).toFixed(0)}% dari level breakout (extended, rawan kejar harga)`);
+  }
+  const n = bars ? bars.length : 0, b = n ? bars[n-1] : null, pv = n>1 ? bars[n-2] : null;
+  if(b && r.age===0 && b.o>0 && b.h>b.l){
+    const rng = b.h-b.l, body = Math.abs(b.c-b.o), top = Math.max(b.o,b.c), bot = Math.min(b.o,b.c);
+    const bull = r.bias==="bullish";
+    const against = bull ? b.c<b.o : b.c>b.o;                       // candle berlawanan arah breakout
+    const wick = bull ? (b.h-top)/rng : (bot-b.l)/rng;               // shadow penolakan
+    if(against && body>=0.6*rng) out.push(`candle breakout ${bull?"bearish":"bullish"} kuat (badan ${(body/rng*100).toFixed(0)}% dari range)`);
+    else if(wick>=0.5) out.push(`shadow ${bull?"atas":"bawah"} panjang (${(wick*100).toFixed(0)}% range) = ada penolakan harga`);
+    if(pv && against && (bull ? b.c<pv.c : b.c>pv.c)) out.push(`close ${bull?"di bawah":"di atas"} close kemarin`);
+  }
+  return out.length ? out : null;
+}
+function psStatusPill(s, warn){ return s==="confirmed" ? (warn ? pillHtml("Confirmed ⚠","gold") : pillHtml("Confirmed","up")) : s==="failed" ? pillHtml("Failed","down") : pillHtml("Developing","muted"); }
+
+function renderPatternScanner(){
+  psCss();
+  const opts = Object.entries(PS_PATTERNS).map(([k,v])=>`<option value="${k}" ${PS.pattern===k?"selected":""}>${v.label} (${v.cat})</option>`).join("");
+  const isP = PS.mode==="pattern";
+  return `
+  <div class="panel">
+    <div class="panel-heading"><h3>📐 Chart Pattern Scanner</h3><span class="panel-heading-note">18 pola klasik · deteksi deterministik dari histori EOD · bukan rekomendasi jual/beli</span></div>
+    <div class="ps-row">
+      <div class="ps-seg" id="psMode"><button data-m="pattern" class="${isP?"on":""}">Pattern Search</button><button data-m="draw" class="${!isP?"on":""}">Draw &amp; Search</button></div>
+      <div class="ps-seg" id="psTf"><button disabled title="Data intraday tidak tersedia (tabel flows hanya EOD)">1H</button><button data-tf="1D" class="${PS.tf==="1D"?"on":""}">1D</button><button data-tf="1W" class="${PS.tf==="1W"?"on":""}">1W</button></div>
+    </div>
+    <div class="ps-row">
+      ${isP ? `<label class="ps-f">Pola<select id="psPattern"><option value="all" ${PS.pattern==="all"?"selected":""}>Semua pola</option>${opts}</select></label>` : ""}
+      <label class="ps-f">Saham (kosong = semua)<input type="text" id="psTickers" placeholder="mis. BBCA, TLKM, GO" value="${escapeHtml(PS.tickerInput)}"></label>
+      <label class="ps-f">Sektor<select id="psSektor"><option value="all">Semua sektor</option>${[...new Set((state.stocks||[]).map(s=>s.sektor).filter(Boolean))].sort((a,b)=>a.localeCompare(b)).map(k=>`<option value="${escapeHtml(k)}" ${PS.sektor===k?"selected":""}>${escapeHtml(k)}</option>`).join("")}</select></label>
+      ${isP ? `<div class="ps-f">Arah<div class="ps-seg" id="psBias">${[["all","Semua"],["bullish","Bullish"],["bearish","Bearish"],["neutral","Netral"]].map(([k,t])=>`<button data-b="${k}" class="${PS.bias===k?"on":""}">${t}</button>`).join("")}</div></div>` : ""}
+      <label class="ps-f">Min. skor<input type="number" id="psMin" min="0" max="100" step="5" value="${PS.minScore}" style="min-width:80px;width:80px"></label>
+      <label class="ps-f" style="flex-direction:row;align-items:center;gap:6px"><input type="checkbox" id="psSyariah" ${PS.syariahOnly?"checked":""}> Syariah saja</label>
+      ${isP ? `<label class="ps-f" style="flex-direction:row;align-items:center;gap:6px"><input type="checkbox" id="psFDev" ${PS.showDeveloping?"checked":""}> Developing</label>
+      <label class="ps-f" style="flex-direction:row;align-items:center;gap:6px"><input type="checkbox" id="psFConf" ${PS.showConfirmed?"checked":""}> Confirmed</label>
+      <label class="ps-f" style="flex-direction:row;align-items:center;gap:6px"><input type="checkbox" id="psFFail" ${PS.showFailed?"checked":""}> Failed</label>
+      <label class="ps-f" style="flex-direction:row;align-items:center;gap:6px" title="Baca hasil dari tabel pattern_scan_results (diisi scan-patterns.mjs). Hilangkan centang untuk memindai lokal di browser."><input type="checkbox" id="psSrv" ${PS.useServer?"checked":""}> Hasil server (cepat)</label>` : ""}
+      <button type="button" class="btn btn-primary" id="psRunBtn">${PS.running ? "⏹ Batalkan" : isP ? "Scan IDX" : "Cari Pola Serupa"}</button>
+      <button type="button" class="btn btn-outline" id="psReloadBtn" title="Buang cache histori harga & tarik ulang">↻ Muat ulang data</button>
+    </div>
+    ${isP ? "" : `<div style="margin-bottom:10px">
+      <div class="ps-note" style="margin-bottom:6px">Gambar bentuk pergerakan harga yang Anda cari (kiri = lama, kanan = terbaru). Contoh: cangkir "U", huruf "W", atau menanjak lalu mendatar.</div>
+      <canvas id="psCanvas" class="ps-canvas" width="640" height="220"></canvas>
+      <div style="margin-top:6px"><button type="button" class="btn btn-outline" id="psClearBtn">Hapus gambar</button></div></div>`}
+    <div class="ps-prog"><div id="psProgBar"></div></div>
+    <div class="ps-note" id="psProgTxt">${PS.running ? "Memulai…" : escapeHtml(PS.msg || "Pilih pola lalu tekan Scan IDX. Scan pertama menarik histori harga (sekali saja); setelah itu tersimpan di browser dan hanya data terbaru yang diambil.")}</div>
+  </div>
+  <div class="ps-grid" style="margin-top:12px">
+    <div class="panel"><div class="panel-heading"><h3>Hasil</h3><span class="panel-heading-note" id="psCount"></span></div><div class="table-wrap" id="psResults"></div></div>
+    <div class="panel"><div class="panel-heading"><h3>Chart &amp; detail</h3></div><div id="psChart"><div class="empty-box">Klik satu hasil untuk melihat candlestick beserta garis polanya.</div></div></div>
+  </div>
+  <div class="panel" style="margin-top:12px"><div class="panel-heading"><h3>Cara membaca</h3></div>
+    <div class="ps-note">
+      <b>Match Score (0–100)</b> = kecocokan bentuk dengan pola ideal: bentuk ${PS_WEIGHTS.shape}, konteks tren ${PS_WEIGHTS.trend}, volume ${PS_WEIGHTS.vol}, durasi &amp; kebaruan ${PS_WEIGHTS.time}, kedekatan/kekuatan breakout ${PS_WEIGHTS.brk}. Ini <i>bukan</i> probabilitas harga akan naik atau turun.<br>
+      <b>Developing</b>: struktur sudah terbentuk, breakout belum. <b>Confirmed</b>: close menembus level breakout dalam 10 bar terakhir. <b>Failed</b>: harga melewati level invalidasi.<br>
+      <b>Likuiditas rendah</b>: rata-rata nilai transaksi 20 hari di bawah Rp ${(PS_LOWLIQ_IDR/1e9).toFixed(0)} miliar — pola pada saham begini kurang andal.<br>
+      Tool ini bersifat edukatif. Selalu lakukan riset mandiri sebelum mengambil keputusan.</div></div>`;
+}
+
+function psSektorMap(){
+  const m = new Map(); (state.stocks||[]).forEach(s=>{ if(s && s.ticker) m.set(String(s.ticker).toUpperCase(), s.sektor||""); });
+  return m;
+}
+function psFiltered(){
+  const min = Number(PS.minScore)||0, sm = PS.sektor!=="all" ? psSektorMap() : null;
+  return PS.results.filter(r=> r.score>=min && (PS.mode==="draw" ||
+    (r.status==="developing"&&PS.showDeveloping) || (r.status==="confirmed"&&PS.showConfirmed) || (r.status==="failed"&&PS.showFailed))
+    && (PS.mode==="draw" || PS.bias==="all" || r.bias===PS.bias)
+    && (!sm || sm.get(r.ticker)===PS.sektor))
+    .sort((a,b)=> b.score-a.score);
+}
+// Item untuk "Simpan ke Backtest": SATU baris per saham (kalau satu saham punya beberapa pola, digabung di keterangan,
+// pola skor tertinggi di depan). Harga = harga live (cClose) bila ada, kalau tidak harga penutupan saat pola dipindai.
+function psBtItems(list){
+  const live = new Map(); (state.stocks||[]).forEach(x=>{ const c = Number(x.cClose); if(x && x.ticker && c>0) live.set(String(x.ticker).toUpperCase(), c); });
+  const by = new Map();
+  for(const r of list){
+    const desc = PS.mode==="pattern" ? `${r.label} (${r.bias}, skor ${r.score}, ${r.status})` : `Kemiripan bentuk ${r.score}%`;
+    const it = by.get(r.ticker);
+    if(it){ it.d.push(desc); continue; }
+    const lastBar = (psBarsFor(r.ticker, PS.tf).slice(-1)[0]||{}).c;
+    by.set(r.ticker, { ticker:r.ticker, price: live.get(r.ticker) || (Number(r.lastClose)>0 ? Number(r.lastClose) : Number(lastBar)||0),
+      kriteria: PS.mode==="pattern" ? `Pattern Scanner ${PS.tf} · ${r.label}` : `Pattern Scanner (Draw) ${PS.tf}`, d:[desc] });
+  }
+  return [...by.values()].map(it=>({ ticker:it.ticker, price:it.price, kriteria:it.kriteria,
+    keterangan:`Chart Pattern Scanner ${PS.tf}: ${it.d.slice(0,3).join("; ")}${it.d.length>3 ? ` (+${it.d.length-3} pola lain)` : ""}` }));
+}
+function psRefresh(){
+  const btn = document.getElementById("psRunBtn");
+  if(btn) btn.textContent = PS.running ? "⏹ Batalkan" : PS.mode==="pattern" ? "Scan IDX" : "Cari Pola Serupa";
+  const box = document.getElementById("psResults"); if(!box) return;
+  const list = psFiltered(), cnt = document.getElementById("psCount");
+  const fk = [PS.minScore, PS.bias, PS.sektor, PS.showDeveloping, PS.showConfirmed, PS.showFailed, PS.mode, PS.tf, PS.results.length].join("|");
+  if(PS._fk !== fk){ PS._fk = fk; PS.showN = 200; }   // filter/hasil berubah -> mulai lagi dari 200 teratas
+  const shown = Math.min(list.length, PS.showN);
+  if(cnt) cnt.textContent = list.length ? `${shown} dari ${list.length}` : "";
+  if(!PS.running){ const t = document.getElementById("psProgTxt"); if(t && PS.msg) t.textContent = PS.msg;
+    else if(t && list.length) t.textContent = `Selesai · ${list.length} hasil (${PS.tf}).`; psSetProg(t?t.textContent:"", PS.results.length||PS.msg ? 100 : 0); }
+  const btItems = list.length ? psBtItems(list) : [], btBy = new Map(btItems.map(it=>[it.ticker, it]));
+  box.innerHTML = !list.length ? `<div class="empty-box">${PS.running ? "Sedang memindai…" : "Belum ada hasil."}</div>` : `
+    ${renderBacktestSaveBar("patternscan", btItems, { margin:"0 0 8px" })}
+    <table class="data-table"><thead><tr><th style="width:28px"></th><th>Saham</th><th>${PS.mode==="pattern"?"Pola":"Kemiripan"}</th><th>Status</th><th>Skor</th><th>Harga</th></tr></thead><tbody>
+    ${list.slice(0,shown).map((r,i)=>`<tr class="ps-tr ${PS.sel===r?"sel":""}" data-psi="${i}">
+      ${backtestRowCheckbox("patternscan", btBy.get(r.ticker))}
+      <td><b>${escapeHtml(r.ticker)}</b>${r.lowLiq?` <span title="Likuiditas rendah" style="font-size:10px;color:var(--gold)">⚠</span>`:""}</td>
+      <td>${PS.mode==="pattern" ? `${escapeHtml(r.label)} ${pillHtml(r.bias,psTone(r.bias))}` : `${r.b-r.a+1} bar`}</td>
+      <td>${PS.mode==="pattern" ? psStatusPill(r.status, psCandleWarn(r, null)) : "-"}</td>
+      <td class="ps-score" style="color:${r.score>=80?"var(--up)":r.score>=65?"var(--gold)":"var(--muted)"}">${r.score}</td>
+      <td class="mono">${fmtNum(Math.round(r.lastClose))}</td></tr>`).join("")}</tbody></table>
+    ${list.length>shown ? `<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;justify-content:center;margin:10px 0">
+      <span class="ps-note">Menampilkan ${shown} dari ${list.length} hasil (diurutkan skor tertinggi).</span>
+      <button type="button" class="btn btn-outline" id="psMoreBtn">Tampilkan ${Math.min(200,list.length-shown)} lagi</button>
+      <button type="button" class="btn btn-outline" id="psAllBtn">Tampilkan semua (${list.length})</button></div>` : ""}`;
+  const more = document.getElementById("psMoreBtn"); if(more) more.onclick = ()=>{ PS.showN = shown+200; psRefresh(); };
+  const all = document.getElementById("psAllBtn"); if(all) all.onclick = ()=>{ PS.showN = list.length; psRefresh(); };
+  box.querySelectorAll("[data-bt-row]").forEach(chk=>{
+    chk.onclick = e=> e.stopPropagation();
+    chk.onchange = ()=>{ const [ns, t] = String(chk.dataset.btRow).split("::"), sel = getBacktestSelection(ns); if(chk.checked) sel.add(t); else sel.delete(t); psRefresh(); };
+  });
+  box.querySelectorAll("[data-bt-select-all]").forEach(chk=> chk.onchange = ()=>{
+    const ns = chk.dataset.btSelectAll, sel = getBacktestSelection(ns);
+    (state.genericBacktestItems[ns]||[]).filter(it=> it && it.ticker && it.price>0).forEach(it=>{ if(chk.checked) sel.add(it.ticker); else sel.delete(it.ticker); });
+    psRefresh();
+  });
+  box.querySelectorAll("[data-bt-save]").forEach(btn=> btn.onclick = ()=> saveGenericListToBacktest("patternscan", "Chart Pattern Scanner"));
+  box.querySelectorAll("[data-psi]").forEach(tr=> tr.onclick = ()=>{ PS.sel = list[Number(tr.dataset.psi)]; psRefresh(); psShowDetail(PS.sel); });
+}
+// ---------- navigasi Sebelumnya/Berikutnya di panel chart (mengikuti urutan hasil yang sedang difilter) ----------
+function psNavHtml(r){
+  const list = psFiltered(), i = list.indexOf(r);
+  if(i<0 || list.length<2) return "";
+  const pv = list[i-1], nx = list[i+1];
+  return `<div class="ps-nav" style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:10px">
+    <button type="button" class="btn btn-outline" data-ps-nav="-1" ${pv?"":"disabled"} title="${pv?escapeHtml(pv.ticker+" · "+(pv.label||"")):"Sudah di hasil pertama"} (tombol ←)" style="padding:6px 12px;font-size:12px">‹ ${pv?escapeHtml(pv.ticker):"Sebelumnya"}</button>
+    <span class="mono" style="font-size:12px;color:var(--muted);text-align:center">${i+1} / ${list.length} di hasil filter</span>
+    <button type="button" class="btn btn-outline" data-ps-nav="1" ${nx?"":"disabled"} title="${nx?escapeHtml(nx.ticker+" · "+(nx.label||"")):"Sudah di hasil terakhir"} (tombol →)" style="padding:6px 12px;font-size:12px">${nx?escapeHtml(nx.ticker):"Berikutnya"} ›</button>
+  </div>`;
+}
+function psNav(dir){
+  const list = psFiltered(), i = list.indexOf(PS.sel), j = i+dir;
+  if(i<0 || j<0 || j>=list.length) return;
+  PS.sel = list[j];
+  if(j>=PS.showN) PS.showN = j+1;           // pastikan barisnya ikut tampil di tabel
+  psRefresh(); psShowDetail(PS.sel);
+  document.querySelector("#psResults tr.ps-tr.sel")?.scrollIntoView({ block:"nearest" });
+}
+function psBindNav(box){
+  box.querySelectorAll("[data-ps-nav]").forEach(b=> b.onclick = ()=> psNav(parseInt(b.dataset.psNav,10)));
+}
+// Pintasan keyboard ← / → (hanya di tab Pattern Scanner, tidak saat mengetik atau modal Detail Emiten terbuka)
+if(!window.__psNavKeys){
+  window.__psNavKeys = true;
+  document.addEventListener("keydown", e=>{
+    if(state.tab!=="patternscan" || !PS.sel || state.detailTicker) return;
+    if(e.key!=="ArrowLeft" && e.key!=="ArrowRight") return;
+    if(e.altKey || e.ctrlKey || e.metaKey || e.shiftKey) return;
+    const t = e.target, tag = t && t.tagName;
+    if(tag==="INPUT" || tag==="TEXTAREA" || tag==="SELECT" || (t && t.isContentEditable)) return;
+    e.preventDefault(); psNav(e.key==="ArrowLeft" ? -1 : 1);
+  });
+}
+
+function psShowDetail(r){
+  const box = document.getElementById("psChart"); if(!box || !r) return;
+  if(r.fromServer && !r._m){
+    box.innerHTML = `${psNavHtml(r)}<div class="empty-box">Memuat data harga ${escapeHtml(r.ticker)}…</div>`;
+    psBindNav(box);
+    psPrepServerRow(r).catch(e=>{ console.warn("[PatternScanner]", e); r._m = true; }).then(()=>{ if(PS.sel===r) psShowDetail(r); });
+    return;
+  }
+  const bars = psBarsFor(r.ticker, PS.tf);
+  const p = r.parts;
+  const warn = psCandleWarn(r, bars);
+  const brk = r.brkPrice==null ? "-" : typeof r.brkPrice==="object" ? `atas ${fmtNum(Math.round(r.brkPrice.up))} / bawah ${fmtNum(Math.round(r.brkPrice.lo))}` : fmtNum(Math.round(r.brkPrice));
+  box.innerHTML = `
+    ${psNavHtml(r)}
+    <div style="display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:8px">
+      <div><b style="font-size:15px">${escapeHtml(r.ticker)}</b> <span style="color:var(--muted)">· ${escapeHtml(r.label)} · ${PS.tf} · ${escapeHtml(r.lastDate||"")}</span></div>
+      <div style="display:flex;gap:6px;flex-wrap:wrap"><button class="btn btn-outline" id="psOpenChart">Buka Grafik</button><button class="btn btn-outline" id="psOpenDetail">Detail Emiten</button></div>
+    </div>
+    ${psChartSvg(bars, r)}
+    ${PS.mode==="pattern" ? `
+    <div style="display:flex;gap:6px;flex-wrap:wrap;margin:10px 0">${psStatusPill(r.status, warn)} ${pillHtml(r.bias,psTone(r.bias))} ${r.lowLiq?pillHtml("Likuiditas rendah","muted"):""}
+      <span class="ps-note">Level breakout: <b class="mono">${brk}</b>${r.age!=null?` · breakout ${r.age===0?"hari ini":r.age+" bar lalu"}`:""}</span></div>
+    ${warn ? `<div class="ps-note" style="color:var(--gold);margin-bottom:8px">⚠ Breakout rawan gagal: ${warn.map(escapeHtml).join("; ")}.</div>` : ""}
+    <div class="ps-bars">
+      ${[["Bentuk",p.shape,PS_WEIGHTS.shape],["Tren",p.trend,PS_WEIGHTS.trend],["Volume",p.vol,PS_WEIGHTS.vol],["Durasi",p.time,PS_WEIGHTS.time],["Breakout",p.brk,PS_WEIGHTS.brk]]
+        .map(([n,v,m])=>`<span>${n}</span><span style="background:color-mix(in srgb,currentColor 8%,transparent);border-radius:3px"><i style="width:${(v/m*100).toFixed(0)}%"></i></span><span class="mono">${v.toFixed(0)}/${m}</span>`).join("")}
+    </div>` : `<div class="ps-note" style="margin-top:8px">Jendela paling mirip ditandai pada chart: ${r.b-r.a+1} bar, skor kemiripan ${r.score}.</div>`}`;
+  psBindNav(box);
+  // prefetch data harga tetangga (hasil server) supaya pindah berikutnya terasa instan
+  { const L = psFiltered(), k = L.indexOf(r); [L[k-1], L[k+1]].forEach(nb=>{ if(nb && nb.fromServer && !nb._m) psPrepServerRow(nb).catch(()=>{ nb._m = true; }); }); }
+  const oc = document.getElementById("psOpenChart"); if(oc) oc.onclick = ()=> loadChart(r.ticker);
+  const od = document.getElementById("psOpenDetail"); if(od) od.onclick = ()=>{ if(typeof openDetail==="function") openDetail(r.ticker); else loadChart(r.ticker); };
+}
+function psChartSvg(bars, r){
+  const N = bars.length; if(N<2) return `<div class="empty-box">Data harga tidak tersedia.</div>`;
+  const hl = PS.mode==="draw" ? { a:r.a, b:r.b } : null;
+  const from = Math.max(0, (hl ? hl.a : r.startI)-12), vis = bars.slice(from), n = vis.length;
+  const W=920,H=380,pL=8,pR=62,pT=10,pB=22,vH=56, pH = H-pT-pB-vH;
+  let mn = Math.min(...vis.map(b=>b.l)), mx = Math.max(...vis.map(b=>b.h));
+  (r.lines||[]).forEach(L=>{ [L.a,L.b].forEach(q=>{ if(q.i>=from){ mn=Math.min(mn,q.price); mx=Math.max(mx,q.price); } }); });
+  const pad = (mx-mn)*0.05||1; mn -= pad; mx += pad;
+  const bw = (W-pL-pR)/n, x = i=> pL+(i-from+0.5)*bw, y = v=> pT+(mx-v)/(mx-mn)*pH;
+  const vmax = Math.max(1,...vis.map(b=>b.v||0));
+  let s = `<svg viewBox="0 0 ${W} ${H}" style="width:100%;height:auto;display:block" role="img" aria-label="Candlestick ${escapeHtml(r.ticker)}">`;
+  for(let k=0;k<=4;k++){ const v = mn+(mx-mn)*k/4, yy = y(v); s += `<line x1="${pL}" x2="${W-pR}" y1="${yy}" y2="${yy}" stroke="currentColor" opacity=".08"/><text x="${W-pR+4}" y="${yy+3}" font-size="10" fill="currentColor" opacity=".55">${fmtNum(Math.round(v))}</text>`; }
+  if(hl) s += `<rect x="${x(hl.a)-bw/2}" y="${pT}" width="${(hl.b-hl.a+1)*bw}" height="${pH}" fill="var(--gold)" opacity=".10"/>`;
+  vis.forEach((b,k)=>{
+    const i = from+k, up = b.c>=b.o, col = up ? "var(--up)" : "var(--down)", cx = x(i);
+    s += `<line x1="${cx}" x2="${cx}" y1="${y(b.h)}" y2="${y(b.l)}" style="stroke:${col}"/>`;
+    s += `<rect x="${cx-bw*0.34}" y="${Math.min(y(b.o),y(b.c))}" width="${Math.max(1,bw*0.68)}" height="${Math.max(1,Math.abs(y(b.o)-y(b.c)))}" style="fill:${col}"/>`;
+    if(b.v) s += `<rect x="${cx-bw*0.34}" y="${H-pB-(b.v/vmax)*vH}" width="${Math.max(1,bw*0.68)}" height="${(b.v/vmax)*vH}" style="fill:${col}" opacity=".35"/>`;
+  });
+  const col = { neck:"#22d3ee", up:"var(--gold)", lo:"var(--gold)", pole:"#a78bfa" };
+  (r.lines||[]).forEach(L=>{ s += `<line x1="${x(Math.max(L.a.i,from))}" x2="${x(L.b.i)}" y1="${y(L.a.price)}" y2="${y(L.b.price)}" style="stroke:${col[L.t]||"var(--gold)"}" stroke-width="1.8" stroke-dasharray="${L.t==="neck"?"6 4":"0"}"/>`; });
+  (r.pts||[]).forEach(q=>{ if(q.i>=from) s += `<circle cx="${x(q.i)}" cy="${y(q.price)}" r="3.5" fill="none" stroke="var(--gold)" stroke-width="1.6"/>`; });
+  [0,Math.floor(n/2),n-1].forEach(k=>{ const b = vis[k]; if(b) s += `<text x="${x(from+k)}" y="${H-6}" font-size="10" fill="currentColor" opacity=".55" text-anchor="${k===0?"start":k===n-1?"end":"middle"}">${escapeHtml(b.t)}</text>`; });
+  return s+"</svg>";
+}
+
+// ---------- event ----------
+function psBind(){
+  const $ = id=> document.getElementById(id);
+  $("psMode")?.querySelectorAll("button").forEach(b=> b.onclick = ()=>{ if(PS.running) return; PS.mode = b.dataset.m; PS.results = []; PS.sel = null; PS.msg = ""; render(); });
+  $("psTf")?.querySelectorAll("button[data-tf]").forEach(b=> b.onclick = ()=>{ if(PS.running) return; PS.tf = b.dataset.tf; PS.results = []; PS.sel = null; PS.msg = ""; render(); });
+  const bindVal = (id, fn)=>{ const el = $(id); if(el) el.onchange = ()=> fn(el); };
+  bindVal("psPattern", el=> PS.pattern = el.value);
+  bindVal("psTickers", el=> PS.tickerInput = el.value);
+  bindVal("psMin", el=>{ PS.minScore = Number(el.value)||0; psRefresh(); });
+  bindVal("psSyariah", el=> PS.syariahOnly = el.checked);
+  bindVal("psFDev", el=>{ PS.showDeveloping = el.checked; psRefresh(); });
+  bindVal("psFConf", el=>{ PS.showConfirmed = el.checked; psRefresh(); });
+  bindVal("psFFail", el=>{ PS.showFailed = el.checked; psRefresh(); });
+  bindVal("psSrv", el=>{ PS.useServer = el.checked; });
+  bindVal("psSektor", el=>{ PS.sektor = el.value; psRefresh(); });
+  $("psBias")?.querySelectorAll("button[data-b]").forEach(b=> b.onclick = ()=>{
+    PS.bias = b.dataset.b;
+    $("psBias").querySelectorAll("button").forEach(x=> x.classList.toggle("on", x===b));
+    psRefresh();
+  });
+  const run = $("psRunBtn");
+  if(run) run.onclick = ()=>{
+    const t = $("psTickers"); if(t) PS.tickerInput = t.value;
+    if(PS.mode==="draw"){
+      if(PS.draw.length<8){ PS.msg = "Gambar bentuk grafik dulu di kotak di atas."; psRefresh(); const m=$("psProgTxt"); if(m) m.textContent = PS.msg; return; }
+      PS.drawSeries = psNorm(psResample(PS.draw.map(p=>1-p.y/220), 48));
+    }
+    psRun();
+  };
+  const rl = $("psReloadBtn"); if(rl) rl.onclick = ()=>{ if(PS.running) return; PS.cache = {}; PS.idbLoaded = false; PS.refreshedAt = 0; psIdbClear(); PS.results = []; PS.sel = null; PS.msg = "Cache dibuang. Tekan Scan untuk menarik ulang data."; render(); };
+  const cv = $("psCanvas");
+  if(cv){
+    const ctx = cv.getContext("2d");
+    const redraw = ()=>{
+      ctx.clearRect(0,0,cv.width,cv.height);
+      if(PS.draw.length<2) return;
+      ctx.lineWidth = 3; ctx.lineJoin = "round"; ctx.lineCap = "round";
+      ctx.strokeStyle = getComputedStyle(document.body).getPropertyValue("--gold").trim() || "#f5b301";
+      ctx.beginPath(); PS.draw.forEach((p,i)=> i ? ctx.lineTo(p.x,p.y) : ctx.moveTo(p.x,p.y)); ctx.stroke();
+    };
+    const pos = e=>{ const r = cv.getBoundingClientRect(); return { x:(e.clientX-r.left)*cv.width/r.width, y:(e.clientY-r.top)*cv.height/r.height }; };
+    let down = false;
+    cv.onpointerdown = e=>{ down = true; cv.setPointerCapture(e.pointerId); PS.draw = [pos(e)]; redraw(); };
+    cv.onpointermove = e=>{ if(!down) return; const p = pos(e), q = PS.draw[PS.draw.length-1]; if(Math.abs(p.x-q.x)+Math.abs(p.y-q.y)>2){ PS.draw.push(p); redraw(); } };
+    cv.onpointerup = cv.onpointercancel = ()=>{ down = false; };
+    const cl = $("psClearBtn"); if(cl) cl.onclick = ()=>{ PS.draw = []; redraw(); };
+    redraw();
+  }
+  psRefresh();
+  if(PS.sel) psShowDetail(PS.sel);
+}
+
+// ---------- pasang ke sidebar (tanpa perlu edit index.html) ----------
+(function psInstallNav(){
+  try{
+    if(document.querySelector('#tabs .tab-btn[data-tab="patternscan"]')) return;
+    const ref = document.querySelector('#tabs .tab-btn[data-tab="smartpick"]') || document.querySelector('#tabs .tab-btn[data-tab="screener"]');
+    if(!ref) return;
+    const wrap = ref.closest("li") || ref, clone = wrap.cloneNode(true);
+    const btn = clone.matches(".tab-btn") ? clone : clone.querySelector(".tab-btn");
+    btn.dataset.tab = "patternscan"; btn.classList.remove("active"); btn.removeAttribute("id");
+    const lab = btn.querySelector(".tab-label, .label, span:last-child");
+    if(lab && lab !== btn) lab.textContent = "📐 Pattern Scanner"; else btn.textContent = "📐 Pattern Scanner";
+    wrap.after(clone);
+    bindInternalLink(btn, ()=> selectMainTab("patternscan"));
+  }catch(e){ console.warn("[PatternScanner] gagal memasang menu:", e); }
+})();
