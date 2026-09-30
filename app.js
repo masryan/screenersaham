@@ -27669,7 +27669,10 @@ function psCss(){
   .ps-canvas{width:100%;max-width:640px;height:220px;border:1px dashed var(--border);border-radius:8px;touch-action:none;cursor:crosshair;display:block;background:color-mix(in srgb, currentColor 3%, transparent)}
   .ps-bars{display:grid;grid-template-columns:auto 1fr auto;gap:4px 8px;font-size:11.5px;align-items:center}
   .ps-bars i{display:block;height:6px;border-radius:3px;background:var(--gold)}
-  .ps-note{font-size:11.5px;color:var(--muted);line-height:1.55}`;
+  .ps-note{font-size:11.5px;color:var(--muted);line-height:1.55}
+  .ps-plan{display:grid;grid-template-columns:auto 1fr;gap:8px 14px;align-items:start;margin:10px 0;padding:10px 12px;border:1px solid var(--border);border-radius:8px;background:color-mix(in srgb, currentColor 3%, transparent)}
+  .ps-plan-h{grid-column:1/-1;font-size:12px;font-weight:700}
+  .ps-k{font-size:11.5px;color:var(--muted);white-space:nowrap;padding-top:1px}`;
   document.head.appendChild(s);
 }
 function psTone(t){ return t==="bullish"?"up":t==="bearish"?"down":"muted"; }
@@ -27699,6 +27702,168 @@ function psCandleWarn(r, bars){
   return out.length ? out : null;
 }
 function psStatusPill(s, warn){ return s==="confirmed" ? (warn ? pillHtml("Confirmed ⚠","gold") : pillHtml("Confirmed","up")) : s==="failed" ? pillHtml("Failed","down") : pillHtml("Developing","muted"); }
+
+// ==========================================================================
+// PANDUAN ENTRY & EXIT + PERINGKAT POLA UNTUK ENTRI
+// Dihitung saat tampil dari pts/lines/brkPrice hasil scan (client maupun server) — TIDAK menambah
+// kolom DB dan TIDAK mengubah blok @@PS_ENGINE. Semua level adalah patokan GEOMETRI pola (measured move),
+// bukan jaminan harga dan bukan rekomendasi. Ditaruh di luar blok engine supaya scan-patterns.mjs tak terpengaruh.
+//   Entry  : level breakout s/d +3% (jangan mengejar lebih jauh; kalau sudah lewat -> tunggu retest)
+//   Stop   : 1,5% di bawah struktur pola (dasar flag / support naik / low handle / dasar pola)
+//   Target : level breakout + tinggi pola (measured move)
+// ==========================================================================
+const PS_CHASE = 0.03, PS_PAD = 0.015;
+const PS_TIER = {
+  bull_flag:["Prioritas untuk entri","up"], bull_pennant:["Prioritas untuk entri","up"],
+  asc_triangle:["Prioritas untuk entri","up"], cup_handle:["Prioritas untuk entri","up"],
+  inverse_head_shoulders:["Baik (butuh tren turun sebelumnya)","up"], falling_wedge:["Baik (butuh tren turun sebelumnya)","up"],
+  double_bottom:["Hati-hati: sinyal palsu lebih sering","gold"], triple_bottom:["Hati-hati: sinyal palsu lebih sering","gold"],
+  rectangle:["Netral: tunggu arah breakout","muted"], sym_triangle:["Netral: tunggu arah breakout","muted"],
+};
+function psTierPill(r){
+  if(!r || PS.mode!=="pattern" || !r.key) return "";
+  const t = PS_TIER[r.key] || (r.bias==="bearish" ? ["Bukan sinyal beli","down"] : null);
+  return t ? pillHtml(t[0], t[1]) : "";
+}
+const psTick = p=> p<200 ? 1 : p<500 ? 2 : p<2000 ? 5 : p<5000 ? 10 : 25;   // fraksi harga IDX
+const psRnd = (p, m)=>{ const t = psTick(p), q = p/t; return (m==="down" ? Math.floor(q+1e-9) : m==="up" ? Math.ceil(q-1e-9) : Math.round(q))*t; };
+// harga garis pada indeks bar i (interpolasi di ruang log, sama dengan cara engine membentuk garis)
+function psLineAt(L, i){
+  if(!L || !L.a || !L.b) return NaN;
+  const a = Number(L.a.price), b = Number(L.b.price); if(!(a>0) || !(b>0)) return NaN;
+  if(L.b.i===L.a.i) return b;
+  const f = (i-L.a.i)/(L.b.i-L.a.i);
+  return Math.exp(Math.log(a)*(1-f)+Math.log(b)*f);
+}
+// Geometri pola -> {side:"long",level,height,stop} | {side:"short",level,height,inval} | {both,up,down} | null
+function psGeom(r){
+  const pts = r.pts||[], P = pts.map(q=>Number(q.price)), Ls = r.lines||[], bp = r.brkPrice, k = r.key;
+  const okN = v=> Number.isFinite(v) && v>0, PAD = PS_PAD;
+  const body = Ls.filter(L=> L && L.a && L.b && L.t!=="pole" && L.t!=="neck");
+  const ends = body.map(L=>Number(L.b.price)).filter(okN);
+  const startW = body.length>=2 ? Math.abs(Number(body[0].a.price)-Number(body[1].a.price)) : NaN;
+  const neck = Ls.find(L=> L && L.t==="neck");
+  const num = typeof bp==="number" && okN(bp) ? bp : NaN;
+  const long = (level,height,stop)=> (okN(level)&&okN(height)&&okN(stop)&&stop<level) ? { side:"long", level, height, stop } : null;
+  const short = (level,height,inval)=> (okN(level)&&okN(height)&&okN(inval)&&inval>level) ? { side:"short", level, height, inval } : null;
+  // --- bullish ---
+  if(k==="double_bottom" && P.length>=3){ const lo = Math.min(P[0],P[2]); return long(num, num-lo, lo*(1-PAD)); }
+  if(k==="triple_bottom" && P.length>=5){ const lo = Math.min(P[0],P[2],P[4]); return long(num, num-lo, lo*(1-PAD)); }
+  if(k==="inverse_head_shoulders" && P.length>=5){ const hd = P[2], nk = neck ? psLineAt(neck, pts[2].i) : NaN; return long(num, okN(nk) ? nk-hd : num-hd, hd*(1-PAD)); }
+  if(k==="cup_handle" && P.length>=4){ const bot = P[1], hl = P[3]; return long(num, num-bot, (hl<num ? hl : bot)*(1-PAD)); }
+  if((k==="asc_triangle"||k==="falling_wedge") && ends.length>=2) return long(num, startW, Math.min(...ends)*(1-PAD));
+  if((k==="bull_flag"||k==="bull_pennant") && P.length>=2 && ends.length>=2) return long(num, Math.abs(P[1]-P[0]), Math.min(...ends)*(1-PAD));
+  // --- bearish (dipakai untuk menghindari / keluar) ---
+  if(k==="double_top" && P.length>=3){ const hi = Math.max(P[0],P[2]); return short(num, hi-num, hi*(1+PAD)); }
+  if(k==="triple_top" && P.length>=5){ const hi = Math.max(P[0],P[2],P[4]); return short(num, hi-num, hi*(1+PAD)); }
+  if(k==="head_shoulders" && P.length>=5){ const hd = P[2], nk = neck ? psLineAt(neck, pts[2].i) : NaN; return short(num, okN(nk) ? hd-nk : hd-num, hd*(1+PAD)); }
+  if(k==="inv_cup_handle" && P.length>=2){ const pk = P[1]; return short(num, pk-num, pk*(1+PAD)); }
+  if((k==="desc_triangle"||k==="rising_wedge") && ends.length>=2) return short(num, startW, Math.max(...ends)*(1+PAD));
+  if((k==="bear_flag"||k==="bear_pennant") && P.length>=2 && ends.length>=2) return short(num, Math.abs(P[1]-P[0]), Math.max(...ends)*(1+PAD));
+  // --- netral: dua skenario sampai arah breakout jelas ---
+  if((k==="rectangle"||k==="sym_triangle") && bp && typeof bp==="object" && okN(bp.up) && okN(bp.lo) && okN(startW)){
+    const up = long(bp.up, startW, bp.lo*(1-PAD)), dn = short(bp.lo, startW, bp.up*(1+PAD));
+    if(r.bias==="bullish") return up;
+    if(r.bias==="bearish") return dn;
+    return up && dn ? { both:true, up, down:dn } : null;
+  }
+  return null;
+}
+// Bangun rencana LONG: area entry, stop, target, R:R
+function psPlanLong(r, g){
+  const last = Number(r.lastClose), lvl = g.level;
+  if(!(last>0)) return null;
+  if(r.status==="failed") return { side:"long", state:"failed" };
+  const ext = (last-lvl)/lvl;
+  let state, lo = lvl, hi = lvl*(1+PS_CHASE), ref;
+  if(last<=lvl){ state = "wait"; ref = lvl; }
+  else if(ext<=PS_CHASE){ state = "in"; ref = last; }
+  else { state = "ext"; hi = lvl*1.01; ref = hi; }
+  const stop = psRnd(g.stop,"down"), target = psRnd(lvl+g.height,"near");
+  const risk = ref-stop; if(!(risk>0)) return null;
+  return { side:"long", state, level:lvl, ext, entryLo:psRnd(lo,"up"), entryHi:psRnd(hi,"near"), ref, stop, target,
+    riskPct:risk/ref*100, rewardPct:(target/ref-1)*100, rr:(target-ref)/risk };
+}
+// Bangun rencana SHORT (bukan sinyal beli): area exit, target penurunan, level pembatalan
+function psPlanShort(r, g){
+  const last = Number(r.lastClose), lvl = g.level;
+  if(!(last>0)) return null;
+  if(r.status==="failed") return { side:"short", state:"failed", inval:psRnd(g.inval,"up") };
+  const state = (last<lvl) ? "broken" : "watch";
+  return { side:"short", state, level:lvl, exitLo:psRnd(lvl*(1-PS_CHASE),"near"), exitHi:psRnd(lvl,"near"), reboundHi:psRnd(lvl*1.01,"near"),
+    target:psRnd(Math.max(lvl-g.height, lvl*0.3),"near"), inval:psRnd(g.inval,"up") };
+}
+function psTradePlan(r){
+  if(!r || PS.mode!=="pattern" || !r.key || r.key==="draw") return null;
+  const g = psGeom(r); if(!g) return null;
+  if(g.both) return { both:true, up:psPlanLong(r,g.up), down:psPlanShort(r,g.down) };
+  return g.side==="long" ? psPlanLong(r,g) : psPlanShort(r,g);
+}
+function psPlanRows(rows){
+  return rows.map(([k,v,h,c])=>`<span class="ps-k">${k}</span><div><b class="mono" ${c?`style="color:${c}"`:""}>${v}</b>${h?`<div class="ps-note">${h}</div>`:""}</div>`).join("");
+}
+function psLongHtml(r, p, title){
+  const f = v=> fmtNum(Math.round(v)), pc = v=> (v>=0?"+":"")+v.toFixed(1)+"%";
+  if(!p) return "";
+  if(p.state==="failed") return `<div class="ps-plan"><div class="ps-plan-h">${title}</div><div class="ps-note" style="grid-column:1/-1">Pola gagal: harga sudah menembus level invalidasi. <b>Tidak ada entry</b> dari pola ini.</div></div>`;
+  const stateTxt = p.state==="wait" ? (r.status==="confirmed" ? `Harga kembali di bawah level breakout (${f(p.level)}) — breakout sebelumnya tidak bertahan. Tunggu <b>close harian di atas ${f(p.level)}</b> lagi sebelum masuk.` : `Belum breakout. Beli hanya jika <b>close harian di atas ${f(p.level)}</b>; jangan masuk sebelum konfirmasi.`)
+    : p.state==="in" ? `Harga sekarang (${f(p.ref)}) masih di dalam area entry.`
+    : `Harga sudah ${(p.ext*100).toFixed(1)}% di atas level breakout — <b>jangan dikejar</b>. Tunggu pullback/retest ke area ini.`;
+  const rrCol = p.rr>=2 ? "var(--up)" : p.rr>=1.5 ? "var(--gold)" : "var(--muted)";
+  const rrTxt = p.rr>=2 ? "menarik" : p.rr>=1.5 ? "cukup" : "kurang menarik — pertimbangkan lewati atau tunggu harga lebih baik";
+  const liq = r.lowLiq ? `<div class="ps-note" style="grid-column:1/-1;color:var(--gold);margin-top:4px">⚠ Likuiditas rendah: pakai order limit dan perkecil ukuran posisi.</div>` : "";
+  return `<div class="ps-plan"><div class="ps-plan-h">${title}</div>${psPlanRows([
+    ["Area entry", `${f(p.entryLo)} – ${f(p.entryHi)}`, stateTxt, "var(--gold)"],
+    ["Stop loss", f(p.stop), `${pc(-p.riskPct)} dari acuan entry. Keluar jika <b>close di bawah</b> level ini (bukan sekadar sentuh intraday).`, "var(--down)"],
+    ["Take profit", f(p.target), `${pc(p.rewardPct)} dari acuan entry (target = level breakout + tinggi pola). Amankan sebagian di sini; sisanya trailing stop di bawah higher-low terbaru.`, "var(--up)"],
+    ["Risk : Reward", `1 : ${Math.max(0,p.rr).toFixed(1)}`, rrTxt, rrCol],
+  ])}${liq}</div>`;
+}
+function psShortHtml(r, p, title){
+  const f = v=> fmtNum(Math.round(v));
+  if(!p) return "";
+  if(p.state==="failed") return `<div class="ps-plan"><div class="ps-plan-h">${title}</div><div class="ps-note" style="grid-column:1/-1">Pola bearish batal: harga sudah di atas ${f(p.inval)}. Tidak ada sinyal keluar dari pola ini.</div></div>`;
+  const exitTxt = p.state==="broken"
+    ? `Sudah breakdown di bawah ${f(p.level)}. Jika masih memegang, manfaatkan rebound ke <b>${f(p.level)} – ${f(p.reboundHi)}</b> untuk keluar/kurangi.`
+    : `Belum breakdown. Kurangi/keluar jika <b>close harian di bawah ${f(p.level)}</b>; area lanjutan ${f(p.exitLo)} – ${f(p.exitHi)}.`;
+  return `<div class="ps-plan"><div class="ps-plan-h">${title}</div>${psPlanRows([
+    ["Sinyal", "Bukan sinyal beli", "Pola bearish dipakai untuk menghindari saham ini atau untuk keluar dari posisi yang sudah ada.", "var(--down)"],
+    ["Area exit", p.state==="broken" ? `${f(p.level)} – ${f(p.reboundHi)}` : `${f(p.level)} ke bawah`, exitTxt, "var(--gold)"],
+    ["Target penurunan", f(p.target), "Level breakdown − tinggi pola (measured move).", "var(--down)"],
+    ["Pola batal jika", `close &gt; ${f(p.inval)}`, "Di atas level ini struktur bearish tidak berlaku lagi.", "var(--muted)"],
+  ])}</div>`;
+}
+function psPlanHtml(r){
+  if(PS.mode!=="pattern") return "";
+  const p = psTradePlan(r);
+  const foot = `<div class="ps-note" style="margin:-2px 0 10px">Ukuran posisi: batasi risiko ±1–2% modal per transaksi → jumlah lot = (modal × risiko%) ÷ ((acuan entry − stop) × 100). Level dihitung otomatis dari geometri pola, bukan jaminan &amp; bukan rekomendasi jual/beli.</div>`;
+  if(!p) return `<div class="ps-note" style="margin:8px 0">Area entry/exit tidak dapat dihitung untuk pola ini (titik pola tidak lengkap).</div>`;
+  if(p.both) return psLongHtml(r, p.up, "Skenario naik (breakout ke atas)") + psShortHtml(r, p.down, "Skenario turun (breakdown)") + foot;
+  return (p.side==="long" ? psLongHtml(r, p, "Rencana entry &amp; exit") : psShortHtml(r, p, "Rencana exit / penghindaran")) + foot;
+}
+function psGuideHtml(){
+  return `<div class="panel" style="margin-top:12px"><div class="panel-heading"><h3>🎯 Pola &amp; filter terbaik untuk entri</h3><span class="panel-heading-note">panduan umum · bukan hasil backtest IDX</span></div>
+    <div class="ps-note">
+      <b>Pola yang paling cocok untuk entri beli</b> (titik masuk dan stop jelas):
+      <ol style="margin:6px 0 8px 18px;padding:0">
+        <li><b>Bull Flag / Bull Pennant</b> — kelanjutan setelah kenaikan tajam. Entry saat menembus batas atas flag, stop di bawah dasar flag, target = tinggi tiang.</li>
+        <li><b>Ascending Triangle</b> — resistance datar + higher low. Entry saat menembus resistance, stop di bawah garis support naik, target = tinggi segitiga.</li>
+        <li><b>Cup &amp; Handle</b> — entry saat menembus rim/handle (bukan di dalam cup), stop di bawah low handle, target = kedalaman cup.</li>
+        <li><b>Inverse Head &amp; Shoulders</b> dan <b>Falling Wedge</b> — layak dipakai hanya bila sebelumnya ada tren turun yang jelas.</li>
+      </ol>
+      <b>Hati-hati:</b> Double/Triple Bottom lebih sering memberi sinyal palsu. Rectangle &amp; Symmetrical Triangle netral — tunggu arah breakout. Semua pola <i>bearish</i> = bukan sinyal beli (dipakai untuk menghindari atau keluar).<br>
+      <b>Filter yang menentukan hasil:</b>
+      <ul style="margin:6px 0 8px 18px;padding:0">
+        <li><b>Confirmed dengan usia breakout 0–2 bar</b> + lonjakan volume = masuk setelah konfirmasi. <b>Developing dekat level breakout</b> = lebih awal tapi risikonya lebih besar.</li>
+        <li>Hindari <b>Failed</b>, <b>Confirmed ⚠</b> (candle penolakan / harga sudah extended) dan saham berlabel <b>⚠ Likuiditas rendah</b>.</li>
+        <li>Arah <b>Bullish</b>, Min. skor <b>70</b>. Pakai <b>1W</b> untuk menyaring arah, <b>1D</b> untuk waktu masuk.</li>
+        <li>IDX: batas ARA/ARB dan dominasi ritel membuat breakout saham kecil cepat gagal — utamakan saham likuid.</li>
+        <li>Untuk mengetahui pola mana yang terbaik di data IDX Anda: simpan hasil tiap pola ke <b>Backtest</b> secara terpisah, lalu bandingkan setelah beberapa minggu.</li>
+      </ul>
+      <button type="button" class="btn btn-outline" id="psPresetBtn" title="Arah Bullish · Min. skor 70 · Developing + Confirmed · Failed disembunyikan">Terapkan filter entri</button>
+      <span class="ps-note"> Klik satu hasil untuk melihat area entry, stop loss, dan target.</span>
+    </div></div>`;
+}
 
 function renderPatternScanner(){
   psCss();
@@ -27736,11 +27901,13 @@ function renderPatternScanner(){
     <div class="panel"><div class="panel-heading"><h3>Hasil</h3><span class="panel-heading-note" id="psCount"></span></div><div class="table-wrap" id="psResults"></div></div>
     <div class="panel"><div class="panel-heading"><h3>Chart &amp; detail</h3></div><div id="psChart"><div class="empty-box">Klik satu hasil untuk melihat candlestick beserta garis polanya.</div></div></div>
   </div>
+  ${psGuideHtml()}
   <div class="panel" style="margin-top:12px"><div class="panel-heading"><h3>Cara membaca</h3></div>
     <div class="ps-note">
       <b>Match Score (0–100)</b> = kecocokan bentuk dengan pola ideal: bentuk ${PS_WEIGHTS.shape}, konteks tren ${PS_WEIGHTS.trend}, volume ${PS_WEIGHTS.vol}, durasi &amp; kebaruan ${PS_WEIGHTS.time}, kedekatan/kekuatan breakout ${PS_WEIGHTS.brk}. Ini <i>bukan</i> probabilitas harga akan naik atau turun.<br>
       <b>Developing</b>: struktur sudah terbentuk, breakout belum. <b>Confirmed</b>: close menembus level breakout dalam 10 bar terakhir. <b>Failed</b>: harga melewati level invalidasi.<br>
       <b>Likuiditas rendah</b>: rata-rata nilai transaksi 20 hari di bawah Rp ${(PS_LOWLIQ_IDR/1e9).toFixed(0)} miliar — pola pada saham begini kurang andal.<br>
+      <b>Area entry / stop / target</b> di panel detail dihitung otomatis dari geometri pola: entry = level breakout s/d +3%, stop = 1,5% di bawah struktur pola, target = level breakout + tinggi pola. Harga sudah lebih dari 3% di atas level = jangan dikejar, tunggu retest.<br>
       Tool ini bersifat edukatif. Selalu lakukan riset mandiri sebelum mengambil keputusan.</div></div>`;
 }
 
@@ -27867,9 +28034,10 @@ function psShowDetail(r){
     </div>
     ${psChartSvg(bars, r)}
     ${PS.mode==="pattern" ? `
-    <div style="display:flex;gap:6px;flex-wrap:wrap;margin:10px 0">${psStatusPill(r.status, warn)} ${pillHtml(r.bias,psTone(r.bias))} ${r.lowLiq?pillHtml("Likuiditas rendah","muted"):""}
+    <div style="display:flex;gap:6px;flex-wrap:wrap;margin:10px 0">${psStatusPill(r.status, warn)} ${pillHtml(r.bias,psTone(r.bias))} ${psTierPill(r)} ${r.lowLiq?pillHtml("Likuiditas rendah","muted"):""}
       <span class="ps-note">Level breakout: <b class="mono">${brk}</b>${r.age!=null?` · breakout ${r.age===0?"hari ini":r.age+" bar lalu"}`:""}</span></div>
     ${warn ? `<div class="ps-note" style="color:var(--gold);margin-bottom:8px">⚠ Breakout rawan gagal: ${warn.map(escapeHtml).join("; ")}.</div>` : ""}
+    ${psPlanHtml(r)}
     <div class="ps-bars">
       ${[["Bentuk",p.shape,PS_WEIGHTS.shape],["Tren",p.trend,PS_WEIGHTS.trend],["Volume",p.vol,PS_WEIGHTS.vol],["Durasi",p.time,PS_WEIGHTS.time],["Breakout",p.brk,PS_WEIGHTS.brk]]
         .map(([n,v,m])=>`<span>${n}</span><span style="background:color-mix(in srgb,currentColor 8%,transparent);border-radius:3px"><i style="width:${(v/m*100).toFixed(0)}%"></i></span><span class="mono">${v.toFixed(0)}/${m}</span>`).join("")}
@@ -27936,6 +28104,7 @@ function psBind(){
     psRun();
   };
   const rl = $("psReloadBtn"); if(rl) rl.onclick = ()=>{ if(PS.running) return; PS.cache = {}; PS.idbLoaded = false; PS.refreshedAt = 0; psIdbClear(); PS.results = []; PS.sel = null; PS.msg = "Cache dibuang. Tekan Scan untuk menarik ulang data."; render(); };
+  const pre = $("psPresetBtn"); if(pre) pre.onclick = ()=>{ if(PS.running) return; PS.mode = "pattern"; PS.bias = "bullish"; PS.minScore = 70; PS.showDeveloping = true; PS.showConfirmed = true; PS.showFailed = false; PS.sel = null; render(); };
   const cv = $("psCanvas");
   if(cv){
     const ctx = cv.getContext("2d");
