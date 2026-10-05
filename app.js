@@ -4028,7 +4028,7 @@ let state = {
   // broker (dipisah koma), `data` = hasil agregasi per broker per tanggal
   // (null selama belum ditarik / belum ada), `forTicker` dipakai supaya
   // data lama tidak nyasar tampil di ticker lain sebelum refetch selesai.
-  chartBrokerAccum: { on:false, codes:"AK,BK,MG", data:null, loading:false, error:null, forTicker:null },
+  chartBrokerAccum: { on:false, auto:true, codes:"", data:null, loading:false, error:null, forTicker:null },
   // Pengaturan tampilan garis Close di chart (warna & model garis) --
   // disimpan di localStorage supaya pilihan user tetap nyangkut walau
   // halaman di-reload. Lihat kontrol "Garis Close" di renderChart() &
@@ -6080,6 +6080,69 @@ function restoreDetailTabsScroll(prevLeft){
   };
 }
 
+// ==========================================================================
+// NAVIGASI SEBELUMNYA/BERIKUTNYA UNTUK SEMUA DAFTAR HASIL
+// Dulu tombol ‹ Sebelumnya / Berikutnya › di Detail Emiten & tab Grafik hanya
+// aktif kalau dibuka dari tab Screener. Sekarang daftar urutannya diambil dari
+// elemen yang diklik: semua ticker yang tampil (berurutan) di tabel / chip /
+// panel yang sama -- jadi berlaku juga untuk Cari Ticker, Watchlist, Top
+// Movers, Gain/Loss, Pola, modal daftar saham, dst tanpa edit tiap tab.
+// ==========================================================================
+const NAV_TICKER_ATTRS = ["detail","chart","spListDetail","dashDetail","btDetail","spTicker","glOpen"];
+function navTickerOf(n){
+  if(!n || !n.dataset) return "";
+  for(const k of NAV_TICKER_ATTRS){ if(n.dataset[k]) return String(n.dataset[k]); }
+  return "";
+}
+function navTickersFromScope(scope){
+  if(!scope || !scope.querySelectorAll) return null;
+  const valid = new Set((state.stocks||[]).map(x=>String(x.ticker)));
+  const sel = NAV_TICKER_ATTRS.map(k=>"[data-"+k.replace(/[A-Z]/g,c=>"-"+c.toLowerCase())+"]").join(",");
+  const seen = new Set(), out = [];
+  scope.querySelectorAll(sel).forEach(n=>{
+    if(n.closest(".chart-nav,.detail-nav,.ps-nav")) return;
+    const t = navTickerOf(n);
+    if(!t || !valid.has(t) || seen.has(t)) return;
+    seen.add(t); out.push(t);
+  });
+  return out;
+}
+// Daftar ticker yang berdampingan dengan elemen `el` (null kalau cuma 1 / tidak ketemu).
+function navTickersFromEl(el){
+  try{
+    if(!el || !el.closest || el.closest("#detailModalContent")) return null;
+    const scope = el.closest("[data-nav-scope]") || el.closest("table") || el.closest(".ticker-chips") || el.closest(".panel") || el.parentElement;
+    const list = navTickersFromScope(scope), t = navTickerOf(el);
+    return (list && list.length > 1 && list.indexOf(t) >= 0) ? list : null;
+  }catch(e){ return null; }
+}
+
+// ==========================================================================
+// SINYAL BELI / JUAL DI CHART
+// Memakai kriteria yang SUDAH ada di aplikasi ("Cek Kriteria EMA21 & RSI" dan
+// SL = EMA21 Low), supaya konsisten dengan kartu TP & SL:
+//   BUY  = close > EMA21 High DAN close > EMA21 Low DAN RSI7 > RSI21, dan
+//          kondisi itu BARU terpenuhi di bar ini (bar sebelumnya belum).
+//   SELL = sedang "posisi beli" lalu close menembus ke bawah EMA21 Low.
+// BUY & SELL selalu bergantian (tidak ada BUY/SELL beruntun).
+// Bukan rekomendasi investasi -- sinyal teknikal dari data historis.
+// ==========================================================================
+function chartTradeSignals(times, closes, emaH, emaL, rsi7, rsi21){
+  const ok = v => v != null && !isNaN(v);
+  const buyAt = i => ok(emaH[i]) && ok(emaL[i]) && ok(rsi7[i]) && ok(rsi21[i])
+    && closes[i] > emaH[i] && closes[i] > emaL[i] && rsi7[i] > rsi21[i];
+  const out = []; let long = false;
+  for(let i=1;i<closes.length;i++){
+    if(!ok(emaL[i]) || !ok(emaH[i])) continue;
+    if(!long && buyAt(i) && !buyAt(i-1) && ok(emaH[i-1])){
+      long = true; out.push({ i, type:"BUY", time:times[i], price:closes[i] });
+    } else if(long && closes[i] < emaL[i]){
+      long = false; out.push({ i, type:"SELL", time:times[i], price:closes[i] });
+    }
+  }
+  return out;
+}
+
 function openDetail(ticker, opts){
   const keepTab = !!(opts && opts.keepTab);
   const keepNav = !!(opts && opts.keepNav);
@@ -6091,7 +6154,8 @@ function openDetail(ticker, opts){
   // dibuka supaya urutannya tidak melompat kena auto-refresh 45 detik.
   if(!keepNav){
     try{
-      state.detailNavList = state.tab === "screener" ? getSorted(getFiltered()).map(x => x.ticker) : null;
+      if(opts && Array.isArray(opts.nav) && opts.nav.length > 1) state.detailNavList = opts.nav; // daftar dari elemen yang diklik (Cari Ticker, Watchlist, dst)
+      else state.detailNavList = state.tab === "screener" ? getSorted(getFiltered()).map(x => x.ticker) : null;
     }catch(e){ state.detailNavList = null; }
   }
   state.detailBsRows = []; state.detailBsEditRows = [];
@@ -10443,9 +10507,9 @@ function renderDetailModalContent(){
   const navIdx = navList ? navList.indexOf(state.detailTicker) : -1;
   const navRow = navIdx >= 0 ? `
     <div class="detail-nav" style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:10px;">
-      <button type="button" class="btn btn-outline" data-detail-nav="-1" ${navIdx<=0?"disabled":""} title="Saham sebelumnya di hasil screener" style="padding:6px 12px;font-size:12px;">‹ ${navIdx>0 ? escapeHtml(navList[navIdx-1]) : "Sebelumnya"}</button>
-      <span class="mono" style="font-size:12px;color:var(--muted);text-align:center;">${navIdx+1} / ${navList.length} di hasil screener</span>
-      <button type="button" class="btn btn-outline" data-detail-nav="1" ${navIdx>=navList.length-1?"disabled":""} title="Saham berikutnya di hasil screener" style="padding:6px 12px;font-size:12px;">${navIdx<navList.length-1 ? escapeHtml(navList[navIdx+1]) : "Berikutnya"} ›</button>
+      <button type="button" class="btn btn-outline" data-detail-nav="-1" ${navIdx<=0?"disabled":""} title="Saham sebelumnya di daftar ini" style="padding:6px 12px;font-size:12px;">‹ ${navIdx>0 ? escapeHtml(navList[navIdx-1]) : "Sebelumnya"}</button>
+      <span class="mono" style="font-size:12px;color:var(--muted);text-align:center;">${navIdx+1} / ${navList.length} di daftar ini</span>
+      <button type="button" class="btn btn-outline" data-detail-nav="1" ${navIdx>=navList.length-1?"disabled":""} title="Saham berikutnya di daftar ini" style="padding:6px 12px;font-size:12px;">${navIdx<navList.length-1 ? escapeHtml(navList[navIdx+1]) : "Berikutnya"} ›</button>
     </div>` : "";
   return `
     ${navRow}
@@ -10507,7 +10571,7 @@ async function loadChart(ticker, opts){
     state.chartRange = "1m";
     state.chartTimeframe = "daily";
     state.chartSeries = {
-      close:true, support:true, resistance:true, fib:false, tpsl:true, bb:false,
+      close:true, support:true, resistance:true, fib:false, tpsl:true, signal:true, bb:false,
       emaHL:true, ema89:true, ema921:false, sar:false, supertrend:false, pc:false,
       bandar:true, vol:true, stochrsi:true, rsi721:true, foreignflow:true, macd:true, netforeign:true
     };
@@ -10578,6 +10642,7 @@ async function loadChart(ticker, opts){
     state.chartBrokerAccum.data = null;
     state.chartBrokerAccum.error = null;
     state.chartBrokerAccum.forTicker = null;
+    state.chartBrokerAccum.autoCodes = [];
     if(state.chartBrokerAccum.on && state.chartData.length) loadChartBrokerAccum();
   }
   render();
@@ -10597,32 +10662,78 @@ async function loadChart(ticker, opts){
 // netLot/netValue/cumLot/cumValue, cuma avgPrice-nya sendiri selalu
 // harga positif (harga saham tidak bisa negatif).
 // ==========================================
+// Jendela periode = tombol "Rentang" chart (1B/3B/6B/1T/Semua/Kustom).
+// Dipakai untuk memilih 3 broker pembeli dominan secara otomatis.
+function chartBrokerAccumPeriodWindow(){
+  const dates = state.chartData.map(d=>String(d.date).slice(0,10)).filter(Boolean).sort();
+  const first = dates[0] || "", last = dates[dates.length-1] || "";
+  if(state.chartRange === "custom") return { startISO: state.chartFrom || first, endISO: state.chartTo || last };
+  const days = {"1m":31,"3m":92,"6m":183,"1y":365}[state.chartRange];
+  if(!days) return { startISO: first, endISO: last };
+  const cutoff = new Date(Date.now() - days*86400000).toISOString().slice(0,10);
+  return { startISO: dates.find(d=>d >= cutoff) || first, endISO: last };
+}
+
+// Tarik semua halaman (PostgREST default max 1000 baris/request).
+async function fetchBrokerActivityRows(qs){
+  const PAGE = 1000, out = [];
+  for(let offset = 0; ; offset += PAGE){
+    const q = new URLSearchParams(qs); q.set("limit", String(PAGE)); q.set("offset", String(offset));
+    const res = await fetch(`${SUPABASE_URL}/broker_activity?${q.toString()}`, { headers: getSupaHeaders(), cache: "no-store" });
+    if(!res.ok) throw new Error(`HTTP ${res.status} ${res.statusText}`);
+    const got = await res.json();
+    out.push(...got);
+    if(got.length < PAGE) break;
+  }
+  return out;
+}
+
 async function loadChartBrokerAccum(){
   const ticker = state.selectedTicker;
-  state.chartBrokerAccum = state.chartBrokerAccum || { on:false, codes:"AK,BK,MG", data:null, loading:false, error:null, forTicker:null };
-  const codes = parseBrokerCodesInput(state.chartBrokerAccum.codes || "");
-  if(!ticker || !codes.length || !state.chartData.length){
-    state.chartBrokerAccum.data = null;
-    state.chartBrokerAccum.loading = false;
-    state.chartBrokerAccum.error = !codes.length ? "Isi kode broker dulu (pisah koma), mis. AK,BK,MG" : null;
+  state.chartBrokerAccum = state.chartBrokerAccum || { on:false, auto:true, codes:"", data:null, loading:false, error:null, forTicker:null };
+  const ba = state.chartBrokerAccum;
+  const manualCodes = parseBrokerCodesInput(ba.codes || "");
+  // Mode auto = tidak ada input manual -> broker dipilih otomatis (top 3 net buyer di periode).
+  const isAuto = ba.auto !== false && !manualCodes.length;
+  if(!ticker || !state.chartData.length){
+    ba.data = null; ba.loading = false; ba.error = null;
     render();
     return;
   }
-  state.chartBrokerAccum.loading = true;
-  state.chartBrokerAccum.error = null;
+  ba.loading = true;
+  ba.error = null;
   render();
   try{
     const dates = state.chartData.map(d=>String(d.date).slice(0,10)).filter(Boolean).sort();
     const from = dates[0], to = dates[dates.length-1];
-    const qs = new URLSearchParams();
-    qs.append("stock_code", `eq.${ticker}`);
-    qs.append("broker_code", `in.(${codes.join(",")})`);
-    qs.append("trade_date", `gte.${from}`);
-    qs.append("trade_date", `lte.${to}`);
-    qs.append("order", "trade_date.asc");
-    const res = await fetch(`${SUPABASE_URL}/broker_activity?${qs.toString()}`, { headers: getSupaHeaders(), cache: "no-store" });
-    if(!res.ok) throw new Error(`HTTP ${res.status} ${res.statusText}`);
-    const rows = await res.json();
+    const baseQs = new URLSearchParams();
+    baseQs.append("stock_code", `eq.${ticker}`);
+    baseQs.append("trade_date", `gte.${from}`);
+    baseQs.append("trade_date", `lte.${to}`);
+    baseQs.append("order", "trade_date.asc");
+    let codes = manualCodes;
+    let rows;
+    if(isAuto){
+      rows = await fetchBrokerActivityRows(baseQs);
+      // Peringkat net value (beli - jual) di jendela periode; hanya yang net BELI (>0).
+      const { startISO, endISO } = chartBrokerAccumPeriodWindow();
+      const agg = {};
+      rows.forEach(r=>{
+        const d = String(r.trade_date).slice(0,10);
+        if((startISO && d < startISO) || (endISO && d > endISO)) return;
+        const c = String(r.broker_code||"").toUpperCase(); if(!c) return;
+        const v = Number(r.value_idr) || 0;
+        agg[c] = (agg[c] || 0) + (r.side === "buy" ? v : r.side === "sell" ? -v : 0);
+      });
+      codes = Object.entries(agg).filter(([,v])=>v > 0).sort((a,b)=>b[1]-a[1]).slice(0,3).map(([c])=>c);
+      ba.autoCodes = codes;
+      const inp = document.getElementById("chartBrokerCodesInput");
+      if(inp) inp.value = codes.join(",");
+      rows = rows.filter(r => codes.includes(String(r.broker_code||"").toUpperCase()));
+    } else {
+      baseQs.append("broker_code", `in.(${codes.join(",")})`);
+      rows = await fetchBrokerActivityRows(baseQs);
+    }
 
     const byBroker = {};
     codes.forEach(c=> byBroker[c] = { byDate:{}, cumLot:0, cumValue:0 });
@@ -10653,16 +10764,18 @@ async function loadChartBrokerAccum(){
         slot.cumAvgPrice = calcAvgPrice(Math.abs(b.cumValue), Math.abs(b.cumLot));
       });
     });
-    state.chartBrokerAccum.data = byBroker;
-    state.chartBrokerAccum.forTicker = ticker;
-    state.chartBrokerAccum.error = anyData ? null
-      : `Belum ada data broker_activity untuk ${codes.join(", ")} pada ${ticker} di rentang tanggal chart ini (${fmtDateID(from)}–${fmtDateID(to)}). Tarik dulu lewat tab "Lacak Broker".`;
+    ba.data = byBroker;
+    ba.forTicker = ticker;
+    ba.error = anyData ? null
+      : (isAuto
+          ? `Belum ada data broker_activity untuk ${ticker} di rentang chart ini (${fmtDateID(from)}–${fmtDateID(to)}). Tarik dulu lewat tab "Lacak Broker", atau isi kode broker manual.`
+          : `Belum ada data broker_activity untuk ${codes.join(", ")} pada ${ticker} di rentang tanggal chart ini (${fmtDateID(from)}–${fmtDateID(to)}). Tarik dulu lewat tab "Lacak Broker".`);
   }catch(e){
-    state.chartBrokerAccum.error = "Gagal memuat data broker: " + e.message;
-    state.chartBrokerAccum.data = null;
-    state.chartBrokerAccum.forTicker = null;
+    ba.error = "Gagal memuat data broker: " + e.message;
+    ba.data = null;
+    ba.forTicker = null;
   }
-  state.chartBrokerAccum.loading = false;
+  ba.loading = false;
   render();
 }
 
@@ -12147,6 +12260,290 @@ function enriched(){
 // dipindah apa adanya dari getFiltered()). getFiltered() menggabungkan
 // beberapa preset aktif dengan AND / OR sesuai state.presetMode.
 // ==========================================
+// ==========================================================================
+// 🛒 BUY ON WEAKNESS -- konfigurasi bisa diatur dari UI (tombol ⚙️ di sebelah pill)
+// Disimpan di localStorage (per browser). Tiap kriteria bisa dimatikan; angka bisa diubah.
+// Tahap evaluasi berurutan: 0 Tren besar -> 1 Pelemahan -> 2 Dekat penahan -> 3 Konfirmasi pantul -> 4 Kualitas.
+// ==========================================================================
+const BOW_DEFAULT = {
+  trendMa200: true, trendMa50: true, pos52On: true, pos52Min: 30, pos52Max: 80,
+  weekOn: true, weekMin: -10, weekMax: -3, monthOn: true, monthMin: -20,
+  rsiOn: true, rsiMin: 30, rsiMax: 45, rsi7Max: 40,
+  nearOn: true, nearMa50: true, ma50Min: -8, ma50Max: 0, nearEma: true, emaPct: 3,
+  nearSup: true, supBelow: 2, supAbove: 5, nearBb: true, bbPct: 2,
+  confOn: true, confStoch: true, confRsi: true, confClv: true, clvMin: 0.5, confMin: 1,
+  turnoverOn: true, turnoverMin: 5, panicOn: true, panicVol: 2, foreignOn: true
+};
+const BOW_PRESETS = {
+  longgar: { pos52Min: 20, pos52Max: 90, weekMin: -15, weekMax: -1, monthMin: -30, rsiMin: 25, rsiMax: 50, rsi7Max: 45,
+             ma50Min: -12, ma50Max: 3, emaPct: 5, supBelow: 3, supAbove: 8, bbPct: 4, confOn: false, turnoverMin: 2, foreignOn: false },
+  standar: {},
+  ketat:   { pos52Min: 40, pos52Max: 75, weekMin: -8, weekMax: -4, monthMin: -15, rsiMin: 30, rsiMax: 40, rsi7Max: 35,
+             ma50Min: -6, ma50Max: -1, emaPct: 2, supBelow: 1, supAbove: 3, bbPct: 1, confMin: 2, turnoverMin: 10, panicVol: 1.5 }
+};
+const LS_BOW_CFG = "ihsg_bow_cfg_v1";
+const BOW_STAGES = ["Tren besar", "Pelemahan", "Dekat penahan", "Konfirmasi pantul", "Kualitas"];
+function bowLoad(){
+  try{ const raw = localStorage.getItem(LS_BOW_CFG); return raw ? { ...BOW_DEFAULT, ...JSON.parse(raw) } : { ...BOW_DEFAULT }; }
+  catch(e){ return { ...BOW_DEFAULT }; }
+}
+let BOW_CFG = bowLoad();
+function bowSave(){ try{ localStorage.setItem(LS_BOW_CFG, JSON.stringify(BOW_CFG)); }catch(e){} }
+function bowIsCustom(){ return Object.keys(BOW_DEFAULT).some(k => BOW_CFG[k] !== BOW_DEFAULT[k]); }
+function bowAfterChange(){ bowSave(); state.page = 1; render(); }
+function bowTogglePanel(){ state.bowPanelOpen = !state.bowPanelOpen; render(); }
+function bowToggle(k){ BOW_CFG[k] = !BOW_CFG[k]; bowAfterChange(); }
+function bowSetNum(k, v){ const n = parseFloat(String(v).replace(",", ".")); if(isNaN(n)) { render(); return; } BOW_CFG[k] = n; bowAfterChange(); }
+function bowApplyPreset(name){ BOW_CFG = { ...BOW_DEFAULT, ...(BOW_PRESETS[name] || {}) }; bowAfterChange(); }
+function bowReset(){ BOW_CFG = { ...BOW_DEFAULT }; bowAfterChange(); }
+
+// Mengembalikan indeks tahap pertama yang GAGAL (0-4), atau -1 kalau lolos semua.
+function bowEval(s, c){
+  c = c || BOW_CFG;
+  const rg = (a, b) => [Math.min(a, b), Math.max(a, b)];
+  // 0) Tren besar
+  if(c.trendMa200 && (s.cClose == null || s.ma200 == null || s.cClose <= s.ma200)) return 0;
+  if(c.trendMa50 && s.ma50 != null && s.ma200 != null && s.ma50 <= s.ma200) return 0;
+  if(c.pos52On && s.pos52w != null){ const [lo, hi] = rg(c.pos52Min, c.pos52Max); if(s.pos52w < lo || s.pos52w > hi) return 0; }
+  // 1) Pelemahan (turun tapi bukan jatuh bebas)
+  if(c.weekOn){ const [lo, hi] = rg(c.weekMin, c.weekMax); if(s.weekChangePct == null || s.weekChangePct < lo || s.weekChangePct > hi) return 1; }
+  if(c.monthOn && s.monthChangePct != null && s.monthChangePct < c.monthMin) return 1;
+  if(c.rsiOn){
+    const [lo, hi] = rg(c.rsiMin, c.rsiMax);
+    const ok = s.rsi14 != null ? (s.rsi14 >= lo && s.rsi14 <= hi) : (s.rsi7 != null && s.rsi7 <= c.rsi7Max);
+    if(!ok) return 1;
+  }
+  // 2) Dekat area penahan: cukup SALAH SATU dari yang diaktifkan
+  if(c.nearOn && (c.nearMa50 || c.nearEma || c.nearSup || c.nearBb)){
+    const [m1, m2] = rg(c.ma50Min, c.ma50Max);
+    const okMa50 = c.nearMa50 && s.vsMa50Pct != null && s.vsMa50Pct >= m1 && s.vsMa50Pct <= m2;
+    const okEma = c.nearEma && s.cClose != null && s.ema21L != null && s.cClose <= s.ema21L * (1 + c.emaPct / 100);
+    const okSup = c.nearSup && s.cClose != null && s.support != null && s.support > 0 && s.cClose >= s.support * (1 - c.supBelow / 100) && s.cClose <= s.support * (1 + c.supAbove / 100);
+    const okBb = c.nearBb && s.cClose != null && s.bbLower != null && s.cClose <= s.bbLower * (1 + c.bbPct / 100);
+    if(!(okMa50 || okEma || okSup || okBb)) return 2;
+  }
+  // 3) Konfirmasi pantulan: minimal confMin dari yang diaktifkan
+  if(c.confOn){
+    const avail = (c.confStoch ? 1 : 0) + (c.confRsi ? 1 : 0) + (c.confClv ? 1 : 0);
+    if(avail){
+      let n = 0;
+      if(c.confStoch && [s.prevStochK, s.prevStochD, s.stochK, s.stochD].every(v => v != null) && s.prevStochK < s.prevStochD && s.stochK > s.stochD) n++;
+      if(c.confRsi && s.rsi14 != null && s.prevRsi14 != null && s.rsi14 > s.prevRsi14) n++;
+      if(c.confClv && s.clv != null && s.clv > c.clvMin) n++;
+      if(n < Math.min(Math.max(1, Math.round(c.confMin)), avail)) return 3;
+    }
+  }
+  // 4) Kualitas: likuid, bukan jual panik, asing tidak keluar
+  if(c.turnoverOn && (s.turnover == null || s.turnover < c.turnoverMin * 1e9)) return 4;
+  if(c.panicOn && (s.changePct || 0) < 0 && s.volRatio != null && s.volRatio > c.panicVol) return 4;
+  if(c.foreignOn && s.foreignNet5D != null && s.foreignNet5D < 0) return 4;
+  return -1;
+}
+
+function bowDescription(){
+  const c = BOW_CFG, p = [];
+  if(c.trendMa200 || c.trendMa50) p.push("Tren: " + [c.trendMa200 ? "Close > MA200" : "", c.trendMa50 ? "MA50 > MA200" : "", c.pos52On ? `posisi 52W ${c.pos52Min}–${c.pos52Max}%` : ""].filter(Boolean).join(", "));
+  else if(c.pos52On) p.push(`Tren: posisi 52W ${c.pos52Min}–${c.pos52Max}%`);
+  const w = [c.weekOn ? `1 minggu ${c.weekMin}% s/d ${c.weekMax}%` : "", c.monthOn ? `1 bulan tidak di bawah ${c.monthMin}%` : "", c.rsiOn ? `RSI14 ${c.rsiMin}–${c.rsiMax}` : ""].filter(Boolean);
+  if(w.length) p.push("Melemah: " + w.join(", "));
+  const n = [c.nearMa50 ? `jarak MA50 ${c.ma50Min}..${c.ma50Max}%` : "", c.nearEma ? `≤ EMA21 Low +${c.emaPct}%` : "", c.nearSup ? `support −${c.supBelow}%/+${c.supAbove}%` : "", c.nearBb ? `≤ BB bawah +${c.bbPct}%` : ""].filter(Boolean);
+  if(c.nearOn && n.length) p.push("Dekat penahan (salah satu): " + n.join(" / "));
+  const f = [c.confStoch ? "Stoch cross up" : "", c.confRsi ? "RSI naik" : "", c.confClv ? `CLV > ${c.clvMin}` : ""].filter(Boolean);
+  if(c.confOn && f.length) p.push(`Konfirmasi (min ${Math.min(Math.round(c.confMin), f.length)}): ` + f.join(", "));
+  const q = [c.turnoverOn ? `Turnover ≥ Rp${c.turnoverMin} miliar` : "", c.panicOn ? `bukan jual panik (hari merah vol > ${c.panicVol}×)` : "", c.foreignOn ? "net asing 5 hari tidak negatif" : ""].filter(Boolean);
+  if(q.length) p.push(q.join("; "));
+  return p.join(" · ") || "Semua kriteria dimatikan (semua saham lolos)";
+}
+
+function bowFunnel(){
+  const list = state.stocks || [], cnt = [0, 0, 0, 0, 0], total = list.length; let pass = 0;
+  for(const s of list){ const f = bowEval(s); if(f === -1){ pass++; for(let i = 0; i < 5; i++) cnt[i]++; } else for(let i = 0; i < f; i++) cnt[i]++; }
+  return { total, cnt, pass };
+}
+
+function bowPanelHtml(){
+  if(!state.bowPanelOpen) return "";
+  const c = BOW_CFG, esc = escapeHtml;
+  const chk = k => `<input type="checkbox" ${c[k] ? "checked" : ""} onchange="bowToggle('${k}')" style="margin:0">`;
+  const num = (k, step, w) => `<input type="number" step="${step}" value="${c[k]}" onchange="bowSetNum('${k}', this.value)" style="width:${w || 64}px;padding:3px 6px;border:1px solid var(--border);border-radius:6px;background:transparent;color:var(--text);font:inherit;font-size:12px">`;
+  const row = (on, label, inner, tip) => `<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:3px 0;${on === false ? "opacity:.5;" : ""}" ${tip ? `title="${esc(tip)}"` : ""}>${label}${inner ? `<span style="display:inline-flex;align-items:center;gap:5px;flex-wrap:wrap">${inner}</span>` : ""}</div>`;
+  const grp = (n, title, body) => `<div style="border:1px solid var(--border);border-radius:10px;padding:8px 12px;flex:1 1 300px;min-width:280px"><div style="font-weight:700;font-size:12px;margin-bottom:4px"><span style="color:var(--teal)">${n}.</span> ${title}</div>${body}</div>`;
+  const fun = bowFunnel(), names = BOW_STAGES;
+  const funHtml = `<div style="display:flex;flex-wrap:wrap;gap:6px;align-items:center;font-size:11.5px;margin:6px 0 10px">
+    <span style="color:var(--muted)">Semua saham</span><b>${fun.total}</b>
+    ${names.map((nm, i) => `<span style="color:var(--muted)">→ lolos ${esc(nm)}</span><b style="color:${i === 4 ? "var(--teal)" : "var(--text)"}">${fun.cnt[i]}</b>`).join("")}
+  </div>`;
+  const preBtn = (k, t) => `<button type="button" class="btn btn-outline" style="font-size:11.5px;padding:4px 10px" onclick="bowApplyPreset('${k}')">${t}</button>`;
+  return `
+  <div id="bowPanel" style="margin-top:10px;border:1px solid var(--border);border-radius:12px;padding:10px 14px;background:color-mix(in srgb, currentColor 3%, transparent)">
+    <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:2px">
+      <b style="font-size:13px">⚙️ Pengaturan Filter 🛒 Buy on Weakness</b>
+      <span style="font-size:11.5px;color:var(--muted)">${bowIsCustom() ? "● memakai pengaturan kustom" : "pengaturan standar"} · tersimpan di browser ini</span>
+      <span style="margin-left:auto;display:inline-flex;gap:6px;flex-wrap:wrap">${preBtn("longgar", "Longgar")}${preBtn("standar", "Standar")}${preBtn("ketat", "Ketat")}
+        <button type="button" class="btn btn-outline" style="font-size:11.5px;padding:4px 10px" onclick="bowReset()" title="Kembalikan semua angka ke bawaan">↺ Reset</button>
+        <button type="button" class="btn btn-outline" style="font-size:11.5px;padding:4px 10px" onclick="bowTogglePanel()">✕ Tutup</button></span>
+    </div>
+    <div style="font-size:11.5px;color:var(--muted)">Centang = kriteria dipakai. Hasil langsung ikut berubah. Corong di bawah menunjukkan berapa saham yang masih lolos setelah tiap tahap, jadi kelihatan tahap mana yang paling banyak membuang saham.</div>
+    ${funHtml}
+    <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:stretch">
+      ${grp(1, "Tren besar sehat",
+        row(c.trendMa200, `<label style="display:flex;gap:6px;align-items:center">${chk("trendMa200")} Close di atas MA200</label>`, "") +
+        row(c.trendMa50, `<label style="display:flex;gap:6px;align-items:center">${chk("trendMa50")} MA50 di atas MA200</label>`, "") +
+        row(c.pos52On, `<label style="display:flex;gap:6px;align-items:center">${chk("pos52On")} Posisi range 52W (%)</label>`, `${num("pos52Min", 1)} s/d ${num("pos52Max", 1)}`, "Bukan di dasar (jatuh) dan bukan di pucuk (sudah mahal)"))}
+      ${grp(2, "Sedang melemah (bukan jatuh bebas)",
+        row(c.weekOn, `<label style="display:flex;gap:6px;align-items:center">${chk("weekOn")} Perubahan 1 minggu (%)</label>`, `${num("weekMin", 0.5)} s/d ${num("weekMax", 0.5)}`, "Contoh -10 s/d -3 = turun 3% sampai 10% dalam seminggu") +
+        row(c.monthOn, `<label style="display:flex;gap:6px;align-items:center">${chk("monthOn")} Turun 1 bulan tidak lebih dalam dari (%)</label>`, num("monthMin", 1)) +
+        row(c.rsiOn, `<label style="display:flex;gap:6px;align-items:center">${chk("rsiOn")} RSI 14</label>`, `${num("rsiMin", 1)} s/d ${num("rsiMax", 1)} <span style="color:var(--muted);font-size:11px">(jika kosong: RSI7 ≤</span>${num("rsi7Max", 1, 54)}<span style="color:var(--muted);font-size:11px">)</span>`))}
+      ${grp(3, "Dekat area penahan (cukup salah satu)",
+        row(c.nearOn, `<label style="display:flex;gap:6px;align-items:center">${chk("nearOn")} <b>Wajibkan dekat penahan</b></label>`, "") +
+        row(c.nearOn && c.nearMa50, `<label style="display:flex;gap:6px;align-items:center">${chk("nearMa50")} Jarak ke MA50 (%)</label>`, `${num("ma50Min", 0.5)} s/d ${num("ma50Max", 0.5)}`) +
+        row(c.nearOn && c.nearEma, `<label style="display:flex;gap:6px;align-items:center">${chk("nearEma")} Close ≤ EMA21 Low +</label>`, `${num("emaPct", 0.5, 58)} %`) +
+        row(c.nearOn && c.nearSup, `<label style="display:flex;gap:6px;align-items:center">${chk("nearSup")} Dekat Support: −</label>`, `${num("supBelow", 0.5, 58)} % / +${num("supAbove", 0.5, 58)} %`) +
+        row(c.nearOn && c.nearBb, `<label style="display:flex;gap:6px;align-items:center">${chk("nearBb")} Close ≤ Bollinger bawah +</label>`, `${num("bbPct", 0.5, 58)} %`))}
+      ${grp(4, "Konfirmasi pantulan (anti pisau jatuh)",
+        row(c.confOn, `<label style="display:flex;gap:6px;align-items:center">${chk("confOn")} <b>Wajibkan konfirmasi</b>, minimal</label>`, `${num("confMin", 1, 50)} dari yang dicentang`) +
+        row(c.confOn && c.confStoch, `<label style="display:flex;gap:6px;align-items:center">${chk("confStoch")} Stochastic K cross up D</label>`, "") +
+        row(c.confOn && c.confRsi, `<label style="display:flex;gap:6px;align-items:center">${chk("confRsi")} RSI14 naik dari kemarin</label>`, "") +
+        row(c.confOn && c.confClv, `<label style="display:flex;gap:6px;align-items:center">${chk("confClv")} CLV lebih dari</label>`, num("clvMin", 0.05, 58), "CLV = posisi close di rentang high-low hari ini (0 = di low, 1 = di high)"))}
+      ${grp(5, "Kualitas & likuiditas",
+        row(c.turnoverOn, `<label style="display:flex;gap:6px;align-items:center">${chk("turnoverOn")} Turnover minimal (Rp miliar)</label>`, num("turnoverMin", 0.5)) +
+        row(c.panicOn, `<label style="display:flex;gap:6px;align-items:center">${chk("panicOn")} Buang jual panik: hari merah & volume &gt;</label>`, `${num("panicVol", 0.1, 58)} × rata-rata`) +
+        row(c.foreignOn, `<label style="display:flex;gap:6px;align-items:center">${chk("foreignOn")} Net asing 5 hari tidak negatif</label>`, ""))}
+    </div>
+    <div style="font-size:11px;color:var(--muted);margin-top:8px">Data kosong (mis. kolom belum terisi) membuat kriteria yang bergantung padanya tidak lolos, kecuali Posisi 52W, Turun 1 bulan, dan Net asing yang dilewati bila datanya kosong. Pengaturan ini hanya berlaku di aplikasi web ini; notifikasi Telegram server tidak memakainya.</div>
+  </div>`;
+}
+// ==========================================================================
+// ⚙️ PENGATURAN PRESET DSI -- skema parameter tiap preset (selain Buy on Weakness yang punya panel sendiri,
+// Skor Bagger yang diatur di tab 🎯 Skor Bagger, dan EMA9×21 yang punya toggle Fresh/Lanjutan di samping pill).
+// t:'b' = ya/tidak (centang), t:'n' = angka. opt:true = angka bisa dimatikan lewat centang (disimpan di `${k}On`).
+// Disimpan di localStorage (per browser). Nilai bawaan = perilaku asli preset.
+// ==========================================================================
+const PRESET_SCHEMA = {
+  eri: { label: "Momentum Kuat Berlanjut", params: [
+    { k: "rsi7Min", l: "RSI 7 minimal", d: 58, step: 1, t: "n" }, { k: "rsi7Max", l: "RSI 7 maksimal", d: 70, step: 1, t: "n" },
+    { k: "rsi21Min", l: "RSI 21 minimal", d: 50, step: 1, t: "n" }, { k: "rsi21Max", l: "RSI 21 maksimal", d: 70, step: 1, t: "n" },
+    { k: "rsi7Gt21", l: "RSI 7 harus di atas RSI 21", d: true, t: "b" },
+    { k: "ema21hPct", l: "Close maks di atas EMA21 High (%)", d: 3, step: 0.5, t: "n" },
+    { k: "aboveEma89", l: "Close di atas EMA89", d: true, t: "b" },
+    { k: "hlvUp", l: "High, Low & Volume naik dari kemarin", d: true, t: "b" },
+    { k: "stochCross", l: "Stochastic K cross up D", d: true, t: "b" } ] },
+  rsicross: { label: "RSI & Harga Cross", params: [
+    { k: "rsi7Min", l: "RSI 7 minimal", d: 58, step: 1, t: "n" }, { k: "rsi7Max", l: "RSI 7 maksimal", d: 75, step: 1, t: "n" },
+    { k: "rsi21Min", l: "RSI 21 minimal", d: 50, step: 1, t: "n" }, { k: "rsi21Max", l: "RSI 21 maksimal", d: 75, step: 1, t: "n" },
+    { k: "rsi7Gt21", l: "RSI 7 harus di atas RSI 21", d: true, t: "b" },
+    { k: "crossEma", l: "Low < EMA21 Low dan Close > EMA21 High", d: true, t: "b" },
+    { k: "green", l: "Candle hijau (Close > Open)", d: true, t: "b" },
+    { k: "upperHalf", l: "Close di setengah atas High-Low", d: true, t: "b" },
+    { k: "turnoverM", l: "Turnover lebih dari (Rp juta)", d: 200, step: 10, t: "n", opt: true },
+    { k: "aboveMa100", l: "Close di atas MA100", d: true, t: "b" } ] },
+  golden: { label: "Golden Cross DSI", params: [
+    { k: "stochCross", l: "Stochastic K cross up D (selain MACD histogram cross naik)", d: true, t: "b" } ] },
+  uptrend: { label: "Super Uptrend", params: [
+    { k: "c21", l: "Close > MA21", d: true, t: "b" }, { k: "m2150", l: "MA21 > MA50", d: true, t: "b" },
+    { k: "m50100", l: "MA50 > MA100", d: true, t: "b" }, { k: "m100200", l: "MA100 > MA200", d: true, t: "b" } ] },
+  breakout: { label: "Volatility Breakout", params: [
+    { k: "squeeze", l: "Wajib keluar dari BB Squeeze (jika datanya ada)", d: true, t: "b" },
+    { k: "volRatio", l: "Rasio volume minimal (×)", d: 1.5, step: 0.1, t: "n", opt: true },
+    { k: "aboveEma21h", l: "Close di atas EMA21 High", d: true, t: "b" },
+    { k: "positive", l: "Perubahan harga hari ini positif", d: true, t: "b" } ] },
+  pullback: { label: "Pullback Uptrend", params: [
+    { k: "bullish", l: "Trend harga Bullish", d: true, t: "b" },
+    { k: "emaPct", l: "Close maks di atas EMA21 Low (%)", d: 3, step: 0.5, t: "n" },
+    { k: "supPct", l: "Close boleh di bawah Support maks (%)", d: 2, step: 0.5, t: "n" },
+    { k: "stochCross", l: "Stochastic K cross up D (jika datanya lengkap)", d: true, t: "b" } ] },
+  custom_bandar: { label: "BPJS (proxy volume)", params: [
+    { k: "openAboveMa", l: "Open di atas MA21, MA50, MA100 & MA200", d: true, t: "b" },
+    { k: "volRatio", l: "Rasio volume lebih dari (×)", d: 2, step: 0.1, t: "n", opt: true },
+    { k: "turnoverB", l: "Turnover minimal (Rp miliar)", d: 10, step: 1, t: "n", opt: true },
+    { k: "bandTone", l: "Tone bandar naik / uang gede masuk (akumulasi)", d: true, t: "b" } ] },
+  asing_akumulasi: { label: "Akumulasi Asing (IDX)", params: [
+    { k: "net20B", l: "Net asing 20 hari minimal (Rp miliar)", d: 50, step: 5, t: "n", opt: true },
+    { k: "upDays", l: "Hari net asing positif minimal (dari 20)", d: 12, step: 1, t: "n", opt: true },
+    { k: "turnoverB", l: "Turnover minimal (Rp miliar)", d: 5, step: 1, t: "n", opt: true } ] },
+  freq_spike: { label: "Lonjakan Frekuensi", params: [
+    { k: "ratio", l: "Rasio frekuensi minimal (×)", d: 1.5, step: 0.1, t: "n" },
+    { k: "useDb", l: "Pakai flag freq_spike dari database bila rasio tidak ada", d: true, t: "b" } ] },
+  freq_up_vol_down: { label: "Freq↑ Vol↓ (Divergensi)", params: [
+    { k: "freq", l: "Rasio frekuensi minimal (×)", d: 1.3, step: 0.1, t: "n", opt: true },
+    { k: "vol", l: "Rasio volume kurang dari (×)", d: 0.8, step: 0.1, t: "n", opt: true },
+    { k: "turnoverB", l: "Turnover minimal (Rp miliar)", d: 1, step: 0.5, t: "n", opt: true } ] },
+  deepvalue: { label: "Deep Value", params: [
+    { k: "perMax", l: "PER maksimal", d: 15, step: 1, t: "n", opt: true }, { k: "pbvMax", l: "PBV maksimal", d: 1.5, step: 0.1, t: "n", opt: true },
+    { k: "roeMin", l: "ROE minimal (%)", d: 8, step: 1, t: "n", opt: true }, { k: "derMax", l: "DER maksimal", d: 2, step: 0.1, t: "n", opt: true } ] },
+  multibagger: { label: "Multibagger", params: [
+    { k: "perMax", l: "PER maksimal", d: 20, step: 1, t: "n", opt: true }, { k: "roeMin", l: "ROE minimal (%)", d: 12, step: 1, t: "n", opt: true },
+    { k: "derMax", l: "DER maksimal", d: 1.5, step: 0.1, t: "n", opt: true }, { k: "npmMin", l: "Net Profit Margin minimal (%)", d: 5, step: 1, t: "n", opt: true } ] },
+  growth: { label: "Growth", params: [
+    { k: "roeMin", l: "ROE minimal (%)", d: 15, step: 1, t: "n", opt: true }, { k: "npmMin", l: "Net Profit Margin minimal (%)", d: 10, step: 1, t: "n", opt: true } ] },
+  defensive: { label: "Defensive", params: [
+    { k: "roeMin", l: "ROE minimal (%)", d: 8, step: 1, t: "n", opt: true }, { k: "derMax", l: "DER maksimal", d: 1.5, step: 0.1, t: "n", opt: true },
+    { k: "npmMin", l: "Net Profit Margin minimal (%)", d: 5, step: 1, t: "n", opt: true } ] },
+  smallcap: { label: "Small Cap", params: [
+    { k: "roeMin", l: "ROE minimal (%)", d: 8, step: 1, t: "n", opt: true }, { k: "perMax", l: "PER maksimal", d: 25, step: 1, t: "n", opt: true },
+    { k: "mcapMaxT", l: "Market Cap kurang dari (Rp triliun)", d: 1, step: 0.5, t: "n", opt: true } ] }
+};
+const LS_PRESET_CFG = "ihsg_preset_cfg_v1";
+let PCFG_SAVED = (function(){ try{ const o = JSON.parse(localStorage.getItem(LS_PRESET_CFG) || "{}"); return o && typeof o === "object" ? o : {}; }catch(e){ return {}; } })();
+const _pcMerged = {};
+function pcDefaults(key){ const o = {}; ((PRESET_SCHEMA[key] || {}).params || []).forEach(p => { o[p.k] = p.d; if(p.opt) o[p.k + "On"] = true; }); return o; }
+function pcfg(key){ return _pcMerged[key] || (_pcMerged[key] = { ...pcDefaults(key), ...(PCFG_SAVED[key] || {}) }); }
+function pcIsCustom(key){ const d = pcDefaults(key), c = pcfg(key); return Object.keys(d).some(k => d[k] !== c[k]); }
+function pcAfter(){ try{ localStorage.setItem(LS_PRESET_CFG, JSON.stringify(PCFG_SAVED)); }catch(e){} state.page = 1; render(); }
+function pcPut(key, k, v){ PCFG_SAVED[key] = { ...(PCFG_SAVED[key] || {}), [k]: v }; delete _pcMerged[key]; pcAfter(); }
+function pcSetNum(key, k, v){ const n = parseFloat(String(v).replace(",", ".")); if(isNaN(n)){ render(); return; } pcPut(key, k, n); }
+function pcToggle(key, k){ pcPut(key, k, !pcfg(key)[k]); }
+function pcReset(key){ delete PCFG_SAVED[key]; delete _pcMerged[key]; pcAfter(); }
+
+// Catatan perubahan untuk teks formula di Rekap Saham: hanya parameter yang berbeda dari bawaan.
+function presetCustomNote(key){
+  if(!PRESET_SCHEMA[key] || !pcIsCustom(key)) return "";
+  const c = pcfg(key), d = pcDefaults(key), out = [];
+  PRESET_SCHEMA[key].params.forEach(p => {
+    if(p.t === "b"){ if(c[p.k] !== d[p.k]) out.push(`${p.l}: ${c[p.k] ? "ya" : "tidak"}`); }
+    else if(p.opt && !c[p.k + "On"]) out.push(`${p.l}: nonaktif`);
+    else if(c[p.k] !== d[p.k]) out.push(`${p.l}: ${c[p.k]}`);
+  });
+  return out.length ? ` · [Kustom] ${out.join("; ")}` : "";
+}
+
+function presetCfgToggle(key){
+  if(key === "bow"){ state.presetCfgOpen = null; state.bowPanelOpen = !state.bowPanelOpen; }
+  else { state.bowPanelOpen = false; state.presetCfgOpen = state.presetCfgOpen === key ? null : key; }
+  render();
+}
+function presetGear(key){
+  const esc = escapeHtml, st = "padding:2px 8px;font-size:11px;";
+  if(key === "bagger") return `<button type="button" class="pill pill-muted" style="${st}" onclick="selectMainTab('bagger');state.showFilterKustomBagger=true;render();" title="Poin & cutoff Skor Bagger diatur di tab 🎯 Skor Bagger (panel Kustomisasi)">⚙️</button>`;
+  const open = key === "bow" ? !!state.bowPanelOpen : state.presetCfgOpen === key;
+  const custom = key === "bow" ? bowIsCustom() : pcIsCustom(key);
+  const label = key === "bow" ? "Buy on Weakness" : ((PRESET_SCHEMA[key] || {}).label || key);
+  return `<button type="button" class="pill ${open ? "pill-gold" : "pill-muted"}" style="${st}" onclick="presetCfgToggle('${key}')" title="Atur kriteria ${esc(label)}">⚙️${custom ? '<span style="color:var(--gold)">●</span>' : ""}</button>`;
+}
+
+function presetCfgPanelHtml(){
+  const key = state.presetCfgOpen, sc = PRESET_SCHEMA[key];
+  if(!key || !sc) return "";
+  const c = pcfg(key), esc = escapeHtml, list = state.stocks || [];
+  let pass = 0; for(const s of list){ try{ if(presetPass(key, s)) pass++; }catch(e){} }
+  const inp = (k, step, on) => `<input type="number" step="${step}" value="${c[k]}" ${on ? "" : "disabled"} onchange="pcSetNum('${key}','${k}',this.value)" style="width:76px;padding:3px 6px;border:1px solid var(--border);border-radius:6px;background:transparent;color:var(--text);font:inherit;font-size:12px">`;
+  const rows = sc.params.map(p => {
+    if(p.t === "b") return `<label style="display:flex;align-items:center;gap:8px;padding:3px 0;cursor:pointer"><input type="checkbox" ${c[p.k] ? "checked" : ""} onchange="pcToggle('${key}','${p.k}')" style="margin:0"> ${esc(p.l)}</label>`;
+    if(p.opt){ const on = !!c[p.k + "On"]; return `<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:3px 0;${on ? "" : "opacity:.55;"}"><label style="display:flex;align-items:center;gap:8px;cursor:pointer"><input type="checkbox" ${on ? "checked" : ""} onchange="pcToggle('${key}','${p.k}On')" style="margin:0"> ${esc(p.l)}</label>${inp(p.k, p.step, on)}</div>`; }
+    return `<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:3px 0"><span>${esc(p.l)}</span>${inp(p.k, p.step, true)}</div>`;
+  }).join("");
+  return `
+  <div id="presetCfgPanel" style="margin-top:10px;border:1px solid var(--border);border-radius:12px;padding:10px 14px;background:color-mix(in srgb, currentColor 3%, transparent)">
+    <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:4px">
+      <b style="font-size:13px">⚙️ Pengaturan Filter: ${esc(sc.label)}</b>
+      <span style="font-size:11.5px;color:var(--muted)">${pcIsCustom(key) ? "● memakai pengaturan kustom" : "pengaturan standar"} · tersimpan di browser ini · saat ini <b style="color:var(--text)">${pass}</b> dari ${list.length} saham lolos</span>
+      <span style="margin-left:auto;display:inline-flex;gap:6px"><button type="button" class="btn btn-outline" style="font-size:11.5px;padding:4px 10px" onclick="pcReset('${key}')" title="Kembalikan ke angka bawaan">↺ Reset</button>
+      <button type="button" class="btn btn-outline" style="font-size:11.5px;padding:4px 10px" onclick="presetCfgToggle('${key}')">✕ Tutup</button></span>
+    </div>
+    <div style="font-size:11.5px;color:var(--muted);margin-bottom:6px">Centang = kriteria dipakai; hilangkan centang untuk mematikannya. Angka bisa diubah dan hasil langsung ikut berubah. Data kosong membuat kriteria yang memakainya tidak lolos.</div>
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(310px,1fr));gap:2px 24px;font-size:12.5px">${rows}</div>
+  </div>`;
+}
 function presetPass(preset, s){
     if(preset === 'bagger') {
       // Skor Bagger — composite formula.md (Fundamental + Momentum +
@@ -12154,17 +12551,26 @@ function presetPass(preset, s){
       // bisa diubah lewat panel ⚙️ Kustomisasi Skor Bagger.
       if ((s.baggerScoreTotal||0) < state.baggerParams.strongCutoff) return false;
     } else if(preset === 'eri') {
-      if (!(s.rsi7 >= 58 && s.rsi7 <= 70 && s.rsi21 >= 50 && s.rsi21 <= 70 && s.rsi7 > s.rsi21)) return false;
-      if (!(s.cClose > s.ema21H && s.cClose <= s.ema21H * 1.03 && s.cClose > s.ema89)) return false;
-      if (!(s.cHigh > s.prevHigh && s.cLow > s.prevLow && s.cVol > s.prevVol)) return false;
-      if (!(s.prevStochK < s.prevStochD && s.stochK > s.stochD)) return false;
+      const P = pcfg('eri');
+      if (!(s.rsi7 >= P.rsi7Min && s.rsi7 <= P.rsi7Max && s.rsi21 >= P.rsi21Min && s.rsi21 <= P.rsi21Max && (!P.rsi7Gt21 || s.rsi7 > s.rsi21))) return false;
+      if (!(s.cClose > s.ema21H && s.cClose <= s.ema21H * (1 + P.ema21hPct / 100) && (!P.aboveEma89 || s.cClose > s.ema89))) return false;
+      if (P.hlvUp && !(s.cHigh > s.prevHigh && s.cLow > s.prevLow && s.cVol > s.prevVol)) return false;
+      if (P.stochCross && !(s.prevStochK < s.prevStochD && s.stochK > s.stochD)) return false;
+
     } else if(preset === 'rsicross') {
-      if (!(s.rsi7 >= 58 && s.rsi7 <= 75 && s.rsi21 >= 50 && s.rsi21 <= 75 && s.rsi7 > s.rsi21)) return false;
-      if (!(s.cLow < s.ema21L && s.cClose > s.ema21H && s.cClose > s.cOpen)) return false;
-      if (!(s.cClose >= (s.cHigh + s.cLow)/2 && s.turnover > 200000000 && s.cClose > s.ma100)) return false;
+      const P = pcfg('rsicross');
+      if (!(s.rsi7 >= P.rsi7Min && s.rsi7 <= P.rsi7Max && s.rsi21 >= P.rsi21Min && s.rsi21 <= P.rsi21Max && (!P.rsi7Gt21 || s.rsi7 > s.rsi21))) return false;
+      if (P.crossEma && !(s.cLow < s.ema21L && s.cClose > s.ema21H)) return false;
+      if (P.green && !(s.cClose > s.cOpen)) return false;
+      if (P.upperHalf && !(s.cClose >= (s.cHigh + s.cLow)/2)) return false;
+      if (P.turnoverMOn && !(s.turnover > P.turnoverM * 1e6)) return false;
+      if (P.aboveMa100 && !(s.cClose > s.ma100)) return false;
+
     } else if(preset === 'golden') {
+      const P = pcfg('golden');
       if (!(s.prevMacdHist <= 0 && s.hist > 0)) return false;
-      if (!(s.prevStochK < s.prevStochD && s.stochK > s.stochD)) return false;
+      if (P.stochCross && !(s.prevStochK < s.prevStochD && s.stochK > s.stochD)) return false;
+
     } else if(preset === 'ema921cross') {
       // Dua mode (toggle di UI, state.ema921Mode):
       // - 'fresh' (default): HANYA cross persis di hari data terakhir --
@@ -12180,40 +12586,53 @@ function presetPass(preset, s){
       if (state.ema921Mode === 'all') { if (!s.ema921BullishNow) return false; }
       else { if (!s.ema921FreshCross) return false; }
     } else if (preset === 'uptrend') {
-      if (!(s.cClose > s.ma21 && s.ma21 > s.ma50 && s.ma50 > s.ma100 && s.ma100 > s.ma200)) return false;
+      const P = pcfg('uptrend');
+      if (P.c21 && !(s.cClose > s.ma21)) return false;
+      if (P.m2150 && !(s.ma21 > s.ma50)) return false;
+      if (P.m50100 && !(s.ma50 > s.ma100)) return false;
+      if (P.m100200 && !(s.ma100 > s.ma200)) return false;
+
     } else if (preset === 'breakout') {
-      if (s.isBBSqueeze && s.isBBSqueeze.indexOf("Ya") === -1) return false;
-      if (s.volRatio == null || s.volRatio < 1.5) return false;
-      if (s.cClose <= s.ema21H) return false;
-      if ((s.changePct || 0) <= 0) return false;
+      const P = pcfg('breakout');
+      if (P.squeeze && s.isBBSqueeze && s.isBBSqueeze.indexOf("Ya") === -1) return false;
+      if (P.volRatioOn && (s.volRatio == null || s.volRatio < P.volRatio)) return false;
+      if (P.aboveEma21h && s.cClose <= s.ema21H) return false;
+      if (P.positive && (s.changePct || 0) <= 0) return false;
+
     } else if (preset === 'pullback') {
-      if (!s.trendHarga || s.trendHarga.indexOf("Bullish") !== 0) return false;
-      if (s.cClose == null || s.ema21L == null || s.cClose > s.ema21L * 1.03) return false;
-      if (s.support != null && s.cClose < s.support * 0.98) return false;
-      if ([s.prevStochK,s.prevStochD,s.stochK,s.stochD].every(v=>v!=null)) {
+      const P = pcfg('pullback');
+      if (P.bullish && (!s.trendHarga || s.trendHarga.indexOf("Bullish") !== 0)) return false;
+      if (s.cClose == null || s.ema21L == null || s.cClose > s.ema21L * (1 + P.emaPct / 100)) return false;
+      if (s.support != null && s.cClose < s.support * (1 - P.supPct / 100)) return false;
+      if (P.stochCross && [s.prevStochK,s.prevStochD,s.stochK,s.stochD].every(v=>v!=null)) {
         if (!(s.prevStochK < s.prevStochD && s.stochK > s.stochD)) return false;
       }
+
+    } else if (preset === 'bow') {
+      // 🛒 Buy on Weakness: seluruh logika di bowEval() (parameter dari UI ⚙️, lihat BOW_CFG).
+      if (bowEval(s) !== -1) return false;
     } else if (preset === 'custom_bandar') {
-      if (!(s.cOpen > s.ma21 && s.cOpen > s.ma50 && s.cOpen > s.ma100 && s.cOpen > s.ma200)) return false;
-      if (s.volRatio == null || s.volRatio <= 2) return false;
-      if (s.turnover == null || s.turnover < 10000000000) return false;
-      if (s.band.tone !== "up" && (!s.uangGedeMasuk || !s.uangGedeMasuk.includes("Akumulasi"))) return false;
+      const P = pcfg('custom_bandar');
+      if (P.openAboveMa && !(s.cOpen > s.ma21 && s.cOpen > s.ma50 && s.cOpen > s.ma100 && s.cOpen > s.ma200)) return false;
+      if (P.volRatioOn && (s.volRatio == null || s.volRatio <= P.volRatio)) return false;
+      if (P.turnoverBOn && (s.turnover == null || s.turnover < P.turnoverB * 1e9)) return false;
+      if (P.bandTone && s.band.tone !== "up" && (!s.uangGedeMasuk || !s.uangGedeMasuk.includes("Akumulasi"))) return false;
+
     } else if (preset === 'asing_akumulasi') {
-      // Bandarmologi ASLI (data resmi IDX), bukan proxy volume seperti
-      // 'custom_bandar' di atas. Syarat sama seperti preset "Akumulasi
-      // Asing" di idx-screener: net 20 hari besar, konsisten (>=12/20
-      // hari positif), dan cukup likuid untuk ditindaklanjuti.
-      if (s.foreignNet20D == null || s.foreignNet20D < 50e9) return false;
-      if (s.foreignUpDays == null || s.foreignUpDays < 12) return false;
-      if (s.turnover == null || s.turnover < 5e9) return false;
+      // Bandarmologi ASLI (data resmi IDX), bukan proxy volume seperti 'custom_bandar'.
+      const P = pcfg('asing_akumulasi');
+      if (P.net20BOn && (s.foreignNet20D == null || s.foreignNet20D < P.net20B * 1e9)) return false;
+      if (P.upDaysOn && (s.foreignUpDays == null || s.foreignUpDays < P.upDays)) return false;
+      if (P.turnoverBOn && (s.turnover == null || s.turnover < P.turnoverB * 1e9)) return false;
+
     } else if (preset === 'freq_spike') {
       // Lonjakan jumlah transaksi vs rata-rata. Prioritas: freqRatio kalau
       // ada (dari frequency & freq_ma20/avg_frequency_3m). Kalau tabel
       // tidak punya kolom "frequency" hari ini (freqRatio selalu null),
       // fallback ke kolom freq_spike yang sudah dihitung backend, supaya
       // preset ini tetap jalan pakai data yang memang tersedia di DB.
-      const isSpikeFromRatio = s.freqRatio != null && s.freqRatio >= 1.5;
-      const isSpikeFromDb = s.freqRatio == null && s.freqSpike != null
+      const isSpikeFromRatio = s.freqRatio != null && s.freqRatio >= pcfg('freq_spike').ratio;
+      const isSpikeFromDb = pcfg('freq_spike').useDb && s.freqRatio == null && s.freqSpike != null
         && String(s.freqSpike).trim().toLowerCase() === "ya";
       if (!isSpikeFromRatio && !isSpikeFromDb) return false;
     } else if (preset === 'freq_up_vol_down') {
@@ -12227,20 +12646,40 @@ function presetPass(preset, s){
       // Butuh kolom frequency & vol_ma20/frequency_ma20 di DB -- kalau
       // belum ada, freqRatio/volRatio null dan preset ini tidak menampilkan
       // hasil (bukan menampilkan hasil palsu).
-      if (s.freqRatio == null || s.freqRatio < 1.3) return false;
-      if (s.volRatio == null || s.volRatio >= 0.8) return false;
-      if (s.turnover == null || s.turnover < 1e9) return false;
+      const P = pcfg('freq_up_vol_down');
+      if (P.freqOn && (s.freqRatio == null || s.freqRatio < P.freq)) return false;
+      if (P.volOn && (s.volRatio == null || s.volRatio >= P.vol)) return false;
+      if (P.turnoverBOn && (s.turnover == null || s.turnover < P.turnoverB * 1e9)) return false;
     } else if (preset === 'deepvalue') {
-      if (s.per == null || s.per <= 0 || s.per > 15 || s.pbv == null || s.pbv <= 0 || s.pbv > 1.5 || s.roe == null || s.roe < 8 || s.der == null || s.der > 2) return false;
+      const P = pcfg('deepvalue');
+      if (P.perMaxOn && (s.per == null || s.per <= 0 || s.per > P.perMax)) return false;
+      if (P.pbvMaxOn && (s.pbv == null || s.pbv <= 0 || s.pbv > P.pbvMax)) return false;
+      if (P.roeMinOn && (s.roe == null || s.roe < P.roeMin)) return false;
+      if (P.derMaxOn && (s.der == null || s.der > P.derMax)) return false;
+
     } else if (preset === 'multibagger') {
-      if (s.per == null || s.per <= 0 || s.per > 20 || s.roe == null || s.roe < 12 || s.der == null || s.der > 1.5 || s.npm == null || s.npm < 5) return false;
+      const P = pcfg('multibagger');
+      if (P.perMaxOn && (s.per == null || s.per <= 0 || s.per > P.perMax)) return false;
+      if (P.roeMinOn && (s.roe == null || s.roe < P.roeMin)) return false;
+      if (P.derMaxOn && (s.der == null || s.der > P.derMax)) return false;
+      if (P.npmMinOn && (s.npm == null || s.npm < P.npmMin)) return false;
+
     } else if (preset === 'growth') {
-      if (s.roe == null || s.roe < 15 || s.npm == null || s.npm < 10) return false;
+      const P = pcfg('growth');
+      if (P.roeMinOn && (s.roe == null || s.roe < P.roeMin)) return false;
+      if (P.npmMinOn && (s.npm == null || s.npm < P.npmMin)) return false;
+
     } else if (preset === 'defensive') {
-      if (s.roe == null || s.roe < 8 || s.der == null || s.der > 1.5 || s.npm == null || s.npm < 5) return false;
+      const P = pcfg('defensive');
+      if (P.roeMinOn && (s.roe == null || s.roe < P.roeMin)) return false;
+      if (P.derMaxOn && (s.der == null || s.der > P.derMax)) return false;
+      if (P.npmMinOn && (s.npm == null || s.npm < P.npmMin)) return false;
+
     } else if (preset === 'smallcap') {
-      if (s.roe == null || s.roe < 8 || s.per == null || s.per <= 0 || s.per > 25) return false;
-      if (s.marketCap == null || s.marketCap >= 1e12) return false;
+      const P = pcfg('smallcap');
+      if (P.roeMinOn && (s.roe == null || s.roe < P.roeMin)) return false;
+      if (P.perMaxOn && (s.per == null || s.per <= 0 || s.per > P.perMax)) return false;
+      if (P.mcapMaxTOn && (s.marketCap == null || s.marketCap >= P.mcapMaxT * 1e12)) return false;
     }
   return true;
 }
@@ -12654,6 +13093,7 @@ const DSI_PRESET_META = [
   { key:"uptrend", label:"Super Uptrend" },
   { key:"breakout", label:"🚀 Volatility Breakout" },
   { key:"pullback", label:"🧲 Pullback Uptrend" },
+  { key:"bow", label:"🛒 Buy on Weakness" },
   { key:"custom_bandar", label:"🔥 BPJS (proxy volume)" },
   { key:"asing_akumulasi", label:"🐋 Akumulasi Asing (IDX)" },
   { key:"freq_spike", label:"🔊 Lonjakan Frekuensi" },
@@ -12698,6 +13138,7 @@ function dsiFormulaText(key){
     uptrend: "Close > MA21 > MA50 > MA100 > MA200 (susunan MA menaik rapi)",
     breakout: "BB Squeeze Ya; rasio volume ≥ 1.5×; Close > EMA21 High; perubahan harga hari ini > 0",
     pullback: "Trend harga Bullish; Close maks 3% di atas EMA21 Low; Close tidak di bawah Support −2%; Stoch K cross up D",
+    bow: bowDescription(),
     custom_bandar: "BPJS proxy volume: Open > MA21, MA50, MA100, MA200; rasio volume > 2×; Turnover ≥ Rp10 miliar; tone bandar naik atau uang gede masuk (akumulasi)",
     asing_akumulasi: "Net asing 20 hari ≥ Rp50 miliar; hari net asing positif ≥ 12 dari 20; Turnover ≥ Rp5 miliar",
     freq_spike: "Rasio frekuensi ≥ 1.5× rata-rata (atau flag freq_spike = Ya dari database)",
@@ -12708,7 +13149,7 @@ function dsiFormulaText(key){
     defensive: "ROE ≥ 8; DER ≤ 1.5; NPM ≥ 5",
     smallcap: "ROE ≥ 8; PER 0–25; Market Cap < Rp1 triliun",
   };
-  return T[key] || "";
+  return (T[key] || "") + presetCustomNote(key);
 }
 
 // Peta id def -> teks formula/kriteria (untuk semua sumber di rekapScreenerDefs()).
@@ -13264,6 +13705,7 @@ function render(){
     else if(state.tab==="bsjp") content.innerHTML = renderBsjp();
     else if(state.tab==="wsdebug") content.innerHTML = renderWsDebug();
     else if(state.tab==="patternscan") content.innerHTML = renderPatternScanner();
+    else if(state.tab==="gainloss") content.innerHTML = (typeof GL==="object" && GL) ? renderGainLoss() : `<div class="empty-box">Memuat…</div>`; // GL didefinisikan di akhir file
     else if(state.tab==="about") content.innerHTML = renderPanduan(); // alias lama, redirect ke Panduan
     else if(state.tab==="panduan") content.innerHTML = renderPanduan();
     else if(state.tab==="settings") content.innerHTML = renderSettingsTab();
@@ -13279,6 +13721,7 @@ function render(){
 
   attachContentEvents();
   if(state.tab==="patternscan" && typeof psBind==="function") psBind();
+  if(state.tab==="gainloss" && typeof GL==="object" && GL && typeof glBind==="function") glBind();
   if(state.tab==="chart" && state.selectedTicker) drawChartSVG();
   // Isi ulang field Pengaturan (token, endpoint, Telegram, dll.) setiap kali
   // tab "settings" ini dirender — mencakup baik lewat openSettings() maupun
@@ -13414,7 +13857,7 @@ function render(){
     document.getElementById("spListModalTitle").textContent = `📋 Daftar Saham · ${spTitleFor(state.spListOpenDefId)}`;
     document.getElementById("spListModalContent").innerHTML = renderSmartPickListModalContent();
     document.querySelectorAll("[data-sp-list-detail]").forEach(b=>{
-      b.onclick = () => { closeSmartPickList(); openDetail(b.dataset.spListDetail); };
+      b.onclick = () => { const nav = navTickersFromEl(b); closeSmartPickList(); openDetail(b.dataset.spListDetail, nav ? { nav } : undefined); };
     });
     // Tombol "+N lainnya" dari rekapPresetCellHtml() (kolom "🧭 Rekap" di
     // tabel modal ini) buka modal Detail Emiten langsung -- data-detail
@@ -13423,7 +13866,7 @@ function render(){
     // di-bind ulang manual di sini juga (sama seperti data-sp-list-detail
     // & rebindGenericTable("smartPick") di bawah).
     document.querySelectorAll("#spListModalContent [data-detail]").forEach(b=>{
-      b.onclick = () => openDetail(b.dataset.detail);
+      b.onclick = () => { const nav = navTickersFromEl(b); openDetail(b.dataset.detail, nav ? { nav } : undefined); };
     });
     // Header sort (▲/▼) & tombol export Excel tabel ini terdaftar di
     // GENERIC_TABLE_FILTER_IDS ("smartPick") tapi rebind otomatisnya di
@@ -13466,7 +13909,7 @@ function bindDashMetricModalEvents(){
     b.onclick = ()=> dashMetricToggleSort(b.dataset.dashSort);
   });
   document.querySelectorAll("[data-dash-detail]").forEach(b=>{
-    b.onclick = ()=>{ dashMetricClose(); openDetail(b.dataset.dashDetail); };
+    b.onclick = ()=>{ const nav = navTickersFromEl(b); dashMetricClose(); openDetail(b.dataset.dashDetail, nav ? { nav } : undefined); };
   });
   const exportBtn = document.getElementById("dashMetricExportBtn");
   if(exportBtn) exportBtn.onclick = exportDashMetricToExcel;
@@ -13570,7 +14013,7 @@ const FILTER_LABELS = {
   capTier:"Market Cap", lq45:"LQ45", marketCap:"Market Cap (Rp)", week52ChangePct:"52W Change (%)", ytdPct:"YTD (%)",
   suspendedLabel:"Suspend", unsuspendedLabel:"Unsuspend", fcaLabel:"FCA", fcaOutLabel:"FCA Out"
 };
-const PRESET_LABELS = { bagger:"Skor Bagger ≥75", eri:"Momentum Kuat Berlanjut", rsicross:"RSI & Harga Cross", golden:"Golden Cross DSI", ema921cross:"🟢 EMA9×21 Golden Cross (Fresh Cross)", uptrend:"Super Uptrend", breakout:"Volatility Breakout", pullback:"Pullback Uptrend", custom_bandar:"BPJS", asing_akumulasi:"Akumulasi Asing (IDX)", freq_spike:"Lonjakan Frekuensi", freq_up_vol_down:"Freq↑ Vol↓ (Divergensi)", deepvalue:"Deep Value", multibagger:"Multibagger", growth:"Growth", defensive:"Defensive", smallcap:"Small Cap (<1T)" };
+const PRESET_LABELS = { bagger:"Skor Bagger ≥75", eri:"Momentum Kuat Berlanjut", rsicross:"RSI & Harga Cross", golden:"Golden Cross DSI", ema921cross:"🟢 EMA9×21 Golden Cross (Fresh Cross)", uptrend:"Super Uptrend", breakout:"Volatility Breakout", pullback:"Pullback Uptrend", bow:"🛒 Buy on Weakness", custom_bandar:"BPJS", asing_akumulasi:"Akumulasi Asing (IDX)", freq_spike:"Lonjakan Frekuensi", freq_up_vol_down:"Freq↑ Vol↓ (Divergensi)", deepvalue:"Deep Value", multibagger:"Multibagger", growth:"Growth", defensive:"Defensive", smallcap:"Small Cap (<1T)" };
 function clearChip(kind, key, value){
   if(kind==="search") state.search="";
   else if(kind==="preset") state.activePresets = key ? state.activePresets.filter(k=>k!==key) : [];
@@ -13948,6 +14391,127 @@ const RULE_METRICS = [
 const RULE_METRICS_BY_KEY = Object.fromEntries(RULE_METRICS.map(m=>[m.key, m]));
 function isCategoryMetric(key){ return RULE_METRICS_BY_KEY[key]?.type === "category"; }
 function isBrokerMetric(key){ return RULE_METRICS_BY_KEY[key]?.type === "broker"; }
+
+// ==========================================================================
+// KLASIFIKASI METRIK RULES KUSTOM — Fundamental / Bandarmologi / Teknikal /
+// Harga & Volume, polanya sama dengan picker "ƒx Indikator" di chart
+// (CHART_IND_CATS: fund / bandar / technical / level). Dipakai picker metrik
+// di baris rule (lihat rbpkOpen). Metrik yang tidak masuk 3 set pertama
+// otomatis jatuh ke "Harga & Volume", jadi metrik baru yang ditambahkan ke
+// RULE_METRICS tetap muncul (tidak hilang dari daftar).
+// ==========================================================================
+const RULE_METRIC_CATS = [
+  { id:"all", label:"Semua" }, { id:"fund", label:"Fundamental" }, { id:"bandar", label:"Bandarmologi" },
+  { id:"technical", label:"Teknikal" }, { id:"price", label:"Harga & Volume" },
+];
+const RULE_CAT_FUND = new Set(["per","forwardPer","pbv","eps","bookValue","psr","peg","roe","roa","npm","opm","revenueGrowth","earningsGrowth",
+  "divYield","dividendRate","payoutRatio","beta","der","currentRatio","marketCap","sharesOutstanding","indexLq45","valuasi","capCategory","capTier",
+  "fundScore60","fundTechScore"]);
+const RULE_CAT_BANDAR = new Set(["foreignNet1D","foreignNet5D","foreignNet20D","foreignUpDays","avgTicket","crossingPct","flowDays","band","uangGedeMasuk",
+  "top5BuyBrokers","top5SellBrokers"]);
+const RULE_CAT_TECH_RE = /^(ma\d|priceMa|prevPriceMa|ema|prevEma|rsi|prevRsi|macd|prevMacd|stoch|prevStoch|bb|atr|prevAtr|adr|prevAdr|vwap|fib|hist$|signal$|prevSignal$|clv$|support$|resistance$|techScore40$|cek(Harga|Rsi|Macd)$|statusRsi$|keyakinanNaik$|trendHarga$|polaCandle$|vsMa)/;
+function ruleMetricCat(key){
+  if(RULE_CAT_FUND.has(key)) return "fund";
+  if(RULE_CAT_BANDAR.has(key)) return "bandar";
+  if(RULE_CAT_TECH_RE.test(key)) return "technical";
+  return "price";
+}
+RULE_METRICS.forEach(m=>{ m.cat = ruleMetricCat(m.key); });
+
+// ---------- picker metrik (modal bertab, mirip picker indikator chart) ----------
+var RBPK = { el:null, ruleId:null, field:null, tab:"all", q:"" };
+function rbpkCss(){
+  if(document.getElementById("rbpkCss")) return;
+  const st = document.createElement("style"); st.id = "rbpkCss";
+  st.textContent = `
+  .rbpk-overlay{position:fixed;inset:0;z-index:100000;background:rgba(15,23,42,.55);display:flex;align-items:center;justify-content:center;padding:16px}
+  .rbpk-card{background:#fff;color:#0f172a;border-radius:12px;width:min(820px,100%);max-height:min(640px,92vh);display:flex;flex-direction:column;box-shadow:0 20px 50px rgba(0,0,0,.35);padding:18px 20px}
+  .rbpk-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:12px}
+  .rbpk-head h3{margin:0;font-size:18px;font-weight:700}
+  .rbpk-x{border:0;background:transparent;font-size:22px;line-height:1;cursor:pointer;color:#64748b;padding:2px 6px}
+  .rbpk-search{width:100%;box-sizing:border-box;padding:10px 12px;border:1px solid #e2e8f0;border-radius:8px;background:#f1f5f9;font-size:13.5px;color:#0f172a;margin-bottom:12px}
+  .rbpk-tabs{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px}
+  .rbpk-tab{border:1px solid #e2e8f0;background:#fff;color:#64748b;border-radius:999px;padding:6px 14px;font-size:12.5px;font-weight:600;cursor:pointer}
+  .rbpk-tab.on{border-color:#059669;color:#059669}
+  .rbpk-tab small{font-weight:500;opacity:.7;margin-left:4px}
+  .rbpk-body{overflow:auto;flex:1;min-height:160px}
+  .rbpk-body h4{margin:8px 0 6px;font-size:13.5px;font-weight:700}
+  .rbpk-grid{display:grid;grid-template-columns:1fr 1fr;gap:2px 28px;margin-bottom:10px}
+  @media(max-width:620px){.rbpk-grid{grid-template-columns:1fr}}
+  .rbpk-item{display:flex;align-items:center;gap:8px;text-align:left;border:0;background:transparent;color:#334155;font-size:13px;padding:8px 6px;border-radius:6px;cursor:pointer}
+  .rbpk-item:hover{background:#f1f5f9}
+  .rbpk-item.on{color:#059669;font-weight:700}
+  .rbpk-tag{font-size:10px;font-weight:600;color:#64748b;border:1px solid #e2e8f0;border-radius:10px;padding:0 6px}
+  .rbpk-tick{margin-left:auto;font-size:12px}
+  .rbpk-foot{margin-top:8px;font-size:12px;color:#64748b}
+  .rule-metric-pick{cursor:pointer;caret-color:transparent}`;
+  document.head.appendChild(st);
+}
+function rbpkItems(){
+  const numericOnly = RBPK.field === "bKey"; // bKey = pembanding metrik lain -> cuma field angka
+  const q = RBPK.q.trim().toLowerCase();
+  return RULE_METRICS.filter(m=> RULE_METRICS_BY_KEY[m.key]===m) // buang duplikat key
+    .filter(m=> !numericOnly || (m.type!=="category" && m.type!=="broker"))
+    .filter(m=> !q || (m.label+" "+m.key).toLowerCase().includes(q))
+    .slice().sort((a,b)=> a.label.localeCompare(b.label,"id"));
+}
+function rbpkBodyHtml(){
+  const rule = state.customRules.find(r=>r.id===RBPK.ruleId), curKey = rule ? rule[RBPK.field] : null;
+  const items = rbpkItems(), searching = !!RBPK.q.trim();
+  const cats = RULE_METRIC_CATS.filter(c=>c.id!=="all");
+  const groups = (searching || RBPK.tab==="all")
+    ? cats.map(c=>({ title:c.label, list:items.filter(m=>m.cat===c.id) }))
+    : [{ title:(cats.find(c=>c.id===RBPK.tab)||{}).label||"", list:items.filter(m=>m.cat===RBPK.tab) }];
+  const tag = m=> m.type==="category" ? `<span class="rbpk-tag">Kategori</span>` : m.type==="broker" ? `<span class="rbpk-tag">Broker</span>` : "";
+  const html = groups.filter(g=>g.list.length).map(g=>`<h4>${escapeHtml(g.title)}</h4><div class="rbpk-grid">${
+    g.list.map(m=>{ const on = m.key===curKey;
+      return `<button type="button" class="rbpk-item ${on?"on":""}" data-rbpk-key="${escapeHtml(m.key)}">${escapeHtml(m.label)}${tag(m)}${on?'<span class="rbpk-tick">✓</span>':""}</button>`;
+    }).join("")}</div>`).join("");
+  return html || `<div style="color:#64748b;font-size:13px;padding:20px 0;">Tidak ada metrik yang cocok dengan "${escapeHtml(RBPK.q)}".</div>`;
+}
+function rbpkFill(){
+  const ov = RBPK.el; if(!ov) return;
+  const items = rbpkItems(), searching = !!RBPK.q.trim();
+  ov.querySelectorAll(".rbpk-tab").forEach(b=>{
+    const id = b.dataset.rtab, n = id==="all" ? items.length : items.filter(m=>m.cat===id).length;
+    b.classList.toggle("on", id===RBPK.tab && !searching);
+    const sm = b.querySelector("small"); if(sm) sm.textContent = n;
+  });
+  const body = ov.querySelector(".rbpk-body"); body.innerHTML = rbpkBodyHtml();
+  ov.querySelector(".rbpk-foot").textContent = RBPK.field==="bKey" ? "Pembanding hanya menampilkan metrik angka." : "Metrik Kategori & Broker dipakai dengan operator pilihan (=, ≠, contains).";
+  body.querySelectorAll("[data-rbpk-key]").forEach(b=> b.onclick = ()=>{
+    const id = RBPK.ruleId, field = RBPK.field, key = b.dataset.rbpkKey;
+    rbpkClose(); updateCustomRule(id, field, key);
+  });
+}
+function rbpkClose(){
+  if(RBPK.el){ RBPK.el.remove(); RBPK.el = null; }
+  document.removeEventListener("keydown", rbpkKey, true);
+}
+function rbpkKey(e){ if(e.key==="Escape"){ e.stopPropagation(); rbpkClose(); } }
+function rbpkOpen(ruleId, field){
+  rbpkCss(); rbpkClose();
+  const rule = state.customRules.find(r=>r.id===ruleId); if(!rule) return;
+  const cur = RULE_METRICS_BY_KEY[rule[field]];
+  RBPK.ruleId = ruleId; RBPK.field = field; RBPK.q = "";
+  RBPK.tab = cur && cur.cat ? cur.cat : "all"; // buka langsung di kategori metrik yang sedang dipilih
+  const ov = document.createElement("div"); ov.className = "rbpk-overlay";
+  ov.innerHTML = `<div class="rbpk-card" role="dialog" aria-label="Pilih metrik">
+    <div class="rbpk-head"><h3>Pilih Metrik</h3><button type="button" class="rbpk-x" aria-label="Tutup">×</button></div>
+    <input type="search" class="rbpk-search" placeholder="🔍 Cari metrik…" autocomplete="off">
+    <div class="rbpk-tabs">${RULE_METRIC_CATS.map(c=>`<button type="button" class="rbpk-tab" data-rtab="${c.id}">${c.label}<small></small></button>`).join("")}</div>
+    <div class="rbpk-body"></div>
+    <div class="rbpk-foot"></div>
+  </div>`;
+  ov.addEventListener("mousedown", e=>{ if(e.target===ov) rbpkClose(); });
+  ov.querySelector(".rbpk-x").onclick = rbpkClose;
+  ov.querySelectorAll(".rbpk-tab").forEach(b=> b.onclick = ()=>{ RBPK.tab = b.dataset.rtab; RBPK.q = ""; ov.querySelector(".rbpk-search").value = ""; rbpkFill(); });
+  ov.querySelector(".rbpk-search").oninput = e=>{ RBPK.q = e.target.value; rbpkFill(); };
+  RBPK.el = ov; document.body.appendChild(ov);
+  document.addEventListener("keydown", rbpkKey, true);
+  rbpkFill();
+  const si = ov.querySelector(".rbpk-search"); if(si) si.focus();
+}
 
 // Label yang ditampilkan di dropdown/autocomplete rule builder — field
 // non-angka (kategori/broker) dapat suffix penanda supaya user tetap tahu
@@ -14497,10 +15061,10 @@ function renderRuleBuilder(){
   // saat event "change" (lihat attachContentEvents).
   const metricInput = (field, ruleId, selectedKey, includeExtra) => {
     const currentLabel = selectedKey ? (includeExtra ? metricDisplayLabel(RULE_METRICS_BY_KEY[selectedKey] || {label:selectedKey}) : ruleMetricLabel(selectedKey)) : "";
-    const listId = includeExtra ? "metricDatalistAll" : "metricDatalistNumeric";
-    return `<input type="text" class="rule-select" list="${listId}" autocomplete="off" placeholder="Cari metrik..." data-rule-field="${field}" data-rule-id="${ruleId}" value="${escapeHtml(currentLabel)}">`;
+    const catLbl = (RULE_METRIC_CATS.find(c=>c.id===(RULE_METRICS_BY_KEY[selectedKey]||{}).cat)||{}).label;
+    return `<input type="text" readonly class="rule-select rule-metric-pick" autocomplete="off" placeholder="Pilih metrik..." data-rule-pick="${field}" data-rule-id="${ruleId}" title="${escapeHtml(catLbl ? catLbl+" · klik untuk ganti metrik" : "Klik untuk memilih metrik")}" value="${escapeHtml(currentLabel)}">`;
   };
-  const metricDatalists = `<datalist id="metricDatalistAll">${RULE_METRIC_DATALIST_ALL_HTML}</datalist><datalist id="metricDatalistNumeric">${RULE_METRIC_DATALIST_NUMERIC_HTML}</datalist><datalist id="metricDatalistSort">${RULE_METRIC_DATALIST_SORT_HTML}</datalist>`;
+  const metricDatalists = `<datalist id="metricDatalistSort">${RULE_METRIC_DATALIST_SORT_HTML}</datalist>`;
 
   // Sortir hasil (Asc/Desc) — memakai state.sort yang sama dengan sort klik
   // header kolom tabel, supaya field yang dipilih di sini benar-benar
@@ -14785,10 +15349,10 @@ function renderScreener(){
             </span>` : ""}
           </label>
           <div style="display:flex; gap:10px; flex-wrap:wrap; width:100%;">
-            <button class="pill ${isPresetOn('bagger') ? 'pill-up' : 'pill-muted'}" onclick="togglePreset('bagger');" title="Skor komposit dari formula_screening_saham_bagger.md: Fundamental + Momentum Teknikal + Volume/Smart Money. Poin & cutoff bisa diubah di tab 🎯 Skor Bagger (menu samping)." style="font-weight:700;box-shadow:0 0 10px rgba(16,185,129,0.15);">🎯 Skor Bagger ≥${state.baggerParams.strongCutoff}</button>
-            <button class="pill ${isPresetOn('eri') ? 'pill-gold' : 'pill-muted'}" onclick="togglePreset('eri');" title="RSI7 58-70 & RSI21 50-70 (RSI7 &gt; RSI21) · Close di atas EMA21 High (maks 3% di atasnya) & di atas EMA89 · High/Low/Volume hari ini lebih tinggi dari kemarin · Stochastic baru cross naik — kombinasi momentum ala Eri Ginanjar">Momentum Kuat Berlanjut</button>
-            <button class="pill ${isPresetOn('rsicross') ? 'pill-gold' : 'pill-muted'}" onclick="togglePreset('rsicross');" title="RSI7 58-75 & RSI21 50-75 (RSI7 &gt; RSI21) · Low di bawah EMA21 Low tapi Close di atas EMA21 High & di atas Open (candle reversal) · Close di atas titik tengah High-Low hari itu · turnover &gt; Rp200jt · Close di atas MA100">RSI & Harga Cross</button>
-            <button class="pill ${isPresetOn('golden') ? 'pill-gold' : 'pill-muted'}" onclick="togglePreset('golden');" title="MACD Histogram baru cross dari negatif ke positif DAN Stochastic K baru cross naik di atas D pada hari yang sama — dua konfirmasi momentum bullish bersamaan (bukan EMA9/21, itu preset Golden Cross yang terpisah)">Golden Cross DSI</button>
+            <button class="pill ${isPresetOn('bagger') ? 'pill-up' : 'pill-muted'}" onclick="togglePreset('bagger');" title="Skor komposit dari formula_screening_saham_bagger.md: Fundamental + Momentum Teknikal + Volume/Smart Money. Poin & cutoff bisa diubah di tab 🎯 Skor Bagger (menu samping)." style="font-weight:700;box-shadow:0 0 10px rgba(16,185,129,0.15);">🎯 Skor Bagger ≥${state.baggerParams.strongCutoff}</button> ${presetGear('bagger')}
+            <button class="pill ${isPresetOn('eri') ? 'pill-gold' : 'pill-muted'}" onclick="togglePreset('eri');" title="RSI7 58-70 & RSI21 50-70 (RSI7 &gt; RSI21) · Close di atas EMA21 High (maks 3% di atasnya) & di atas EMA89 · High/Low/Volume hari ini lebih tinggi dari kemarin · Stochastic baru cross naik — kombinasi momentum ala Eri Ginanjar">Momentum Kuat Berlanjut</button> ${presetGear('eri')}
+            <button class="pill ${isPresetOn('rsicross') ? 'pill-gold' : 'pill-muted'}" onclick="togglePreset('rsicross');" title="RSI7 58-75 & RSI21 50-75 (RSI7 &gt; RSI21) · Low di bawah EMA21 Low tapi Close di atas EMA21 High & di atas Open (candle reversal) · Close di atas titik tengah High-Low hari itu · turnover &gt; Rp200jt · Close di atas MA100">RSI & Harga Cross</button> ${presetGear('rsicross')}
+            <button class="pill ${isPresetOn('golden') ? 'pill-gold' : 'pill-muted'}" onclick="togglePreset('golden');" title="MACD Histogram baru cross dari negatif ke positif DAN Stochastic K baru cross naik di atas D pada hari yang sama — dua konfirmasi momentum bullish bersamaan (bukan EMA9/21, itu preset Golden Cross yang terpisah)">Golden Cross DSI</button> ${presetGear('golden')}
             <button class="pill ${isPresetOn('ema921cross') ? 'pill-up' : 'pill-muted'}" onclick="togglePreset('ema921cross');" title="${state.ema921Mode==='all' ? 'Semua saham yang EMA9 > EMA21 sekarang (termasuk cross beberapa hari lalu)' : 'EMA9 baru saja crossup EMA21 PERSIS hari ini (ketat, wajar kalau sering 0 hasil)'} -- butuh kolom ema21/prev_ema9/prev_ema21 di stock_indicators_ext (jalankan migrasi SQL & '📊 Update Teknikal' dulu kalau kosong)">${state.ema921Mode==='all' ? '🟡' : '🟢'} EMA9×21 Golden Cross</button>
             ${isPresetOn('ema921cross') ? `
             <div style="display:flex; gap:4px; align-items:center; background:rgba(255,255,255,0.03); border-radius:20px; padding:3px; border:1px solid var(--border);">
@@ -14796,19 +15360,23 @@ function renderScreener(){
               <button class="pill ${state.ema921Mode==='all' ? 'pill-gold' : 'pill-muted'}" style="padding:4px 10px; font-size:11px;" onclick="state.ema921Mode='all'; state.page=1; render();" title="Semua yang EMA9 > EMA21 sekarang, termasuk cross beberapa hari lalu (lanjutan)">🟡 Semua (termasuk lanjutan)</button>
             </div>
             ` : ""}
-            <button class="pill ${isPresetOn('uptrend') ? 'pill-gold' : 'pill-muted'}" onclick="togglePreset('uptrend');" title="Susunan MA rapi menaik: Close &gt; MA21 &gt; MA50 &gt; MA100 &gt; MA200 — uptrend jangka panjang yang solid & konsisten di semua timeframe MA">Super Uptrend</button>
-            <button class="pill ${isPresetOn('breakout') ? 'pill-up' : 'pill-muted'}" onclick="togglePreset('breakout');" title="Baru keluar dari Bollinger Band Squeeze (kalau data BB Squeeze ada) · Volume &ge;1.5x rata-rata · Close di atas EMA21 High · harga hari ini naik (%) — sinyal breakout volatilitas dengan konfirmasi volume">🚀 Volatility Breakout</button>
-            <button class="pill ${isPresetOn('pullback') ? 'pill-teal' : 'pill-muted'}" onclick="togglePreset('pullback');" title="Tren harga Bullish · harga sedang koreksi mendekati EMA21 Low (maks 3% di atasnya) tapi belum break support (maks 3% di bawah support) · Stochastic baru cross naik kalau datanya lengkap — cari entry beli saat pullback di dalam uptrend">🧲 Pullback Uptrend</button>
-          <button class="pill ${isPresetOn('custom_bandar') ? 'pill-up' : 'pill-muted'}" onclick="togglePreset('custom_bandar');" title="Proxy dari lonjakan volume — bukan data asing resmi">🔥 BPJS (proxy volume)</button>
-          <button class="pill ${isPresetOn('asing_akumulasi') ? 'pill-up' : 'pill-muted'}" onclick="togglePreset('asing_akumulasi');" title="Net beli asing 20 hari &ge; 50M, konsisten &ge;12/20 hari, likuid &ge;5M/hari — dari data resmi IDX">🐋 Akumulasi Asing (IDX)</button>
-          <button class="pill ${isPresetOn('freq_spike') ? 'pill-teal' : 'pill-muted'}" onclick="togglePreset('freq_spike');" title="Rasio Frekuensi &ge; 1.5x rata-rata — butuh kolom frequency/freq_ma20 di DB, kalau belum ada preset ini tidak akan menampilkan hasil">🔊 Lonjakan Frekuensi</button>
-          <button class="pill ${isPresetOn('freq_up_vol_down') ? 'pill-teal' : 'pill-muted'}" onclick="togglePreset('freq_up_vol_down');" title="Frekuensi &ge;1.3x rata-rata TAPI Volume &lt;0.8x rata-rata, turnover &ge;1M — heuristik akumulasi diam-diam, BELUM tervalidasi statistik. Butuh kolom frequency & vol_ma20/freq_ma20 di DB.">🕵️ Freq↑ Vol↓</button>
-          <button class="pill ${isPresetOn('deepvalue') ? 'pill-up' : 'pill-muted'}" onclick="togglePreset('deepvalue');" title="PER &le;15 · PBV &le;1.5 · ROE &ge;8% · DER &le;2 — kriteria Deep Value ala screener publik">💎 Deep Value</button>
-          <button class="pill ${isPresetOn('multibagger') ? 'pill-up' : 'pill-muted'}" onclick="togglePreset('multibagger');" title="PER &le;20 · ROE &ge;12% · DER &le;1.5 · NPM &ge;5% — kandidat multibagger">📈 Multibagger</button>
-          <button class="pill ${isPresetOn('growth') ? 'pill-up' : 'pill-muted'}" onclick="togglePreset('growth');" title="ROE &ge;15% · NPM &ge;10% — bisnis efisien & profitabel">🌱 Growth</button>
-          <button class="pill ${isPresetOn('defensive') ? 'pill-up' : 'pill-muted'}" onclick="togglePreset('defensive');" title="ROE &ge;8% · DER &le;1.5 · NPM &ge;5% — fundamental stabil">🛡️ Defensive</button>
-          <button class="pill ${isPresetOn('smallcap') ? 'pill-up' : 'pill-muted'}" onclick="togglePreset('smallcap');" title="ROE &ge;8% · PER &le;25 · Market Cap &lt; Rp1 T — butuh kolom market_cap/shares_outstanding di DB">🐜 Small Cap (&lt;1T)</button>
+            <button class="pill ${isPresetOn('uptrend') ? 'pill-gold' : 'pill-muted'}" onclick="togglePreset('uptrend');" title="Susunan MA rapi menaik: Close &gt; MA21 &gt; MA50 &gt; MA100 &gt; MA200 — uptrend jangka panjang yang solid & konsisten di semua timeframe MA">Super Uptrend</button> ${presetGear('uptrend')}
+            <button class="pill ${isPresetOn('breakout') ? 'pill-up' : 'pill-muted'}" onclick="togglePreset('breakout');" title="Baru keluar dari Bollinger Band Squeeze (kalau data BB Squeeze ada) · Volume &ge;1.5x rata-rata · Close di atas EMA21 High · harga hari ini naik (%) — sinyal breakout volatilitas dengan konfirmasi volume">🚀 Volatility Breakout</button> ${presetGear('breakout')}
+            <button class="pill ${isPresetOn('pullback') ? 'pill-teal' : 'pill-muted'}" onclick="togglePreset('pullback');" title="Tren harga Bullish · harga sedang koreksi mendekati EMA21 Low (maks 3% di atasnya) tapi belum break support (maks 3% di bawah support) · Stochastic baru cross naik kalau datanya lengkap — cari entry beli saat pullback di dalam uptrend">🧲 Pullback Uptrend</button> ${presetGear('pullback')}
+          <button class="pill ${isPresetOn('bow') ? 'pill-teal' : 'pill-muted'}" onclick="togglePreset('bow');" title="Buy on Weakness: tren besar sehat (Close > MA200, MA50 > MA200), minggu ini turun 3–10%, RSI14 30–45, dekat MA50/EMA21 Low/Support/BB bawah, ada tanda pantul (Stoch cross up / RSI naik / CLV > 0.5), turnover ≥ Rp5 miliar, bukan jual panik, asing tidak keluar. Kriteria bisa diatur lewat tombol ⚙️ di sebelahnya.">🛒 Buy on Weakness</button>
+          ${presetGear('bow')}
+          <button class="pill ${isPresetOn('custom_bandar') ? 'pill-up' : 'pill-muted'}" onclick="togglePreset('custom_bandar');" title="Proxy dari lonjakan volume — bukan data asing resmi">🔥 BPJS (proxy volume)</button> ${presetGear('custom_bandar')}
+          <button class="pill ${isPresetOn('asing_akumulasi') ? 'pill-up' : 'pill-muted'}" onclick="togglePreset('asing_akumulasi');" title="Net beli asing 20 hari &ge; 50M, konsisten &ge;12/20 hari, likuid &ge;5M/hari — dari data resmi IDX">🐋 Akumulasi Asing (IDX)</button> ${presetGear('asing_akumulasi')}
+          <button class="pill ${isPresetOn('freq_spike') ? 'pill-teal' : 'pill-muted'}" onclick="togglePreset('freq_spike');" title="Rasio Frekuensi &ge; 1.5x rata-rata — butuh kolom frequency/freq_ma20 di DB, kalau belum ada preset ini tidak akan menampilkan hasil">🔊 Lonjakan Frekuensi</button> ${presetGear('freq_spike')}
+          <button class="pill ${isPresetOn('freq_up_vol_down') ? 'pill-teal' : 'pill-muted'}" onclick="togglePreset('freq_up_vol_down');" title="Frekuensi &ge;1.3x rata-rata TAPI Volume &lt;0.8x rata-rata, turnover &ge;1M — heuristik akumulasi diam-diam, BELUM tervalidasi statistik. Butuh kolom frequency & vol_ma20/freq_ma20 di DB.">🕵️ Freq↑ Vol↓</button> ${presetGear('freq_up_vol_down')}
+          <button class="pill ${isPresetOn('deepvalue') ? 'pill-up' : 'pill-muted'}" onclick="togglePreset('deepvalue');" title="PER &le;15 · PBV &le;1.5 · ROE &ge;8% · DER &le;2 — kriteria Deep Value ala screener publik">💎 Deep Value</button> ${presetGear('deepvalue')}
+          <button class="pill ${isPresetOn('multibagger') ? 'pill-up' : 'pill-muted'}" onclick="togglePreset('multibagger');" title="PER &le;20 · ROE &ge;12% · DER &le;1.5 · NPM &ge;5% — kandidat multibagger">📈 Multibagger</button> ${presetGear('multibagger')}
+          <button class="pill ${isPresetOn('growth') ? 'pill-up' : 'pill-muted'}" onclick="togglePreset('growth');" title="ROE &ge;15% · NPM &ge;10% — bisnis efisien & profitabel">🌱 Growth</button> ${presetGear('growth')}
+          <button class="pill ${isPresetOn('defensive') ? 'pill-up' : 'pill-muted'}" onclick="togglePreset('defensive');" title="ROE &ge;8% · DER &le;1.5 · NPM &ge;5% — fundamental stabil">🛡️ Defensive</button> ${presetGear('defensive')}
+          <button class="pill ${isPresetOn('smallcap') ? 'pill-up' : 'pill-muted'}" onclick="togglePreset('smallcap');" title="ROE &ge;8% · PER &le;25 · Market Cap &lt; Rp1 T — butuh kolom market_cap/shares_outstanding di DB">🐜 Small Cap (&lt;1T)</button> ${presetGear('smallcap')}
             </div>
+          ${bowPanelHtml()}
+          ${presetCfgPanelHtml()}
         </div>
         <div class="field" style="flex:0 0 auto;">
           <label>&nbsp;</label>
@@ -19429,6 +19997,281 @@ function renderTickerPicker(){
     ${hint}`;
 }
 
+// ==========================================================================
+// MODAL "INDIKATOR" (gaya Stockbit): tombol ƒx Indikator di tab Grafik membuka
+// jendela berisi pencarian + tab kategori (Popular / Bandarmology / Technical /
+// Harga & Level / All). Klik satu indikator = tampilkan/sembunyikan di chart.
+// Menggantikan dua baris checkbox "Overlay Harga" & "Panel Bawah" yang padat.
+// Status aktif tetap di state.chartSeries[key] (key sama seperti sebelumnya),
+// kecuali "brokerAccum" yang memakai state.chartBrokerAccum.on.
+// Tab Fundamental: garis nilai wajar di chart (Graham, Book Value, PER 10×/15×)
+// + kartu rasio (PER, PBV, ROE, DER, dst) di bawah chart. Data fundamental
+// hanya snapshot terakhir dari screener, jadi bukan time-series.
+// Indikator tambahan bertanda x:true, default MATI sampai dipilih.
+// ==========================================================================
+const CHART_IND_CATS = [
+  { id:"popular", label:"Popular" }, { id:"fund", label:"Fundamental" }, { id:"bandar", label:"Bandarmology" },
+  { id:"technical", label:"Technical" }, { id:"level", label:"Harga & Level" }, { id:"all", label:"All" },
+];
+// Rasio fundamental yang bisa ditampilkan sebagai kartu di bawah chart. get(s) = nilai mentah dari enriched();
+// fmt = format tampil; tone(v) = warna (hijau/merah/netral) kalau relevan.
+const FUND_RATIOS = [
+  { k:"r_per",  label:"PER",              s:"PER",        get:s=>numOrNull(s.per),            fmt:v=>v.toFixed(2)+"x" },
+  { k:"r_fper", label:"Forward PER",      s:"Fwd PER",    get:s=>numOrNull(s.forwardPer),     fmt:v=>v.toFixed(2)+"x" },
+  { k:"r_pbv",  label:"PBV",              s:"PBV",        get:s=>numOrNull(s.pbv),            fmt:v=>v.toFixed(2)+"x" },
+  { k:"r_psr",  label:"PSR",              s:"PSR",        get:s=>numOrNull(s.psr),            fmt:v=>v.toFixed(2)+"x" },
+  { k:"r_peg",  label:"PEG",              s:"PEG",        get:s=>numOrNull(s.peg),            fmt:v=>v.toFixed(2) },
+  { k:"r_roe",  label:"ROE %",            s:"ROE",        get:s=>numOrNull(s.roe),            fmt:v=>v.toFixed(2)+"%", good:v=>v>=15, bad:v=>v<5 },
+  { k:"r_roa",  label:"ROA %",            s:"ROA",        get:s=>numOrNull(s.roa),            fmt:v=>v.toFixed(2)+"%", good:v=>v>=7,  bad:v=>v<2 },
+  { k:"r_npm",  label:"Net Profit Margin %", s:"NPM",     get:s=>numOrNull(s.npm),            fmt:v=>v.toFixed(2)+"%", good:v=>v>=15, bad:v=>v<3 },
+  { k:"r_opm",  label:"Operating Margin %",  s:"OPM",     get:s=>numOrNull(s.opm),            fmt:v=>v.toFixed(2)+"%", good:v=>v>=15, bad:v=>v<3 },
+  { k:"r_div",  label:"Dividend Yield %", s:"Div Yield",  get:s=>numOrNull(s.divYield),       fmt:v=>v.toFixed(2)+"%", good:v=>v>=4 },
+  { k:"r_rev",  label:"Revenue Growth %", s:"Rev Growth", get:s=>numOrNull(s.revenueGrowth),  fmt:v=>(v>=0?"+":"")+v.toFixed(2)+"%", good:v=>v>=10, bad:v=>v<0 },
+  { k:"r_earn", label:"Earnings Growth %",s:"Earn Growth",get:s=>numOrNull(s.earningsGrowth), fmt:v=>(v>=0?"+":"")+v.toFixed(2)+"%", good:v=>v>=10, bad:v=>v<0 },
+  { k:"r_der",  label:"DER (Debt/Equity)",s:"DER",        get:s=>numOrNull(s.der),            fmt:v=>v.toFixed(2),     good:v=>v<=1, bad:v=>v>2 },
+  { k:"r_cr",   label:"Current Ratio",    s:"Current Ratio", get:s=>numOrNull(s.currentRatio),fmt:v=>v.toFixed(2),     good:v=>v>=1.5, bad:v=>v<1 },
+  { k:"r_beta", label:"Beta",             s:"Beta",       get:s=>numOrNull(s.beta),           fmt:v=>v.toFixed(2) },
+  { k:"r_mcap", label:"Market Cap",       s:"Market Cap", get:s=>numOrNull(s.marketCap),      fmt:v=>"Rp "+fmtCap(v) },
+  { k:"r_mos",  label:"Margin of Safety (Graham)", s:"MoS Graham", get:s=>{ const g=grahamFairValue(s), c=numOrNull(s.cClose); return (g!=null&&c) ? (g-c)/c*100 : null; }, fmt:v=>(v>=0?"+":"")+v.toFixed(1)+"%", good:v=>v>=15, bad:v=>v<=-15 },
+];
+const CHART_IND = [
+  // k = key di state.chartSeries; s = nama pendek (chip); cat = kategori; pop = tampil di tab Popular
+  { k:"signal",     label:"Sinyal Beli/Jual (EMA21 H/L + RSI 7×21)", s:"Sinyal Beli/Jual", cat:"technical", pop:true, color:"#16a34a" },
+  { k:"emaHL",      label:"EMA21 High/Low",            s:"EMA21 H/L",   cat:"technical", pop:true, color:"#2dd4bf" },
+  { k:"ema89",      label:"EMA89 Close",               s:"EMA89",       cat:"technical", pop:true, color:"#f472b6" },
+  { k:"ema921",     label:"EMA9×EMA21 Cross",          s:"EMA9×21",     cat:"technical", color:"#fbbf24" },
+  { k:"bb",         label:"Bollinger Bands (20,2)",    s:"Bollinger",   cat:"technical", color:"#c084fc" },
+  { k:"sar",        label:"SAR (0.02,0.02,0.2)",       s:"SAR",         cat:"technical", color:"#ef4444" },
+  { k:"supertrend", label:"SuperTrend (10,3)",         s:"SuperTrend",  cat:"technical", color:"#a855f7" },
+  { k:"pc",         label:"Price Channel (20)",        s:"Price Channel", cat:"technical", color:"#e879f9" },
+  { k:"vol",        label:"Volume 20",                 s:"Volume 20",   cat:"technical", pop:true, color:"#94a3b8" },
+  { k:"stochrsi",   label:"Stoch RSI (14,14,3,3)",     s:"Stoch RSI",   cat:"technical", color:"#ef4444" },
+  { k:"rsi721",     label:"RSI 7 & 21",                s:"RSI 7&21",    cat:"technical", pop:true, color:"#22c55e" },
+  { k:"macd",       label:"MACD (12,26,9)",            s:"MACD",        cat:"technical", pop:true, color:"#60a5fa" },
+  { k:"bandar",     label:"Bandar Volume",             s:"Bandar Vol",  cat:"bandar", pop:true, color:"#22c55e" },
+  { k:"foreignflow",label:"Foreign Flow",              s:"Foreign Flow",cat:"bandar", color:"#60a5fa" },
+  { k:"netforeign", label:"Net Foreign Buy/Sell",      s:"Net Foreign", cat:"bandar", color:"#22c55e" },
+  { k:"brokerAccum",label:"Broker Accum (harga rata-rata broker)", s:"Broker Accum", cat:"bandar", color:"#38bdf8" },
+  { k:"close",      label:"Close (harga)",             s:"Close",       cat:"level", color:"#f59e0b" },
+  { k:"support",    label:"Support",                   s:"Support",     cat:"level", color:"#ef4444" },
+  { k:"resistance", label:"Resisten",                  s:"Resisten",    cat:"level", color:"#10b981" },
+  { k:"fib",        label:"Fibonacci",                 s:"Fibonacci",   cat:"level", color:"#94a3b8" },
+  { k:"tpsl",       label:"TP & SL (EMA21 Low, 1:1)",  s:"TP & SL",     cat:"level", pop:true, color:"#facc15" },
+  // ---- Indikator tambahan (x:true = default MATI sampai dipilih) ----
+  // Teknikal: overlay harga
+  { k:"ma5",   label:"SMA 5",   s:"SMA5",   cat:"technical", x:true, color:"#fde047" },
+  { k:"ma20",  label:"SMA 20",  s:"SMA20",  cat:"technical", x:true, color:"#fb923c" },
+  { k:"ma50",  label:"SMA 50",  s:"SMA50",  cat:"technical", x:true, pop:true, color:"#38bdf8" },
+  { k:"ma100", label:"SMA 100", s:"SMA100", cat:"technical", x:true, color:"#a78bfa" },
+  { k:"ma200", label:"SMA 200", s:"SMA200", cat:"technical", x:true, pop:true, color:"#f43f5e" },
+  { k:"ema50", label:"EMA 50",  s:"EMA50",  cat:"technical", x:true, color:"#22d3ee" },
+  { k:"ema200",label:"EMA 200", s:"EMA200", cat:"technical", x:true, color:"#fb7185" },
+  { k:"vwap",  label:"VWAP 20 (rolling)", s:"VWAP20", cat:"technical", x:true, color:"#f97316" },
+  { k:"keltner",label:"Keltner Channel (20, 10, 2)", s:"Keltner", cat:"technical", x:true, color:"#84cc16" },
+  // Teknikal: panel bawah
+  { k:"rsi14", label:"RSI 14",  s:"RSI 14", cat:"technical", x:true, pop:true, color:"#22c55e" },
+  { k:"stoch", label:"Stochastic (14,3,3)", s:"Stochastic", cat:"technical", x:true, color:"#eab308" },
+  { k:"willr", label:"Williams %R (14)", s:"Williams %R", cat:"technical", x:true, color:"#f472b6" },
+  { k:"cci",   label:"CCI (20)", s:"CCI",   cat:"technical", x:true, color:"#06b6d4" },
+  { k:"roc",   label:"ROC (12)", s:"ROC",   cat:"technical", x:true, color:"#818cf8" },
+  { k:"atr",   label:"ATR (14)", s:"ATR",   cat:"technical", x:true, color:"#fb923c" },
+  { k:"adx",   label:"ADX / DI (14)", s:"ADX", cat:"technical", x:true, color:"#e879f9" },
+  // Bandarmology: aliran uang & asing
+  { k:"obv",   label:"OBV (On-Balance Volume)", s:"OBV", cat:"bandar", x:true, pop:true, color:"#34d399" },
+  { k:"ad",    label:"Accumulation/Distribution Line", s:"A/D Line", cat:"bandar", x:true, color:"#2dd4bf" },
+  { k:"cmf",   label:"Chaikin Money Flow (20)", s:"CMF", cat:"bandar", x:true, color:"#4ade80" },
+  { k:"mfi",   label:"Money Flow Index (14)", s:"MFI", cat:"bandar", x:true, color:"#a3e635" },
+  { k:"forbs", label:"Nilai Beli vs Jual Asing", s:"Asing Beli/Jual", cat:"bandar", x:true, color:"#60a5fa" },
+  // Harga & Level
+  { k:"pivot", label:"Pivot Point (klasik, dari bar terakhir)", s:"Pivot", cat:"level", x:true, color:"#fbbf24" },
+  // Fundamental: garis nilai wajar di chart
+  { k:"fundGraham", label:"Nilai Wajar Graham (garis harga)", s:"Wajar Graham", cat:"fund", x:true, pop:true, color:"#f59e0b" },
+  { k:"fundBV",     label:"Book Value (PBV 1×)", s:"Book Value", cat:"fund", x:true, color:"#a78bfa" },
+  { k:"fundPER10",  label:"Harga pada PER 10×", s:"PER 10×", cat:"fund", x:true, color:"#34d399" },
+  { k:"fundPER15",  label:"Harga pada PER 15×", s:"PER 15×", cat:"fund", x:true, color:"#fb923c" },
+  // Fundamental: kartu rasio di bawah chart
+  { k:"r_per", label:"PER", s:"PER", cat:"fund", x:true, fr:true, color:"#94a3b8" },
+  { k:"r_fper", label:"Forward PER", s:"Fwd PER", cat:"fund", x:true, fr:true, color:"#94a3b8" },
+  { k:"r_pbv", label:"PBV", s:"PBV", cat:"fund", x:true, fr:true, color:"#94a3b8" },
+  { k:"r_psr", label:"PSR", s:"PSR", cat:"fund", x:true, fr:true, color:"#94a3b8" },
+  { k:"r_peg", label:"PEG", s:"PEG", cat:"fund", x:true, fr:true, color:"#94a3b8" },
+  { k:"r_roe", label:"ROE %", s:"ROE", cat:"fund", x:true, fr:true, color:"#94a3b8" },
+  { k:"r_roa", label:"ROA %", s:"ROA", cat:"fund", x:true, fr:true, color:"#94a3b8" },
+  { k:"r_npm", label:"Net Profit Margin %", s:"NPM", cat:"fund", x:true, fr:true, color:"#94a3b8" },
+  { k:"r_opm", label:"Operating Margin %", s:"OPM", cat:"fund", x:true, fr:true, color:"#94a3b8" },
+  { k:"r_div", label:"Dividend Yield %", s:"Div Yield", cat:"fund", x:true, fr:true, color:"#94a3b8" },
+  { k:"r_rev", label:"Revenue Growth %", s:"Rev Growth", cat:"fund", x:true, fr:true, color:"#94a3b8" },
+  { k:"r_earn", label:"Earnings Growth %", s:"Earn Growth", cat:"fund", x:true, fr:true, color:"#94a3b8" },
+  { k:"r_der", label:"DER (Debt/Equity)", s:"DER", cat:"fund", x:true, fr:true, color:"#94a3b8" },
+  { k:"r_cr", label:"Current Ratio", s:"Current Ratio", cat:"fund", x:true, fr:true, color:"#94a3b8" },
+  { k:"r_beta", label:"Beta", s:"Beta", cat:"fund", x:true, fr:true, color:"#94a3b8" },
+  { k:"r_mcap", label:"Market Cap", s:"Market Cap", cat:"fund", x:true, fr:true, color:"#94a3b8" },
+  { k:"r_mos", label:"Margin of Safety (Graham)", s:"MoS Graham", cat:"fund", x:true, fr:true, color:"#94a3b8" },
+];
+const CIND = { tab:"popular", q:"", el:null, onKey:null };
+function chartIndActive(it){
+  if(it.k === "brokerAccum") return !!(state.chartBrokerAccum && state.chartBrokerAccum.on);
+  if(it.x) return (state.chartSeries || {})[it.k] === true;   // indikator tambahan: default mati
+  return (state.chartSeries || {})[it.k] !== false;
+}
+function chartIndSet(it, on){
+  if(it.k === "brokerAccum"){
+    state.chartBrokerAccum = state.chartBrokerAccum || { on:false, auto:true, codes:"", data:null, loading:false, error:null, forTicker:null };
+    state.chartBrokerAccum.on = on;
+    if(on && (!state.chartBrokerAccum.data || state.chartBrokerAccum.forTicker !== state.selectedTicker)) { loadChartBrokerAccum(); return; }
+    render(); return;
+  }
+  state.chartSeries = state.chartSeries || {};
+  state.chartSeries[it.k] = on;
+  render();
+}
+function chartIndCss(){
+  if(document.getElementById("chartIndStyle")) return;
+  const st = document.createElement("style"); st.id = "chartIndStyle";
+  st.textContent = `
+  .cind-overlay{position:fixed;inset:0;z-index:2000;background:rgba(15,23,42,.55);display:flex;align-items:center;justify-content:center;padding:16px}
+  .cind-card{background:#fff;color:#0f172a;border-radius:12px;width:min(820px,100%);max-height:min(640px,92vh);display:flex;flex-direction:column;box-shadow:0 20px 60px rgba(0,0,0,.35);padding:20px 22px}
+  .cind-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:14px}
+  .cind-head h3{margin:0;font-size:18px;font-weight:700}
+  .cind-x{border:0;background:transparent;font-size:22px;line-height:1;cursor:pointer;color:#64748b;padding:2px 6px}
+  .cind-search{width:100%;box-sizing:border-box;padding:10px 12px;border:1px solid #e2e8f0;border-radius:8px;background:#f1f5f9;font-size:13.5px;color:#0f172a;margin-bottom:14px}
+  .cind-tabs{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px}
+  .cind-tab{border:1px solid #e2e8f0;background:#fff;color:#64748b;border-radius:999px;padding:6px 16px;font-size:12.5px;font-weight:600;cursor:pointer}
+  .cind-tab.on{border-color:#059669;color:#059669}
+  .cind-body{overflow:auto;flex:1;min-height:160px}
+  .cind-body h4{margin:6px 0 8px;font-size:14px;font-weight:700}
+  .cind-grid{display:grid;grid-template-columns:1fr 1fr;gap:2px 28px;margin-bottom:12px}
+  .cind-item{display:flex;align-items:center;gap:8px;text-align:left;border:0;background:transparent;color:#334155;font-size:13px;padding:8px 6px;border-radius:6px;cursor:pointer}
+  .cind-item:hover{background:#f1f5f9}
+  .cind-item.on{color:#059669;font-weight:700}
+  .cind-dot{width:9px;height:9px;border-radius:50%;flex:none}
+  .cind-tick{margin-left:auto;font-size:12px}
+  .cind-foot{display:flex;justify-content:space-between;align-items:center;gap:10px;margin-top:10px;font-size:12px;color:#64748b}
+  .cind-foot button{border:1px solid #e2e8f0;background:#fff;color:#334155;border-radius:6px;padding:5px 10px;font-size:12px;cursor:pointer}
+  @media(max-width:620px){.cind-grid{grid-template-columns:1fr}}
+  .cind-chips{display:flex;flex-wrap:wrap;gap:6px;align-items:center}
+  .cind-chip{display:inline-flex;align-items:center;gap:6px;border:1px solid var(--border);border-radius:999px;padding:3px 6px 3px 10px;font-size:11.5px;background:transparent;color:var(--text)}
+  .cind-chip button{border:0;background:transparent;color:var(--muted);cursor:pointer;font-size:13px;line-height:1;padding:0 2px}
+  .cind-chip button:hover{color:var(--down)}`;
+  document.head.appendChild(st);
+}
+function chartIndBodyHtml(){
+  const q = CIND.q.trim().toLowerCase();
+  let items = CHART_IND.filter(it=> !q || (it.label+" "+it.s).toLowerCase().includes(q));
+  const groups = [];
+  if(q || CIND.tab === "all"){
+    CHART_IND_CATS.filter(c=>c.id!=="popular" && c.id!=="all").forEach(c=>{ const l = items.filter(it=>it.cat===c.id); if(l.length) groups.push({ title:c.label, list:l }); });
+  } else if(CIND.tab === "popular"){
+    groups.push({ title:"Popular", list: items.filter(it=>it.pop) });
+  } else {
+    const c = CHART_IND_CATS.find(x=>x.id===CIND.tab);
+    groups.push({ title:c ? c.label : "", list: items.filter(it=>it.cat===CIND.tab) });
+  }
+  const html = groups.filter(g=>g.list.length).map(g=>`<h4>${escapeHtml(g.title)}</h4><div class="cind-grid">${
+    g.list.map(it=>{ const on = chartIndActive(it);
+      return `<button type="button" class="cind-item ${on?"on":""}" data-cind="${it.k}"><span class="cind-dot" style="background:${it.color}"></span>${escapeHtml(it.label)}${on?'<span class="cind-tick">✓</span>':""}</button>`;
+    }).join("")}</div>`).join("");
+  return html || `<div style="color:#64748b;font-size:13px;padding:20px 0;">Tidak ada indikator yang cocok dengan "${escapeHtml(CIND.q)}".</div>`;
+}
+function chartIndFill(){
+  const ov = CIND.el; if(!ov) return;
+  ov.querySelectorAll(".cind-tab").forEach(b=> b.classList.toggle("on", b.dataset.ctab === CIND.tab && !CIND.q.trim()));
+  const body = ov.querySelector(".cind-body"), top = body.scrollTop;
+  body.innerHTML = chartIndBodyHtml();
+  body.scrollTop = top;
+  const n = CHART_IND.filter(chartIndActive).length;
+  ov.querySelector(".cind-count").textContent = `${n} indikator aktif`;
+  body.querySelectorAll("[data-cind]").forEach(b=> b.onclick = ()=>{
+    const it = CHART_IND.find(x=>x.k===b.dataset.cind); if(!it) return;
+    const keep = body.scrollTop;
+    chartIndSet(it, !chartIndActive(it));
+    chartIndMount(); body.scrollTop = keep;
+  });
+}
+// (Re)pasang overlay ke DOM: render() menimpa isi #content, jadi overlay yang
+// ada di dalamnya ikut terhapus -- elemen yang sama dipasang ulang di sini.
+// Saat browser fullscreen, hanya subtree elemen fullscreen yang terlihat.
+function chartIndMount(){
+  const ov = CIND.el; if(!ov) return;
+  const host = document.fullscreenElement || document.webkitFullscreenElement || document.body;
+  if(ov.parentNode !== host || !ov.isConnected) host.appendChild(ov);
+  chartIndFill();
+}
+function chartIndOpen(){
+  chartIndCss();
+  if(!CIND.el){
+    const ov = document.createElement("div"); ov.className = "cind-overlay"; ov.id = "chartIndOverlay";
+    ov.innerHTML = `<div class="cind-card" role="dialog" aria-label="Indikator">
+      <div class="cind-head"><h3>Indikator</h3><button type="button" class="cind-x" aria-label="Tutup">×</button></div>
+      <input type="search" class="cind-search" placeholder="🔍 Cari indikator…" autocomplete="off">
+      <div class="cind-tabs">${CHART_IND_CATS.map(c=>`<button type="button" class="cind-tab" data-ctab="${c.id}">${c.label}</button>`).join("")}</div>
+      <div class="cind-body"></div>
+      <div class="cind-foot"><span class="cind-count"></span><span><button type="button" class="cind-off">Matikan semua</button> <button type="button" class="cind-done">Selesai</button></span></div>
+    </div>`;
+    ov.addEventListener("mousedown", e=>{ if(e.target === ov) chartIndClose(); });
+    ov.querySelector(".cind-x").onclick = chartIndClose;
+    ov.querySelector(".cind-done").onclick = chartIndClose;
+    ov.querySelector(".cind-off").onclick = ()=>{
+      state.chartSeries = state.chartSeries || {};
+      CHART_IND.forEach(it=>{ if(it.k!=="brokerAccum") state.chartSeries[it.k] = false; });
+      if(state.chartBrokerAccum) state.chartBrokerAccum.on = false;
+      render(); chartIndMount();
+    };
+    ov.querySelector(".cind-search").oninput = e=>{ CIND.q = e.target.value; chartIndFill(); };
+    ov.querySelectorAll(".cind-tab").forEach(b=> b.onclick = ()=>{ CIND.tab = b.dataset.ctab; CIND.q = ""; ov.querySelector(".cind-search").value = ""; chartIndFill(); });
+    CIND.el = ov;
+  }
+  if(!CIND.onKey){ CIND.onKey = e=>{ if(e.key === "Escape" && CIND.el && CIND.el.isConnected) chartIndClose(); }; document.addEventListener("keydown", CIND.onKey); }
+  chartIndMount();
+  const si = CIND.el.querySelector(".cind-search"); if(si) setTimeout(()=>si.focus(), 30);
+}
+function chartIndClose(){
+  if(CIND.el && CIND.el.parentNode) CIND.el.parentNode.removeChild(CIND.el);
+}
+
+// Blok info di bawah chart (Harga Rata-rata Broker, Sinyal Beli/Jual, Sinyal Cross, Rasio Fundamental)
+// bisa diciutkan/dibuka lewat tombol panah di kepala blok. Status per blok disimpan di
+// state.chartBadgeCollapsed[key] supaya tetap ciut/terbuka walau chart digambar ulang.
+function chartBadgeHtml(key, titleHtml, bodyHtml, opts){
+  opts = opts || {};
+  state.chartBadgeCollapsed = state.chartBadgeCollapsed || {};
+  const c = !!state.chartBadgeCollapsed[key];
+  return `<div class="cbadge-head" data-badge-toggle="${key}" data-gap="${opts.gap||6}" style="display:flex;align-items:center;justify-content:space-between;gap:10px;cursor:pointer;user-select:none;${c?"":"margin-bottom:"+(opts.gap||6)+"px;"}">
+    <span style="font-weight:700;">${titleHtml}</span>
+    <button type="button" class="cbadge-btn" aria-expanded="${c?"false":"true"}" title="${c?"Buka blok ini":"Ciutkan blok ini"}" style="flex:none;width:24px;height:24px;padding:0;border:1px solid var(--border);border-radius:6px;background:transparent;color:var(--muted);font-size:11px;line-height:1;cursor:pointer;">${c?"▼":"▲"}</button>
+  </div><div class="cbadge-body" style="${c?"display:none;":""}">${bodyHtml}</div>`;
+}
+(function chartBadgeBind(){
+  if(typeof document === "undefined" || window.__cbadgeBound) return;
+  window.__cbadgeBound = true;
+  document.addEventListener("click", e=>{
+    const head = e.target.closest && e.target.closest("[data-badge-toggle]");
+    if(!head) return;
+    const key = head.dataset.badgeToggle;
+    state.chartBadgeCollapsed = state.chartBadgeCollapsed || {};
+    const c = !state.chartBadgeCollapsed[key];
+    state.chartBadgeCollapsed[key] = c;
+    const body = head.nextElementSibling, btn = head.querySelector(".cbadge-btn");
+    if(body) body.style.display = c ? "none" : "";
+    head.style.marginBottom = c ? "" : (head.dataset.gap || "6") + "px";
+    if(btn){ btn.textContent = c ? "▼" : "▲"; btn.title = c ? "Buka blok ini" : "Ciutkan blok ini"; btn.setAttribute("aria-expanded", c ? "false" : "true"); }
+  });
+})();
+
+// Kartu rasio fundamental di bawah chart -- hanya rasio yang dipilih di modal Indikator (tab Fundamental).
+function chartFundStripHtml(){
+  const sel = FUND_RATIOS.filter(r => (state.chartSeries||{})[r.k] === true);
+  if(!sel.length || !state.selectedTicker) return "";
+  const st = enriched().find(x=>x.ticker===state.selectedTicker);
+  if(!st) return `<div style="margin-top:14px;padding:10px 14px;border:1px solid var(--border);border-radius:10px;font-size:12px;color:var(--muted);">Data fundamental ${escapeHtml(state.selectedTicker)} belum ada di screener.</div>`;
+  const cells = sel.map(r=>{
+    const v = r.get(st), ok = v!=null && isFinite(v);
+    const col = !ok ? "var(--muted)" : (r.good&&r.good(v)) ? "var(--up)" : (r.bad&&r.bad(v)) ? "var(--down)" : "var(--text)";
+    return `<div style="min-width:110px;padding:6px 10px;border:1px solid var(--border);border-radius:8px;"><div style="font-size:10.5px;color:var(--muted);">${escapeHtml(r.label)}</div><div class="mono" style="font-size:15px;font-weight:700;color:${col};">${ok ? escapeHtml(r.fmt(v)) : "–"}</div></div>`;
+  }).join("");
+  return `<div style="margin-top:14px;">${chartBadgeHtml("fund", `Fundamental · ${escapeHtml(st.ticker)} <span style="font-weight:400;color:var(--muted);font-size:11px;">(data screener terakhir, bukan time-series)</span>`, `<div style="display:flex;flex-wrap:wrap;gap:8px;">${cells}</div>`)}</div>`;
+}
+
 function renderChart(){
   const picker = renderTickerPicker();
   if(!state.selectedTicker){
@@ -19450,9 +20293,9 @@ function renderChart(){
   const chNavIdx = chNavList ? chNavList.indexOf(t) : -1;
   const chartNavRow = chNavIdx >= 0 ? `
       <div class="chart-nav" style="display:flex;align-items:center;justify-content:space-between;gap:8px;flex:1 1 100%;margin-bottom:8px;">
-        <button type="button" class="btn btn-outline" data-chart-nav="-1" ${chNavIdx<=0?"disabled":""} title="Saham sebelumnya di hasil screener" style="padding:6px 12px;font-size:12px;">‹ ${chNavIdx>0 ? escapeHtml(chNavList[chNavIdx-1]) : "Sebelumnya"}</button>
-        <span class="mono" style="font-size:12px;color:var(--muted);text-align:center;">${escapeHtml(t)} · ${chNavIdx+1} / ${chNavList.length} di hasil screener</span>
-        <button type="button" class="btn btn-outline" data-chart-nav="1" ${chNavIdx>=chNavList.length-1?"disabled":""} title="Saham berikutnya di hasil screener" style="padding:6px 12px;font-size:12px;">${chNavIdx<chNavList.length-1 ? escapeHtml(chNavList[chNavIdx+1]) : "Berikutnya"} ›</button>
+        <button type="button" class="btn btn-outline" data-chart-nav="-1" ${chNavIdx<=0?"disabled":""} title="Saham sebelumnya di daftar ini" style="padding:6px 12px;font-size:12px;">‹ ${chNavIdx>0 ? escapeHtml(chNavList[chNavIdx-1]) : "Sebelumnya"}</button>
+        <span class="mono" style="font-size:12px;color:var(--muted);text-align:center;">${escapeHtml(t)} · ${chNavIdx+1} / ${chNavList.length} di daftar ini</span>
+        <button type="button" class="btn btn-outline" data-chart-nav="1" ${chNavIdx>=chNavList.length-1?"disabled":""} title="Saham berikutnya di daftar ini" style="padding:6px 12px;font-size:12px;">${chNavIdx<chNavList.length-1 ? escapeHtml(chNavList[chNavIdx+1]) : "Berikutnya"} ›</button>
       </div>` : "";
   const chartToolbar = `
     <div class="chart-toolbar" style="margin-top: 24px;flex-wrap:wrap;">
@@ -19466,6 +20309,8 @@ function renderChart(){
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 13v6a2 2 0 01-2 2H5a2 2 0 01-2-2V8a2 2 0 012-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
           Stockbit
         </a>
+        <button type="button" class="btn btn-outline chart-icon-btn" data-chart-ind-open title="Tambah / hapus indikator di grafik">ƒx Indikator</button>
+        <button type="button" class="btn btn-outline chart-icon-btn" data-chart-detail="${escapeHtml(t)}" title="Buka Detail Emiten ${escapeHtml(t)}">📋 Detail Emiten</button>
         <button class="btn btn-outline chart-icon-btn ${controlsHidden?'active':''}" data-chart-minimize-toggle title="${controlsHidden?'Tampilkan blok Chart & Indikator':'Sembunyikan blok Chart & Indikator biar chart tampil penuh vertikal'}">${controlsHidden?'🔽 Tampilkan Kontrol':'➖ Minimize'}</button>
         <button class="btn btn-outline chart-icon-btn ${state.chartExpanded?'active':''}" data-chart-fullscreen-toggle title="${state.chartExpanded?'Keluar dari layar penuh':'Perbesar ke layar penuh'}">⛶ ${state.chartExpanded?'Keluar Fullscreen':'Fullscreen'}</button>
       </div>
@@ -19475,11 +20320,19 @@ function renderChart(){
   // toggle tiap seri. State-nya disimpan di state.chartRange/chartTimeframe/
   // chartZoom/chartSeries supaya nilai & checkbox tetap konsisten saat
   // seluruh tab dirender ulang.
-  const ranges = [['1m','1B'],['3m','3B'],['6m','6B'],['1y','1T'],['all','Semua']];
+  const activeInds = CHART_IND.filter(chartIndActive);
+  const ranges = [['1m','1B'],['3m','3B'],['6m','6B'],['1y','1T'],['all','Semua'],['custom','📅 Kustom']];
+  const _cdates = (state.chartData||[]).map(d=>String(d.date).slice(0,10)).sort();
+  const _cMin = _cdates[0] || "", _cMax = _cdates[_cdates.length-1] || "";
   const controls = `<div class="chart-controls">
     <div class="chart-control-group">
       <span class="chart-control-label">Rentang</span>
       ${ranges.map(([v,l])=>`<button class="chart-range-btn ${state.chartRange===v?'active':''}" data-chart-range="${v}">${l}</button>`).join('')}
+      ${state.chartRange==='custom' ? `
+      <span style="display:inline-flex;align-items:center;gap:4px;font-size:11px;color:var(--muted);">
+        Dari <input type="date" id="chartFromInput" value="${state.chartFrom||''}" min="${_cMin}" max="${_cMax}" style="padding:3px 6px;border:1px solid var(--border);border-radius:6px;background:var(--bg);color:var(--text);font-size:11.5px;">
+        s/d <input type="date" id="chartToInput" value="${state.chartTo||''}" min="${_cMin}" max="${_cMax}" style="padding:3px 6px;border:1px solid var(--border);border-radius:6px;background:var(--bg);color:var(--text);font-size:11.5px;">
+      </span>` : ''}
     </div>
     <div class="chart-control-group">
       <span class="chart-control-label">Timeframe</span>
@@ -19515,38 +20368,22 @@ function renderChart(){
       <span class="chart-control-label">Candle</span>
       <span style="font-size:11px;color:var(--muted);white-space:nowrap;"><span style="color:var(--up);">■</span> Naik (Close ≥ Open) &nbsp; <span style="color:var(--down);">■</span> Turun (Close &lt; Open)</span>
     </div>`}
-    <div class="chart-control-group chart-series-group">
-      <span class="chart-control-label">Overlay Harga</span>
-      ${toggle('close','Close',state.chartLineColor||'var(--gold)')}
-      ${toggle('support','Support','var(--down)')}
-      ${toggle('resistance','Resisten','var(--up)')}
-      ${toggle('fib','Fibonacci','#94a3b8')}
-      ${toggle('tpsl','TP &amp; SL (EMA21 Low, 1:1)','#facc15')}
-      ${toggle('bb','Bollinger Bands','#c084fc')}
-      ${toggle('emaHL','EMA21 High/Low','#2dd4bf')}
-      ${toggle('ema89','EMA89 Close','#f472b6')}
-      ${toggle('ema921','EMA9×EMA21 Cross','#fbbf24')}
-      ${toggle('sar','SAR (0.02,0.02,0.2)','#ef4444')}
-      ${toggle('supertrend','SuperTrend (10,3)','#a855f7')}
-      ${toggle('pc','Price Channel (20)','#e879f9')}
+    <div class="chart-control-group chart-series-group" style="flex-direction:column;align-items:flex-start;gap:8px;">
+      <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
+        <span class="chart-control-label">Indikator</span>
+        <button type="button" class="chart-range-btn active" data-chart-ind-open title="Tambah / hapus indikator di grafik">ƒx Tambah Indikator</button>
+        <span style="font-size:11px;color:var(--muted);">${activeInds.length} aktif</span>
+      </div>
+      <div class="cind-chips">${activeInds.map(it=>`<span class="cind-chip"><span class="chart-swatch" style="background:${it.color}"></span>${escapeHtml(it.s)}<button type="button" data-chart-ind-remove="${it.k}" title="Hapus ${escapeHtml(it.s)} dari grafik" aria-label="Hapus ${escapeHtml(it.s)}">✕</button></span>`).join("") || '<span style="font-size:11px;color:var(--muted);">Belum ada indikator aktif.</span>'}</div>
     </div>
     <div class="chart-control-group" style="align-items:center;">
       <span class="chart-control-label">Broker Accum</span>
       <button type="button" class="chart-range-btn ${ba.on?'active':''}" data-chart-broker-toggle title="Tampilkan garis rata-rata harga akumulasi broker terpilih + ringkasan net lot/nilai per hari di tooltip">${ba.on?'✓ Aktif':'Aktifkan'}</button>
-      <input type="text" id="chartBrokerCodesInput" placeholder="Kode broker, mis. AK,BK,MG" value="${(ba.codes||'').replace(/"/g,'&quot;')}" style="width:150px;padding:4px 8px;border:1px solid var(--border);border-radius:6px;background:var(--bg);color:var(--text);font-size:11px;">
-      <button type="button" class="chart-range-btn" data-chart-broker-apply title="Tarik ulang data broker_activity untuk kode broker di atas">Terapkan</button>
+      <input type="text" id="chartBrokerCodesInput" placeholder="Auto: top 3 net buyer (atau ketik, mis. AK,BK,MG)" value="${((ba.auto!==false && !ba.codes) ? (ba.autoCodes||[]).join(',') : (ba.codes||'')).replace(/"/g,'&quot;')}" style="width:190px;padding:4px 8px;border:1px solid var(--border);border-radius:6px;background:var(--bg);color:var(--text);font-size:11px;">
+      <button type="button" class="chart-range-btn" data-chart-broker-apply title="Tarik ulang data broker_activity untuk kode broker di atas. Kosongkan input lalu Terapkan = kembali ke Auto (top 3 net buyer)">Terapkan</button>
+      ${(ba.auto!==false && !ba.codes) ? '<span style="font-size:10.5px;color:var(--muted);">Auto · top 3 net buyer periode ini</span>' : ''}
       ${ba.loading ? '<span style="font-size:10.5px;color:var(--muted);">Memuat data broker…</span>' : ''}
       ${(!ba.loading && ba.error) ? `<span style="font-size:10.5px;color:var(--down);">${ba.error}</span>` : ''}
-    </div>
-    <div class="chart-control-group chart-series-group">
-      <span class="chart-control-label">Panel Bawah</span>
-      ${toggle('bandar','Bandar Volume','#22c55e')}
-      ${toggle('vol','Volume 20','rgba(148,163,184,.8)')}
-      ${toggle('stochrsi','Stoch RSI (14,14,3,3)','#ef4444')}
-      ${toggle('rsi721','RSI 7 &amp; 21','#22c55e')}
-      ${toggle('foreignflow','Foreign Flow','#60a5fa')}
-      ${toggle('macd','MACD (12,26,9)','#60a5fa')}
-      ${toggle('netforeign','Net Foreign Buy/Sell','#22c55e')}
     </div>
   </div>`;
 
@@ -19573,6 +20410,7 @@ function renderChart(){
   // di attachContentEvents().
   return `<div id="chartTabWrap" class="${state.chartExpanded?'chart-fullscreen':''}${(state.chartExpanded && state.chartPaneFocus)?' chart-pane-focus':''}">
     ${state.chartExpanded ? '' : picker}
+    ${state.chartExpanded ? `<button type="button" data-chart-download title="Snapshot chart (simpan sebagai gambar PNG)" aria-label="Snapshot chart" style="position:fixed;top:6px;right:64px;z-index:1000;width:24px;height:24px;padding:0;display:flex;align-items:center;justify-content:center;background:rgba(15,23,42,0.85);color:#e2e8f0;border:1px solid rgba(148,163,184,0.5);border-radius:5px;line-height:1;cursor:pointer;"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 8.5A1.5 1.5 0 0 1 5.5 7H8l1.2-2h5.6L16 7h2.5A1.5 1.5 0 0 1 20 8.5v9a1.5 1.5 0 0 1-1.5 1.5h-13A1.5 1.5 0 0 1 4 17.5z"/><circle cx="12" cy="13" r="3.4"/></svg></button>` : ''}
     ${state.chartExpanded ? `<button type="button" data-chart-fullscreen-close title="Tutup layar penuh" aria-label="Tutup layar penuh" style="position:fixed;top:6px;right:6px;z-index:1000;width:24px;height:24px;padding:0;display:flex;align-items:center;justify-content:center;background:rgba(15,23,42,0.85);color:#e2e8f0;border:1px solid rgba(148,163,184,0.5);border-radius:5px;font-size:13px;line-height:1;cursor:pointer;">✕</button>` : ''}
     ${chartToolbar}
     ${sectionAndControls}
@@ -19582,6 +20420,9 @@ function renderChart(){
          (bukan ubah stylesheet-nya) supaya tampilan chart nempel rata tanpa
          kartu abu-abu melengkung di sekelilingnya. -->
 
+    ${chartFundStripHtml()}
+    <div id="chartBrokerBadge" style="display:none;margin-top:14px;padding:12px 14px;border:1px solid var(--border);border-radius:10px;font-size:12.5px;"></div>
+    <div id="chartSignalBadge" style="display:none;margin-top:14px;padding:12px 14px;border:1px solid var(--border);border-radius:10px;background:rgba(22,163,74,0.05);font-size:12.5px;"></div>
     <div id="chartEma921Badge" class="chart-ema921-badge" style="display:none;margin-top:14px;padding:12px 14px;border:1px solid var(--border);border-radius:10px;background:rgba(251,191,36,0.05);"></div>
   </div>`;
 }
@@ -19720,6 +20561,57 @@ function chartStochRSI(rsiValues, stochPeriod=14, kSmooth=3, dSmooth=3){
 // Kunci minggu ISO-8601 (Senin-Minggu, minggu pertama = minggu yang
 // memuat Kamis pertama tahun itu) -- dipakai buat mengelompokkan baris
 // harian jadi satu bar mingguan saat timeframe = "weekly".
+
+// ==== Helper indikator tambahan (katalog lengkap Indikator) ====
+function chartSmaNull(arr, n){ return arr.map((_,i)=>{ if(i+1<n) return null; const a=arr.slice(i+1-n,i+1); if(a.some(v=>v==null)) return null; return a.reduce((x,y)=>x+y,0)/n; }); }
+function chartStoch(h,l,c,kp=14,ks=3,ds=3){
+  const raw = c.map((_,i)=>{ const hh=chartHighest(h,kp,i), ll=chartLowest(l,kp,i); if(hh==null||ll==null) return null; return hh===ll?50:(c[i]-ll)/(hh-ll)*100; });
+  const k = chartSmaNull(raw,ks); return { k, d: chartSmaNull(k,ds) };
+}
+function chartWillR(h,l,c,p=14){ return c.map((_,i)=>{ const hh=chartHighest(h,p,i), ll=chartLowest(l,p,i); if(hh==null||ll==null) return null; return hh===ll?-50:-100*(hh-c[i])/(hh-ll); }); }
+function chartCCI(h,l,c,p=20){
+  const tp = c.map((_,i)=>(h[i]+l[i]+c[i])/3);
+  return tp.map((v,i)=>{ if(i+1<p) return null; const a=tp.slice(i+1-p,i+1), m=a.reduce((x,y)=>x+y,0)/p, md=a.reduce((x,y)=>x+Math.abs(y-m),0)/p; return md===0?0:(v-m)/(0.015*md); });
+}
+function chartROC(c,p=12){ return c.map((v,i)=> i<p||!c[i-p] ? null : (v/c[i-p]-1)*100); }
+function chartADX(h,l,c,p=14){
+  const n=c.length, adx=Array(n).fill(null), pdi=Array(n).fill(null), mdi=Array(n).fill(null);
+  if(n < 2*p) return { adx, pdi, mdi };
+  const tr=[], pdm=[], mdm=[];
+  for(let i=1;i<n;i++){
+    const up=h[i]-h[i-1], dn=l[i-1]-l[i];
+    pdm[i]=(up>dn&&up>0)?up:0; mdm[i]=(dn>up&&dn>0)?dn:0;
+    tr[i]=Math.max(h[i]-l[i], Math.abs(h[i]-c[i-1]), Math.abs(l[i]-c[i-1]));
+  }
+  let sTR=0,sP=0,sM=0; for(let i=1;i<=p;i++){ sTR+=tr[i]; sP+=pdm[i]; sM+=mdm[i]; }
+  const dx=Array(n).fill(null);
+  for(let i=p;i<n;i++){
+    if(i>p){ sTR=sTR-sTR/p+tr[i]; sP=sP-sP/p+pdm[i]; sM=sM-sM/p+mdm[i]; }
+    pdi[i]= sTR? 100*sP/sTR : 0; mdi[i]= sTR? 100*sM/sTR : 0;
+    const sum=pdi[i]+mdi[i]; dx[i]= sum? 100*Math.abs(pdi[i]-mdi[i])/sum : 0;
+  }
+  let seed=0; for(let i=p;i<=2*p-1;i++) seed+=dx[i];
+  adx[2*p-1]=seed/p;
+  for(let i=2*p;i<n;i++) adx[i]=(adx[i-1]*(p-1)+dx[i])/p;
+  return { adx, pdi, mdi };
+}
+function chartOBV(c,v){ const out=[]; let acc=0; c.forEach((x,i)=>{ if(i>0){ if(x>c[i-1]) acc+=v[i]; else if(x<c[i-1]) acc-=v[i]; } out.push(acc); }); return out; }
+function chartMFI(h,l,c,v,p=14){
+  const tp=c.map((_,i)=>(h[i]+l[i]+c[i])/3);
+  return tp.map((_,i)=>{ if(i<p) return null; let pos=0,neg=0;
+    for(let j=i-p+1;j<=i;j++){ const mf=tp[j]*v[j]; if(tp[j]>tp[j-1]) pos+=mf; else if(tp[j]<tp[j-1]) neg+=mf; }
+    return neg===0 ? 100 : 100-100/(1+pos/neg); });
+}
+function chartMFV(h,l,c,v){ return c.map((_,i)=>{ const rg=h[i]-l[i]; return rg>0 ? (((c[i]-l[i])-(h[i]-c[i]))/rg)*v[i] : 0; }); }
+function chartCMF(h,l,c,v,p=20){
+  const mfv=chartMFV(h,l,c,v);
+  return c.map((_,i)=>{ if(i+1<p) return null; let a=0,b=0; for(let j=i+1-p;j<=i;j++){ a+=mfv[j]; b+=v[j]; } return b>0?a/b:null; });
+}
+function chartAD(h,l,c,v){ let acc=0; return chartMFV(h,l,c,v).map(x=>(acc+=x)); }
+function chartVWAPRoll(h,l,c,v,p=20){
+  return c.map((_,i)=>{ if(i+1<p) return null; let a=0,b=0; for(let j=i+1-p;j<=i;j++){ a+=((h[j]+l[j]+c[j])/3)*v[j]; b+=v[j]; } return b>0?a/b:null; });
+}
+
 function chartIsoWeekKey(dateStr){
   const d = new Date(dateStr);
   d.setHours(0,0,0,0);
@@ -19801,7 +20693,10 @@ function drawChartSVGLegacy(){
   const allData = state.chartTimeframe==="weekly" ? chartAggregateWeekly(state.chartData) : state.chartData.slice();
   const now = new Date();
   const days = {"1m":31,"3m":92,"6m":183,"1y":365}[state.chartRange];
-  const data = days ? allData.filter(d => (now - new Date(d.date)) <= days*86400000) : allData;
+  const _cf = state.chartRange==="custom" ? (state.chartFrom||"") : "", _ct = state.chartRange==="custom" ? (state.chartTo||"") : "";
+  const data = state.chartRange==="custom"
+    ? allData.filter(d => { const ds = String(d.date).slice(0,10); return (!_cf || ds >= _cf) && (!_ct || ds <= _ct); })
+    : (days ? allData.filter(d => (now - new Date(d.date)) <= days*86400000) : allData);
   let plotted = data.length ? data : allData;
   // Zoom: state.chartZoom 1 = tampilkan semua bar hasil filter Rentang di
   // atas; <1 = perbesar dengan cuma menampilkan N bar TERAKHIR (paling
@@ -19911,7 +20806,7 @@ function drawChartSVGLegacy(){
       showMACD && macdSignal ? renderCrossSignalSection('📊 MACD (12,26,9)', macdSignal) : '',
       showStochRsi && stochrsiSignal ? renderCrossSignalSection('🎯 Stoch RSI (%K×%D)', stochrsiSignal) : '',
     ].filter(Boolean);
-    if(sections.length){ ema921BadgeEl.style.display=''; ema921BadgeEl.innerHTML=sections.join('<hr style="border:none;border-top:1px solid var(--border);margin:10px 0;">'); }
+    if(sections.length){ ema921BadgeEl.style.display=''; ema921BadgeEl.innerHTML=chartBadgeHtml('cross','Sinyal Persilangan Indikator',sections.join('<hr style="border:none;border-top:1px solid var(--border);margin:10px 0;">'),{gap:8}); }
     else { ema921BadgeEl.style.display='none'; ema921BadgeEl.innerHTML=''; }
   }
 
@@ -20312,6 +21207,83 @@ function drawChartSVG(){
   });
 }
 
+// Download chart (yang sedang tampil, termasuk sinyal BUY/SELL, garis level &
+// semua panel) sebagai PNG. Chart baru (lightweight-charts) pakai
+// takeScreenshot() bawaan library; header kecil berisi ticker + tanggal
+// ditambahkan di atasnya. Kalau chart jatuh balik ke SVG lama, SVG-nya
+// dirasterisasi lewat <canvas>.
+function chartDownloadImage(){
+  const t = state.selectedTicker || "chart";
+  const tfLabel = state.chartTimeframe === "weekly" ? "Mingguan" : "Harian";
+  const stamp = toLocalISODate(new Date());
+  const header = `${t} · ${tfLabel} · ${stamp}`;
+  const save = (src, cssW) => {
+    const k = cssW ? src.width / cssW : 1, hh = Math.round(40 * k);
+    const out = document.createElement("canvas");
+    out.width = src.width; out.height = src.height + hh;
+    const g = out.getContext("2d");
+    g.fillStyle = "#0f172a"; g.fillRect(0, 0, out.width, out.height);
+    g.fillStyle = "#e2e8f0"; g.font = `700 ${Math.round(16*k)}px Sora, Arial, sans-serif`; g.textBaseline = "middle";
+    g.fillText(header, Math.round(14*k), hh/2);
+    g.drawImage(src, 0, hh);
+    out.toBlob(blob => {
+      if(!blob){ alert("Gagal membuat gambar chart."); return; }
+      const a = document.createElement("a");
+      a.href = URL.createObjectURL(blob); a.download = `${t}_${stamp}.png`;
+      document.body.appendChild(a); a.click(); a.remove();
+      setTimeout(() => URL.revokeObjectURL(a.href), 4000);
+    }, "image/png");
+  };
+  try{
+    const lwcWrap = document.getElementById("chartLwcWrap");
+    if(lwcChart && lwcWrap && lwcWrap.style.display !== "none"){
+      const cont = document.getElementById("chartLwc");
+      save(lwcChart.takeScreenshot(), cont ? cont.clientWidth : 0);
+      return;
+    }
+    const svg = document.getElementById("chartSvg");
+    if(!svg) throw new Error("chart belum tampil");
+    const r = svg.getBoundingClientRect(), w = Math.max(1, Math.round(r.width)), h = Math.max(1, Math.round(r.height));
+    const clone = svg.cloneNode(true);
+    clone.setAttribute("xmlns", "http://www.w3.org/2000/svg"); clone.setAttribute("width", w); clone.setAttribute("height", h);
+    const img = new Image();
+    img.onload = () => {
+      const c = document.createElement("canvas"); c.width = w*2; c.height = h*2;
+      const g = c.getContext("2d"); g.fillStyle = "#0f172a"; g.fillRect(0,0,c.width,c.height); g.drawImage(img, 0, 0, c.width, c.height);
+      save(c, w);
+    };
+    img.onerror = () => alert("Gagal membuat gambar chart.");
+    img.src = "data:image/svg+xml;charset=utf-8," + encodeURIComponent(new XMLSerializer().serializeToString(clone));
+  }catch(err){ console.error("chartDownloadImage:", err); alert("Gagal membuat gambar chart."); }
+}
+
+// Statistik broker untuk SATU periode (tanggal >= startISO; "" = semua data).
+// byDate = slot per tanggal dari loadChartBrokerAccum (buyLot/buyValue/sellLot/sellValue).
+//   avgNet  = |net nilai| / (|net lot| x 100)  -> "harga rata-rata net buy/sell"
+//   avgBuy  = total nilai beli / total lot beli (gross)
+//   avgSell = total nilai jual / total lot jual (gross)
+function chartBrokerPeriodStats(byDate, startISO, endISO){
+  const st = { buyLot:0, buyValue:0, sellLot:0, sellValue:0, days:0, first:null, last:null };
+  Object.keys(byDate||{}).sort().forEach(d=>{
+    if(startISO && d < startISO) return;
+    if(endISO && d > endISO) return;
+    const x = byDate[d];
+    st.buyLot += x.buyLot||0; st.buyValue += x.buyValue||0; st.sellLot += x.sellLot||0; st.sellValue += x.sellValue||0;
+    st.days++; if(!st.first) st.first = d; st.last = d;
+  });
+  st.netLot = st.buyLot - st.sellLot; st.netValue = st.buyValue - st.sellValue;
+  st.avgBuy = calcAvgPrice(st.buyValue, st.buyLot);
+  st.avgSell = calcAvgPrice(st.sellValue, st.sellLot);
+  // Net lot & net nilai harus searah supaya |nilai|/|lot| bermakna. Kalau
+  // berlawanan tanda (mis. net beli lot tapi nilainya net jual karena harga
+  // jual jauh lebih tinggi), pakai rata-rata gross sisi dominan (beli/jual).
+  st.avgNetFallback = (st.netLot * st.netValue) <= 0;
+  st.avgNet = st.avgNetFallback
+    ? (st.netLot >= 0 ? st.avgBuy : st.avgSell)
+    : calcAvgPrice(Math.abs(st.netValue), Math.abs(st.netLot));
+  return st;
+}
+
 function renderLwcChart(){
   const container = document.getElementById("chartLwc");
   if(!container || !state.chartData.length) return;
@@ -20319,6 +21291,7 @@ function renderLwcChart(){
 
   const lv = state.selectedLevels, seriesToggle = state.chartSeries || {};
   const on = k => seriesToggle[k] !== false;
+  const onX = k => seriesToggle[k] === true;   // indikator tambahan: harus dipilih eksplisit
   const allData = state.chartTimeframe==="weekly" ? chartAggregateWeekly(state.chartData) : state.chartData.slice();
   if(!allData.length) return;
 
@@ -20345,6 +21318,29 @@ function renderLwcChart(){
   const rsi7 = chartRSI(closes,7), rsi21 = chartRSI(closes,21);
   const netForeign = allData.map(d=>{ const fb=d.foreignBuy, fs=d.foreignSell; return (fb==null||fs==null) ? null : (fb-fs)*d.close; });
   const foreignFlow = (()=>{ let acc=0; return netForeign.map(v=>{ acc += (v||0); return acc; }); })();
+  // --- Indikator tambahan (hanya dihitung kalau dipilih, supaya chart tetap ringan) ---
+  const X = {};
+  if(onX("ma5")) X.ma5 = chartSMA(closes,5);
+  if(onX("ma20")) X.ma20 = chartSMA(closes,20);
+  if(onX("ma50")) X.ma50 = chartSMA(closes,50);
+  if(onX("ma100")) X.ma100 = chartSMA(closes,100);
+  if(onX("ma200")) X.ma200 = chartSMA(closes,200);
+  if(onX("ema50")) X.ema50 = chartEMA(closes,50);
+  if(onX("ema200")) X.ema200 = chartEMA(closes,200);
+  if(onX("vwap")) X.vwap = chartVWAPRoll(highs,lows,closes,vols,20);
+  if(onX("keltner")){ const e20 = chartEMA(closes,20), a10 = chartATR(highs,lows,closes,10); X.kelMid = e20; X.kelUp = e20.map((v,i)=>a10[i]==null?null:v+2*a10[i]); X.kelLo = e20.map((v,i)=>a10[i]==null?null:v-2*a10[i]); }
+  if(onX("rsi14")) X.rsi14 = rsi14;
+  if(onX("stoch")) X.stoch = chartStoch(highs,lows,closes,14,3,3);
+  if(onX("willr")) X.willr = chartWillR(highs,lows,closes,14);
+  if(onX("cci")) X.cci = chartCCI(highs,lows,closes,20);
+  if(onX("roc")) X.roc = chartROC(closes,12);
+  if(onX("atr")) X.atr = chartATR(highs,lows,closes,14);
+  if(onX("adx")) X.adx = chartADX(highs,lows,closes,14);
+  if(onX("obv")) X.obv = chartOBV(closes,vols);
+  if(onX("ad")) X.ad = chartAD(highs,lows,closes,vols);
+  if(onX("cmf")) X.cmf = chartCMF(highs,lows,closes,vols,20);
+  if(onX("mfi")) X.mfi = chartMFI(highs,lows,closes,vols,14);
+  if(onX("forbs")){ X.forBuy = allData.map(d=> d.foreignBuy==null ? null : d.foreignBuy*d.close); X.forSell = allData.map(d=> d.foreignSell==null ? null : d.foreignSell*d.close); }
 
   const UP="#10b981", DOWN="#ef4444";
   const LC = LightweightCharts;
@@ -20433,6 +21429,34 @@ function renderLwcChart(){
     }
   }
 
+  // --- Pivot Point klasik (dari High/Low/Close bar terakhir) ---
+  if(onX("pivot")){
+    const H=highs[lastIdx], L=lows[lastIdx], C=closes[lastIdx], P=(H+L+C)/3;
+    [["R2",P+(H-L),UP],["R1",2*P-L,UP],["Pivot",P,"#fbbf24"],["S1",2*P-H,DOWN],["S2",P-(H-L),DOWN]].forEach(([t,price,col])=>{
+      priceSeries.createPriceLine({ price, color:col, lineWidth:1, lineStyle:LC.LineStyle.Dotted, axisLabelVisible:true, title:t });
+      extraLevels.push(price);
+    });
+  }
+  // --- Fundamental: garis nilai wajar. Hanya melebarkan skala kalau levelnya
+  // masih dalam 0.6×–1.6× harga terakhir, supaya level yang jauh tidak
+  // menggencet candle (garisnya tetap ada, tinggal scroll skala harga). ---
+  if(onX("fundGraham")||onX("fundBV")||onX("fundPER10")||onX("fundPER15")){
+    const fs = enriched().find(x=>x.ticker===state.selectedTicker);
+    if(fs){
+      const nowPx = closes[lastIdx], per = numOrNull(fs.per), pbv = numOrNull(fs.pbv), bv = numOrNull(fs.bookValue);
+      const eps = (per!=null && per>0 && nowPx) ? nowPx/per : null;
+      const fl = [];
+      if(onX("fundGraham")){ const g = grahamFairValue(fs); if(g!=null) fl.push([g,"Wajar Graham","#f59e0b"]); }
+      if(onX("fundBV")){ const b = (bv!=null && bv>0) ? bv : ((pbv!=null && pbv>0 && nowPx) ? nowPx/pbv : null); if(b!=null) fl.push([b,"Book Value","#a78bfa"]); }
+      if(onX("fundPER10") && eps!=null) fl.push([eps*10,"PER 10×","#34d399"]);
+      if(onX("fundPER15") && eps!=null) fl.push([eps*15,"PER 15×","#fb923c"]);
+      fl.forEach(([price,t,col])=>{
+        priceSeries.createPriceLine({ price, color:col, lineWidth:1, lineStyle:LC.LineStyle.LargeDashed, axisLabelVisible:true, title:t });
+        if(nowPx && price>=nowPx*0.6 && price<=nowPx*1.6) extraLevels.push(price);
+      });
+    }
+  }
+
   // Lebarkan autoscale supaya semua level aktif (Fib/TP/SL/Support/Resisten)
   // pasti terlihat walau di luar rentang harga jendela tampil.
   if(extraLevels.length){
@@ -20488,9 +21512,48 @@ function renderLwcChart(){
     addLine(st.line.map((v,i)=> st.dir[i]===1 ? v : null), UP, { lineWidth:2, title:"ST" });
     addLine(st.line.map((v,i)=> st.dir[i]===-1 ? v : null), DOWN, { lineWidth:2 });
   }
+  // --- Overlay tambahan (katalog Indikator) ---
+  [["ma5","SMA5","#fde047"],["ma20","SMA20","#fb923c"],["ma50","SMA50","#38bdf8"],["ma100","SMA100","#a78bfa"],["ma200","SMA200","#f43f5e"],
+   ["ema50","EMA50","#22d3ee"],["ema200","EMA200","#fb7185"]].forEach(([k,t,c])=>{ if(X[k]) addLine(X[k], c, { title:t }); });
+  if(X.vwap) addLine(X.vwap, "#f97316", { title:"VWAP20", lineStyle:LC.LineStyle.Dashed });
+  if(X.kelUp){
+    addLine(X.kelUp, "#84cc16", { title:"KC-U" });
+    addLine(X.kelLo, "#84cc16", { title:"KC-L" });
+    addLine(X.kelMid, "#84cc16", { lineWidth:1, lineStyle:LC.LineStyle.Dashed });
+  }
+  // Marker harga utama digabung (SAR + sinyal Beli/Jual) dalam SATU panggilan
+  // createSeriesMarkers, supaya tidak saling menimpa.
+  const priceMarkers = [];
   if(on("sar")){
-    const sarMarkers = sar.map((v,i)=> v==null ? null : { time:times[i], position: closes[i]>=v ? "belowBar" : "aboveBar", color:"#ef4444", shape:"circle", size:0.5 }).filter(Boolean);
-    if(sarMarkers.length) LC.createSeriesMarkers(priceSeries, sarMarkers);
+    sar.forEach((v,i)=>{ if(v!=null) priceMarkers.push({ time:times[i], position: closes[i]>=v ? "belowBar" : "aboveBar", color:"#ef4444", shape:"circle", size:0.5 }); });
+  }
+  const tradeSignals = on("signal") ? chartTradeSignals(times, closes, emaH, emaL, rsi7, rsi21) : [];
+  tradeSignals.forEach(sg=>{
+    priceMarkers.push(sg.type==="BUY"
+      ? { time:sg.time, position:"belowBar", color:"#16a34a", shape:"arrowUp", text:"BUY", size:1.4 }
+      : { time:sg.time, position:"aboveBar", color:"#ef4444", shape:"arrowDown", text:"SELL", size:1.4 });
+  });
+  if(priceMarkers.length){
+    priceMarkers.sort((a,b)=> a.time < b.time ? -1 : a.time > b.time ? 1 : 0);
+    LC.createSeriesMarkers(priceSeries, priceMarkers);
+  }
+  // Ringkasan sinyal terakhir di bawah chart.
+  {
+    const badge = document.getElementById("chartSignalBadge");
+    if(badge){
+      if(!on("signal")){ badge.style.display = "none"; badge.innerHTML = ""; }
+      else {
+        const lastSg = tradeSignals.slice(-6).reverse();
+        const nowPx = closes[lastIdx];
+        const pill = sg => `<span style="display:inline-block;margin:2px 8px 2px 0;"><b style="color:${sg.type==="BUY"?"#16a34a":"#ef4444"}">${sg.type==="BUY"?"▲ BUY":"▼ SELL"}</b> <span class="mono">${escapeHtml(String(sg.time))} @ ${fmtNum(Math.round(sg.price))}</span></span>`;
+        const cur = tradeSignals.length ? tradeSignals[tradeSignals.length-1] : null;
+        const status = !cur ? "Belum ada sinyal pada data ini."
+          : cur.type==="BUY" ? `Posisi beli aktif sejak sinyal BUY (${(nowPx>=cur.price?"+":"")}${((nowPx/cur.price-1)*100).toFixed(2)}% dari harga sinyal).`
+          : "Sinyal terakhir SELL — belum ada sinyal BUY baru.";
+        badge.style.display = "";
+        badge.innerHTML = chartBadgeHtml("signal", "Sinyal Beli/Jual", `<div style="margin-bottom:4px;">${status}</div><div>${lastSg.map(pill).join("") || ""}</div><div style="font-size:11px;color:var(--muted);margin-top:4px;">BUY: close di atas EMA21 High &amp; EMA21 Low dan RSI7 &gt; RSI21 (baru terpenuhi). SELL: close turun menembus EMA21 Low. Sinyal teknikal historis, bukan rekomendasi.</div>`, { gap:4 });
+      }
+    }
   }
 
   // --- Overlay "Broker Accum" -- SATU priceLine per broker terpilih, di
@@ -20504,21 +21567,57 @@ function renderLwcChart(){
   const BROKER_ACCUM_PALETTE = ["#38bdf8","#f97316","#a78bfa","#facc15","#34d399","#f472b6","#fb7185","#2dd4bf"];
   if(on("close") && state.chartBrokerAccum?.on && state.chartBrokerAccum?.data && state.chartBrokerAccum.forTicker === state.selectedTicker){
     brokerLines = {};
+    // Periode = rentang yang dipilih di tombol "Rentang" (1B/3B/6B/1T/Semua):
+    // dihitung dari bar pertama di jendela tampil sampai bar terakhir.
+    const rgDays = {"1m":31,"3m":92,"6m":183,"1y":365}[state.chartRange];
+    const isCustom = state.chartRange === "custom";
+    const rgLabel = isCustom ? "Kustom" : ({"1m":"1B","3m":"3B","6m":"6B","1y":"1T"}[state.chartRange] || "Semua");
+    let startISO = "", endISO = "";
+    if(isCustom){
+      startISO = state.chartFrom || ""; endISO = state.chartTo || "";
+    } else if(rgDays){
+      const cutoff = new Date(Date.now() - rgDays*86400000);
+      const fi = Math.max(0, allData.findIndex(d=> new Date(d.date) >= cutoff));
+      startISO = String(times[fi]).slice(0,10);
+    }
+    const badgeRows = [];
     Object.keys(state.chartBrokerAccum.data).forEach((code,i)=>{
       const b = state.chartBrokerAccum.data[code];
       const dateKeys = Object.keys(b.byDate).sort();
       if(!dateKeys.length) return;
       const color = BROKER_ACCUM_PALETTE[i % BROKER_ACCUM_PALETTE.length];
-      const last = b.byDate[dateKeys[dateKeys.length-1]];
-      if(last.cumAvgPrice != null){
+      const ps = chartBrokerPeriodStats(b.byDate, startISO, endISO);
+      if(ps.days > 0 && ps.avgNet != null){
+        const isBuy = ps.netLot >= 0;
+        const px = ps.avgNet;
         priceSeries.createPriceLine({
-          price: last.cumAvgPrice, color, lineWidth:1,
-          lineStyle: last.cumLot >= 0 ? LC.LineStyle.Dashed : LC.LineStyle.Solid,
-          title: code,
+          price: px, color, lineWidth:1,
+          lineStyle: isBuy ? LC.LineStyle.Dashed : LC.LineStyle.Solid,
+          axisLabelVisible:true, title: `${code} ${isBuy?"NetBuy":"NetSell"} ${rgLabel}`,
         });
       }
+      if(ps.days > 0) badgeRows.push({ code, color, ps });
       brokerLines[code] = { color, byDate: b.byDate };
     });
+    const bb = document.getElementById("chartBrokerBadge");
+    if(bb){
+      if(!badgeRows.length){ bb.style.display = "none"; bb.innerHTML = ""; }
+      else {
+        const f = v => v==null ? "-" : fmtNum(v);
+        const tr = badgeRows.map(({code,color,ps})=>{
+          const isBuy = ps.netLot >= 0;
+          return `<tr><td><b style="color:${color}">${escapeHtml(code)}</b></td>
+            <td style="color:${isBuy?"var(--up)":"var(--down)"};font-weight:700">${isBuy?"Net Buy":"Net Sell"}</td>
+            <td class="mono">${fmtCompactID(ps.netLot)} lot</td><td class="mono">${fmtCompactID(ps.netValue)}</td>
+            <td class="mono" style="font-weight:700">${f(ps.avgNet)}</td><td class="mono">${f(ps.avgBuy)}</td><td class="mono">${f(ps.avgSell)}</td>
+            <td class="mono" style="color:var(--muted)">${ps.days} hari</td></tr>`;
+        }).join("");
+        bb.style.display = "";
+        bb.innerHTML = chartBadgeHtml("broker", `Harga Rata-rata Broker · Periode ${rgLabel}${isCustom ? ` (${escapeHtml(startISO||"awal")} s/d ${escapeHtml(endISO||"akhir")})` : (startISO?` (sejak ${escapeHtml(startISO)})`:"")}`, `
+          <div class="table-wrap"><table class="mono" style="font-size:12px;"><thead><tr><th>Broker</th><th>Posisi</th><th>Net Lot</th><th>Net Nilai (Rp)</th><th>Avg Net</th><th>Avg Beli</th><th>Avg Jual</th><th>Data</th></tr></thead><tbody>${tr}</tbody></table></div>
+          <div style="font-size:11px;color:var(--muted);margin-top:4px;">Avg Net = |net nilai| ÷ (|net lot| × 100) selama periode yang dipilih — garis di chart (kalau net lot &amp; net nilai berlawanan arah, dipakai Avg Beli/Jual sisi dominan). Avg Beli/Jual = rata-rata gross. Hanya hari yang sudah ditarik di Lacak Broker yang dihitung.</div>`);
+      }
+    }
   }
 
   // --- Sub-panel bawah: tiap indikator dapat pane sendiri (pane index
@@ -20580,6 +21679,20 @@ function renderLwcChart(){
     paneKeyByIndex[paneIdx] = "netforeign"; paneIdx++;
   }
 
+  // --- Panel tambahan (katalog Indikator) ---
+  if(X.rsi14){ const r = addPaneLine(X.rsi14, "#22c55e", { lineWidth:2 }); [30,50,70].forEach(g=> refLine(r, g, "rgba(148,163,184,0.35)")); paneKeyByIndex[paneIdx] = "rsi14"; paneIdx++; }
+  if(X.stoch){ const k = addPaneLine(X.stoch.k, "#eab308", { title:"%K" }); addPaneLine(X.stoch.d, "#ef4444", { title:"%D" }); [20,50,80].forEach(g=> refLine(k, g, "rgba(148,163,184,0.35)")); paneKeyByIndex[paneIdx] = "stoch"; paneIdx++; }
+  if(X.willr){ const w = addPaneLine(X.willr, "#f472b6", { lineWidth:1.8 }); [-80,-50,-20].forEach(g=> refLine(w, g, "rgba(148,163,184,0.35)")); paneKeyByIndex[paneIdx] = "willr"; paneIdx++; }
+  if(X.cci){ const c = addPaneLine(X.cci, "#06b6d4", { lineWidth:1.8 }); [-100,0,100].forEach(g=> refLine(c, g, "rgba(148,163,184,0.35)")); paneKeyByIndex[paneIdx] = "cci"; paneIdx++; }
+  if(X.roc){ const r = addPaneLine(X.roc, "#818cf8", { lineWidth:1.8 }); refLine(r, 0, "rgba(148,163,184,0.45)"); paneKeyByIndex[paneIdx] = "roc"; paneIdx++; }
+  if(X.atr){ addPaneLine(X.atr, "#fb923c", { lineWidth:1.8 }); paneKeyByIndex[paneIdx] = "atr"; paneIdx++; }
+  if(X.adx){ addPaneLine(X.adx.adx, "#e879f9", { lineWidth:2, title:"ADX" }); addPaneLine(X.adx.pdi, "#22c55e", { title:"+DI" }); addPaneLine(X.adx.mdi, "#ef4444", { title:"-DI" }); paneKeyByIndex[paneIdx] = "adx"; paneIdx++; }
+  if(X.obv){ addPaneLine(X.obv, "#34d399", { lineWidth:1.8, priceFormat:{ type:"volume" } }); paneKeyByIndex[paneIdx] = "obv"; paneIdx++; }
+  if(X.ad){ addPaneLine(X.ad, "#2dd4bf", { lineWidth:1.8, priceFormat:{ type:"volume" } }); paneKeyByIndex[paneIdx] = "ad"; paneIdx++; }
+  if(X.cmf){ addPaneHist(X.cmf, v=> v>=0 ? "rgba(16,185,129,.6)" : "rgba(239,68,68,.6)"); paneKeyByIndex[paneIdx] = "cmf"; paneIdx++; }
+  if(X.mfi){ const m = addPaneLine(X.mfi, "#a3e635", { lineWidth:1.8 }); [20,50,80].forEach(g=> refLine(m, g, "rgba(148,163,184,0.35)")); paneKeyByIndex[paneIdx] = "mfi"; paneIdx++; }
+  if(X.forBuy){ addPaneLine(X.forBuy, "#22c55e", { title:"Beli", priceFormat:{ type:"volume" } }); addPaneLine(X.forSell, "#ef4444", { title:"Jual", priceFormat:{ type:"volume" } }); paneKeyByIndex[paneIdx] = "forbs"; paneIdx++; }
+
   // Tinggi relatif pane: harga lebih besar dari sub-panel (mirip proporsi
   // mainH vs subH di versi SVG lama) -- KECUALI kalau ada panel yang lagi
   // difokuskan/maximize (state.chartPaneFocus, dipicu ikon ⛶ di pojok
@@ -20628,6 +21741,13 @@ function renderLwcChart(){
       foreignflow: { text:"FOREIGN FLOW", color:"#60a5fa" },
       macd: { text:"MACD 12/26/9", color:"#60a5fa" },
       netforeign: { text:"NET FOREIGN BUY/SELL", color:"#22c55e" },
+      rsi14: { text:"RSI 14", color:"#22c55e" }, stoch: { text:"STOCHASTIC 14,3,3", color:"#eab308" },
+      willr: { text:"WILLIAMS %R 14", color:"#f472b6" }, cci: { text:"CCI 20", color:"#06b6d4" },
+      roc: { text:"ROC 12", color:"#818cf8" }, atr: { text:"ATR 14", color:"#fb923c" },
+      adx: { text:"ADX / DI 14  (ungu=ADX, hijau=+DI, merah=-DI)", color:"#e879f9" },
+      obv: { text:"OBV", color:"#34d399" }, ad: { text:"ACCUMULATION / DISTRIBUTION", color:"#2dd4bf" },
+      cmf: { text:"CHAIKIN MONEY FLOW 20", color:"#4ade80" }, mfi: { text:"MONEY FLOW INDEX 14", color:"#a3e635" },
+      forbs: { text:"NILAI BELI (hijau) vs JUAL (merah) ASING", color:"#60a5fa" },
     };
     panes.forEach((pane,i)=>{
       const lbl = paneLabels[paneKeyByIndex[i]];
@@ -20701,7 +21821,15 @@ function renderLwcChart(){
   // lebih jauh dari jendela ini (beda dari versi lama yang benar2 memotong
   // datanya). "Semua" -> fitContent (pas ke semua bar). ---
   const days = {"1m":31,"3m":92,"6m":183,"1y":365}[state.chartRange];
-  if(days){
+  if(state.chartRange === "custom"){
+    const cf = state.chartFrom || "", ct = state.chartTo || "";
+    const fi = cf ? times.findIndex(t=> String(t) >= cf) : 0;
+    let ti = times.length - 1; if(ct){ ti = -1; for(let k=times.length-1;k>=0;k--){ if(String(times[k]) <= ct){ ti = k; break; } } }
+    if(fi >= 0 && ti >= fi){
+      try{ lwcChart.timeScale().setVisibleRange({ from: times[fi], to: times[ti] }); }
+      catch(e){ lwcChart.timeScale().fitContent(); }
+    } else lwcChart.timeScale().fitContent();
+  } else if(days){
     const cutoff = new Date(Date.now() - days*86400000);
     const fromIdx = Math.max(0, allData.findIndex(d=> new Date(d.date) >= cutoff));
     try{ lwcChart.timeScale().setVisibleRange({ from: times[fromIdx], to: times[times.length-1] }); }
@@ -24934,6 +26062,11 @@ function attachContentEvents(){
   });
   repositionRuleDropdown();
 
+  document.querySelectorAll("[data-rule-pick]").forEach(el=>{
+    const open = e => { e.preventDefault(); e.stopPropagation(); rbpkOpen(el.dataset.ruleId, el.dataset.rulePick); };
+    el.onclick = open;
+    el.onkeydown = e => { if(e.key==="Enter" || e.key===" " || e.key==="ArrowDown") open(e); };
+  });
   document.querySelectorAll("[data-rule-field]").forEach(el=>{
     const id = el.dataset.ruleId;
     const field = el.dataset.ruleField;
@@ -25018,7 +26151,31 @@ function attachContentEvents(){
 
   // --- Kontrol chart interaktif (rentang waktu + toggle indikator) ---
   document.querySelectorAll("[data-chart-range]").forEach(btn=>{
-    btn.onclick = () => { state.chartRange = btn.dataset.chartRange; render(); };
+    btn.onclick = () => {
+      state.chartRange = btn.dataset.chartRange;
+      if(state.chartRange === "custom" && (!state.chartFrom || !state.chartTo)){
+        // default awal: 3 bulan terakhir dari data chart
+        const ds = (state.chartData||[]).map(d=>String(d.date).slice(0,10)).sort();
+        if(ds.length){ state.chartTo = ds[ds.length-1]; const f = new Date(state.chartTo+"T00:00:00Z"); f.setUTCMonth(f.getUTCMonth()-3); state.chartFrom = f.toISOString().slice(0,10); if(state.chartFrom < ds[0]) state.chartFrom = ds[0]; }
+      }
+      // Mode Auto: top 3 net buyer ikut berubah mengikuti periode baru.
+      const baR = state.chartBrokerAccum;
+      if(baR && baR.on && baR.auto !== false && !baR.codes){ loadChartBrokerAccum(); return; }
+      render();
+    };
+  });
+  // Tanggal Dari/Sampai untuk Rentang Kustom (otomatis ditukar kalau terbalik).
+  ["chartFromInput","chartToInput"].forEach(id=>{
+    const el = document.getElementById(id); if(!el) return;
+    el.onchange = () => {
+      const f = document.getElementById("chartFromInput"), t = document.getElementById("chartToInput");
+      let a = f ? f.value : "", b = t ? t.value : "";
+      if(a && b && a > b){ const x = a; a = b; b = x; }
+      state.chartFrom = a; state.chartTo = b;
+      const baR = state.chartBrokerAccum;
+      if(baR && baR.on && baR.auto !== false && !baR.codes){ loadChartBrokerAccum(); return; }
+      render();
+    };
   });
   document.querySelectorAll("[data-chart-series]").forEach(chk=>{
     chk.onchange = () => {
@@ -25075,7 +26232,7 @@ function attachContentEvents(){
   // dari "AK,BK,MG" ke kode lain) & otomatis mengaktifkan overlay-nya.
   const chartBrokerToggleBtn = document.querySelector("[data-chart-broker-toggle]");
   if(chartBrokerToggleBtn) chartBrokerToggleBtn.onclick = () => {
-    state.chartBrokerAccum = state.chartBrokerAccum || { on:false, codes:"AK,BK,MG", data:null, loading:false, error:null, forTicker:null };
+    state.chartBrokerAccum = state.chartBrokerAccum || { on:false, auto:true, codes:"", data:null, loading:false, error:null, forTicker:null };
     state.chartBrokerAccum.on = !state.chartBrokerAccum.on;
     if(state.chartBrokerAccum.on && (!state.chartBrokerAccum.data || state.chartBrokerAccum.forTicker !== state.selectedTicker)){
       loadChartBrokerAccum();
@@ -25086,8 +26243,10 @@ function attachContentEvents(){
   const chartBrokerApplyBtn = document.querySelector("[data-chart-broker-apply]");
   if(chartBrokerApplyBtn) chartBrokerApplyBtn.onclick = () => {
     const val = document.getElementById("chartBrokerCodesInput")?.value || "";
-    state.chartBrokerAccum = state.chartBrokerAccum || { on:false, codes:"AK,BK,MG", data:null, loading:false, error:null, forTicker:null };
-    state.chartBrokerAccum.codes = val;
+    state.chartBrokerAccum = state.chartBrokerAccum || { on:false, auto:true, codes:"", data:null, loading:false, error:null, forTicker:null };
+    const manual = parseBrokerCodesInput(val);
+    state.chartBrokerAccum.codes = manual.join(",");   // kosong -> mode Auto (top 3 net buyer)
+    state.chartBrokerAccum.auto = !manual.length;
     state.chartBrokerAccum.on = true;
     loadChartBrokerAccum();
   };
@@ -25175,7 +26334,10 @@ function attachContentEvents(){
       if(e.key === "Enter"){
         const val = (e.target.value||"").trim().toUpperCase();
         const exists = state.stocks.some(st => st.ticker === val);
-        if(exists) openDetail(val);
+        if(exists){
+          const nav = navTickersFromScope(document.getElementById("content"));
+          openDetail(val, (nav && nav.length > 1 && nav.indexOf(val) >= 0) ? { nav } : undefined);
+        }
         else if(val) alert(`Ticker "${val}" tidak ditemukan di data screener.`);
       }
     });
@@ -25481,7 +26643,7 @@ function attachContentEvents(){
     btn.onclick = ()=>{ state.topMoversTab = btn.dataset.moverTab; render(); };
   });
 
-  document.querySelectorAll("[data-detail]").forEach(b=> b.onclick=()=>openDetail(b.dataset.detail));
+  document.querySelectorAll("[data-detail]").forEach(b=> b.onclick=()=>{ const nav = state.tab === "screener" ? null : navTickersFromEl(b); openDetail(b.dataset.detail, nav ? { nav } : undefined); });
 
   // --- Tab mandiri "🧭 Rekap Saham" (lihat renderRekapSaham()) ---
   document.querySelectorAll("[data-rekap-filter]").forEach(b=> b.onclick=()=>{
@@ -25621,8 +26783,19 @@ function attachContentEvents(){
     } else dashMetricOpen(key);
   });
   document.querySelectorAll("[data-fav]").forEach(b=> b.onclick=()=>toggleFav(b.dataset.fav));
-  document.querySelectorAll("[data-chart]").forEach(b=> bindInternalLink(b, () => loadChart(b.dataset.chart)));
+  document.querySelectorAll("[data-chart]").forEach(b=> bindInternalLink(b, () => { const nav = state.tab === "screener" ? null : navTickersFromEl(b); loadChart(b.dataset.chart, nav ? { nav } : undefined); }));
   document.querySelectorAll("[data-chart-nav]").forEach(b=> b.onclick = () => navigateChart(parseInt(b.dataset.chartNav, 10)));
+  document.querySelectorAll("[data-chart-download]").forEach(b=> b.onclick = () => chartDownloadImage());
+  document.querySelectorAll("[data-chart-ind-open]").forEach(b=> b.onclick = () => chartIndOpen());
+  document.querySelectorAll("[data-chart-ind-remove]").forEach(b=> b.onclick = () => {
+    const it = CHART_IND.find(x=>x.k===b.dataset.chartIndRemove); if(it) chartIndSet(it, false);
+  });
+  // Tombol "Detail Emiten" di toolbar tab Grafik: buka modal Detail Emiten untuk
+  // ticker yang sedang tampil, membawa daftar Sebelumnya/Berikutnya yang sama.
+  document.querySelectorAll("[data-chart-detail]").forEach(b=> b.onclick = () => {
+    const nav = state.chartNavList && state.chartNavList.length > 1 ? state.chartNavList : null;
+    openDetail(b.dataset.chartDetail, nav ? { nav } : undefined);
+  });
   document.querySelectorAll("[data-stockbit-live]").forEach(b=> b.onclick=(e)=>{ e.stopPropagation(); fetchStockbitLive(b.dataset.stockbitLive); });
   document.querySelectorAll("[data-expand]").forEach(b=> b.onclick=()=>{
     const t = b.dataset.expand;
@@ -25637,7 +26810,7 @@ function attachContentEvents(){
     btn.onclick = ()=>{ const [sid,tk] = btn.dataset.btAddPorto.split("|"); addBacktestItemToPortfolio(sid,tk); };
   });
   document.querySelectorAll("[data-bt-detail]").forEach(btn=>{
-    btn.onclick = ()=>openDetail(btn.dataset.btDetail);
+    btn.onclick = ()=>{ const nav = navTickersFromEl(btn); openDetail(btn.dataset.btDetail, nav ? { nav } : undefined); };
   });
   document.querySelectorAll("[data-backtest-view]").forEach(btn=>{
     btn.onclick = ()=>{ state.backtestView = btn.dataset.backtestView; render(); };
@@ -25846,7 +27019,7 @@ function attachContentEvents(){
     };
   });
   document.querySelectorAll("[data-sp-ticker]").forEach(btn=>{
-    btn.onclick = () => openDetail(btn.dataset.spTicker);
+    btn.onclick = () => { const nav = navTickersFromEl(btn); openDetail(btn.dataset.spTicker, nav ? { nav } : undefined); };
   });
   document.querySelectorAll("[data-sp-viewall]").forEach(btn=>{
     btn.onclick = () => openSmartPickList(btn.dataset.spViewall);
@@ -26081,6 +27254,7 @@ window.addEventListener("popstate", applyRouteFromHash);
 
 function selectMainTab(tab){
   if(!tab) return;
+  if(tab === "rekaptren") tab = "gainloss"; // Rekap Tren sudah digabung ke Rekap Gain/Loss & Tren (bookmark lama tetap jalan)
   state.tab = tab;
   syncHashFromState();
   expandGroupForActiveTab(); // lebarkan grup kategori yang memuat tab ini kalau sedang diciutkan
@@ -28055,8 +29229,8 @@ function psShowDetail(r){
   psBindNav(box);
   // prefetch data harga tetangga (hasil server) supaya pindah berikutnya terasa instan
   { const L = psFiltered(), k = L.indexOf(r); [L[k-1], L[k+1]].forEach(nb=>{ if(nb && nb.fromServer && !nb._m) psPrepServerRow(nb).catch(()=>{ nb._m = true; }); }); }
-  const oc = document.getElementById("psOpenChart"); if(oc) oc.onclick = ()=> loadChart(r.ticker);
-  const od = document.getElementById("psOpenDetail"); if(od) od.onclick = ()=>{ if(typeof openDetail==="function") openDetail(r.ticker); else loadChart(r.ticker); };
+  const oc = document.getElementById("psOpenChart"); if(oc) oc.onclick = ()=>{ const nav = psFiltered().map(x=>x.ticker); loadChart(r.ticker, nav.length > 1 ? { nav } : undefined); };
+  const od = document.getElementById("psOpenDetail"); if(od) od.onclick = ()=>{ const nav = psFiltered().map(x=>x.ticker); if(typeof openDetail==="function") openDetail(r.ticker, nav.length > 1 ? { nav } : undefined); else loadChart(r.ticker); };
 }
 function psChartSvg(bars, r){
   const N = bars.length; if(N<2) return `<div class="empty-box">Data harga tidak tersedia.</div>`;
@@ -28150,4 +29324,794 @@ function psBind(){
     wrap.after(clone);
     bindInternalLink(btn, ()=> selectMainTab("patternscan"));
   }catch(e){ console.warn("[PatternScanner] gagal memasang menu:", e); }
+})();
+
+// ==========================================================================
+// 📈 REKAP GAIN/LOSS PER SAHAM (tab "gainloss")
+//
+// Menjawab: "dalam 1 hari / 1 minggu / 1 bulan / rentang tanggal kustom,
+// saham mana yang gain & loss, berapa besar, KENAPA bisa naik/turun, dan
+// seperti apa pola chart-nya saat naik dan saat turun."
+//
+// SUMBER DATA: sama persis dengan Pattern Scanner — histori OHLCV harian
+// tabel `flows` yang di-cache di PS.cache (+ IndexedDB). Tidak ada tabel /
+// kolom baru. Satu-satunya fetch tambahan: foreign_buy/foreign_sell SATU
+// saham saat panel analisa dibuka (opsional, gagal pun analisa tetap jalan).
+//
+// DEFINISI GAIN/LOSS: perubahan close akhir periode terhadap close hari
+// bursa SEBELUM periode dimulai (sama seperti "% perubahan harian" biasa
+// kalau periodenya 1 hari). Saham yang baru listing di tengah periode
+// memakai harga open hari pertamanya sebagai basis.
+//   1 Hari   : hari bursa terakhir di data
+//   1 Minggu : 7 hari kalender terakhir (± 5 hari bursa)
+//   1 Bulan  : 1 bulan kalender terakhir
+//   Kustom   : Dari–Sampai (basis = close sebelum tanggal "Dari")
+//
+// ANALISA "KENAPA NAIK/TURUN": rule-based dari harga, volume, EMA9/21/50,
+// RSI14, breakout/breakdown 20 hari, gap, candle, pola chart klasik
+// (psScanBars), perbandingan dengan pasar & sektor, dan net asing. Ini
+// FAKTOR TEKNIKAL YANG TERDETEKSI, bukan penyebab pasti — berita, aksi
+// korporasi & laporan keuangan tidak ikut dianalisis (dijelaskan di UI).
+//
+// PATTERN CHART: fase naik terbesar (low→high) dan fase turun terbesar
+// (high→low) di dalam periode, digambar sebagai candlestick + EMA21, plus
+// pola klasik yang terdeteksi SEBELUM fase dimulai (setup) dan di AKHIR fase.
+// ==========================================================================
+// `var` (bukan const) disengaja: applyRouteFromHash() di atas jalan SEBELUM blok ini dieksekusi.
+// Dengan const, reload di URL #/gainloss memicu ReferenceError (TDZ) dan menghentikan sisa script.
+var GL = {
+  period:"1d", from:"", to:"", bars:20, sektor:"all", view:"all", minAbs:0, limit:150,
+  trend:"all", minUp:"", minDown:"", bowOnly:false,
+  loading:false, ready:false, msg:"", progTxt:"", progPct:0, dataStamp:0,
+  sel:null, rowsKey:"", rows:[], skipped:0, market:null, sectors:{},
+  anCache:{}, fgCache:{}, _ld:null, _ldStamp:-1,
+};
+const GL_DAY = 864e5;
+var GL_SCREENER_URL = "https://xang1234.github.io/stock-screener/";
+const glAddDays = (iso,n)=> new Date(new Date(iso+"T00:00:00Z").getTime()+n*GL_DAY).toISOString().slice(0,10);
+function glAddMonths(iso,n){
+  const d = new Date(iso+"T00:00:00Z"), day = d.getUTCDate();
+  d.setUTCMonth(d.getUTCMonth()+n);
+  if(d.getUTCDate()!==day) d.setUTCDate(0); // 31 Mar -> 28/29 Feb, bukan loncat ke Maret
+  return d.toISOString().slice(0,10);
+}
+function glIdxLE(B,d){ let lo=0,hi=B.length-1,r=-1; while(lo<=hi){ const m=(lo+hi)>>1; if(B[m].t<=d){ r=m; lo=m+1; } else hi=m-1; } return r; }
+function glIdxGE(B,d){ let lo=0,hi=B.length-1,r=B.length; while(lo<=hi){ const m=(lo+hi)>>1; if(B[m].t>=d){ r=m; hi=m-1; } else lo=m+1; } return r; }
+const glUniverse = ()=> (state.stocks||[]).map(s=>s && s.ticker).filter(Boolean);
+const glP = v=> "Rp"+fmtNum(Math.round(v));
+const glPct = (v,d=2)=> v==null || !Number.isFinite(v) ? "-" : (v>=0?"+":"")+v.toFixed(d)+"%";
+const glCol = v=> v==null ? "var(--muted)" : v>0 ? "var(--up)" : v<0 ? "var(--down)" : "var(--muted)";
+
+// ---------- indikator ----------
+function glEma(a,n){ const k=2/(n+1), o=new Array(a.length); let e=a[0]; for(let i=0;i<a.length;i++){ e = i ? a[i]*k+e*(1-k) : a[0]; o[i]=e; } return o; }
+function glRsi(c,n=14){
+  const o = new Array(c.length).fill(null); if(c.length<=n) return o;
+  let g=0,l=0; for(let i=1;i<=n;i++){ const d=c[i]-c[i-1]; if(d>=0) g+=d; else l-=d; } g/=n; l/=n;
+  o[n] = l===0 ? 100 : 100-100/(1+g/l);
+  for(let i=n+1;i<c.length;i++){ const d=c[i]-c[i-1]; g=(g*(n-1)+(d>0?d:0))/n; l=(l*(n-1)+(d<0?-d:0))/n; o[i] = l===0 ? 100 : 100-100/(1+g/l); }
+  return o;
+}
+function glCandleName(B,i){
+  const b = B[i]; if(!b) return "";
+  const rng = b.h-b.l; if(!(rng>0)) return "";
+  const body = Math.abs(b.c-b.o), top = Math.max(b.o,b.c), bot = Math.min(b.o,b.c);
+  const upS = b.h-top, loS = bot-b.l, p = i>0 ? B[i-1] : null, bull = b.c>b.o, bear = b.c<b.o;
+  if(p){
+    const pb = Math.abs(p.c-p.o);
+    if(bull && p.c<p.o && b.o<=p.c && b.c>=p.o && body>pb) return "Bullish Engulfing";
+    if(bear && p.c>p.o && b.o>=p.c && b.c<=p.o && body>pb) return "Bearish Engulfing";
+  }
+  if(body<=rng*0.1) return "Doji";
+  if(loS>=body*2 && upS<=body*0.5) return "Hammer";
+  if(upS>=body*2 && loS<=body*0.5) return bull ? "Inverted Hammer" : "Shooting Star";
+  if(body>=rng*0.9 && b.o>0 && body/b.o>=0.02) return bull ? "Bullish Marubozu" : "Bearish Marubozu";
+  return "";
+}
+
+// ---------- jendela periode ----------
+function glLastDate(){
+  if(GL._ldStamp===GL.dataStamp && GL._ld) return GL._ld;
+  const cnt = {}; let first = null;
+  for(const t of glUniverse()){ const B = PS.cache[t]; if(B && B.length){ const d = B[B.length-1].t; cnt[d] = (cnt[d]||0)+1; if(!first || B[0].t<first) first = B[0].t; } }
+  GL._first = first;
+  const ds = Object.keys(cnt).sort(); let r = null;
+  for(let k=ds.length-1;k>=0;k--) if(cnt[ds[k]]>=20){ r = ds[k]; break; } // abaikan tanggal "nyasar" yang cuma dimiliki segelintir saham
+  if(!r && ds.length) r = ds[ds.length-1];
+  GL._ld = r; GL._ldStamp = GL.dataStamp; return r;
+}
+// Kalender hari bursa (dari saham dgn histori terpanjang yg berakhir di tanggal terakhir) -> dipakai periode "N Hari Bursa"
+function glTradingDates(){
+  if(GL._tdStamp===GL.dataStamp && GL._td) return GL._td;
+  const L = glLastDate(); let best = null;
+  for(const t of glUniverse()){ const B = PS.cache[t]; if(B && B.length && B[B.length-1].t===L && (!best || B.length>best.length)) best = B; }
+  GL._td = best ? best.map(b=>b.t) : []; GL._tdStamp = GL.dataStamp; return GL._td;
+}
+function glBarsN(){ const n = parseInt(GL.bars,10); return n>=2 && n<=250 ? n : 20; }
+function glWindow(){
+  const L = glLastDate(); if(!L) return null;
+  let start = L, end = L;
+  if(GL.period==="1w") start = glAddDays(L,-6);
+  else if(GL.period==="2w") start = glAddDays(L,-13);
+  else if(GL.period==="1m") start = glAddDays(glAddMonths(L,-1),1);
+  else if(GL.period==="3m") start = glAddDays(glAddMonths(L,-3),1);
+  else if(GL.period==="bars"){ const D = glTradingDates(), n = glBarsN(); start = D.length ? D[Math.max(0,D.length-n)] : L; }
+  else if(GL.period==="custom"){
+    start = GL.from || glAddDays(L,-29); end = GL.to || L;
+    if(start>end){ const x = start; start = end; end = x; }
+    if(end>L) end = L;
+    if(start>end) start = end;
+  }
+  const label = { "1d":"1 Hari", "1w":"1 Minggu", "2w":"2 Minggu", "1m":"1 Bulan", "3m":"3 Bulan", bars:`${glBarsN()} Hari Bursa`, custom:"Kustom" }[GL.period] || GL.period;
+  return { start, end, last:L, period:GL.period, label, key:`${GL.period}|${start}|${end}|${GL.dataStamp}` };
+}
+
+// ---------- hitung gain/loss per saham ----------
+function glQuickTags(B,i0,i1,pct,volRatio){
+  const tags = [], up = pct>=0, pre = B.slice(Math.max(0,i0-20),i0);
+  if(pre.length>=10){
+    const ph = Math.max(...pre.map(b=>b.h)), pl = Math.min(...pre.map(b=>b.l));
+    let mx=-Infinity, mn=Infinity; for(let k=i0;k<=i1;k++){ if(B[k].c>mx) mx=B[k].c; if(B[k].c<mn) mn=B[k].c; }
+    if(up && mx>ph) tags.push({ t:"Breakout 20H", tone:"up" });
+    if(!up && mn<pl) tags.push({ t:"Breakdown 20L", tone:"down" });
+  }
+  if(volRatio!=null && volRatio>=1.5) tags.push({ t:`Vol ×${volRatio.toFixed(1)}`, tone: up?"up":"down" });
+  let g = 0;
+  for(let k=Math.max(i0,1);k<=i1;k++){ const gp = (B[k].o-B[k-1].c)/B[k-1].c*100; if(up ? gp>g : gp<g) g = gp; }
+  if(up && g>=2) tags.push({ t:`Gap up ${glPct(g,1)}`, tone:"up" });
+  if(!up && g<=-2) tags.push({ t:`Gap down ${glPct(g,1)}`, tone:"down" });
+  return tags.slice(0,3);
+}
+function glRow(t, win){
+  const B = PS.cache[t]; if(!B || B.length<2) return null;
+  const i1 = glIdxLE(B, win.end), i0 = glIdxGE(B, win.start);
+  if(i1<0 || i0>i1 || i0>=B.length) return null;           // tidak ada bar sama sekali di dalam periode
+  if(B[i1].t < glAddDays(win.end,-4)) return null;          // berhenti diperdagangkan / suspend
+  const baseIsOpen = i0===0, base = baseIsOpen ? B[0].o : B[i0-1].c, end = B[i1].c;
+  if(!(base>0) || !(end>0)) return null;
+  let hi=-Infinity, lo=Infinity, up=0, dn=0, vs=0, vn=0, sk=0, skDir="";
+  for(let k=i0;k<=i1;k++){
+    const b = B[k], pc = k>0 ? B[k-1].c : b.o;
+    if(b.h>hi) hi=b.h; if(b.l<lo) lo=b.l;
+    const dir = b.c>pc ? "u" : b.c<pc ? "d" : "f";
+    if(dir==="u") up++; else if(dir==="d") dn++;
+    if(dir===skDir) sk++; else { skDir = dir; sk = 1; } // streak beruntun sampai bar terakhir periode
+    if(b.v>0){ vs+=b.v; vn++; }
+  }
+  let pv=0, pn=0; for(let k=Math.max(0,i0-20);k<i0;k++){ if(B[k].v>0){ pv+=B[k].v; pn++; } }
+  const volRatio = (vn && pn && pv>0) ? (vs/vn)/(pv/pn) : null, pct = (end-base)/base*100;
+  return { ticker:t, i0, i1, base, baseIsOpen, end, pct, delta:end-base, hi, lo,
+    peakPct:(hi-base)/base*100, troughPct:(lo-base)/base*100, up, dn, flats:(i1-i0+1)-up-dn, upPct:up/(i1-i0+1)*100, streak:sk, streakDir:skDir, nBars:i1-i0+1, volRatio,
+    lastDate:B[i1].t, tags:glQuickTags(B,i0,i1,pct,volRatio) };
+}
+// ---------- riwayat batang harian (mini bar chart di tabel) ----------
+// Satu batang per hari bursa di dalam periode terpilih (1 Hari -> minimal 5
+// batang terakhir sebagai konteks; maksimal 30 batang terakhir). Naik = hijau
+// (di atas garis tengah), turun = merah (di bawah garis tengah), tetap = abu.
+// Tinggi batang = |perubahan harian| dengan skala tetap (5% = penuh) supaya
+// antar saham bisa dibandingkan. Batang di luar periode dibuat pudar.
+function glHist(r){
+  const B = PS.cache[r.ticker]; if(!B) return [];
+  const want = Math.min(30, Math.max(5, r.i1 - r.i0 + 1));
+  const from = Math.max(0, r.i1 - want + 1), out = [];
+  for(let k=from;k<=r.i1;k++){
+    const pc = k>0 ? B[k-1].c : B[k].o;
+    out.push({ t:B[k].t, pct: pc>0 ? (B[k].c-pc)/pc*100 : 0, inP: k>=r.i0 });
+  }
+  return out;
+}
+function glHistSvg(r){
+  const h = glHist(r); if(!h.length) return `<span class="gl-note">—</span>`;
+  const bw = h.length>20 ? 4 : 5, gap = 2, HALF = 14, W = h.length*(bw+gap)-gap, H = HALF*2, CAP = 5;
+  let bars = "";
+  h.forEach((d,i)=>{
+    const flat = Math.abs(d.pct) < 0.005, up = d.pct > 0;
+    const ht = flat ? 2 : Math.max(3, Math.min(1, Math.abs(d.pct)/CAP)*HALF);
+    const y = flat ? HALF-1 : up ? HALF-ht : HALF;
+    const col = flat ? "var(--muted)" : up ? "var(--up)" : "var(--down)";
+    bars += `<rect x="${i*(bw+gap)}" y="${y.toFixed(1)}" width="${bw}" height="${ht.toFixed(1)}" rx="1" style="fill:${col}" opacity="${d.inP?1:.4}"><title>${escapeHtml(String(d.t))}: ${glPct(d.pct,2)}</title></rect>`;
+  });
+  return `<svg width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" role="img" aria-label="Riwayat ${h.length} hari ${escapeHtml(r.ticker)}" style="display:block"><line x1="0" x2="${W}" y1="${HALF}" y2="${HALF}" stroke="currentColor" stroke-opacity=".2" stroke-width="1"/>${bars}</svg>`;
+}
+
+function glComputeRows(win){
+  if(GL.rowsKey===win.key) return GL.rows;
+  const rows = [], meta = new Map(); let skipped = 0;
+  (state.stocks||[]).forEach(s=>{ if(s && s.ticker) meta.set(s.ticker, s); });
+  for(const [t,s] of meta){
+    const r = glRow(t, win); if(!r){ skipped++; continue; }
+    r.name = s.name || ""; r.sektor = s.sektor || "";
+    try{ r.bow = !!presetPass("bow", s); }catch(e){ r.bow = false; } // lolos preset Buy on Weakness saat ini
+    rows.push(r);
+  }
+  const ps = rows.map(r=>r.pct).sort((a,b)=>a-b), n = ps.length;
+  const med = n ? (ps[(n-1)>>1]+ps[n>>1])/2 : 0;
+  const sec = {}; rows.forEach(r=>{ const k = r.sektor || "-"; (sec[k] ||= { sum:0, n:0 }); sec[k].sum += r.pct; sec[k].n++; });
+  GL.sectors = {}; Object.keys(sec).forEach(k=>{ GL.sectors[k] = { avg:sec[k].sum/sec[k].n, n:sec[k].n }; });
+  GL.market = { median:med, avg: n ? ps.reduce((s,v)=>s+v,0)/n : 0, n,
+    adv: rows.filter(r=>r.pct>=0.005).length, dec: rows.filter(r=>r.pct<=-0.005).length };
+  GL.market.flat = n - GL.market.adv - GL.market.dec;
+  GL.rows = rows; GL.rowsKey = win.key; GL.skipped = skipped;
+  return rows;
+}
+
+// ---------- analisa "kenapa naik / turun" ----------
+function glReasons(B,row,fg){
+  const { i0, i1, pct } = row, up = pct>=0, R = [];
+  const add = (w,icon,title,detail,tone)=> R.push({ w, icon, title, detail, tone: tone || (up?"up":"down") });
+  const D = iso=> fmtDateID(iso), win = B.slice(i0,i1+1), ib = Math.max(0,i0-1), pre = B.slice(Math.max(0,i0-20),i0);
+  const ph = pre.length>=10 ? Math.max(...pre.map(b=>b.h)) : null, pl = pre.length>=10 ? Math.min(...pre.map(b=>b.l)) : null;
+  const cl = B.map(b=>b.c), e9 = glEma(cl,9), e21 = glEma(cl,21), e50 = glEma(cl,50), rsi = glRsi(cl,14);
+
+  // 1) breakout / breakdown 20 hari
+  if(up && ph!=null){ const mx = Math.max(...win.map(b=>b.c)); if(mx>ph) add(28,"🚀","Breakout resistance 20 hari",`Close tertinggi periode ${glP(mx)} menembus high 20 hari sebelumnya (${glP(ph)}).`); }
+  if(!up && pl!=null){ const mn = Math.min(...win.map(b=>b.c)); if(mn<pl) add(28,"💥","Breakdown support 20 hari",`Close terendah periode ${glP(mn)} menembus low 20 hari sebelumnya (${glP(pl)}).`); }
+
+  // 2) volume
+  let uV=0,uN=0,dV=0,dN=0;
+  for(let k=i0;k<=i1;k++){ const pc = k>0 ? B[k-1].c : B[k].o, v = B[k].v; if(!(v>0)) continue; if(B[k].c>pc){ uV+=v; uN++; } else if(B[k].c<pc){ dV+=v; dN++; } }
+  const vr = row.volRatio;
+  if(vr!=null && vr>=1.5) add(Math.min(30,10+vr*5),"📊","Lonjakan volume",`Rata-rata volume ${vr.toFixed(1)}× lebih besar dari 20 hari sebelum periode → ${up?"minat beli meningkat (indikasi akumulasi)":"tekanan jual meningkat (indikasi distribusi)"}.`);
+  else if(vr!=null && vr<=0.6) add(8,"📉","Volume menyusut",`Rata-rata volume hanya ${vr.toFixed(1)}× dari normal → ${up?"kenaikan kurang didukung transaksi, rawan tidak berlanjut":"penurunan tanpa tekanan jual besar, bisa jadi koreksi wajar"}.`,"warn");
+  if(uN && dN){
+    const r = (uV/uN)/(dV/dN);
+    if(up && r>=1.3) add(14,"⚖️","Volume hari naik > hari turun",`Rata-rata volume di hari naik ${r.toFixed(1)}× hari turun → tekanan beli dominan.`);
+    if(!up && r<=1/1.3) add(14,"⚖️","Volume hari turun > hari naik",`Rata-rata volume di hari turun ${(1/r).toFixed(1)}× hari naik → tekanan jual dominan.`);
+  }
+
+  // 3) gap
+  let gBest = 0, gDate = null;
+  for(let k=Math.max(i0,1);k<=i1;k++){ const gp = (B[k].o-B[k-1].c)/B[k-1].c*100; if(up ? gp>gBest : gp<gBest){ gBest = gp; gDate = B[k].t; } }
+  if((up && gBest>=2) || (!up && gBest<=-2)) add(16+Math.min(10,Math.abs(gBest)),"⬆️","Gap "+(up?"up":"down"),`Gap ${glPct(gBest,1)} pada ${D(gDate)} (open langsung ${up?"di atas":"di bawah"} close sebelumnya) → ada katalis / antrian ${up?"beli":"jual"} saat pembukaan.`);
+
+  // 4) kondisi sebelum periode: RSI, dekat support / resistance
+  const r0 = rsi[ib];
+  if(up && r0!=null && r0<=35) add(22,"🔄","Rebound dari jenuh jual",`RSI14 sebelum periode = ${r0.toFixed(0)} (area jenuh jual) → pantulan teknikal.`);
+  if(!up && r0!=null && r0>=70) add(22,"🔄","Koreksi dari jenuh beli",`RSI14 sebelum periode = ${r0.toFixed(0)} (area jenuh beli) → aksi ambil untung.`);
+  if(up && pl!=null && B[ib].c<=pl*1.04) add(18,"🛟","Memantul dari area support",`Harga awal periode ${glP(B[ib].c)} berada dekat low 20 hari (${glP(pl)}).`);
+  if(!up && ph!=null && B[ib].c>=ph*0.96) add(18,"🧱","Tertolak di area resistance",`Harga awal periode ${glP(B[ib].c)} berada dekat high 20 hari (${glP(ph)}).`);
+
+  // 5) EMA
+  let cross = -1;
+  for(let k=Math.max(i0,21);k<=i1;k++){
+    if(up && e9[k-1]<=e21[k-1] && e9[k]>e21[k]) cross = k;
+    if(!up && e9[k-1]>=e21[k-1] && e9[k]<e21[k]) cross = k;
+  }
+  if(cross>=0) add(22,"✂️",up?"Golden cross EMA9/21":"Death cross EMA9/21",`EMA9 memotong ${up?"ke atas":"ke bawah"} EMA21 pada ${D(B[cross].t)}.`);
+  if(i1>=50){
+    if(up && cl[ib]<e50[ib] && cl[i1]>e50[i1]) add(18,"📈","Menembus EMA50",`Harga naik dari bawah ke atas EMA50 (${glP(e50[i1])}).`);
+    else if(!up && cl[ib]>e50[ib] && cl[i1]<e50[i1]) add(18,"📉","Jatuh di bawah EMA50",`Harga turun dari atas ke bawah EMA50 (${glP(e50[i1])}).`);
+    else if(up && cl[i1]>e21[i1] && e21[i1]>e50[i1]) add(12,"📈","Tren naik terjaga","Harga di atas EMA21 dan EMA50, dengan EMA21 > EMA50.");
+    else if(!up && cl[i1]<e21[i1] && e21[i1]<e50[i1]) add(12,"📉","Tren turun terjaga","Harga di bawah EMA21 dan EMA50, dengan EMA21 < EMA50.");
+  }
+
+  // 6) candle terkuat dalam arah pergerakan
+  let bk = -1, bv = 0;
+  for(let k=i0;k<=i1;k++){
+    const b = B[k]; if(!(b.o>0) || !(b.h>b.l)) continue;
+    const body = (b.c-b.o)/b.o*100, pos = (b.c-b.l)/(b.h-b.l);
+    if(up && body>=4 && pos>=0.7 && body>bv){ bv = body; bk = k; }
+    if(!up && body<=-4 && pos<=0.3 && -body>bv){ bv = -body; bk = k; }
+  }
+  if(bk>=0) add(14,up?"🟢":"🔴",up?"Candle bullish kuat":"Candle bearish kuat",`Candle ${glPct(up?bv:-bv,1)} pada ${D(B[bk].t)}, close di dekat ${up?"high":"low"} harian.`);
+
+  // 7) struktur HH-HL / LH-LL
+  if(win.length>=6){
+    const h = win.length>>1, a = win.slice(0,h), b = win.slice(h);
+    const aH = Math.max(...a.map(x=>x.h)), bH = Math.max(...b.map(x=>x.h)), aL = Math.min(...a.map(x=>x.l)), bL = Math.min(...b.map(x=>x.l));
+    if(up && bH>aH && bL>aL) add(12,"🪜","Higher high – higher low","Paruh akhir periode membuat puncak dan lembah lebih tinggi dari paruh awal.");
+    if(!up && bH<aH && bL<aL) add(12,"🪜","Lower high – lower low","Paruh akhir periode membuat puncak dan lembah lebih rendah dari paruh awal.");
+  }
+
+  // 8) pola chart klasik yang sudah terbentuk SEBELUM periode
+  try{
+    if(ib>=39){
+      const exp = up ? "bullish" : "bearish";
+      const pats = psScanBars(B.slice(0,ib+1),"1D").filter(p=>p.status!=="failed" && p.score>=55 && p.bias===exp).sort((a,b)=>b.score-a.score);
+      if(pats[0]) add(Math.min(35,15+pats[0].score*0.2),"📐",`Pola ${pats[0].label}`,`Pola ${pats[0].label} (skor ${pats[0].score}, ${pats[0].status}) sudah terdeteksi sebelum periode dimulai — bias ${exp}.`);
+    }
+  }catch(err){ console.warn("[GL] psScanBars gagal:", err); }
+
+  // 9) pasar & sektor
+  const mk = GL.market ? GL.market.median : null, sc = GL.sectors[row.sektor || "-"];
+  if(mk!=null){
+    if(up && mk>=1) add(12,"🌐","Ikut arus pasar",`Median seluruh saham juga naik ${glPct(mk,1)} → sebagian kenaikan adalah sentimen pasar.`);
+    if(!up && mk<=-1) add(12,"🌐","Ikut tekanan pasar",`Median seluruh saham juga turun ${glPct(mk,1)} → sebagian penurunan adalah sentimen pasar.`);
+    if(up && pct-mk>=5) add(16,"⭐","Outperform pasar",`Unggul ${(pct-mk).toFixed(1)} poin persentase dari median pasar (${glPct(mk,1)}) → ada penggerak spesifik saham ini.`);
+    if(!up && pct-mk<=-5) add(16,"⚠️","Underperform pasar",`Tertinggal ${(mk-pct).toFixed(1)} poin persentase dari median pasar (${glPct(mk,1)}) → ada tekanan spesifik saham ini.`);
+    if(up && mk<=-1) add(14,"💪","Kuat saat pasar turun",`Naik ${glPct(pct,1)} sementara median pasar ${glPct(mk,1)} → kekuatan relatif.`);
+    if(!up && mk>=1) add(14,"🫥","Lemah saat pasar naik",`Turun ${glPct(pct,1)} sementara median pasar ${glPct(mk,1)} → kelemahan relatif.`);
+  }
+  if(sc && sc.n>=3){
+    if(up && sc.avg>=2) add(13,"🏭","Sektor ikut menguat",`Sektor ${row.sektor} naik rata-rata ${glPct(sc.avg,1)} (${sc.n} saham) → sentimen sektoral.`);
+    if(!up && sc.avg<=-2) add(13,"🏭","Sektor ikut melemah",`Sektor ${row.sektor} turun rata-rata ${glPct(sc.avg,1)} (${sc.n} saham) → sentimen sektoral.`);
+  }
+
+  // 10) net asing (dimuat async, boleh kosong)
+  if(fg){
+    if(up && fg.share>=0.1) add(15,"🌏","Asing net beli",`Net beli asing ≈ ${(fg.share*100).toFixed(0)}% dari total transaksi asing selama ${fg.n} hari data.`);
+    if(!up && fg.share<=-0.1) add(15,"🌏","Asing net jual",`Net jual asing ≈ ${(-fg.share*100).toFixed(0)}% dari total transaksi asing selama ${fg.n} hari data.`);
+  }
+
+  R.sort((a,b)=>b.w-a.w);
+  const out = R.slice(0,7);
+  if(!out.length) out.push({ w:0, icon:"❔", title:"Tidak ada pemicu teknikal yang menonjol", tone:"warn",
+    detail:"Pergerakan tidak disertai breakout/breakdown, lonjakan volume, gap, atau persilangan EMA. Kemungkinan dipicu berita, aksi korporasi, atau pergerakan wajar — cek keterbukaan informasi." });
+  return out;
+}
+
+// fase naik & turun terbesar di dalam periode
+function glLegInfo(B,leg,kind){
+  const up = kind==="up", exp = up ? "bullish" : "bearish", s = leg.i, e = leg.j;
+  const avg = a=>{ const v = a.map(b=>b.v).filter(x=>x>0); return v.length ? v.reduce((p,c)=>p+c,0)/v.length : null; };
+  const va = avg(B.slice(s,e+1)), vp = avg(B.slice(Math.max(0,s-20),s));
+  let setup = null, end = null;
+  try{
+    if(s>=39){ const r = psScanBars(B.slice(0,s+1),"1D").filter(x=>x.status!=="failed" && x.score>=50 && (x.bias===exp || x.bias==="neutral")).sort((x,y)=>y.score-x.score); setup = r[0] || null; }
+    if(e>=39){ const r = psScanBars(B.slice(0,e+1),"1D").filter(x=>x.status!=="failed" && x.score>=50).sort((x,y)=>y.score-x.score); end = r.find(x=>x.bias===(up?"bearish":"bullish")) || r[0] || null; }
+  }catch(err){ console.warn("[GL] pola fase gagal:", err); }
+  return { ...leg, kind, bars:e-s, volRatio:(va && vp) ? va/vp : null, setup, end,
+    candleStart:glCandleName(B,s), candleEnd:glCandleName(B,e), dateS:B[s].t, dateE:B[e].t,
+    priceS: up ? B[s].l : B[s].h, priceE: up ? B[e].h : B[e].l };
+}
+function glLegs(B,row){
+  let a = Math.max(0,row.i0-1), b = row.i1, extended = false;
+  if(row.i1-row.i0+1<5){ a = Math.max(0,row.i1-19); extended = true; } // periode terlalu pendek utk punya "fase" -> pakai 20 bar terakhir
+  let minI=a, maxI=a, bu=null, bd=null;
+  for(let j=a;j<=b;j++){
+    if(j>a){
+      const u = (B[j].h-B[minI].l)/B[minI].l*100; if(u>(bu?bu.pct:0)) bu = { pct:u, i:minI, j };
+      const d = (B[j].l-B[maxI].h)/B[maxI].h*100; if(d<(bd?bd.pct:0)) bd = { pct:d, i:maxI, j };
+    }
+    if(B[j].l<B[minI].l) minI = j;
+    if(B[j].h>B[maxI].h) maxI = j;
+  }
+  if(bu && bu.pct<2) bu = null;
+  if(bd && bd.pct>-2) bd = null;
+  return { up: bu ? glLegInfo(B,bu,"up") : null, down: bd ? glLegInfo(B,bd,"down") : null, extended };
+}
+function glAnalysis(row,win){
+  const B = PS.cache[row.ticker] || [];
+  const fgKey = `${row.ticker}|${B[row.i0] && B[row.i0].t}|${B[row.i1] && B[row.i1].t}`, fg = GL.fgCache[fgKey];
+  const key = `${win.key}|${row.ticker}|${fg===undefined ? "u" : (fg ? "y" : "n")}`;
+  if(GL.anCache[key]) return GL.anCache[key];
+  const out = { reasons:glReasons(B,row,fg||null), legs:glLegs(B,row), fgKey };
+  const ks = Object.keys(GL.anCache); if(ks.length>40) delete GL.anCache[ks[0]];
+  return (GL.anCache[key] = out);
+}
+async function glLoadForeign(row){
+  const B = PS.cache[row.ticker] || [], a = B[row.i0] && B[row.i0].t, b = B[row.i1] && B[row.i1].t;
+  if(!a || !b || !SUPABASE_URL) return;
+  const key = `${row.ticker}|${a}|${b}`; if(GL.fgCache[key]!==undefined) return;
+  GL.fgCache[key] = null;
+  try{
+    const rows = await fetch(`${SUPABASE_URL}/flows?ticker=eq.${encodeURIComponent(row.ticker)}&date=gte.${a}&date=lte.${b}&select=date,foreign_buy,foreign_sell&order=date.asc`,
+      { headers:getSupaHeaders(), cache:"no-store" }).then(r=>r.ok ? r.json() : []);
+    let buy=0, sell=0, n=0;
+    (Array.isArray(rows) ? rows : []).forEach(r=>{ if(r.foreign_buy!=null && r.foreign_sell!=null){ buy += Number(r.foreign_buy)||0; sell += Number(r.foreign_sell)||0; n++; } });
+    GL.fgCache[key] = (n>0 && buy+sell>0) ? { buy, sell, net:buy-sell, share:(buy-sell)/(buy+sell), n } : false;
+  }catch(err){ GL.fgCache[key] = false; }
+  if(GL.sel===row.ticker && state.tab==="gainloss") render();
+}
+
+// ---------- pemuatan data ----------
+async function glEnsure(force){
+  if(GL.loading) return;
+  if(!(state.stocks||[]).length){ GL.msg = "Menunggu data saham dimuat…"; return; }
+  if(typeof PS!=="undefined" && PS.running){ GL.msg = "Pattern Scanner sedang berjalan — coba lagi setelah selesai."; if(state.tab==="gainloss") render(); return; }
+  GL.loading = true; GL.msg = ""; GL.progTxt = "Menyiapkan…"; GL.progPct = 2; PS.abort = false;
+  const prog = (txt,pct)=>{
+    GL.progTxt = txt; GL.progPct = pct;
+    const t = document.getElementById("glProgTxt"); if(t) t.textContent = txt;
+    const b = document.getElementById("glProgBar"); if(b) b.style.width = Math.round(pct)+"%";
+  };
+  try{
+    if(force) PS.refreshedAt = 0; // paksa update inkremental ke data terbaru
+    await psEnsureData(glUniverse(), prog);
+    GL.ready = true; GL.dataStamp++; GL.rowsKey = ""; GL.anCache = {};
+  }catch(err){
+    console.error("[GL] gagal memuat histori:", err);
+    GL.msg = "Gagal memuat histori harga: " + (err && err.message || err);
+  }
+  GL.loading = false;
+  if(state.tab==="gainloss") render();
+}
+
+// ---------- CSS ----------
+function glCss(){
+  if(document.getElementById("glStyle")) return;
+  const s = document.createElement("style"); s.id = "glStyle";
+  s.textContent = `
+  .gl-row{display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end;margin:10px 0}
+  .gl-f{display:flex;flex-direction:column;gap:4px;font-size:11px;color:var(--muted)}
+  .gl-f select,.gl-f input{background:color-mix(in srgb, currentColor 6%, transparent);border:1px solid var(--border);color:var(--text);font-size:12.5px;border-radius:6px;padding:7px 8px;min-width:110px}
+  .gl-seg{display:inline-flex;border:1px solid var(--border);border-radius:8px;overflow:hidden}
+  .gl-seg button{background:transparent;border:0;color:var(--muted);padding:7px 14px;font-size:12.5px;cursor:pointer}
+  .gl-seg button.on{background:color-mix(in srgb, var(--gold) 18%, transparent);color:var(--text);font-weight:600}
+  .gl-prog{height:4px;background:color-mix(in srgb, currentColor 10%, transparent);border-radius:4px;overflow:hidden;margin:8px 0}
+  .gl-prog>div{height:100%;background:var(--gold);transition:width .2s}
+  .gl-note{font-size:11.5px;color:var(--muted);line-height:1.55}
+  .gl-grid2{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:14px}
+  @media(max-width:980px){.gl-grid2{grid-template-columns:1fr}}
+  .gl-box{border:1px solid var(--border);border-radius:10px;padding:12px;min-width:0}
+  .gl-box h4{margin:0 0 8px;font-size:13px}
+  .gl-reason{display:flex;gap:10px;padding:8px 0;border-top:1px solid var(--border)}
+  .gl-reason:first-of-type{border-top:0}
+  .gl-reason .ic{font-size:16px;line-height:1.3}
+  .gl-reason .tt{font-weight:600;font-size:12.5px}
+  .gl-reason .dd{font-size:11.5px;color:var(--muted);line-height:1.5;margin-top:2px}
+  .gl-facts{display:grid;grid-template-columns:auto 1fr;gap:4px 10px;font-size:11.5px;margin-top:8px}
+  .gl-facts dt{color:var(--muted)} .gl-facts dd{margin:0}
+  .gl-tag{display:inline-block;font-size:10px;padding:1px 6px;border-radius:10px;margin:1px 3px 1px 0;border:1px solid var(--border)}
+  .gl-tag.up{color:var(--up)} .gl-tag.down{color:var(--down)}
+  .gl-scroll{max-height:380px;overflow:auto}
+  .gl-bar{display:inline-block;height:6px;border-radius:3px;vertical-align:middle}
+  .gl-tr{cursor:pointer}.gl-tr.sel td{background:color-mix(in srgb, var(--gold) 12%, transparent)}`;
+  document.head.appendChild(s);
+}
+
+// ---------- chart ----------
+function glLegSvg(B,leg){
+  const up = leg.kind==="up", s0 = Math.max(0,leg.i-30), e0 = Math.min(B.length-1,leg.j+6), vis = B.slice(s0,e0+1), n = vis.length;
+  if(n<2) return "";
+  const W=640, H=300, pL=8, pR=62, pT=16, pB=22, vH=44, pH = H-pT-pB-vH;
+  let mn = Math.min(...vis.map(b=>b.l)), mx = Math.max(...vis.map(b=>b.h));
+  const pat = leg.setup;
+  if(pat) (pat.lines||[]).forEach(L=>{ [L.a,L.b].forEach(q=>{ mn = Math.min(mn,q.price); mx = Math.max(mx,q.price); }); });
+  const pad = (mx-mn)*0.06 || 1; mn -= pad; mx += pad;
+  const bw = (W-pL-pR)/n, x = i=> pL+(i-s0+0.5)*bw, y = v=> pT+(mx-v)/(mx-mn)*pH;
+  const vmax = Math.max(1,...vis.map(b=>b.v||0)), tone = up ? "var(--up)" : "var(--down)";
+  let s = `<svg viewBox="0 0 ${W} ${H}" style="width:100%;height:auto;display:block" role="img" aria-label="Chart fase ${up?"naik":"turun"}">`;
+  for(let k=0;k<=4;k++){ const v = mn+(mx-mn)*k/4, yy = y(v); s += `<line x1="${pL}" x2="${W-pR}" y1="${yy}" y2="${yy}" stroke="currentColor" opacity=".08"/><text x="${W-pR+4}" y="${yy+3}" font-size="10" fill="currentColor" opacity=".55">${fmtNum(Math.round(v))}</text>`; }
+  s += `<rect x="${x(leg.i)-bw/2}" y="${pT}" width="${(leg.j-leg.i+1)*bw}" height="${pH}" style="fill:${tone}" opacity=".08"/>`;
+  vis.forEach((b,k)=>{
+    const i = s0+k, bull = b.c>=b.o, col = bull ? "var(--up)" : "var(--down)", cx = x(i);
+    s += `<line x1="${cx}" x2="${cx}" y1="${y(b.h)}" y2="${y(b.l)}" style="stroke:${col}"/>`;
+    s += `<rect x="${cx-bw*0.34}" y="${Math.min(y(b.o),y(b.c))}" width="${Math.max(1,bw*0.68)}" height="${Math.max(1,Math.abs(y(b.o)-y(b.c)))}" style="fill:${col}"/>`;
+    if(b.v) s += `<rect x="${cx-bw*0.34}" y="${H-pB-(b.v/vmax)*vH}" width="${Math.max(1,bw*0.68)}" height="${(b.v/vmax)*vH}" style="fill:${col}" opacity=".35"/>`;
+  });
+  const e21 = glEma(B.map(b=>b.c),21);
+  s += `<polyline fill="none" stroke="var(--gold)" stroke-width="1.2" stroke-dasharray="3 3" opacity=".9" points="${vis.map((b,k)=>`${x(s0+k)},${y(e21[s0+k])}`).join(" ")}"/>`;
+  if(pat){
+    const col = { neck:"#22d3ee", up:"var(--gold)", lo:"var(--gold)", pole:"#a78bfa" };
+    (pat.lines||[]).forEach(L=>{ if(L.b.i<s0) return; s += `<line x1="${x(Math.max(L.a.i,s0))}" x2="${x(L.b.i)}" y1="${y(L.a.price)}" y2="${y(L.b.price)}" style="stroke:${col[L.t]||"var(--gold)"}" stroke-width="1.8" stroke-dasharray="${L.t==="neck"?"6 4":"0"}"/>`; });
+    (pat.pts||[]).forEach(q=>{ if(q.i>=s0) s += `<circle cx="${x(q.i)}" cy="${y(q.price)}" r="3.5" fill="none" stroke="var(--gold)" stroke-width="1.6"/>`; });
+  }
+  const xs = x(leg.i), ys = y(leg.priceS), xe = x(leg.j), ye = y(leg.priceE), anc = xe > W-pR-70 ? "end" : "start";
+  s += `<line x1="${xs}" y1="${ys}" x2="${xe}" y2="${ye}" style="stroke:${tone}" stroke-width="1.4" stroke-dasharray="5 4"/>`;
+  s += `<circle cx="${xs}" cy="${ys}" r="4" style="fill:${tone}"/><circle cx="${xe}" cy="${ye}" r="4" style="fill:${tone}"/>`;
+  s += `<text x="${xe+(anc==="end"?-6:6)}" y="${ye+(up?-8:14)}" font-size="12" font-weight="700" text-anchor="${anc}" style="fill:${tone}">${glPct(leg.pct,1)}</text>`;
+  s += `<text x="${xs}" y="${ys+(up?14:-8)}" font-size="10" text-anchor="middle" fill="currentColor" opacity=".7">mulai</text>`;
+  [0,Math.floor(n/2),n-1].forEach(k=>{ const b = vis[k]; if(b) s += `<text x="${x(s0+k)}" y="${H-6}" font-size="10" fill="currentColor" opacity=".55" text-anchor="${k===0?"start":k===n-1?"end":"middle"}">${escapeHtml(b.t)}</text>`; });
+  return s+"</svg>";
+}
+function glDailySvg(B,i0,i1){
+  const rows = []; for(let k=i0;k<=i1;k++){ const pc = k>0 ? B[k-1].c : B[k].o; rows.push({ t:B[k].t, p:(B[k].c-pc)/pc*100 }); }
+  const n = rows.length; if(n<2) return "";
+  const W=640, H=130, pL=40, pR=6, pT=8, pB=18, m = Math.max(1,...rows.map(r=>Math.abs(r.p)));
+  const mid = pT+(H-pT-pB)/2, sc = (H-pT-pB)/2/m, bw = (W-pL-pR)/n;
+  let s = `<svg viewBox="0 0 ${W} ${H}" style="width:100%;height:auto;display:block" role="img" aria-label="Gain/Loss harian">`;
+  s += `<line x1="${pL}" x2="${W-pR}" y1="${mid}" y2="${mid}" stroke="currentColor" opacity=".25"/>`;
+  s += `<text x="${pL-4}" y="${pT+8}" font-size="9" text-anchor="end" fill="currentColor" opacity=".6">+${m.toFixed(1)}%</text><text x="${pL-4}" y="${H-pB}" font-size="9" text-anchor="end" fill="currentColor" opacity=".6">-${m.toFixed(1)}%</text>`;
+  rows.forEach((r,k)=>{
+    const h = Math.max(1,Math.abs(r.p)*sc), yy = r.p>=0 ? mid-h : mid;
+    s += `<rect x="${pL+k*bw+bw*0.15}" y="${yy}" width="${Math.max(1,bw*0.7)}" height="${h}" style="fill:${r.p>=0?"var(--up)":"var(--down)"}"><title>${escapeHtml(r.t)}: ${glPct(r.p)}</title></rect>`;
+  });
+  s += `<text x="${pL}" y="${H-4}" font-size="9" fill="currentColor" opacity=".6">${escapeHtml(rows[0].t)}</text><text x="${W-pR}" y="${H-4}" font-size="9" text-anchor="end" fill="currentColor" opacity=".6">${escapeHtml(rows[n-1].t)}</text>`;
+  return s+"</svg>";
+}
+
+// ---------- render ----------
+function glPatPill(p){
+  if(!p) return `<span class="gl-note">tidak ada pola klasik yang terdeteksi</span>`;
+  const tone = p.bias==="bullish" ? "up" : p.bias==="bearish" ? "down" : "muted";
+  return `${pillHtml(escapeHtml(p.label), tone)} <span class="gl-note">skor ${p.score} · ${escapeHtml(p.status)}</span>`;
+}
+function glLegHtml(B,leg,kind){
+  const up = kind==="up", head = up ? "📈 Pattern saat NAIK" : "📉 Pattern saat TURUN";
+  if(!leg) return `<div class="gl-box"><h4>${head}</h4><div class="empty-box">Tidak ada fase ${up?"kenaikan":"penurunan"} signifikan (≥ 2%) pada periode ini.</div></div>`;
+  return `<div class="gl-box"><h4>${head} <span style="font-weight:400;color:${glCol(leg.pct)}">${glPct(leg.pct,1)}</span></h4>
+    ${glLegSvg(B,leg)}
+    <dl class="gl-facts">
+      <dt>Fase</dt><dd>${fmtDateID(leg.dateS)} → ${fmtDateID(leg.dateE)} (${leg.bars} hari bursa)</dd>
+      <dt>Harga</dt><dd>${glP(leg.priceS)} → ${glP(leg.priceE)}</dd>
+      <dt>Volume fase</dt><dd>${leg.volRatio!=null ? leg.volRatio.toFixed(1)+"× rata-rata 20 hari sebelumnya" : "-"}</dd>
+      <dt>Candle awal</dt><dd>${escapeHtml(leg.candleStart || "—")}</dd>
+      <dt>Candle akhir</dt><dd>${escapeHtml(leg.candleEnd || "—")}</dd>
+      <dt>Pola sebelum fase</dt><dd>${glPatPill(leg.setup)}</dd>
+      <dt>Pola di akhir fase</dt><dd>${glPatPill(leg.end)}</dd>
+    </dl></div>`;
+}
+function glDetailHtml(row,win){
+  const B = PS.cache[row.ticker] || [], an = glAnalysis(row,win), up = row.pct>=0, top = an.reasons.filter(r=>r.w>0);
+  const support = top.slice(0,3).reduce((s,r)=>s+r.w,0), supLbl = support>=60 ? "Kuat" : support>=35 ? "Sedang" : "Lemah";
+  const summary = `${escapeHtml(row.ticker)} ${up?"naik":"turun"} <b style="color:${glCol(row.pct)}">${glPct(row.pct)}</b> (${glP(row.base)} → ${glP(row.end)}) dalam periode ${escapeHtml(win.label)}.` +
+    (top.length ? ` Faktor teknikal dominan: ${top.slice(0,2).map(r=>escapeHtml(r.title.toLowerCase())).join(" dan ")}.` : "");
+  // statistik harian
+  const days = []; for(let k=row.i0;k<=row.i1;k++){ const pc = k>0 ? B[k-1].c : B[k].o; days.push({ k, b:B[k], pc, p:(B[k].c-pc)/pc*100 }); }
+  const ups = days.filter(d=>d.p>0), dns = days.filter(d=>d.p<0), mean = a=> a.length ? a.reduce((s,d)=>s+d.p,0)/a.length : null;
+  const bestD = days.reduce((m,d)=> !m || d.p>m.p ? d : m, null), worstD = days.reduce((m,d)=> !m || d.p<m.p ? d : m, null);
+  const card = (l,v,sub,c)=> `<div class="summary-card"><div class="summary-lbl">${l}</div><div class="summary-val" style="${c?`color:${c};`:""}font-size:16px;">${v}</div>${sub?`<div class="gl-note">${sub}</div>`:""}</div>`;
+  const dayRows = days.slice().reverse().slice(0,260).map(d=>{
+    const pre = B.slice(Math.max(0,d.k-20),d.k).map(x=>x.v).filter(v=>v>0), av = pre.length ? pre.reduce((s,v)=>s+v,0)/pre.length : null;
+    const vx = (av && d.b.v>0) ? d.b.v/av : null;
+    return `<tr><td>${fmtDateID(d.b.t)}</td><td class="mono">${fmtNum(Math.round(d.b.o))}</td><td class="mono">${fmtNum(Math.round(d.b.h))}</td><td class="mono">${fmtNum(Math.round(d.b.l))}</td><td class="mono">${fmtNum(Math.round(d.b.c))}</td>
+      <td class="mono" style="font-weight:700;color:${glCol(d.p)}">${glPct(d.p)}</td><td class="mono" style="color:${glCol(d.p)}">${(d.b.c-d.pc>=0?"+":"")+fmtNum(Math.round(d.b.c-d.pc))}</td>
+      <td class="mono">${d.b.v>0 ? fmtNum(Math.round(d.b.v)) : "-"}</td><td class="mono">${vx!=null ? vx.toFixed(1)+"×" : "-"}</td><td>${escapeHtml(glCandleName(B,d.k) || "")}</td></tr>`;
+  }).join("");
+  const reasonsHtml = an.reasons.map(r=>{
+    const c = r.tone==="up" ? "var(--up)" : r.tone==="down" ? "var(--down)" : "var(--gold)";
+    const lvl = r.w>=25 ? "Kuat" : r.w>=15 ? "Sedang" : r.w>0 ? "Lemah" : "";
+    return `<div class="gl-reason"><div class="ic">${r.icon}</div><div><div class="tt" style="color:${c}">${escapeHtml(r.title)} ${lvl?`<span class="gl-tag">${lvl}</span>`:""}</div><div class="dd">${escapeHtml(r.detail)}</div></div></div>`;
+  }).join("");
+  return `
+  <div class="panel" id="glDetail" style="flex-direction:column;align-items:stretch;margin-bottom:16px;">
+    <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;">
+      <div class="filter-section-title" style="margin:0;">${up?"📈":"📉"} ${escapeHtml(row.ticker)} <span style="font-weight:400;color:var(--muted);font-size:12px;">${escapeHtml(row.name||"")}${row.sektor?" · "+escapeHtml(row.sektor):""}</span></div>
+      <div style="display:flex;gap:6px;flex-wrap:wrap;">
+        <button type="button" class="btn btn-outline" data-chart="${escapeHtml(row.ticker)}" style="font-size:11px;padding:4px 10px;">📊 Chart Lengkap</button>
+        <button type="button" class="btn btn-outline" data-detail="${escapeHtml(row.ticker)}" style="font-size:11px;padding:4px 10px;">Detail Emiten</button>
+        <button type="button" class="btn btn-outline" id="glCloseBtn" style="font-size:11px;padding:4px 10px;">✕ Tutup</button>
+      </div>
+    </div>
+    <div class="summary-grid" style="margin:12px 0;">
+      ${card("Gain / Loss", glPct(row.pct), `${(row.delta>=0?"+":"")+fmtNum(Math.round(row.delta))} per lembar`, glCol(row.pct))}
+      ${card("Harga", `${fmtNum(Math.round(row.base))} → ${fmtNum(Math.round(row.end))}`, row.baseIsOpen ? "basis: open hari pertama (baru listing)" : "basis: close sebelum periode")}
+      ${card("High / Low periode", `${fmtNum(Math.round(row.hi))} / ${fmtNum(Math.round(row.lo))}`, `${glPct(row.peakPct,1)} / ${glPct(row.troughPct,1)} dari basis`)}
+      ${card("Hari naik / turun", `${ups.length} / ${dns.length}`, `rata-rata ${glPct(mean(ups),1)} / ${glPct(mean(dns),1)}`)}
+      ${card("Hari terbaik", bestD ? glPct(bestD.p) : "-", bestD ? fmtDateID(bestD.b.t) : "", "var(--up)")}
+      ${card("Hari terburuk", worstD ? glPct(worstD.p) : "-", worstD ? fmtDateID(worstD.b.t) : "", "var(--down)")}
+    </div>
+
+    <div class="gl-box" style="margin-bottom:14px;">
+      <h4>🔎 Kenapa ${up?"naik":"turun"}? <span class="gl-tag">Dukungan sinyal teknikal: ${supLbl}</span></h4>
+      <div style="font-size:12.5px;line-height:1.6;margin-bottom:6px;">${summary}</div>
+      ${reasonsHtml}
+      <div class="gl-note" style="margin-top:8px;">⚠️ Analisa ini rule-based dari harga, volume, indikator, dan pola chart — daftar <b>faktor teknikal yang terdeteksi</b>, bukan penyebab pasti. Berita, aksi korporasi, dan laporan keuangan tidak ikut dianalisis. Bukan rekomendasi investasi.</div>
+    </div>
+
+    <div class="filter-section-title" style="margin:4px 0 6px;">📐 Pattern Chart Fase Naik &amp; Turun</div>
+    ${an.legs.extended ? `<div class="gl-note" style="margin-bottom:6px;">Periode terlalu pendek (&lt; 5 hari bursa) untuk punya fase naik/turun sendiri, jadi fase dicari di 20 hari bursa terakhir.</div>` : ""}
+    <div class="gl-grid2">${glLegHtml(B,an.legs.up,"up")}${glLegHtml(B,an.legs.down,"down")}</div>
+    <div class="gl-note" style="margin:6px 0 14px;">Area berwarna = fase naik/turun terbesar di periode (low→high / high→low). Garis putus emas = EMA21. Garis &amp; titik emas = pola klasik yang terdeteksi <b>sebelum</b> fase dimulai (setup). Skor pola = kecocokan bentuk, bukan probabilitas.</div>
+
+    <div class="filter-section-title" style="margin:4px 0 6px;">🗓 Histori Gain/Loss Harian (${days.length} hari bursa)</div>
+    ${glDailySvg(B,row.i0,row.i1)}
+    <div class="table-wrap gl-scroll" style="margin-top:8px;">
+      <table class="data-table"><thead><tr><th>Tanggal</th><th>Open</th><th>High</th><th>Low</th><th>Close</th><th>Gain/Loss</th><th>Δ Rp</th><th>Volume</th><th>Vol ×</th><th>Candle</th></tr></thead>
+      <tbody>${dayRows}</tbody></table>
+    </div>
+  </div>`;
+}
+
+function renderGainLoss(){
+  glCss();
+  const head = `<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:6px;">
+    <div class="filter-section-title" style="margin:0;">📈 Rekap Gain/Loss &amp; Tren per Saham</div>
+    <a class="btn btn-outline" href="${GL_SCREENER_URL}" target="_blank" rel="noopener noreferrer" title="Buka Screener Saham Global di tab baru" style="font-size:11.5px;padding:5px 12px;">🌐 Screener Saham Global</a>
+  </div>`;
+  if(!GL.ready){
+    if(!GL.loading && (state.stocks||[]).length) setTimeout(()=>glEnsure(), 0);
+    return `<div class="panel" style="flex-direction:column;align-items:stretch;">${head}
+      <div class="gl-note">Menarik histori harga harian semua saham (disimpan di cache browser, jadi pemuatan berikutnya jauh lebih cepat — cache yang sama dipakai Pattern Scanner).</div>
+      <div class="gl-prog"><div id="glProgBar" style="width:${Math.round(GL.progPct||0)}%"></div></div>
+      <div class="gl-note" id="glProgTxt">${escapeHtml(GL.msg || GL.progTxt || ((state.stocks||[]).length ? "Menyiapkan…" : "Menunggu data saham dimuat…"))}</div>
+      ${GL.msg && !GL.loading ? `<div style="margin-top:8px;"><button type="button" class="btn btn-outline" id="glReloadBtn">🔄 Coba Lagi</button></div>` : ""}
+    </div>`;
+  }
+  const win = glWindow();
+  if(!win) return `<div class="panel" style="flex-direction:column;align-items:stretch;">${head}<div class="empty-box">Belum ada histori harga di database.</div></div>`;
+  const all = glComputeRows(win);
+
+  // filter
+  let list = all;
+  if(GL.view==="gain") list = list.filter(r=>r.pct>0);
+  else if(GL.view==="loss") list = list.filter(r=>r.pct<0);
+  if(GL.sektor!=="all") list = list.filter(r=>r.sektor===GL.sektor);
+  if(GL.minAbs>0) list = list.filter(r=>Math.abs(r.pct)>=GL.minAbs);
+  if(GL.trend==="up") list = list.filter(r=>r.upPct>=60);
+  else if(GL.trend==="down") list = list.filter(r=>r.upPct<=40);
+  else if(GL.trend==="mixed") list = list.filter(r=>r.upPct>40 && r.upPct<60);
+  const muUp = parseInt(GL.minUp,10), muDn = parseInt(GL.minDown,10);
+  if(!isNaN(muUp)) list = list.filter(r=>r.up>=muUp);
+  if(!isNaN(muDn)) list = list.filter(r=>r.dn>=muDn);
+  if(GL.bowOnly) list = list.filter(r=>r.bow);
+  list = tableFilterRows("glTable", list, r=>[r.ticker, r.name, r.sektor]);
+  const ui = getTableUI("glTable");
+  if(ui.sortCol){
+    list = tableSortRows("glTable", list, { ticker:r=>r.ticker, name:r=>r.name, sektor:r=>r.sektor, base:r=>r.base, end:r=>r.end, pct:r=>r.pct, delta:r=>r.delta, peak:r=>r.peakPct, trough:r=>r.troughPct, vol:r=>r.volRatio,
+      ups:r=>r.up, dns:r=>r.dn, flat:r=>r.flats, upPct:r=>r.upPct, bow:r=>r.bow?1:0,
+      streak:r=> r.streakDir==="u" ? r.streak : r.streakDir==="d" ? -r.streak : 0 });
+  } else {
+    list = [...list].sort((a,b)=> GL.view==="loss" ? a.pct-b.pct : b.pct-a.pct);
+  }
+  registerTableExport("glTable", ()=>list, [
+    { label:"Ticker", get:"ticker" }, { label:"Nama", get:r=>r.name||"-" }, { label:"Sektor", get:r=>r.sektor||"-" },
+    { label:"Harga Awal", get:r=>Math.round(r.base) }, { label:"Harga Akhir", get:r=>Math.round(r.end) },
+    { label:"Gain/Loss (%)", get:r=>Math.round(r.pct*100)/100 }, { label:"Gain/Loss (Rp)", get:r=>Math.round(r.delta) },
+    { label:"Hari Naik", get:r=>r.up }, { label:"Hari Turun", get:r=>r.dn }, { label:"Hari Datar", get:r=>r.flats },
+    { label:"% Hari Naik", get:r=>Math.round(r.upPct) },
+    { label:"Streak", get:r=> r.streakDir==="u" ? "+"+r.streak : r.streakDir==="d" ? "-"+r.streak : "-" },
+    { label:"Lolos BoW", get:r=>r.bow ? "Ya" : "" },
+    { label:"High Periode (%)", get:r=>Math.round(r.peakPct*100)/100 }, { label:"Low Periode (%)", get:r=>Math.round(r.troughPct*100)/100 },
+    { label:"Volume ×", get:r=>r.volRatio==null ? "-" : Math.round(r.volRatio*100)/100 }, { label:"Sinyal", get:r=>r.tags.map(t=>t.t).join("; ")||"-" },
+    { label:"Riwayat harian (%)", get:r=>glHist(r).map(d=>(Math.round(d.pct*100)/100)).join(", ")||"-" },
+  ], `Rekap_GainLoss_${win.label.replace(/\s+/g,"")}`);
+
+  const m = GL.market || { median:0, avg:0, adv:0, dec:0, flat:0, n:0 };
+  const sektors = [...new Set(all.map(r=>r.sektor).filter(Boolean))].sort((a,b)=>a.localeCompare(b,"id"));
+  const topG = [...all].sort((a,b)=>b.pct-a.pct).slice(0,6).filter(r=>r.pct>0), topL = [...all].sort((a,b)=>a.pct-b.pct).slice(0,6).filter(r=>r.pct<0);
+  const avgUp = all.length ? all.reduce((a,r)=>a+r.upPct,0)/all.length : 0;
+  const consUp = all.filter(r=>r.upPct>=70).length, consDn = all.filter(r=>r.upPct<=30).length;
+  const noDown = all.filter(r=>r.dn===0).length, bowN = all.filter(r=>r.bow).length;
+  const skHtml = r=> r.streakDir==="u" ? `<span style="color:var(--up)">+${r.streak}</span>` : r.streakDir==="d" ? `<span style="color:var(--down)">−${r.streak}</span>` : "-";
+  const chip = (r,tone)=> `<button type="button" class="pill pill-${tone}" data-gl-open="${escapeHtml(r.ticker)}" title="Klik untuk analisa">${escapeHtml(r.ticker)} <b class="mono">${glPct(r.pct,1)}</b></button>`;
+  const shown = list.slice(0,GL.limit);
+  const tagHtml = r=> r.tags.map(t=>`<span class="gl-tag ${t.tone}">${escapeHtml(t.t)}</span>`).join("") || `<span class="gl-note">—</span>`;
+  const rows = shown.map(r=>`
+    <tr class="gl-tr ${GL.sel===r.ticker?"sel":""}" data-gl-open="${escapeHtml(r.ticker)}">
+      <td class="ticker-cell"><button type="button" class="ticker-link" data-gl-open="${escapeHtml(r.ticker)}" title="Analisa ${escapeHtml(r.ticker)}">${escapeHtml(r.ticker)}</button></td>
+      <td style="white-space:normal;max-width:190px;font-family:'Sora',sans-serif;">${escapeHtml(r.name||"-")}</td>
+      <td>${escapeHtml(r.sektor||"-")}</td>
+      <td class="mono">${fmtNum(Math.round(r.base))}</td><td class="mono">${fmtNum(Math.round(r.end))}</td>
+      <td class="mono" style="font-weight:700;color:${glCol(r.pct)}">${glPct(r.pct)}</td>
+      <td class="mono" style="color:${glCol(r.pct)}">${(r.delta>=0?"+":"")+fmtNum(Math.round(r.delta))}</td>
+      <td class="mono" style="color:var(--up);font-weight:600">${r.up}</td>
+      <td class="mono" style="color:var(--down);font-weight:600">${r.dn}</td>
+      <td class="mono" style="color:var(--muted)">${r.flats}</td>
+      <td class="mono" style="white-space:nowrap">${r.upPct.toFixed(0)}% <span class="gl-bar" style="width:${Math.round(r.upPct*0.5)}px;background:var(--up)"></span><span class="gl-bar" style="width:${Math.round((100-r.upPct)*0.5)}px;background:var(--down);opacity:.55"></span></td>
+      <td class="mono">${skHtml(r)}</td>
+      <td style="padding:4px 8px;">${glHistSvg(r)}</td>
+      <td class="mono" style="color:var(--up)">${glPct(r.peakPct,1)}</td><td class="mono" style="color:var(--down)">${glPct(r.troughPct,1)}</td>
+      <td class="mono">${r.volRatio!=null ? r.volRatio.toFixed(1)+"×" : "-"}</td>
+      <td>${r.bow ? '<span class="pill pill-teal" title="Lolos preset Buy on Weakness">✓</span>' : ""}</td>
+      <td style="white-space:normal;max-width:210px;">${tagHtml(r)}</td>
+      <td style="white-space:nowrap;"><button type="button" class="btn btn-outline" data-gl-open="${escapeHtml(r.ticker)}" style="font-size:11px;padding:4px 10px;">🔎 Analisa</button>
+        <button type="button" class="btn btn-outline" data-detail="${escapeHtml(r.ticker)}" style="font-size:11px;padding:4px 10px;">Detail</button></td>
+    </tr>`).join("");
+
+  const detail = GL.sel ? (()=>{
+    const row = all.find(r=>r.ticker===GL.sel);
+    if(row) return glDetailHtml(row, win);
+    return `<div class="panel" id="glDetail" style="flex-direction:column;align-items:stretch;margin-bottom:16px;"><div class="empty-box">${escapeHtml(GL.sel)} tidak punya data perdagangan pada periode ini.</div><div><button type="button" class="btn btn-outline" id="glCloseBtn">✕ Tutup</button></div></div>`;
+  })() : "";
+
+  return `
+    <div class="panel" style="flex-direction:column;align-items:stretch;margin-bottom:16px;">
+      ${head}
+      <div class="gl-note">Gain/Loss = perubahan close akhir periode terhadap close hari bursa <b>sebelum</b> periode dimulai. Klik saham untuk analisa penyebab naik/turun dan pattern chart fase naik &amp; turunnya.</div>
+      <div class="gl-row">
+        <div class="gl-seg" id="glPeriod">
+          ${[["1d","1 Hari"],["1w","1 Minggu"],["2w","2 Minggu"],["1m","1 Bulan"],["3m","3 Bulan"],["bars","Hari Bursa"],["custom","Kustom"]].map(([k,l])=>`<button type="button" data-p="${k}" class="${GL.period===k?"on":""}">${l}</button>`).join("")}
+        </div>
+        ${GL.period==="bars" ? `
+          <label class="gl-f">Jumlah hari bursa<input type="number" id="glBars" min="2" max="250" value="${glBarsN()}" style="min-width:90px;max-width:110px;"></label>` : ""}
+        ${GL.period==="custom" ? `
+          <label class="gl-f">Dari<input type="date" id="glFrom" value="${win.start}" max="${win.last}"></label>
+          <label class="gl-f">Sampai<input type="date" id="glTo" value="${win.end}" max="${win.last}"></label>` : ""}
+        <label class="gl-f">Tampilkan<select id="glView">
+          <option value="all" ${GL.view==="all"?"selected":""}>Gain &amp; Loss</option>
+          <option value="gain" ${GL.view==="gain"?"selected":""}>Gain saja</option>
+          <option value="loss" ${GL.view==="loss"?"selected":""}>Loss saja</option></select></label>
+        <label class="gl-f">Sektor<select id="glSektor"><option value="all">Semua sektor</option>
+          ${sektors.map(s=>`<option value="${escapeHtml(s)}" ${GL.sektor===s?"selected":""}>${escapeHtml(s)}</option>`).join("")}</select></label>
+        <label class="gl-f">Min. |perubahan| %<input type="number" id="glMin" min="0" step="0.5" value="${GL.minAbs||0}" style="min-width:90px;max-width:110px;"></label>
+        <label class="gl-f">Tren<select id="glTrend">${[["all","Semua"],["up","Dominan naik (≥60%)"],["mixed","Campuran"],["down","Dominan turun (≤40%)"]].map(([k,t])=>`<option value="${k}" ${GL.trend===k?"selected":""}>${t}</option>`).join("")}</select></label>
+        <label class="gl-f">Naik ≥ (hari)<input type="number" id="glMinUp" min="0" value="${escapeHtml(String(GL.minUp))}" style="min-width:80px;max-width:90px;"></label>
+        <label class="gl-f">Turun ≥ (hari)<input type="number" id="glMinDown" min="0" value="${escapeHtml(String(GL.minDown))}" style="min-width:80px;max-width:90px;"></label>
+        <label class="gl-f" style="flex-direction:row;align-items:center;gap:6px;"><input type="checkbox" id="glBow" ${GL.bowOnly?"checked":""} style="min-width:0"> Hanya lolos Buy on Weakness</label>
+        <button type="button" class="btn btn-outline" id="glReloadBtn" ${GL.loading?"disabled":""} title="Tarik data harga terbaru dari database">${GL.loading?"Memuat…":"🔄 Perbarui Data"}</button>
+      </div>
+      <div class="gl-note" style="margin-bottom:10px;">Periode <b>${fmtDateID(win.start)}</b> s/d <b>${fmtDateID(win.end)}</b> · histori tersedia: ${GL._first?fmtDateID(GL._first):"-"} s/d ${fmtDateID(win.last)}${GL.msg?` · <span style="color:var(--down)">${escapeHtml(GL.msg)}</span>`:""}</div>
+      ${GL.loading ? `<div class="gl-prog"><div id="glProgBar" style="width:${Math.round(GL.progPct||0)}%"></div></div><div class="gl-note" id="glProgTxt">${escapeHtml(GL.progTxt||"")}</div>` : ""}
+      <div class="summary-grid" style="margin-bottom:10px;">
+        <div class="summary-card"><div class="summary-lbl">Saham Dihitung</div><div class="summary-val">${m.n}</div><div class="gl-note">${GL.skipped} tanpa transaksi di periode</div></div>
+        <div class="summary-card tone-up"><div class="summary-lbl">Gain (naik)</div><div class="summary-val">${m.adv}</div></div>
+        <div class="summary-card tone-down"><div class="summary-lbl">Loss (turun)</div><div class="summary-val">${m.dec}</div></div>
+        <div class="summary-card"><div class="summary-lbl">Tidak berubah</div><div class="summary-val">${m.flat}</div></div>
+        <div class="summary-card"><div class="summary-lbl">Median / Rata-rata</div><div class="summary-val" style="font-size:16px;color:${glCol(m.median)}">${glPct(m.median,2)} / ${glPct(m.avg,2)}</div></div>
+        <div class="summary-card"><div class="summary-lbl">Rata-rata % hari naik</div><div class="summary-val">${avgUp.toFixed(0)}%</div></div>
+        <div class="summary-card tone-up"><div class="summary-lbl">Naik konsisten</div><div class="summary-val">${consUp}</div><div class="gl-note">≥70% hari naik</div></div>
+        <div class="summary-card tone-down"><div class="summary-lbl">Turun konsisten</div><div class="summary-val">${consDn}</div><div class="gl-note">≤30% hari naik</div></div>
+        <div class="summary-card"><div class="summary-lbl">Tanpa hari turun</div><div class="summary-val">${noDown}</div></div>
+        <div class="summary-card"><div class="summary-lbl">Lolos Buy on Weakness</div><div class="summary-val">${bowN}</div></div>
+      </div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:6px;"><span class="gl-note">🏆 Top Gain:</span>${topG.map(r=>chip(r,"up")).join("") || '<span class="gl-note">—</span>'}</div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;"><span class="gl-note">🔻 Top Loss:</span>${topL.map(r=>chip(r,"down")).join("") || '<span class="gl-note">—</span>'}</div>
+    </div>
+
+    ${detail}
+
+    <div class="panel" style="flex-direction:column;align-items:stretch;">
+      <div class="filter-section-title" style="margin-bottom:10px;">📋 Tabel Gain/Loss — ${escapeHtml(win.label)}</div>
+      ${tableFilterBoxHtml("glTable","Cari ticker, nama, atau sektor...")}
+      <div class="gl-note" style="margin-bottom:8px;">Menampilkan <b class="mono">${shown.length}</b> dari <b class="mono">${list.length}</b> saham. Klik header kolom untuk mengurutkan. Kolom <b>Riwayat</b>: satu batang per hari bursa — <span style="color:var(--up)">hijau naik</span>, <span style="color:var(--down)">merah turun</span> (periode 1 Hari menampilkan 5 hari terakhir; batang pudar = sebelum periode).<br>
+        <b>▲ Naik / ▼ Turun / • Datar</b> = jumlah hari bursa dengan close lebih tinggi / rendah / sama dengan close hari bursa sebelumnya. <b>% Hari Naik</b> = naik ÷ jumlah hari di periode (baca bersama Gain/Loss: banyak hari naik kecil-kecil bisa kalah oleh satu hari turun besar). <b>Streak</b> = beruntun naik (+) / turun (−) sampai hari terakhir periode. <b>BoW ✓</b> = saat ini juga lolos preset 🛒 Buy on Weakness.</div>
+      <div class="table-wrap">
+        <table class="data-table">
+          <thead><tr>
+            ${tableSortTh("glTable","Ticker","ticker")}${tableSortTh("glTable","Nama","name")}${tableSortTh("glTable","Sektor","sektor")}
+            ${tableSortTh("glTable","Harga Awal","base")}${tableSortTh("glTable","Harga Akhir","end")}${tableSortTh("glTable","Gain/Loss","pct")}${tableSortTh("glTable","Δ Rp","delta")}${tableSortTh("glTable","▲ Naik","ups")}${tableSortTh("glTable","▼ Turun","dns")}${tableSortTh("glTable","• Datar","flat")}${tableSortTh("glTable","% Hari Naik","upPct")}${tableSortTh("glTable","Streak","streak")}<th title="Perubahan harian per hari bursa: hijau = naik, merah = turun">Riwayat</th>
+            ${tableSortTh("glTable","High Periode","peak")}${tableSortTh("glTable","Low Periode","trough")}${tableSortTh("glTable","Vol ×","vol")}${tableSortTh("glTable","BoW","bow")}
+            <th>Sinyal</th><th></th>
+          </tr></thead>
+          <tbody>${rows || `<tr><td colspan="19"><div class="empty-box">${all.length ? "Tidak ada saham yang cocok dengan filter." : `Tidak ada data perdagangan di periode ini. Histori yang tersedia: ${GL._first?fmtDateID(GL._first):"-"} s/d ${fmtDateID(win.last)}.`}</div></td></tr>`}</tbody>
+        </table>
+      </div>
+      ${list.length>shown.length ? `<div style="margin-top:10px;"><button type="button" class="btn btn-outline" id="glMoreBtn">Tampilkan ${Math.min(150,list.length-shown.length)} lagi (sisa ${list.length-shown.length})</button></div>` : ""}
+    </div>`;
+}
+
+function glOpen(t){
+  GL.sel = t; render();
+  const el = document.getElementById("glDetail"); if(el) el.scrollIntoView({ block:"start", behavior:"smooth" });
+  const row = GL.rows.find(r=>r.ticker===t); if(row) glLoadForeign(row);
+}
+function glBind(){
+  const $ = id=> document.getElementById(id);
+  $("glPeriod")?.querySelectorAll("button[data-p]").forEach(b=> b.onclick = ()=>{
+    GL.period = b.dataset.p; GL.sel = null;
+    if(GL.period==="custom" && !GL.from){ const L = glLastDate(); if(L){ GL.from = glAddDays(L,-29); GL.to = L; } }
+    render();
+  });
+  const on = (id,fn)=>{ const el = $(id); if(el) el.onchange = ()=> fn(el); };
+  on("glFrom", el=>{ GL.from = el.value; GL.sel = null; render(); });
+  on("glTo", el=>{ GL.to = el.value; GL.sel = null; render(); });
+  on("glView", el=>{ GL.view = el.value; render(); });
+  on("glSektor", el=>{ GL.sektor = el.value; render(); });
+  on("glMin", el=>{ GL.minAbs = Math.max(0, Number(el.value)||0); render(); });
+  on("glBars", el=>{ const n = parseInt(el.value,10); GL.bars = n>=2 && n<=250 ? n : 20; GL.sel = null; render(); });
+  on("glTrend", el=>{ GL.trend = el.value; GL.limit = 150; render(); });
+  on("glMinUp", el=>{ GL.minUp = el.value; GL.limit = 150; render(); });
+  on("glMinDown", el=>{ GL.minDown = el.value; GL.limit = 150; render(); });
+  on("glBow", el=>{ GL.bowOnly = el.checked; GL.limit = 150; render(); });
+  const rl = $("glReloadBtn"); if(rl) rl.onclick = ()=>{ if(GL.loading) return; GL.ready = false; GL.msg = ""; glEnsure(true); render(); };
+  const more = $("glMoreBtn"); if(more) more.onclick = ()=>{ GL.limit += 150; render(); };
+  const cl = $("glCloseBtn"); if(cl) cl.onclick = ()=>{ GL.sel = null; render(); };
+  document.querySelectorAll("[data-gl-open]").forEach(b=> b.onclick = e=>{
+    if(e.target.closest("[data-detail]")) return; // tombol "Detail" di baris tetap membuka modal Detail Emiten
+    e.stopPropagation(); glOpen(b.dataset.glOpen);
+  });
+  rebindGenericTable("glTable");
+}
+
+// ---------- pasang ke sidebar (tanpa perlu edit index.html) ----------
+(function glInstallNav(){
+  try{
+    if(document.querySelector('#tabs .tab-btn[data-tab="gainloss"]')) return;
+    const ref = document.querySelector('#tabs .tab-btn[data-tab="rekap"]') || document.querySelector('#tabs .tab-btn[data-tab="patternscan"]') || document.querySelector('#tabs .tab-btn[data-tab="screener"]');
+    if(!ref) return;
+    const wrap = ref.closest("li") || ref, clone = wrap.cloneNode(true);
+    const btn = clone.matches(".tab-btn") ? clone : clone.querySelector(".tab-btn");
+    btn.dataset.tab = "gainloss"; btn.classList.remove("active"); btn.removeAttribute("id");
+    const lab = btn.querySelector(".tab-label, .label, span:last-child");
+    if(lab && lab !== btn) lab.textContent = "📈 Rekap Gain/Loss & Tren"; else btn.textContent = "📈 Rekap Gain/Loss & Tren";
+    if(btn.tagName==="A") btn.setAttribute("href", "#/gainloss");
+    wrap.after(clone);
+    bindInternalLink(btn, ()=> selectMainTab("gainloss"));
+  }catch(e){ console.warn("[GainLoss] gagal memasang menu:", e); }
+})();
+
+// Rekap Tren sudah digabung ke tab "gainloss" -> buang tombol lamanya kalau masih ada di markup.
+document.querySelectorAll('#tabs .tab-btn[data-tab="rekaptren"]').forEach(b=>(b.closest("li") || b).remove());
+
+// Link ke stock-screener eksternal (buka di tab baru), dipasang tepat di bawah menu Rekap Gain/Loss & Tren.
+(function glInstallScreenerLink(){
+  try{
+    if(document.querySelector('#tabs [data-ext="xang-screener"]')) return;
+    const ref = document.querySelector('#tabs .tab-btn[data-tab="gainloss"]'); if(!ref) return;
+    const wrap = ref.closest("li") || ref, clone = wrap.cloneNode(true);
+    const btn = clone.matches(".tab-btn") ? clone : clone.querySelector(".tab-btn");
+    btn.removeAttribute("data-tab"); btn.removeAttribute("id"); btn.classList.remove("active");
+    btn.setAttribute("data-ext", "xang-screener"); clone.setAttribute("data-ext", "xang-screener");
+    btn.title = "Buka Screener Saham Global di tab baru";
+    const lab = btn.querySelector(".tab-label, .label, span:last-child");
+    if(lab && lab !== btn) lab.textContent = "🌐 Screener Saham Global"; else btn.textContent = "🌐 Screener Saham Global";
+    if(btn.tagName==="A"){
+      btn.href = GL_SCREENER_URL; btn.target = "_blank"; btn.rel = "noopener noreferrer";
+      btn.onclick = e=> e.stopPropagation(); // biarkan browser membuka link apa adanya
+    } else {
+      btn.onclick = e=>{ e.preventDefault(); e.stopPropagation(); window.open(GL_SCREENER_URL, "_blank", "noopener,noreferrer"); };
+    }
+    wrap.after(clone);
+  }catch(e){ console.warn("[GainLoss] gagal memasang link screener:", e); }
 })();
