@@ -1339,7 +1339,7 @@ async function fetchAndSaveBrokerActivityBulk(brokerCodes, rangeFrom, rangeTo){
         const SAVE_BATCH = 1000;
         updateBrokerActivityProgressUI({ phase: "simpan", rows: rows.length, saveDone: 0, saveTotal: Math.ceil(rows.length / SAVE_BATCH) });
         for(let i = 0; i < rows.length; i += SAVE_BATCH){
-          await supaFetch(`${SUPABASE_URL}/broker_activity?on_conflict=broker_code,trade_date,stock_code,side`, {
+          brokerCachesClear(); await supaFetch(`${SUPABASE_URL}/broker_activity?on_conflict=broker_code,trade_date,stock_code,side`, {
             method: "POST",
             headers: { ...getSupaHeaders(), "Prefer": "resolution=merge-duplicates,return=minimal" },
             body: JSON.stringify(rows.slice(i, i + SAVE_BATCH))
@@ -1643,7 +1643,7 @@ async function fetchAndSaveBrokerSummaryBulk(tickers, rangeFrom, rangeTo, opts =
           state.stockbitBrokerBulkResults.push({ ticker, date: `${fromDate}..${toDate}`, ok:false, msg: "Tidak ada baris broker valid di respons ini." });
         } else {
           try{
-            await supaFetch(`${SUPABASE_URL}/broker_activity?on_conflict=broker_code,trade_date,stock_code,side`, {
+            brokerCachesClear(); await supaFetch(`${SUPABASE_URL}/broker_activity?on_conflict=broker_code,trade_date,stock_code,side`, {
               method: "POST",
               headers: { ...getSupaHeaders(), "Prefer": "resolution=merge-duplicates,return=minimal" },
               body: JSON.stringify(rows)
@@ -7921,7 +7921,7 @@ async function saveDetailBrokerSummaryRows(){
   if(!rows.length){ state.detailBsMsg = "Belum ada baris terisi."; state.detailBsMsgError = true; render(); return; }
 
   try {
-    await supaFetch(`${SUPABASE_URL}/broker_activity?on_conflict=broker_code,trade_date,stock_code,side`, {
+    brokerCachesClear(); await supaFetch(`${SUPABASE_URL}/broker_activity?on_conflict=broker_code,trade_date,stock_code,side`, {
       method: "POST",
       headers: { ...getSupaHeaders(), "Prefer": "resolution=merge-duplicates,return=representation" },
       body: JSON.stringify(rows)
@@ -14246,6 +14246,7 @@ function render(){
     else if(state.tab==="target") content.innerHTML = renderTargetBandar();
     else if(state.tab==="eps") content.innerHTML = renderEntryPriceScanner();
     else if(state.tab==="kraken") content.innerHTML = renderKrakenFlow();
+    else if(state.tab==="radar") content.innerHTML = renderMarketRadar();
     else if(state.tab==="bsjp") content.innerHTML = renderBsjp();
     else if(state.tab==="gapgo") content.innerHTML = renderGapGo();
     else if(state.tab==="wsdebug") content.innerHTML = renderWsDebug();
@@ -17950,7 +17951,121 @@ function bsScanFromEpsRaw(raw){
   return d;
 }
 
-async function runBsScan(){
+// ---------- Cache perangkat Pindai Akumulasi (IndexedDB) ----------
+// Sama seperti Broker Nyangkut: kalau RPC eps_scan_daily_v2_activity tidak
+// bisa dipakai, data ditarik lewat paging broker_activity (puluhan ribu baris).
+// Hasilnya disimpan PER TANGGAL di perangkat; scan berikutnya cukup menarik
+// tanggal terakhir yang ada di cache (+ yang lebih baru). Cache dibuang kalau
+// ada penyimpanan broker_activity baru dari aplikasi ini, umur tarik-penuh
+// terakhir > 24 jam, URL backend berubah, atau tombol "Tarik penuh" ditekan.
+const LS_BSSCAN_RPC_FAIL = "ihsg_bsscan_rpc_fail_at";
+const BSSCAN_IDB_KEY = "bsscan_days_v1";
+const BSSCAN_FULL_REFRESH_MS = 24 * 3600 * 1000;
+
+async function idbKvGet(key){
+  try{
+    const db = await bsTrapIdbOpen();
+    return await new Promise(resolve => {
+      const r = db.transaction(BSTRAP_IDB.store, "readonly").objectStore(BSTRAP_IDB.store).get(key);
+      r.onsuccess = () => { db.close(); resolve(r.result || null); };
+      r.onerror = () => { db.close(); resolve(null); };
+    });
+  }catch(e){ return null; }
+}
+async function idbKvSet(key, value){
+  try{
+    const db = await bsTrapIdbOpen();
+    await new Promise(resolve => {
+      const tx = db.transaction(BSTRAP_IDB.store, "readwrite");
+      tx.objectStore(BSTRAP_IDB.store).put(value, key);
+      tx.oncomplete = () => { db.close(); resolve(); };
+      tx.onerror = tx.onabort = () => { db.close(); resolve(); };
+    });
+  }catch(e){}
+}
+async function idbKvDel(keys){
+  try{
+    const db = await bsTrapIdbOpen();
+    await new Promise(resolve => {
+      const tx = db.transaction(BSTRAP_IDB.store, "readwrite");
+      keys.forEach(k => tx.objectStore(BSTRAP_IDB.store).delete(k));
+      tx.oncomplete = () => { db.close(); resolve(); };
+      tx.onerror = tx.onabort = () => { db.close(); resolve(); };
+    });
+  }catch(e){}
+}
+// Dipanggil setiap kali aplikasi ini menyimpan data ke broker_activity.
+function brokerCachesClear(){ return idbKvDel([BSTRAP_IDB.key, BSSCAN_IDB_KEY]); }
+
+// Baris mentah -> { tanggal: [[saham, broker, net], ...] }
+function bsScanRowsToByDate(rows){
+  const maps = new Map();
+  rows.forEach(r => {
+    const stock = String(r.stock_code || "").toUpperCase(), broker = String(r.broker_code || "").toUpperCase();
+    const date = r.trade_date ? String(r.trade_date).slice(0, 10) : "";
+    if(!stock || !broker || !date) return;
+    const sign = String(r.side).toLowerCase() === "buy" ? 1 : -1;
+    const val = sign * (Number(r.value_idr) || 0);
+    let m = maps.get(date); if(!m){ m = new Map(); maps.set(date, m); }
+    const key = stock + "|" + broker;
+    let e = m.get(key); if(!e){ e = [stock, broker, 0]; m.set(key, e); }
+    e[2] += val;
+  });
+  const out = {};
+  maps.forEach((m, d) => { out[d] = [...m.values()]; });
+  return out;
+}
+function bsScanBuildData(byDate, source, fetchedAt){
+  const d = bsScanNewData();
+  Object.keys(byDate).forEach(date => byDate[date].forEach(a => bsScanAddNet(d, a[0], a[1], date, a[2])));
+  const stocks = new Set(); d.pairs.forEach(e => stocks.add(e.stock));
+  return { pairs: d.pairs, dates: [...d.dates].sort(), source, fetchedAt: fetchedAt || new Date().toISOString(), stockCount: stocks.size };
+}
+// Tampilkan cache langsung (tanpa jaringan) saat mode ini dibuka pertama kali.
+async function bsScanHydrate(){
+  const sc = state.bsScan;
+  const cache = await idbKvGet(BSSCAN_IDB_KEY);
+  if(sc.data || sc.loading) return;
+  if(!cache || cache.supa !== SUPABASE_URL || !cache.byDate) return;
+  const d = bsScanBuildData(cache.byDate, "cache", cache.savedAt);
+  if(!d.dates.length || !d.pairs.size) return;
+  sc.data = d; sc.limit = 100; sc.err = false;
+  sc.msg = "Data dari cache perangkat — klik SCAN ULANG untuk mengambil hari terbaru.";
+  render();
+}
+async function bsScanFetchRows(fromDate){
+  const PAGE = 1000;
+  const qs = new URLSearchParams({
+    trade_date: `gte.${fromDate}`,
+    select: "stock_code,trade_date,side,broker_code,value_idr",
+    // 4 kolom ini unik per baris -> paging offset konsisten (tidak ada baris
+    // terlewat/dobel di batas halaman seperti kalau urutannya tidak unik).
+    order: "trade_date.asc,stock_code.asc,side.asc,broker_code.asc"
+  });
+  let pageErr = null;
+  const rows = await fetchAllPagesParallel(async (offset) => {
+    if(pageErr) return null;
+    const q = new URLSearchParams(qs);
+    q.set("limit", String(PAGE)); q.set("offset", String(offset));
+    const res = await fetch(`${SUPABASE_URL}/broker_activity?${q}`, { headers: getSupaHeaders(), cache: "no-store" });
+    if(!res.ok){ pageErr = new Error(`HTTP ${res.status} ${res.statusText}`); return null; }
+    const page = await res.json();
+    if(page && page.message){ pageErr = new Error(page.message); return null; }
+    return page;
+  }, PAGE, {
+    maxConcurrent: 5,
+    onProgress: (n) => {
+      const el = document.getElementById("bsScanProgress");
+      if(el) el.textContent = `Menarik data broker_activity... ${n.toLocaleString("id-ID")} baris`;
+    }
+  });
+  if(pageErr) throw pageErr;
+  return rows;
+}
+
+// opts.full = true -> abaikan cache & catatan "RPC gagal", tarik ulang semuanya.
+async function runBsScan(opts){
+  opts = opts || {};
   const sc = state.bsScan;
   if(sc.loading) return;
   if(!SUPABASE_URL || !SUPABASE_KEY){ openSettings(); return; }
@@ -17959,54 +18074,57 @@ async function runBsScan(){
     // Butuh 2x jendela terpanjang (1 bulan = 22 hari bursa) supaya status
     // BARU/BALIK/ULANG punya periode pembanding.
     const cutoff = epsCutoffDate(BS_SCAN_PERIOD_DAYS["1m"] * 2 + 2);
-    let built = null, source = "";
-    const fast = await tryFastEpsScanV2Activity(cutoff);
-    if(fast && fast.stockCount){ built = bsScanFromEpsRaw(fast); source = "eps_scan_daily_v2_activity"; }
 
-    if(!built || !built.pairs.size){
-      const d = bsScanNewData();
-      const PAGE = 1000;
-      const qs = new URLSearchParams({
-        trade_date: `gte.${cutoff}`,
-        select: "stock_code,trade_date,side,broker_code,value_idr",
-        order: "trade_date.asc,stock_code.asc"
-      });
-      let pageErr = null;
-      const rows = await fetchAllPagesParallel(async (offset) => {
-        if(pageErr) return null;
-        const q = new URLSearchParams(qs);
-        q.set("limit", String(PAGE)); q.set("offset", String(offset));
-        const res = await fetch(`${SUPABASE_URL}/broker_activity?${q}`, { headers: getSupaHeaders(), cache: "no-store" });
-        if(!res.ok){ pageErr = new Error(`HTTP ${res.status} ${res.statusText}`); return null; }
-        const page = await res.json();
-        if(page && page.message){ pageErr = new Error(page.message); return null; }
-        return page;
-      }, PAGE, {
-        maxConcurrent: 5,
-        onProgress: (n) => {
-          const el = document.getElementById("bsScanProgress");
-          if(el) el.textContent = `Menarik data broker_activity... ${n.toLocaleString("id-ID")} baris`;
-        }
-      });
-      if(pageErr) throw pageErr;
-      rows.forEach(r => {
-        const sign = String(r.side).toLowerCase() === "buy" ? 1 : -1;
-        bsScanAddNet(d, String(r.stock_code || "").toUpperCase(), String(r.broker_code || "").toUpperCase(), r.trade_date, sign * (Number(r.value_idr) || 0));
-      });
-      built = d; source = "broker_activity";
+    // Jalur 1: RPC. Kalau gagal, jangan dicoba lagi selama 6 jam.
+    let skipRpc = false;
+    if(!opts.full){
+      try{ const at = Number(localStorage.getItem(LS_BSSCAN_RPC_FAIL) || 0); skipRpc = at > 0 && Date.now() - at < 6 * 3600 * 1000; }catch(e){}
     }
+    const fast = skipRpc ? null : await tryFastEpsScanV2Activity(cutoff);
+    if(fast && fast.stockCount){
+      const built = bsScanFromEpsRaw(fast);
+      if(built.pairs.size){
+        try{ localStorage.removeItem(LS_BSSCAN_RPC_FAIL); }catch(e){}
+        const stocks = new Set(); built.pairs.forEach(e => stocks.add(e.stock));
+        sc.data = { pairs: built.pairs, dates: [...built.dates].sort(), source: "eps_scan_daily_v2_activity", fetchedAt: new Date().toISOString(), stockCount: stocks.size };
+        sc.msg = ""; sc.limit = 100; sc.loading = false; render(); return;
+      }
+    }
+    if(!skipRpc){ try{ localStorage.setItem(LS_BSSCAN_RPC_FAIL, String(Date.now())); }catch(e){} }
 
+    // Jalur 2: paging broker_activity + cache harian di perangkat.
+    if(opts.full) await idbKvDel([BSSCAN_IDB_KEY]);
+    const cache = opts.full ? null : await idbKvGet(BSSCAN_IDB_KEY);
+    const dayKeys = cache && cache.byDate ? Object.keys(cache.byDate).sort() : [];
+    const usable = !!(cache && cache.supa === SUPABASE_URL && dayKeys.length && cache.lastFullAt
+      && (Date.now() - Date.parse(cache.lastFullAt)) < BSSCAN_FULL_REFRESH_MS);
+    const byDate = usable ? cache.byDate : {};
+    let fromDate = cutoff;
+    if(usable){
+      fromDate = dayKeys[dayKeys.length - 1]; // tanggal terakhir ditarik ulang (bisa belum lengkap saat di-cache)
+      sc.data = bsScanBuildData(byDate, "cache", cache.savedAt); sc.limit = 100;
+      sc.msg = `Menampilkan cache — memperbarui dari ${fromDate}...`;
+    }else{
+      sc.msg = "RPC eps_scan_daily_v2_activity tidak tersedia — memuat lewat paging broker_activity (lebih lambat, hasilnya disimpan ke cache perangkat)...";
+    }
+    render();
+
+    const rows = await bsScanFetchRows(fromDate);
+    Object.assign(byDate, bsScanRowsToByDate(rows)); // tanggal yang ditarik menimpa versi cache
+    Object.keys(byDate).forEach(d => { if(d < cutoff) delete byDate[d]; });
+
+    const built = bsScanBuildData(byDate, usable ? "cache" : "broker_activity");
     if(!built.pairs.size){
       sc.data = null;
       sc.msg = "Belum ada data broker_activity. Tarik dulu Broker Activity untuk beberapa kode broker di Broker Stalker > Lacak Broker.";
       sc.err = true;
     }else{
-      const stocks = new Set(); built.pairs.forEach(e => stocks.add(e.stock));
-      sc.data = { pairs: built.pairs, dates: [...built.dates].sort(), source, fetchedAt: new Date().toISOString(), stockCount: stocks.size };
-      sc.msg = ""; sc.limit = 100;
+      sc.data = built; sc.msg = ""; sc.limit = 100;
+      const nowIso = new Date().toISOString();
+      idbKvSet(BSSCAN_IDB_KEY, { v: 1, supa: SUPABASE_URL, savedAt: nowIso, lastFullAt: usable ? cache.lastFullAt : nowIso, byDate });
     }
   }catch(e){
-    sc.msg = "Gagal memuat data broker: " + e.message; sc.err = true;
+    sc.msg = "Gagal memuat data broker: " + e.message + (sc.data ? " (menampilkan data cache)" : ""); sc.err = true;
   }
   sc.loading = false;
   render();
@@ -18288,6 +18406,7 @@ function exportBsScanToExcel(){
 
 function renderBsScan(){
   const sc = state.bsScan, f = sc.filters;
+  if(!sc.data && !sc.loading && !sc.cacheTried){ sc.cacheTried = true; bsScanHydrate(); }
   const res = sc.data ? bsScanCompute() : null;
   const N = BS_SCAN_PERIOD_DAYS[f.period] || 5;
   const ffAvailable = (state.stocks || []).some(s => s.freeFloatPct != null);
@@ -18317,6 +18436,7 @@ function renderBsScan(){
           <button type="button" class="bs2-chip" id="bsScanFfBtn" ${sc.ffImporting ? "disabled" : ""} title="Impor daftar free float (.xlsx/.csv dari BEI) ke tabel stock_free_float">${sc.ffImporting ? "Mengimpor…" : "📥 Impor Free Float"}</button>
           <input type="file" id="bsScanFfFile" accept=".xlsx,.xls,.csv" style="display:none;">
           <button type="button" class="bs2-chip active" id="bsScanRunBtn" ${sc.loading ? "disabled" : ""}>${sc.loading ? "Memuat…" : (sc.data ? "⟳ SCAN ULANG" : "⟳ SCAN")}</button>
+          <button type="button" class="bs2-chip" id="bsScanFullBtn" ${sc.loading ? "disabled" : ""} title="Hapus cache perangkat lalu tarik ulang semua data">Tarik penuh</button>
         </div>
       </div>
       <div style="font-size:11px;color:var(--muted);margin:8px 0 2px;line-height:1.5;">${escapeHtml(dateLine)}</div>
@@ -18411,6 +18531,8 @@ function wireBsScanControls(){
   const sc = state.bsScan;
   const runBtn = document.getElementById("bsScanRunBtn");
   if(runBtn) runBtn.onclick = () => runBsScan();
+  const fullBtn = document.getElementById("bsScanFullBtn");
+  if(fullBtn) fullBtn.onclick = () => runBsScan({ full: true });
   const expBtn = document.getElementById("bsScanExportBtn");
   if(expBtn) expBtn.onclick = () => exportBsScanToExcel();
   const ffBtn = document.getElementById("bsScanFfBtn"), ffFile = document.getElementById("bsScanFfFile");
@@ -18554,71 +18676,200 @@ async function bsTrapTryRpc(cutoff){
   }
 }
 
-async function runBsTrap(){
+// ---------- Cache perangkat (IndexedDB) ----------
+// Jalur paging broker_activity menarik puluhan ribu baris (di HP/4G bisa lama).
+// Hasilnya disimpan PER TANGGAL di IndexedDB perangkat ini. Scan berikutnya
+// cukup menarik tanggal terakhir yang ada di cache (+ tanggal yang lebih baru),
+// lalu digabung ke cache -- bukan menarik ulang 30 hari bursa.
+// Cache dibuang otomatis kalau: (a) ada penarikan/penyimpanan broker_activity
+// baru dari aplikasi ini (data lama bisa ter-backfill), (b) umur tarik-penuh
+// terakhir > 24 jam, (c) URL backend berubah, atau (d) tombol "Tarik penuh".
+const LS_BSTRAP_RPC_FAIL = "ihsg_bstrap_rpc_fail_at";
+const BSTRAP_IDB = { db: "ihsg_cache_v1", store: "kv", key: "bstrap_days_v1" };
+const BSTRAP_FULL_REFRESH_MS = 24 * 3600 * 1000;
+
+function bsTrapIdbOpen(){
+  return new Promise((resolve, reject) => {
+    if(typeof indexedDB === "undefined"){ reject(new Error("IndexedDB tidak tersedia")); return; }
+    const req = indexedDB.open(BSTRAP_IDB.db, 1);
+    req.onupgradeneeded = () => {
+      if(!req.result.objectStoreNames.contains(BSTRAP_IDB.store)) req.result.createObjectStore(BSTRAP_IDB.store);
+    };
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => reject(req.error);
+  });
+}
+async function bsTrapCacheGet(){
+  try{
+    const db = await bsTrapIdbOpen();
+    return await new Promise(resolve => {
+      const r = db.transaction(BSTRAP_IDB.store, "readonly").objectStore(BSTRAP_IDB.store).get(BSTRAP_IDB.key);
+      r.onsuccess = () => { db.close(); resolve(r.result || null); };
+      r.onerror = () => { db.close(); resolve(null); };
+    });
+  }catch(e){ return null; }
+}
+async function bsTrapCacheSet(value){
+  try{
+    const db = await bsTrapIdbOpen();
+    await new Promise(resolve => {
+      const tx = db.transaction(BSTRAP_IDB.store, "readwrite");
+      tx.objectStore(BSTRAP_IDB.store).put(value, BSTRAP_IDB.key);
+      tx.oncomplete = () => { db.close(); resolve(); };
+      tx.onerror = tx.onabort = () => { db.close(); resolve(); };
+    });
+  }catch(e){}
+}
+async function bsTrapCacheClear(){
+  try{
+    const db = await bsTrapIdbOpen();
+    await new Promise(resolve => {
+      const tx = db.transaction(BSTRAP_IDB.store, "readwrite");
+      tx.objectStore(BSTRAP_IDB.store).delete(BSTRAP_IDB.key);
+      tx.oncomplete = () => { db.close(); resolve(); };
+      tx.onerror = tx.onabort = () => { db.close(); resolve(); };
+    });
+  }catch(e){}
+}
+
+// Baris mentah broker_activity -> { tanggal: [[saham, broker, net, bv, sh], ...] }
+// (buy & sell digabung per pasangan per hari; bv/sh hanya dari baris buy ber-lot).
+function bsTrapRowsToByDate(rows){
+  const maps = new Map();
+  rows.forEach(r => {
+    const stock = String(r.stock_code || "").toUpperCase(), broker = String(r.broker_code || "").toUpperCase();
+    const date = r.trade_date ? String(r.trade_date).slice(0, 10) : "";
+    if(!stock || !broker || !date) return;
+    const val = Number(r.value_idr) || 0, lot = Number(r.lot) || 0;
+    const isBuy = String(r.side).toLowerCase() === "buy";
+    let m = maps.get(date); if(!m){ m = new Map(); maps.set(date, m); }
+    const key = stock + "|" + broker;
+    let e = m.get(key); if(!e){ e = [stock, broker, 0, 0, 0]; m.set(key, e); }
+    e[2] += isBuy ? val : -val;
+    if(isBuy && val > 0 && lot > 0){ e[3] += val; e[4] += lot * 100; } // 1 lot = 100 lembar
+  });
+  const out = {};
+  maps.forEach((m, d) => { out[d] = [...m.values()]; });
+  return out;
+}
+
+// byDate -> struktur yang dipakai bsTrapCompute(): pairs[saham|broker].days[tanggal] = {bv, sh, net}
+function bsTrapBuildData(byDate, source, fetchedAt){
+  const pairs = new Map();
+  const dates = Object.keys(byDate).sort();
+  let rowCount = 0;
+  dates.forEach(d => {
+    const arr = byDate[d];
+    rowCount += arr.length;
+    arr.forEach(a => {
+      const key = a[0] + "|" + a[1];
+      let e = pairs.get(key);
+      if(!e){ e = { stock: a[0], broker: a[1], days: {} }; pairs.set(key, e); }
+      e.days[d] = { bv: a[3], sh: a[4], net: a[2] };
+    });
+  });
+  return { pairs, dates, rowCount, source, fetchedAt: fetchedAt || new Date().toISOString() };
+}
+
+// Tampilkan cache langsung (tanpa jaringan) saat mode ini dibuka pertama kali.
+async function bsTrapHydrate(){
+  const t = state.bsTrap;
+  const cache = await bsTrapCacheGet();
+  if(t.data || t.loading) return;
+  if(!cache || cache.supa !== SUPABASE_URL || !cache.byDate) return;
+  const d = bsTrapBuildData(cache.byDate, "cache", cache.savedAt);
+  if(!d.dates.length) return;
+  t.data = d; t.limit = 100; t.err = false;
+  t.msg = "Data dari cache perangkat — klik SCAN ULANG untuk mengambil hari terbaru.";
+  render();
+}
+
+async function bsTrapFetchActivityRows(fromDate){
+  const PAGE = 1000;
+  const qs = new URLSearchParams({
+    trade_date: `gte.${fromDate}`,
+    select: "stock_code,trade_date,side,broker_code,value_idr,lot",
+    // order tanpa "rank" (broker_activity tidak punya kolom itu, beda dengan
+    // broker_summary) -- kombinasi 4 kolom ini tetap unik per baris karena
+    // on_conflict broker_activity adalah broker_code,trade_date,stock_code,side
+    order: "trade_date.asc,stock_code.asc,side.asc,broker_code.asc"
+  });
+  let pageErr = null;
+  const rows = await fetchAllPagesParallel(async (offset) => {
+    if(pageErr) return null;
+    const q = new URLSearchParams(qs);
+    q.set("limit", String(PAGE)); q.set("offset", String(offset));
+    const res = await fetch(`${SUPABASE_URL}/broker_activity?${q}`, { headers: getSupaHeaders(), cache: "no-store" });
+    if(!res.ok){ pageErr = new Error(`HTTP ${res.status} ${res.statusText}`); return null; }
+    const page = await res.json();
+    if(page && page.message){ pageErr = new Error(page.message); return null; }
+    return page;
+  }, PAGE, {
+    maxConcurrent: 5,
+    onProgress: (n) => {
+      const el = document.getElementById("bsTrapProgress");
+      if(el) el.textContent = `Menarik data broker_activity... ${n.toLocaleString("id-ID")} baris`;
+    }
+  });
+  if(pageErr) throw pageErr;
+  return rows;
+}
+
+// opts.full = true -> abaikan cache & catatan "RPC gagal", tarik ulang semuanya.
+async function runBsTrap(opts){
+  opts = opts || {};
   const t = state.bsTrap;
   if(t.loading) return;
   if(!SUPABASE_URL || !SUPABASE_KEY){ openSettings(); return; }
   t.loading = true; t.msg = "Memuat data broker_activity (30 hari bursa)..."; t.err = false; render();
   try{
     const cutoff = epsCutoffDate(Math.max(...BS_TRAP_WINDOWS) + 2);
-    const fast = await bsTrapTryRpc(cutoff);
+
+    // Jalur 1: RPC (dihitung di server). Kalau RPC gagal, jangan dicoba lagi
+    // selama 6 jam supaya tidak menunggu timeout tiap kali SCAN.
+    let skipRpc = false;
+    if(!opts.full){
+      try{ const at = Number(localStorage.getItem(LS_BSTRAP_RPC_FAIL) || 0); skipRpc = at > 0 && Date.now() - at < 6 * 3600 * 1000; }catch(e){}
+    }
+    const fast = skipRpc ? null : await bsTrapTryRpc(cutoff);
     if(fast){
+      try{ localStorage.removeItem(LS_BSTRAP_RPC_FAIL); }catch(e){}
       t.data = fast; t.msg = ""; t.limit = 100; t.loading = false; render(); return;
     }
-    t.msg = "RPC bs_trap_scan_activity belum tersedia — memuat lewat paging broker_activity (lebih lambat)...";
+    if(!skipRpc){ try{ localStorage.setItem(LS_BSTRAP_RPC_FAIL, String(Date.now())); }catch(e){} }
+
+    // Jalur 2: paging broker_activity + cache harian di perangkat.
+    if(opts.full) await bsTrapCacheClear();
+    const cache = opts.full ? null : await bsTrapCacheGet();
+    const dayKeys = cache && cache.byDate ? Object.keys(cache.byDate).sort() : [];
+    const usable = !!(cache && cache.supa === SUPABASE_URL && dayKeys.length && cache.lastFullAt
+      && (Date.now() - Date.parse(cache.lastFullAt)) < BSTRAP_FULL_REFRESH_MS);
+    const byDate = usable ? cache.byDate : {};
+    let fromDate = cutoff;
+    if(usable){
+      fromDate = dayKeys[dayKeys.length - 1]; // tanggal terakhir ikut ditarik ulang (bisa belum lengkap saat di-cache)
+      t.data = bsTrapBuildData(byDate, "cache", cache.savedAt); t.limit = 100;
+      t.msg = `Menampilkan cache — memperbarui dari ${fromDate}...`;
+    }else{
+      t.msg = "RPC bs_trap_scan_activity belum tersedia — memuat lewat paging broker_activity (lebih lambat, hasilnya disimpan ke cache perangkat)...";
+    }
     render();
-    const PAGE = 1000;
-    const qs = new URLSearchParams({
-      trade_date: `gte.${cutoff}`,
-      select: "stock_code,trade_date,side,broker_code,value_idr,lot",
-      // order tanpa "rank" (broker_activity tidak punya kolom itu, beda dengan
-      // broker_summary) -- kombinasi 4 kolom ini tetap unik per baris karena
-      // on_conflict broker_activity adalah broker_code,trade_date,stock_code,side
-      order: "trade_date.asc,stock_code.asc,side.asc,broker_code.asc"
-    });
-    let pageErr = null;
-    const rows = await fetchAllPagesParallel(async (offset) => {
-      if(pageErr) return null;
-      const q = new URLSearchParams(qs);
-      q.set("limit", String(PAGE)); q.set("offset", String(offset));
-      const res = await fetch(`${SUPABASE_URL}/broker_activity?${q}`, { headers: getSupaHeaders(), cache: "no-store" });
-      if(!res.ok){ pageErr = new Error(`HTTP ${res.status} ${res.statusText}`); return null; }
-      const page = await res.json();
-      if(page && page.message){ pageErr = new Error(page.message); return null; }
-      return page;
-    }, PAGE, {
-      maxConcurrent: 5,
-      onProgress: (n) => {
-        const el = document.getElementById("bsTrapProgress");
-        if(el) el.textContent = `Menarik data broker_activity... ${n.toLocaleString("id-ID")} baris`;
-      }
-    });
-    if(pageErr) throw pageErr;
 
-    const pairs = new Map(), dateSet = new Set();
-    rows.forEach(r => {
-      const stock = String(r.stock_code || "").toUpperCase(), broker = String(r.broker_code || "").toUpperCase();
-      if(!stock || !broker || !r.trade_date) return;
-      const val = Number(r.value_idr) || 0, lot = Number(r.lot) || 0;
-      const isBuy = String(r.side).toLowerCase() === "buy";
-      const key = stock + "|" + broker;
-      let e = pairs.get(key);
-      if(!e){ e = { stock, broker, days: {} }; pairs.set(key, e); }
-      const d = (e.days[r.trade_date] ||= { bv: 0, sh: 0, net: 0 });
-      d.net += isBuy ? val : -val;
-      if(isBuy && val > 0 && lot > 0){ d.bv += val; d.sh += lot * 100; } // 1 lot = 100 lembar
-      dateSet.add(r.trade_date);
-    });
+    const rows = await bsTrapFetchActivityRows(fromDate);
+    Object.assign(byDate, bsTrapRowsToByDate(rows)); // tanggal yang ditarik menimpa versi cache
+    Object.keys(byDate).forEach(d => { if(d < cutoff) delete byDate[d]; });
 
-    if(!pairs.size){
+    if(!Object.keys(byDate).length){
       t.data = null; t.err = true;
       t.msg = "Belum ada data broker_activity. Tarik dulu Broker Activity untuk beberapa kode broker di Broker Stalker > Lacak Broker.";
     }else{
-      t.data = { pairs, dates: [...dateSet].sort(), rowCount: rows.length, source: "paging", fetchedAt: new Date().toISOString() };
+      const nowIso = new Date().toISOString();
+      t.data = bsTrapBuildData(byDate, usable ? "cache" : "paging", nowIso);
       t.msg = ""; t.limit = 100;
+      bsTrapCacheSet({ v: 1, supa: SUPABASE_URL, savedAt: nowIso, lastFullAt: usable ? cache.lastFullAt : nowIso, byDate });
     }
   }catch(e){
-    t.msg = "Gagal memuat data broker: " + e.message; t.err = true;
+    t.msg = "Gagal memuat data broker: " + e.message + (t.data ? " (menampilkan data cache)" : ""); t.err = true;
   }
   t.loading = false;
   render();
@@ -18683,6 +18934,7 @@ function bsTrapCompute(){
 // ---------- 3) Tampilan ----------
 function renderBsTrap(){
   const t = state.bsTrap, f = t.filters;
+  if(!t.data && !t.loading && !t.cacheTried){ t.cacheTried = true; bsTrapHydrate(); }
   const res = t.data ? bsTrapCompute() : null;
   const chips = (key, opts, current) => opts.map(([v, lab]) =>
     `<button type="button" class="bs2-chip ${String(current) === String(v) ? "active" : ""}" data-bstrap="${key}:${v}">${lab}</button>`).join("");
@@ -18690,7 +18942,7 @@ function renderBsTrap(){
   const dateLine = t.data
     ? `data ${fmtDateID(t.data.dates[0])} – ${fmtDateID(t.data.dates[t.data.dates.length - 1])} · ${t.data.dates.length} hari bursa · ` + (t.data.source === "rpc"
         ? `${t.data.pairs.size.toLocaleString("id-ID")} pasangan kandidat (avg > close di minimal satu jendela) · sumber: RPC bs_trap_scan_activity`
-        : `${t.data.pairs.size.toLocaleString("id-ID")} pasangan broker–saham · ${t.data.rowCount.toLocaleString("id-ID")} baris · sumber: paging broker_activity`)
+        : `${t.data.pairs.size.toLocaleString("id-ID")} pasangan broker–saham · ${t.data.rowCount.toLocaleString("id-ID")} baris · sumber: ${t.data.source === "cache" ? "cache perangkat + update harian" : "paging broker_activity"}`)
     : "Belum ada data — klik SCAN untuk memuat data broker_activity semua saham.";
   const shortNote = t.data && t.data.dates.length < Math.max(...BS_TRAP_WINDOWS)
     ? `<div style="font-size:11px;color:var(--gold);margin-top:6px;">Data baru mencakup ${t.data.dates.length} hari bursa — jendela 30D sebenarnya lebih pendek dari 30 hari.</div>` : "";
@@ -18700,7 +18952,7 @@ function renderBsTrap(){
       <div class="bs2-head">
         <div class="bs2-card-title" style="margin-bottom:0;"><span>BROKER NYANGKUT</span>
           <span class="pill pill-teal" style="font-size:9px;">AVG BELI &gt; CLOSE</span></div>
-        <button type="button" class="bs2-chip active" id="bsTrapRunBtn" ${t.loading ? "disabled" : ""}>${t.loading ? "Memuat…" : (t.data ? "⟳ SCAN ULANG" : "⟳ SCAN")}</button>
+        <span style="display:flex;gap:6px;flex-wrap:wrap;"><button type="button" class="bs2-chip active" id="bsTrapRunBtn" ${t.loading ? "disabled" : ""}>${t.loading ? "Memuat…" : (t.data ? "⟳ SCAN ULANG" : "⟳ SCAN")}</button><button type="button" class="bs2-chip" id="bsTrapFullBtn" title="Hapus cache perangkat lalu tarik ulang semua data" ${t.loading ? "disabled" : ""}>Tarik penuh</button></span>
       </div>
       <div style="font-size:11px;color:var(--muted);margin:8px 0 2px;line-height:1.5;">${escapeHtml(dateLine)}</div>
       ${shortNote}
@@ -18772,6 +19024,8 @@ function wireBsTrapControls(){
   const t = state.bsTrap;
   const runBtn = document.getElementById("bsTrapRunBtn");
   if(runBtn) runBtn.onclick = () => runBsTrap();
+  const fullBtn = document.getElementById("bsTrapFullBtn");
+  if(fullBtn) fullBtn.onclick = () => runBsTrap({ full: true });
 
   document.querySelectorAll("[data-bstrap-win]").forEach(btn => btn.onclick = () => {
     const n = Number(btn.dataset.bstrapWin), cur = t.filters.windows;
@@ -23978,7 +24232,7 @@ async function saveBrokerSummaryRows(){
   if(!rows.length){ state.bsMsg = "Belum ada baris terisi."; state.bsMsgError = true; render(); return; }
 
   try {
-    await supaFetch(`${SUPABASE_URL}/broker_activity?on_conflict=broker_code,trade_date,stock_code,side`, {
+    brokerCachesClear(); await supaFetch(`${SUPABASE_URL}/broker_activity?on_conflict=broker_code,trade_date,stock_code,side`, {
       method: "POST",
       headers: { ...getSupaHeaders(), "Prefer": "resolution=merge-duplicates,return=representation" },
       body: JSON.stringify(rows)
@@ -25908,6 +26162,365 @@ function orcaSegBtn(group, key, label, active){
   return `<button type="button" class="btn ${active?'btn-primary':'btn-outline'}" data-orca-seg="${group}" data-orca-value="${key}" style="padding:7px 12px;font-size:11.5px;">${label}</button>`;
 }
 
+// ==========================================================================
+// 📡 MARKET RADAR — preset ala "Market Radar" Stockbit (Most Trending, Top
+// Gain, Aggression, Top Akum/Distribusi), lengkap dengan aturan "Kuncinya":
+//   1) Kalau akumulasi minus, Aggression harus > 1 Bio (Rp 1 M) dan lebih
+//      besar 1-2x dari akumulasi. Makin bagus kalau keduanya di atas 1 Bio.
+//   2) Tradeflow Aggression konsisten naik terus.
+//
+// Tiap grup punya jendela: Off / M (Momentum = 5 hari bursa terakhir) /
+// S (Session = hari terakhir). Saham harus masuk Top N di SEMUA grup aktif;
+// urutan akhir = rata-rata peringkat di grup-grup itu.
+//
+// SUMBER DATA (semua sudah ada di aplikasi, tidak ada endpoint baru):
+//   - Trending & Price : state.stocks (hari terakhir) + tabel flows (5 hari).
+//   - Flow (Akum/Dist) : net beli-jual broker dari broker_activity, lewat data
+//                        Pindai Akumulasi (state.bsScan) -- hanya broker yang
+//                        sudah pernah ditarik lewat Lacak Broker.
+//   - Aggression       : ESTIMASI, bukan HAKA/HAKI asli. Aplikasi ini belum
+//                        punya data tradebook, jadi dihitung dari OHLC harian:
+//                        nilai transaksi x posisi close dalam range
+//                        ((C-L)-(H-C))/(H-L). Akan lebih akurat kalau suatu
+//                        saat ada data HAKA/HAKI asli -- cukup ganti
+//                        radarCalc().
+// ==========================================================================
+const LS_RADAR = "ihsg_radar_v1";
+const RADAR_GROUPS = [
+  { id: "trend", title: "MOST TRENDING", picks: [["active", "Most Active"], ["value", "Most Value"]] },
+  { id: "price", title: "PRICE",         picks: [["gain", "Top Gain"], ["loss", "Top Loss"]] },
+  { id: "flow",  title: "FLOW",          picks: [["accum", "Top Accum"], ["dist", "Top Dist"]] },
+  { id: "aggr",  title: "AGGRESSION",    picks: [["haka", "Top HAKA"], ["haki", "Top HAKI"]] },
+];
+const RADAR_TOPN = [30, 50, 100, 200];
+const RADAR_MINVAL = [0, 1e9, 5e9, 1e10];
+const RADAR_MINAGGR = [5e8, 1e9, 2e9, 5e9];
+
+function radarDefaults(){
+  // Preset "Cuan Senin": Most Trending (M), Top Gain (S), Aggression (M), Akum/Dist Off.
+  return {
+    groups: {
+      trend: { win: "M",   pick: "active" },
+      price: { win: "S",   pick: "gain" },
+      flow:  { win: "off", pick: "accum" },
+      aggr:  { win: "M",   pick: "haka" },
+    },
+    topN: 100, minValue: 1e9, rules: true, minAggr: 1e9, mult: 1,
+  };
+}
+function radarState(){
+  if(!state.radar){
+    const R = radarDefaults();
+    try{
+      const f = JSON.parse(localStorage.getItem(LS_RADAR) || "null");
+      if(f && typeof f === "object"){
+        RADAR_GROUPS.forEach(g => {
+          const sg = f.groups && f.groups[g.id];
+          if(sg && ["off", "M", "S"].includes(sg.win)) R.groups[g.id].win = sg.win;
+          if(sg && g.picks.some(p => p[0] === sg.pick)) R.groups[g.id].pick = sg.pick;
+        });
+        if(RADAR_TOPN.includes(f.topN)) R.topN = f.topN;
+        if(RADAR_MINVAL.includes(f.minValue)) R.minValue = f.minValue;
+        if(typeof f.rules === "boolean") R.rules = f.rules;
+        if(RADAR_MINAGGR.includes(f.minAggr)) R.minAggr = f.minAggr;
+        if(f.mult === 1 || f.mult === 2) R.mult = f.mult;
+      }
+    }catch(e){}
+    R.hist = { loading: false, err: "", byTicker: null, loadedAt: null, tried: false };
+    state.radar = R;
+  }
+  return state.radar;
+}
+function radarSave(){
+  const R = radarState();
+  try{ localStorage.setItem(LS_RADAR, JSON.stringify({ groups: R.groups, topN: R.topN, minValue: R.minValue, rules: R.rules, minAggr: R.minAggr, mult: R.mult })); }catch(e){}
+}
+
+// Histori harian 5-6 hari bursa dari tabel flows (dipaging: 1 hari ~ 950 baris).
+async function loadRadarHistory(){
+  const R = radarState(), h = R.hist;
+  if(h.loading) return;
+  if(!SUPABASE_URL || !SUPABASE_KEY){ openSettings(); return; }
+  h.loading = true; h.err = ""; render();
+  try{
+    const d = new Date(); d.setDate(d.getDate() - 14);
+    const cutoff = toLocalISODate(d);
+    const PAGE = 1000;
+    let pageErr = null;
+    const rows = await fetchAllPagesParallel(async (offset) => {
+      if(pageErr) return null;
+      const q = new URLSearchParams({
+        date: `gte.${cutoff}`, select: "ticker,date,high,low,close,value,frequency",
+        order: "date.desc,ticker.asc", limit: String(PAGE), offset: String(offset)
+      });
+      const res = await fetch(`${SUPABASE_URL}/flows?${q}`, { headers: getSupaHeaders(), cache: "no-store" });
+      if(!res.ok){ pageErr = new Error(`HTTP ${res.status} ${res.statusText}`); return null; }
+      const page = await res.json();
+      if(page && page.message){ pageErr = new Error(page.message); return null; }
+      return page;
+    }, PAGE, { maxConcurrent: 5 });
+    if(pageErr) throw pageErr;
+    const by = {};
+    rows.forEach(r => {
+      const t = String(r.ticker || "").toUpperCase();
+      if(!t || !r.date) return;
+      (by[t] || (by[t] = [])).push(r);
+    });
+    Object.keys(by).forEach(t => { by[t].sort((a, b) => a.date < b.date ? 1 : -1); by[t] = by[t].slice(0, 6); }); // terbaru dulu
+    h.byTicker = by; h.loadedAt = new Date().toISOString();
+  }catch(e){
+    h.err = "Gagal menarik histori flows: " + e.message;
+  }
+  h.loading = false;
+  render();
+}
+
+// Posisi close dalam range harian: +1 = close di high (didominasi beli agresif), -1 = di low.
+function radarClv(h, l, c){
+  h = Number(h); l = Number(l); c = Number(c);
+  if(!(h > l) || !Number.isFinite(c)) return 0;
+  return Math.max(-1, Math.min(1, ((c - l) - (h - c)) / (h - l)));
+}
+
+// Akumulasi broker per saham dari data Pindai Akumulasi: S = hari terakhir, M = 5 hari bursa terakhir.
+function radarAccumIndex(){
+  const sc = state.bsScan && state.bsScan.data;
+  if(!sc || !sc.dates || !sc.dates.length) return null;
+  if(sc._radarIdx) return sc._radarIdx;
+  const last = sc.dates[sc.dates.length - 1], m5 = sc.dates.slice(-5);
+  const idx = new Map();
+  sc.pairs.forEach(e => {
+    let r = idx.get(e.stock); if(!r){ r = { S: 0, M: 0 }; idx.set(e.stock, r); }
+    r.S += e.days[last] || 0;
+    m5.forEach(d => { r.M += e.days[d] || 0; });
+  });
+  idx.lastDate = last;
+  sc._radarIdx = idx;
+  return idx;
+}
+
+// Metrik semua saham (S = session, M = momentum 5 hari).
+function radarCalc(){
+  const H = radarState().hist.byTicker, acc = radarAccumIndex();
+  const out = [];
+  (state.stocks || []).forEach(s => {
+    const close = Number(s.cClose);
+    if(!(close > 0)) return;
+    const t = s.ticker;
+    const valueS = Number(s.valueTraded != null ? s.valueTraded : s.turnover) || 0;
+    const freqS = Number(s.frequency) || 0;
+    const chgS = s.changePct != null && Number.isFinite(Number(s.changePct)) ? Number(s.changePct) : null;
+    const aggrS = valueS * radarClv(s.cHigh, s.cLow, s.cClose);
+    const hist = H && H[t] ? H[t] : [];
+    const last5 = hist.slice(0, 5);
+    const m = { ticker: t, name: s.name || "", close, valueS, freqS, chgS, aggrS };
+    if(last5.length >= 3){
+      m.valueM = last5.reduce((a, r) => a + (Number(r.value) || 0), 0);
+      m.freqM = last5.reduce((a, r) => a + (Number(r.frequency) || 0), 0) / last5.length;
+      const oldest = hist[Math.min(5, hist.length - 1)];
+      m.chgM = oldest && Number(oldest.close) > 0 ? (Number(hist[0].close) / Number(oldest.close) - 1) * 100 : chgS;
+      const daily = last5.map(r => (Number(r.value) || 0) * radarClv(r.high, r.low, r.close)); // terbaru dulu
+      m.aggrM = daily.reduce((a, v) => a + v, 0);
+      let run = 0; m.series = daily.slice().reverse().map(v => (run += v));
+      const pos = daily.filter(v => v > 0).length;
+      m.posDays = pos; m.nDays = daily.length;
+      m.consistent = daily.length >= 3 && pos >= Math.ceil(daily.length * 0.8) && m.aggrM > 0;
+      m.histOk = true;
+    }else{
+      m.valueM = valueS; m.freqM = freqS; m.chgM = chgS; m.aggrM = aggrS;
+      m.series = null; m.consistent = null; m.histOk = false;
+    }
+    const a = acc ? acc.get(t) : null;
+    m.accumS = a ? a.S : null; m.accumM = a ? a.M : null;
+    out.push(m);
+  });
+  return out;
+}
+
+function radarMetric(m, gid, pick, win){
+  const W = win === "S" ? "S" : "M";
+  if(gid === "trend") return pick === "active" ? m["freq" + W] : m["value" + W];
+  if(gid === "price") return m["chg" + W];
+  if(gid === "flow") return m["accum" + W];
+  return m["aggr" + W];
+}
+function radarQualifies(gid, pick, v){
+  if(v == null || !Number.isFinite(v)) return false;
+  if(gid === "trend") return v > 0;
+  const positive = (gid === "price" && pick === "gain") || (gid === "flow" && pick === "accum") || (gid === "aggr" && pick === "haka");
+  return positive ? v > 0 : v < 0;
+}
+function radarBiggerIsBetter(gid, pick){
+  return gid === "trend" || pick === "gain" || pick === "accum" || pick === "haka";
+}
+
+function radarCompute(){
+  const R = radarState();
+  const active = RADAR_GROUPS.filter(g => R.groups[g.id].win !== "off");
+  if(!active.length) return { active, out: [], total: 0, afterRank: 0 };
+  const pool = radarCalc().filter(m => m.valueS >= R.minValue);
+  const rankMaps = {};
+  active.forEach(g => {
+    const { win, pick } = R.groups[g.id];
+    const big = radarBiggerIsBetter(g.id, pick);
+    const list = pool.map(m => ({ m, v: radarMetric(m, g.id, pick, win) })).filter(x => radarQualifies(g.id, pick, x.v));
+    list.sort((a, b) => big ? b.v - a.v : a.v - b.v);
+    const map = new Map(); list.slice(0, R.topN).forEach((x, i) => map.set(x.m.ticker, i + 1));
+    rankMaps[g.id] = map;
+  });
+  let out = pool.filter(m => active.every(g => rankMaps[g.id].has(m.ticker)));
+  const afterRank = out.length;
+  out.forEach(m => { m.score = active.reduce((a, g) => a + rankMaps[g.id].get(m.ticker), 0) / active.length; });
+
+  // Aturan "Kuncinya" -- jendela Aggression/Flow mengikuti grupnya (kalau Off: M).
+  const wAg = R.groups.aggr.win !== "off" ? R.groups.aggr.win : "M";
+  const wFl = R.groups.flow.win !== "off" ? R.groups.flow.win : wAg;
+  out.forEach(m => {
+    const ag = m["aggr" + wAg], ac = m["accum" + wFl];
+    m.rAgg = ag > R.minAggr;
+    if(ac == null){ m.rFlow = null; }
+    else if(ac < 0){ m.rFlow = ag > R.minAggr && ag >= Math.abs(ac) * R.mult; }
+    else { m.rFlow = true; }
+    m.rBoth = ac != null && ac > R.minAggr && ag > R.minAggr; // keduanya di atas 1 Bio = lebih bagus
+    m.rPass = m.rAgg && m.rFlow !== false && m.consistent !== false;
+    m.aggrShown = ag; m.accumShown = ac;
+  });
+  if(R.rules) out = out.filter(m => m.rPass);
+  out.sort((a, b) => a.score - b.score || b.aggrShown - a.aggrShown);
+  return { active, out, total: pool.length, afterRank, wAg, wFl };
+}
+
+function radarSpark(series){
+  if(!series || series.length < 2) return `<span style="color:var(--muted);">-</span>`;
+  const w = 64, h = 20, min = Math.min(...series), max = Math.max(...series), rng = (max - min) || 1;
+  const pts = series.map((v, i) => `${(i / (series.length - 1) * (w - 2) + 1).toFixed(1)},${(h - 1 - ((v - min) / rng) * (h - 2)).toFixed(1)}`).join(" ");
+  const up = series[series.length - 1] >= series[0];
+  return `<svg width="${w}" height="${h}" viewBox="0 0 ${w} ${h}" aria-hidden="true"><polyline points="${pts}" fill="none" stroke="${up ? "var(--up)" : "var(--down)"}" stroke-width="1.8" stroke-linejoin="round" stroke-linecap="round"/></svg>`;
+}
+
+function renderMarketRadar(){
+  const R = radarState(), h = R.hist;
+  if(!h.byTicker && !h.loading && !h.tried){ h.tried = true; setTimeout(loadRadarHistory, 0); }
+  if(!state.bsScan.data && !state.bsScan.loading && !state.bsScan.cacheTried){ state.bsScan.cacheTried = true; setTimeout(bsScanHydrate, 0); }
+
+  const chip = (act, label, on, extra) => `<button type="button" class="bs2-chip ${on ? "active" : ""}" data-radar="${act}" ${extra || ""}>${label}</button>`;
+  const groupCard = g => {
+    const gs = R.groups[g.id], off = gs.win === "off";
+    const wins = [["off", "Off"], ["M", "M"], ["S", "S"]].map(([v, l]) => chip(`win:${g.id}:${v}`, l, gs.win === v)).join("");
+    const picks = g.picks.map(([v, l]) => chip(`pick:${g.id}:${v}`, l, !off && gs.pick === v, off ? 'style="opacity:.45;"' : "")).join("");
+    return `<div class="panel" style="flex-direction:column;align-items:stretch;gap:10px;padding:14px;">
+      <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;">
+        <span style="font-size:11px;font-weight:800;letter-spacing:.05em;color:var(--muted);">${g.title}</span>
+        <span style="display:flex;gap:4px;">${wins}</span></div>
+      <div style="display:flex;gap:6px;flex-wrap:wrap;">${picks}</div></div>`;
+  };
+
+  const res = radarCompute();
+  const acc = radarAccumIndex();
+  const needAccum = R.groups.flow.win !== "off";
+  const histLine = h.loading ? `<span style="color:var(--gold);">⏳ Menarik histori 5 hari dari flows…</span>`
+    : h.err ? `<span style="color:var(--down);">${escapeHtml(h.err)}</span>`
+    : h.byTicker ? `Histori flows: ${Object.keys(h.byTicker).length} emiten`
+    : "Histori flows belum dimuat";
+  const accLine = acc ? `Akumulasi broker s/d ${fmtDateID(acc.lastDate)} · ${acc.size} saham`
+    : (state.bsScan.loading ? `<span style="color:var(--gold);">⏳ Memuat data akumulasi broker…</span>` : "Data akumulasi broker belum dimuat");
+
+  const settings = `
+    <div class="panel" style="flex-direction:column;align-items:stretch;gap:12px;">
+      <div style="display:flex;flex-wrap:wrap;gap:8px;align-items:center;">
+        <span class="bs2-label" style="margin:0;">PRESET</span>
+        ${chip("preset:cuan", "🚀 Cuan Senin", false)}${chip("preset:reset", "Reset", false)}
+        <span style="font-size:11px;color:var(--muted);">M = Momentum (5 hari bursa) · S = Session (hari terakhir)</span>
+      </div>
+      <div class="bsx-grid">
+        <div><label class="bs2-label">TOP N PER GRUP</label><div class="bs2-chipset">${RADAR_TOPN.map(n => chip("topn:" + n, "Top " + n, R.topN === n)).join("")}</div></div>
+        <div><label class="bs2-label">MIN NILAI TRANSAKSI</label><div class="bs2-chipset">${RADAR_MINVAL.map(v => chip("minval:" + v, v ? fmtCap(v).replace(/^\+/, "") : "Semua", R.minValue === v)).join("")}</div></div>
+        <div><label class="bs2-label">ATURAN "KUNCINYA"</label><div class="bs2-chipset">${chip("rules:1", "Aktif", R.rules)}${chip("rules:0", "Nonaktif", !R.rules)}</div></div>
+        <div><label class="bs2-label">MIN AGGRESSION</label><div class="bs2-chipset">${RADAR_MINAGGR.map(v => chip("minaggr:" + v, fmtCap(v).replace(/^\+/, ""), R.minAggr === v)).join("")}</div></div>
+        <div><label class="bs2-label">AGGR ≥ N × |AKUM| (saat akum minus)</label><div class="bs2-chipset">${chip("mult:1", "1×", R.mult === 1)}${chip("mult:2", "2×", R.mult === 2)}</div></div>
+      </div>
+      <div style="font-size:11px;color:var(--muted);line-height:1.6;">
+        ${histLine} · ${accLine}
+        ${acc ? "" : ` <button type="button" class="bs2-chip" data-radar="loadaccum" ${state.bsScan.loading ? "disabled" : ""}>Muat data akumulasi</button>`}
+        <button type="button" class="bs2-chip" data-radar="reloadhist" ${h.loading ? "disabled" : ""}>⟳ Histori</button>
+        ${needAccum && !acc ? `<div style="color:var(--gold);margin-top:4px;">Grup FLOW aktif tapi data akumulasi belum ada — hasil kosong sampai dimuat.</div>` : ""}
+      </div>
+    </div>`;
+
+  const info = `
+    <details class="panel" style="flex-direction:column;align-items:stretch;">
+      <summary style="cursor:pointer;font-weight:700;font-size:13px;">ℹ️ Cara baca &amp; batas data</summary>
+      <div style="margin-top:10px;font-size:12px;line-height:1.7;color:var(--muted);display:flex;flex-direction:column;gap:6px;">
+        <div><b style="color:var(--text);">Cara kerja:</b> tiap grup aktif (M/S) mengambil Top N saham; yang lolos hanya saham yang ada di <b>semua</b> grup aktif, diurutkan dari rata-rata peringkat.</div>
+        <div><b style="color:var(--text);">Aturan "Kuncinya":</b> (1) Aggression &gt; batas minimum; kalau akumulasi minus, Aggression juga ≥ N× |akumulasi|. Badge ★ = akumulasi &amp; Aggression sama-sama di atas batas. (2) Aggression konsisten naik = minimal 80% hari (dari 5) positif dan totalnya positif; grafik kecil = kumulatif Aggression.</div>
+        <div style="color:var(--gold);"><b>Aggression di sini ESTIMASI</b>, bukan HAKA/HAKI asli: nilai transaksi × posisi close dalam range harian. Aplikasi ini belum punya data tradebook, jadi angkanya bisa meleset dari Market Radar Stockbit — pakai sebagai penyaring awal, lalu cek chart Trade Flow di Stockbit.</div>
+        <div><b style="color:var(--text);">Akumulasi</b> berasal dari broker_activity (hanya broker yang pernah ditarik lewat Lacak Broker), jadi bisa lebih kecil dari angka Stockbit.</div>
+      </div>
+    </details>`;
+
+  let body;
+  if(!state.stocks || !state.stocks.length){
+    body = `<div class="empty-box">Data saham belum dimuat.</div>`;
+  }else if(!res.active.length){
+    body = `<div class="empty-box">Aktifkan minimal satu grup (pilih M atau S), atau tekan preset <b>🚀 Cuan Senin</b>.</div>`;
+  }else if(!res.out.length){
+    body = `<div class="empty-box">Tidak ada saham yang lolos (${res.afterRank} lolos peringkat grup dari ${res.total} saham).${R.rules ? " Coba <b>Nonaktifkan</b> aturan Kuncinya, naikkan Top N, atau turunkan Min Aggression." : " Coba naikkan Top N atau matikan salah satu grup."}</div>`;
+  }else{
+    const wAg = res.wAg, wFl = res.wFl;
+    const pct = v => v == null ? "-" : `<span style="color:${v >= 0 ? "var(--up)" : "var(--down)"};font-weight:700;">${v >= 0 ? "+" : ""}${v.toFixed(2)}%</span>`;
+    const tag = (ok, label) => `<span class="pill ${ok === null ? "pill-muted" : ok ? "pill-up" : "pill-down"}" style="font-size:9px;margin-right:3px;">${label} ${ok === null ? "?" : ok ? "✓" : "✗"}</span>`;
+    const rows = res.out.slice(0, 50).map((m, i) => `<tr>
+      <td class="mono" style="color:var(--muted);">${i + 1}</td>
+      <td><button type="button" class="ticker-link" data-detail="${escapeHtml(m.ticker)}" style="font-weight:800;font-size:14px;">${escapeHtml(m.ticker)}</button>${m.rBoth ? ` <span title="Akumulasi &amp; Aggression sama-sama di atas batas" style="color:var(--gold);">★</span>` : ""}
+        <div style="font-size:10px;color:var(--muted);max-width:150px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${escapeHtml(m.name)}</div></td>
+      <td class="mono"><div style="font-weight:800;">${fmtNum(Math.round(m.close))}</div><div style="font-size:11px;">${pct(m.chgS)}</div></td>
+      <td class="mono">${fmtCap(m.valueS)}</td>
+      <td class="mono" style="color:${m.aggrShown >= 0 ? "var(--up)" : "var(--down)"};font-weight:800;">${fmtRp(m.aggrShown)}<div style="font-size:9px;color:var(--muted);font-weight:500;">estimasi ${wAg}</div></td>
+      <td class="mono" style="color:${m.accumShown == null ? "var(--muted)" : m.accumShown >= 0 ? "var(--up)" : "var(--down)"};">${m.accumShown == null ? "-" : fmtRp(m.accumShown)}${m.accumShown == null ? "" : `<div style="font-size:9px;color:var(--muted);">${wFl}</div>`}</td>
+      <td>${radarSpark(m.series)}${m.histOk ? `<div style="font-size:9px;color:var(--muted);">${m.posDays}/${m.nDays} hari +</div>` : ""}</td>
+      <td style="white-space:nowrap;">${tag(m.rAgg, "AGR")}${tag(m.rFlow, "FLOW")}${tag(m.consistent, "KONS")}</td>
+      <td class="mono">${m.score.toFixed(1)}</td></tr>`).join("");
+    body = `
+      <div style="font-size:11.5px;color:var(--muted);margin-bottom:8px;">${res.out.length} saham lolos (dari ${res.afterRank} yang lolos peringkat grup, ${res.total} saham dipindai) · menampilkan ${Math.min(50, res.out.length)} teratas</div>
+      <div class="table-wrap"><table class="bsx-table"><thead><tr>
+        <th>#</th><th>SAHAM</th><th>HARGA</th><th>NILAI</th><th>AGGR (EST)</th><th>AKUM</th><th>TREN AGGR</th><th>ATURAN</th><th>SKOR</th>
+      </tr></thead><tbody>${rows}</tbody></table></div>`;
+  }
+
+  return `
+    <div class="panel" style="flex-direction:column;align-items:stretch;gap:4px;">
+      <div class="filter-section-title" style="margin:0;"><span>📡 MARKET RADAR</span><span class="line"></span></div>
+      <div style="font-size:12px;color:var(--muted);line-height:1.6;">Preset ala Market Radar Stockbit: Most Trending, Price, Flow, dan Aggression — dengan aturan "Kuncinya" (Aggression &gt; 1 Bio &amp; konsisten naik).</div>
+    </div>
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:12px;margin:12px 0;">${RADAR_GROUPS.map(groupCard).join("")}</div>
+    ${settings}
+    <div style="margin:12px 0;">${info}</div>
+    ${body}`;
+}
+
+function radarAction(a){
+  const R = radarState(), p = String(a).split(":");
+  if(p[0] === "win" && R.groups[p[1]] && ["off", "M", "S"].includes(p[2])) R.groups[p[1]].win = p[2];
+  else if(p[0] === "pick" && R.groups[p[1]]) R.groups[p[1]].pick = p[2];
+  else if(p[0] === "preset"){
+    const d = radarDefaults();
+    if(p[1] === "reset"){ Object.keys(d.groups).forEach(k => { d.groups[k].win = "off"; }); d.rules = false; }
+    Object.assign(R, d);
+  }
+  else if(p[0] === "topn") R.topN = Number(p[1]);
+  else if(p[0] === "minval") R.minValue = Number(p[1]);
+  else if(p[0] === "rules") R.rules = p[1] === "1";
+  else if(p[0] === "minaggr") R.minAggr = Number(p[1]);
+  else if(p[0] === "mult") R.mult = Number(p[1]) === 2 ? 2 : 1;
+  else if(p[0] === "loadaccum"){ runBsScan(); return; }
+  else if(p[0] === "reloadhist"){ loadRadarHistory(); return; }
+  radarSave();
+  render();
+}
+function wireRadarControls(){
+  document.querySelectorAll("[data-radar]").forEach(b => { b.onclick = () => radarAction(b.dataset.radar); });
+}
+
 function renderKrakenFlow(){
   const result = computeOrcaResults();
   const rows = result.rows;
@@ -27757,6 +28370,7 @@ function attachContentEvents(){
   wireBsScanControls();
   wireBsTrapControls();
   wireBsSignalControls();
+  wireRadarControls();
   bindSearchInputPreservingCursor("stalkerResultSearch", v => {
     state.brokerStalkerResultSearch = v;
     state.brokerStalkerRows = brokerStalkerFilteredSorted();
@@ -27874,6 +28488,7 @@ function selectMainTab(tab){
   if(state.tab === "rekap" && !state.rekapHistory.length && !state.rekapHistoryLoading) loadRekapHistory();
   if(state.tab === "eps" && !state.epsRaw && !state.epsScanning) ensureEpsDataLoaded();
   if(state.tab === "kraken") ensureOrcaHistoryLoaded();
+  if(state.tab === "radar"){ const _R = radarState(); if(!_R.hist.byTicker && !_R.hist.loading){ _R.hist.tried = true; loadRadarHistory(); } }
   render();
 }
 
