@@ -5773,6 +5773,10 @@ async function loadLive(opts){
     if (skipStatic) {
        // dipertahankan
     } else if (Array.isArray(backtestRes)) {
+       // Data keluar (harga/alasan) dipertahankan dari salinan lokal kalau kolom
+       // exit_price/exit_reason belum ada di server, supaya tidak hilang saat refresh.
+       const _btPrevExit = new Map();
+       (state.backtests || []).forEach(s0 => (s0.items || []).forEach(i0 => _btPrevExit.set(String(s0.id) + "|" + i0.ticker, i0)));
        state.backtests = backtestRes.map(b => ({
          id: b.id, date: b.session_date,
          // Guard Array: sesi tanpa relasi backtest_items (null/undefined)
@@ -5786,7 +5790,9 @@ async function loadLive(opts){
             // tanggal sesi (b.session_date, format "YYYY-MM-DD" dari Supabase)
             // supaya kolom "Tanggal Entry"/"Hari" tetap menampilkan sesuatu
             // yang masuk akal, bukan kosong.
-            entryDate: it.entry_date || b.session_date || null
+            entryDate: it.entry_date || b.session_date || null,
+            exitPrice: (it.exit_price != null && it.exit_price !== "") ? Number(it.exit_price) : ((_btPrevExit.get(String(b.id) + "|" + it.ticker) || {}).exitPrice ?? null),
+            exitReason: it.exit_reason || ((_btPrevExit.get(String(b.id) + "|" + it.ticker) || {}).exitReason) || ""
          }))
        })).sort((a,b) => String(b.id).localeCompare(String(a.id)));
        saveBacktests();
@@ -11211,6 +11217,7 @@ function wireBacktestSaveControls(scopeEl){
         eps: "Entry Price Scanner",
         orca: "Kraken Flow (ORCA)",
         bsjp: "BSJP (Beli Sore, Jual Pagi)",
+        gapgo: "Gap Up & Go (day trade)",
         patternscan: "Chart Pattern Scanner",
         smartpick: `Smart Pick — ${spTitleFor(state.spListOpenDefId)}`
       };
@@ -11384,6 +11391,9 @@ function exportBacktestToExcel(id) {
       "Harga Tertinggi": period.highPeriod ?? "-",
       "Capai P/L (%)": period.maxPL != null ? parseFloat(period.maxPL.toFixed(2)) : "-",
       "Hari": hariSejak ?? "-",
+      "Harga Keluar": item.exitPrice ?? "-",
+      "Alasan Keluar": item.exitReason || "-",
+      "P/L Keluar (%)": btExitPL(item) != null ? parseFloat(btExitPL(item).toFixed(2)) : "-",
       "Filter / Keterangan": item.filterStr || "-"
     };
   });
@@ -11405,6 +11415,9 @@ function exportBacktestToExcel(id) {
     {wch: 16}, // Harga Tertinggi
     {wch: 14}, // Capai P/L (%)
     {wch: 8},  // Hari
+    {wch: 13}, // Harga Keluar
+    {wch: 18}, // Alasan Keluar
+    {wch: 14}, // P/L Keluar (%)
     {wch: 50}  // Keterangan
   ];
   worksheet['!cols'] = wscols;
@@ -11440,6 +11453,9 @@ function exportAllBacktestToExcel() {
         "Harga Tertinggi": period.highPeriod ?? "-",
         "Capai P/L (%)": period.maxPL != null ? parseFloat(period.maxPL.toFixed(2)) : "-",
         "Hari": hariSejak ?? "-",
+        "Harga Keluar": item.exitPrice ?? "-",
+        "Alasan Keluar": item.exitReason || "-",
+        "P/L Keluar (%)": btExitPL(item) != null ? parseFloat(btExitPL(item).toFixed(2)) : "-",
         "Filter / Keterangan": item.filterStr || "-"
       });
     });
@@ -11466,6 +11482,9 @@ function exportAllBacktestToExcel() {
     {wch: 16}, // Harga Tertinggi
     {wch: 14}, // Capai P/L (%)
     {wch: 8},  // Hari
+    {wch: 13}, // Harga Keluar
+    {wch: 18}, // Alasan Keluar
+    {wch: 14}, // P/L Keluar (%)
     {wch: 50}  // Keterangan
   ];
   worksheet['!cols'] = wscols;
@@ -14228,6 +14247,7 @@ function render(){
     else if(state.tab==="eps") content.innerHTML = renderEntryPriceScanner();
     else if(state.tab==="kraken") content.innerHTML = renderKrakenFlow();
     else if(state.tab==="bsjp") content.innerHTML = renderBsjp();
+    else if(state.tab==="gapgo") content.innerHTML = renderGapGo();
     else if(state.tab==="wsdebug") content.innerHTML = renderWsDebug();
     else if(state.tab==="patternscan") content.innerHTML = renderPatternScanner();
     else if(state.tab==="screenerbt") content.innerHTML = (typeof SBT==="object" && SBT) ? renderScreenerBt() : `<div class="empty-box">Memuat…</div>`;
@@ -14246,6 +14266,7 @@ function render(){
   }
 
   attachContentEvents();
+  if(state.tab==="gapgo" && typeof ggBind==="function") ggBind();
   if(state.tab==="patternscan" && typeof psBind==="function") psBind();
   if(state.tab==="gainloss" && typeof GL==="object" && GL && typeof glBind==="function") glBind();
   if(state.tab==="chart" && state.selectedTicker) drawChartSVG();
@@ -16872,6 +16893,42 @@ function occurrenceDetailRows(occurrences, mode){
   </td></tr>`;
 }
 
+// ---------- Catatan KELUAR per item Backtest (harga keluar + alasan) ----------
+// Untuk menilai uji maju day trade: isi harga keluar nyata dan alasannya (TP/SL/gap terisi/...).
+// Disimpan lokal (localStorage) dan, kalau kolom server tersedia, ke backtest_items.exit_price/exit_reason:
+//   ALTER TABLE backtest_items ADD COLUMN exit_price numeric, ADD COLUMN exit_reason text;
+const BT_EXIT_REASONS = ["TP", "SL", "Gap terisi", "Tutup hari (close)", "Manual", "Lainnya"];
+let _btExitSyncWarned = false;
+function btExitPL(item){
+  const ep = Number(item && item.exitPrice), en = Number(item && item.entryPrice);
+  return (ep > 0 && en > 0) ? ((ep - en) / en) * 100 : null;
+}
+async function setBacktestExit(sessionId, ticker, field, rawValue){
+  const session = state.backtests.find(b => String(b.id) === String(sessionId));
+  const item = session && session.items.find(it => it.ticker === ticker);
+  if(!item) return;
+  if(field === "price"){
+    const v = parseFloat(String(rawValue).replace(",", "."));
+    item.exitPrice = (Number.isFinite(v) && v > 0) ? v : null;
+  } else {
+    item.exitReason = String(rawValue || "");
+  }
+  saveBacktests();
+  render();
+  try{
+    await supaFetch(`${SUPABASE_URL}/backtest_items?session_id=eq.${sessionId}&ticker=eq.${ticker}`, {
+      method: "PATCH",
+      headers: { ...getSupaHeaders(), "Prefer": "return=minimal" },
+      body: JSON.stringify({ exit_price: item.exitPrice, exit_reason: item.exitReason || null })
+    });
+  }catch(e){
+    if(!_btExitSyncWarned){
+      _btExitSyncWarned = true;
+      showError(`Catatan keluar tersimpan lokal, tapi belum tersinkron ke server (kolom exit_price/exit_reason mungkin belum ada): ${e.message}`);
+    }
+  }
+}
+
 function renderBacktest(){
   const tickerOptions = [...new Set(state.stocks.map(s=>s.ticker))].map(t=>`<option value="${t}">`).join("");
   const sessionOptions = `<option value="">+ Buat sesi baru</option>` +
@@ -16927,7 +16984,7 @@ function renderBacktest(){
   }
 
   const sessions = state.backtests.map(session => {
-    let winCount = 0, lossCount = 0, winCountMax = 0, lossCountMax = 0, totalPL = 0, maxPL = -Infinity, minPL = Infinity, validItems = 0;
+    let winCount = 0, lossCount = 0, winCountMax = 0, lossCountMax = 0, totalPL = 0, maxPL = -Infinity, minPL = Infinity, validItems = 0, exitN = 0, exitWin = 0, exitSum = 0; const exitReasons = {};
 
     const rowData = session.items.map(item => {
       const liveData = state.stocks.find(s => s.ticker === item.ticker);
@@ -16965,6 +17022,15 @@ function renderBacktest(){
         else if (periodMaxPL < 0) lossCountMax++;
       }
 
+      const plExit = btExitPL(item);
+      if (plExit != null) {
+        exitN++; exitSum += plExit; if (plExit > 0) exitWin++;
+        const rk = item.exitReason || "Tanpa alasan"; exitReasons[rk] = (exitReasons[rk] || 0) + 1;
+      }
+      const exitTone = (plExit ?? 0) > 0 ? "up" : (plExit ?? 0) < 0 ? "down" : "muted";
+      const exitKey = `${session.id}|${item.ticker}`;
+      const exitReasonOpts = [""].concat(BT_EXIT_REASONS).concat((item.exitReason && !BT_EXIT_REASONS.includes(item.exitReason)) ? [item.exitReason] : [])
+        .map(r => `<option value="${escapeHtml(r)}" ${r === (item.exitReason || "") ? "selected" : ""}>${r ? escapeHtml(r) : "— pilih —"}</option>`).join("");
       const tone = plTone;
       const plStr = plText(pl);
       const filterStr = item.filterStr || "-";
@@ -16982,7 +17048,7 @@ function renderBacktest(){
       return { sortKey: {
           ticker: item.ticker, sumber: item.sumber || "Screener", tglEntry: item.entryDate,
           hargaEntry: item.entryPrice, hargaLive: currentPrice, pl, hargaTertinggi: period.highPeriod,
-          plMax: periodMaxPL, hari: hariSejak,
+          plMax: periodMaxPL, hari: hariSejak, plExit,
         }, html: `<tr>
         <td class="ticker-cell"><button class="ticker-link" data-bt-add-porto="${session.id}|${item.ticker}" title="Tambah ${item.ticker} ke Portofolio (harga &amp; tanggal entry otomatis terisi)">${item.ticker}</button> <button type="button" class="link-btn" data-bt-detail="${item.ticker}" title="Buka detail ${item.ticker}">Detail</button></td>
         <td>${sumberPill}</td>
@@ -16995,6 +17061,9 @@ function renderBacktest(){
         <td class="mono" title="${escapeHtml(noHistTip) || `Harga tertinggi sejak tanggal entry (dari data historical harian)${historyTip}`}">${fmtNum(period.highPeriod)}</td>
         <td class="mono" style="color:var(--${maxTone}); font-weight:700; font-size:14px;" title="${escapeHtml(noHistTip) || `P/L maksimum: (Harga Tertinggi periode − Harga Entry) ÷ Harga Entry${historyTip}`}">${plText(periodMaxPL)}</td>
         <td class="mono">${hariStr}</td>
+        <td><input type="number" step="any" min="0" data-bt-exit="price" data-bt-key="${exitKey}" value="${item.exitPrice ?? ""}" placeholder="harga keluar" title="Harga keluar nyata (saat TP/SL/gap terisi/tutup)" style="width:96px;padding:4px 6px;font-size:12px;"></td>
+        <td><select data-bt-exit="reason" data-bt-key="${exitKey}" title="Alasan keluar" style="padding:4px 6px;font-size:12px;">${exitReasonOpts}</select></td>
+        <td class="mono" style="color:var(--${exitTone}); font-weight:700;" title="P/L realisasi = (Harga Keluar − Harga Entry) ÷ Harga Entry (belum dikurangi fee)">${plExit == null ? "-" : plText(plExit)}</td>
         <td><a class="link-btn" href="#/chart/${encodeURIComponent(item.ticker)}" data-chart="${item.ticker}">Chart</a></td>
         <td><button class="link-btn" style="color:#f87171;" data-del-bt-item="${session.id}|${item.ticker}">Hapus</button></td>
       </tr>` };
@@ -17002,7 +17071,7 @@ function renderBacktest(){
     const sortedRowData = tableSortRows(`backtestSession-${session.id}`, rowData, {
       ticker: r=>r.sortKey.ticker, sumber: r=>r.sortKey.sumber, tglEntry: r=>r.sortKey.tglEntry,
       hargaEntry: r=>r.sortKey.hargaEntry, hargaLive: r=>r.sortKey.hargaLive, pl: r=>r.sortKey.pl,
-      hargaTertinggi: r=>r.sortKey.hargaTertinggi, plMax: r=>r.sortKey.plMax, hari: r=>r.sortKey.hari,
+      hargaTertinggi: r=>r.sortKey.hargaTertinggi, plMax: r=>r.sortKey.plMax, hari: r=>r.sortKey.hari, plExit: r=>r.sortKey.plExit,
     });
     const rows = sortedRowData.map(r => r.html).join("");
 
@@ -17050,12 +17119,13 @@ function renderBacktest(){
           </div>
         </div>
         ${sessionSummary}
+        ${exitN > 0 ? `<div style="font-size:12px;margin:-4px 0 14px;padding:8px 12px;border:1px solid var(--border);border-radius:8px;"><b>Realisasi keluar:</b> ${exitN} dari ${session.items.length} item · win rate ${Math.round(exitWin / exitN * 100)}% (${exitWin}/${exitN}) · rata-rata ${(exitSum / exitN) > 0 ? "+" : ""}${(exitSum / exitN).toFixed(2)}% · ${Object.entries(exitReasons).map(([k, v]) => escapeHtml(k) + " " + v).join(", ")}</div>` : ""}
         <div class="table-wrap">
           <table class="mono">
             <thead>
               <tr>
                 ${tableSortTh(`backtestSession-${session.id}`,"Ticker","ticker")}${tableSortTh(`backtestSession-${session.id}`,"Sumber","sumber")}${tableSortTh(`backtestSession-${session.id}`,"Tanggal Entry","tglEntry")}<th>Kriteria Screener</th><th>Filter / Keterangan</th>${tableSortTh(`backtestSession-${session.id}`,"Harga Entry","hargaEntry")}
-                ${tableSortTh(`backtestSession-${session.id}`,"Harga Live","hargaLive")}${tableSortTh(`backtestSession-${session.id}`,"Profit / Loss","pl")}${tableSortTh(`backtestSession-${session.id}`,"Harga Tertinggi","hargaTertinggi")}${tableSortTh(`backtestSession-${session.id}`,"Capai P/L","plMax")}${tableSortTh(`backtestSession-${session.id}`,"Hari","hari")}<th>Aksi</th><th></th>
+                ${tableSortTh(`backtestSession-${session.id}`,"Harga Live","hargaLive")}${tableSortTh(`backtestSession-${session.id}`,"Profit / Loss","pl")}${tableSortTh(`backtestSession-${session.id}`,"Harga Tertinggi","hargaTertinggi")}${tableSortTh(`backtestSession-${session.id}`,"Capai P/L","plMax")}${tableSortTh(`backtestSession-${session.id}`,"Hari","hari")}<th>Harga Keluar</th><th>Alasan Keluar</th>${tableSortTh(`backtestSession-${session.id}`,"P/L Keluar","plExit")}<th>Aksi</th><th></th>
               </tr>
             </thead>
             <tbody>${rows}</tbody>
@@ -27336,6 +27406,9 @@ function attachContentEvents(){
     render();
   });
 
+  document.querySelectorAll("[data-bt-exit]").forEach(el=>{
+    el.onchange = ()=>{ const [sid,tk] = el.dataset.btKey.split("|"); setBacktestExit(sid, tk, el.dataset.btExit, el.value); };
+  });
   document.querySelectorAll("[data-del-bt-item]").forEach(btn=>{
     btn.onclick = ()=>{ const [sid,tk] = btn.dataset.delBtItem.split("|"); deleteBacktestItem(sid,tk); };
   });
@@ -29877,7 +29950,617 @@ function sbtEquityHtml(selKey){
     </svg>
     <div style="font-size:12px;line-height:1.6;"><span style="color:var(--gold,#f90);font-weight:700;">━ Preset</span> ${sbtF(cp,1)} · <span style="color:var(--muted);">┅ Baseline pada hari sinyal yang sama</span> ${sbtF(cb,1)}<br>
     Rata-rata per sinyal ${sbtF(tot/rs.length,2)} · tanpa ${k5} sinyal terbaik ${sbtF(rest,2)} · ${share}${warn}</div>
-    <div style="font-size:11px;color:var(--muted);margin-top:4px;line-height:1.5;">Penjumlahan rata-rata harian, bukan simulasi akun: posisi tumpang-tindih, tanpa ukuran posisi. Garis putus-putus vertikal = batas in-sample / out-of-sample. Kurva yang naik terus di kedua sisi lebih meyakinkan daripada yang hanya naik di satu sisi.</div>`;
+    <div style="font-size:11px;color:var(--muted);margin-top:4px;line-height:1.5;">Penjumlahan rata-rata harian, bukan simulasi akun: posisi tumpang-tindih, tanpa ukuran posisi (lihat 🏦 Simulasi akun di bawah). Garis putus-putus vertikal = batas in-sample / out-of-sample. Kurva yang naik terus di kedua sisi lebih meyakinkan daripada yang hanya naik di satu sisi.</div>`;
+}
+
+// ---------- Simulasi akun + Monte Carlo ----------
+// Aturan: modal awal, maks N posisi bersamaan, tiap posisi = ekuitas / N (sama rata, majemuk),
+// satu posisi per saham, sinyal berurutan sesuai likuiditas saham (yang paling likuid dulu) bila slot terbatas.
+// Slot baru bebas pada hari sinyal = hari keluar posisi lama. Untuk TP/SL, slot dianggap terpakai selama maks tahan (konservatif).
+// Tidak dimodelkan: pembulatan lot 100 lembar, antrean/partial fill, auto-reject, biaya pinjam saham (short).
+function sbtSimAccount(list,key,cap0,maxPos,ci,cal,capPct){
+  capPct=+capPct||0; let capped=0, fillSum=0;
+  const hz=sbtHoldDays(key);
+  const sg=(list||[]).filter(s=>s.r[key]!=null && ci[s.d]!=null).map((s,k)=>({s,k})).sort((a,b)=> a.s.d<b.s.d?-1: a.s.d>b.s.d?1: a.k-b.k).map(x=>x.s);
+  let cash=cap0, open=[], curve=[], peak=cap0, mdd=0, taken=0, skipped=0, wins=0, sumR=0; const rets=[];
+  if(!sg.length) return null;
+  const eqNow=()=> cash+open.reduce((a,p)=>a+p.alloc,0);
+  const mark=d=>{ const e=eqNow(); curve.push([d,e]); if(e>peak) peak=e; const dd=(peak-e)/peak*100; if(dd>mdd) mdd=dd; };
+  const release=upto=>{ open.sort((a,b)=>a.exit-b.exit); while(open.length && open[0].exit<=upto){ const p=open.shift(); const back=p.alloc*(1+p.ret/100); cash+=back;
+      rets.push(p.ret); sumR+=p.ret; if(p.ret>0) wins++; mark(cal[Math.min(p.exit,cal.length-1)]); } };
+  curve.push([sg[0].d,cap0]);
+  for(const s of sg){ const idx=ci[s.d]; release(idx);
+    if(open.length>=maxPos || open.some(p=>p.t===s.t)){ skipped++; continue; }
+    const want=Math.min(cash, eqNow()/maxPos); let alloc=want;
+    if(capPct>0 && s.w>0){ const lim=capPct/100*s.w; if(lim<alloc){ alloc=lim; capped++; } } // batas kapasitas likuiditas
+    if(!(alloc>0)){ skipped++; continue; }
+    fillSum+= want>0 ? alloc/want : 1;
+    cash-=alloc; open.push({ t:s.t, alloc, ret:s.r[key], exit:idx+hz }); taken++; }
+  release(Infinity);
+  const end=eqNow();
+  return { end, ret:(end/cap0-1)*100, mdd, taken, skipped, win: taken? wins/taken*100:null, avg: taken? sumR/taken:null, curve, rets, capped, fill: taken? fillSum/taken*100 : null };
+}
+function sbtMulberry(a){ return function(){ a|=0; a=a+0x6D2B79F5|0; let t=Math.imul(a^a>>>15,1|a); t=t+Math.imul(t^t>>>7,61|t)^t; return ((t^t>>>14)>>>0)/4294967296; }; }
+// Monte Carlo: ambil acak (dengan pengembalian) return transaksi yang benar-benar diambil simulasi, urutan diacak, ukuran 1/N ekuitas.
+// Menjawab: "berapa rentang hasil kalau urutan nasibnya berbeda?" — bukan prediksi.
+function sbtMonteCarlo(rets,maxPos,iter){
+  if(!rets||rets.length<10) return null; const rnd=sbtMulberry(20260101), n=rets.length, fin=[], dds=[];
+  for(let it=0;it<iter;it++){ let eq=1, pk=1, dd=0; for(let k=0;k<n;k++){ const r=rets[(rnd()*n)|0]; eq*=1+r/100/maxPos; if(eq>pk) pk=eq; const x=(pk-eq)/pk; if(x>dd) dd=x; } fin.push((eq-1)*100); dds.push(dd*100); }
+  fin.sort((a,b)=>a-b); dds.sort((a,b)=>a-b); const q=(a,p)=>a[Math.min(a.length-1,Math.floor(p*a.length))];
+  return { p5:q(fin,.05), p50:q(fin,.5), p95:q(fin,.95), ddP50:q(dds,.5), ddP95:q(dds,.95), loss:fin.filter(x=>x<=0).length/iter*100, n };
+}
+function sbtAccountHtml(selKey){
+  const key=sbtKey(), M=SBT.meta, C=SBT.cfg; if(!SBT.ctx||!SBT.ctx.cal) return "";
+  const cal=SBT.ctx.cal, ci={}; cal.forEach((d,i)=>ci[d]=i);
+  const cap0=Math.max(1,C.capitalM||100)*1e6, N=Math.max(1,Math.round(C.maxPos||5));
+  const P=sbtSimAccount(sbtRegFilter(SBT.signals[selKey]),key,cap0,N,ci,cal), B=sbtSimAccount(sbtRegFilter(SBT.signals.__baseline),key,cap0,N,ci,cal);
+  if(!P||P.taken<5) return "";
+  const rp=v=>"Rp "+fmtNum(Math.round(v/1e6))+" jt";
+  const sens=[3,5,10,20].map(n=>{ const a=sbtSimAccount(sbtRegFilter(SBT.signals[selKey]),key,cap0,n,ci,cal), b=sbtSimAccount(sbtRegFilter(SBT.signals.__baseline),key,cap0,n,ci,cal); return {n,a,b}; });
+  const mc=sbtMonteCarlo(P.rets,N,2000);
+  const W=700,H=220,L=48,R=12,T=12,Bm=26, i0=ci[P.curve[0][0]], i1=Math.max(i0+1,ci[P.curve[P.curve.length-1][0]]);
+  const pct=c=>c.map(([d,e])=>[ci[d],(e/cap0-1)*100]);
+  const pc=pct(P.curve), bc=B?pct(B.curve):[], all=pc.concat(bc).map(x=>x[1]).concat([0]), lo=Math.min(...all), hi=Math.max(...all), rng=(hi-lo)||1;
+  const x=i=>L+(W-L-R)*(i-i0)/(i1-i0), y=v=>T+(H-T-Bm)*(1-(v-lo)/rng);
+  const path=a=>a.map((p,k)=>(k?"L":"M")+x(p[0]).toFixed(1)+" "+y(p[1]).toFixed(1)).join(" ");
+  const cutI=cal.findIndex(d=>d>M.cutoff), cutLine= cutI>i0&&cutI<i1 ? `<line x1="${x(cutI).toFixed(1)}" x2="${x(cutI).toFixed(1)}" y1="${T}" y2="${H-Bm}" stroke="currentColor" stroke-opacity=".35" stroke-dasharray="4 3"/><text x="${(x(cutI)+4).toFixed(1)}" y="${T+10}" font-size="10" fill="currentColor" fill-opacity=".6">out-of-sample →</text>`:"";
+  const zero=`<line x1="${L}" x2="${W-R}" y1="${y(0).toFixed(1)}" y2="${y(0).toFixed(1)}" stroke="currentColor" stroke-opacity=".25"/>`;
+  const col=v=>v==null?"":`color:${v>0?"var(--up)":v<0?"var(--down)":"inherit"};`;
+  const beats= B && P.ret>B.ret;
+  return `<div class="panel-heading" style="margin-top:14px;"><h3>🏦 Simulasi akun — ${escapeHtml(sbtLabel(selKey))}</h3><span class="panel-heading-note">modal ${rp(cap0)} · maks ${N} posisi · ukuran sama rata · majemuk · ${escapeHtml(sbtMethodLabel(key))}</span></div>
+    <svg viewBox="0 0 ${W} ${H}" style="width:100%;max-width:760px;height:auto;color:var(--muted);" role="img" aria-label="Kurva ekuitas akun">
+      ${zero}${cutLine}${bc.length?`<path d="${path(bc)}" fill="none" stroke="currentColor" stroke-opacity=".7" stroke-width="1.5" stroke-dasharray="5 3"/>`:""}
+      <path d="${path(pc)}" fill="none" stroke="var(--gold,#f90)" stroke-width="2"/>
+      <text x="${L-4}" y="${y(hi).toFixed(1)}" font-size="10" text-anchor="end" dominant-baseline="hanging" fill="currentColor">${hi.toFixed(0)}%</text>
+      <text x="${L-4}" y="${y(lo).toFixed(1)}" font-size="10" text-anchor="end" fill="currentColor">${lo.toFixed(0)}%</text>
+      <text x="${L}" y="${H-8}" font-size="10" fill="currentColor">${cal[i0]}</text><text x="${W-R}" y="${H-8}" font-size="10" text-anchor="end" fill="currentColor">${cal[i1]}</text>
+    </svg>
+    <div class="table-wrap"><table class="data-table"><thead><tr><th></th><th>Ekuitas akhir</th><th>Return</th><th>Drawdown maks</th><th>Transaksi diambil</th><th>Sinyal terlewat (slot penuh)</th><th>Win rate</th><th>Rata-rata / transaksi</th></tr></thead><tbody>
+      <tr><td><b>Preset</b></td><td class="mono">${rp(P.end)}</td><td class="mono" style="${col(P.ret)}">${sbtF(P.ret,1)}</td><td class="mono" style="color:var(--down);">−${P.mdd.toFixed(1)}%</td><td class="mono">${P.taken}</td><td class="mono">${P.skipped}</td><td class="mono">${sbtF(P.win)}</td><td class="mono" style="${col(P.avg)}">${sbtF(P.avg,2)}</td></tr>
+      ${B?`<tr style="opacity:.8;"><td>Baseline (aturan sama)</td><td class="mono">${rp(B.end)}</td><td class="mono" style="${col(B.ret)}">${sbtF(B.ret,1)}</td><td class="mono" style="color:var(--down);">−${B.mdd.toFixed(1)}%</td><td class="mono">${B.taken}</td><td class="mono">${B.skipped}</td><td class="mono">${sbtF(B.win)}</td><td class="mono" style="${col(B.avg)}">${sbtF(B.avg,2)}</td></tr>`:""}
+    </tbody></table></div>
+    <div style="font-size:12px;margin:8px 0 4px;"><b>Uji ketahanan: jumlah posisi bersamaan</b> <span style="color:var(--muted);">(keunggulan sejati tidak hilang saat N diubah)</span></div>
+    <div class="table-wrap"><table class="data-table"><thead><tr><th>Maks posisi</th><th>Return preset</th><th>Drawdown preset</th><th>Return baseline</th><th>Drawdown baseline</th><th></th></tr></thead><tbody>
+      ${sens.map(r=>`<tr><td class="mono">${r.n}</td><td class="mono" style="${col(r.a&&r.a.ret)}">${r.a?sbtF(r.a.ret,1):"-"}</td><td class="mono">${r.a?"−"+r.a.mdd.toFixed(1)+"%":"-"}</td><td class="mono" style="${col(r.b&&r.b.ret)}">${r.b?sbtF(r.b.ret,1):"-"}</td><td class="mono">${r.b?"−"+r.b.mdd.toFixed(1)+"%":"-"}</td><td>${r.a&&r.b?(r.a.ret>r.b.ret?pillHtml("unggul","up"):pillHtml("kalah","gold")):""}</td></tr>`).join("")}
+    </tbody></table></div>
+    ${mc?`<div style="font-size:12px;line-height:1.65;margin-top:8px;"><b>🎲 Monte Carlo</b> (${mc.n} transaksi diacak ulang 2.000×, ukuran posisi 1/${N} ekuitas): return akhir rentang 90% = <b style="${col(mc.p5)}">${sbtF(mc.p5,1)}</b> s/d <b style="${col(mc.p95)}">${sbtF(mc.p95,1)}</b> (median ${sbtF(mc.p50,1)}) · drawdown median −${mc.ddP50.toFixed(1)}%, terburuk 5% kasus −${mc.ddP95.toFixed(1)}% · peluang berakhir rugi <b>${mc.loss.toFixed(1)}%</b>${mc.loss>20?` <span style="color:var(--gold);">⚠ cukup besar: keuntungan bisa jadi hanya urutan nasib baik</span>`:""}</div>`:""}
+    <div style="font-size:11px;color:var(--muted);margin-top:4px;line-height:1.5;">${beats?"Preset mengungguli baseline pada aturan akun yang sama. ":"Preset tidak mengungguli baseline pada aturan akun yang sama. "}Simulasi ini lebih realistis daripada penjumlahan return harian karena modal terbatas dan sinyal berebut slot, tetapi tetap tanpa pembulatan lot, antrean order, dan auto-reject. Monte Carlo mengacak transaksi sebagai independen sehingga meremehkan risiko saat banyak saham jatuh bersamaan (hari sinyal berkorelasi).</div>`;
+}
+
+// ---------- Uji realitas (Romano–Wolf stepdown, bootstrap stasioner) + uji placebo ----------
+// Uji realitas: menjawab "dari SELURUH preset & kombinasi yang dicoba, adakah yang benar-benar mengalahkan baseline,
+// atau yang terbaik hanya kebetulan hasil pencarian?" Statistik: selisih rata-rata harian vs baseline (0 pada hari tanpa sinyal),
+// dibootstrap berblok (Politis–Romano) sehingga autokorelasi & korelasi antarpreset ikut terjaga; p disesuaikan memakai stepdown Romano–Wolf (FWER).
+const SBT_RC_B=500, SBT_RC_MAXK=2500;
+async function sbtRcCompute(items,n,B,bl,prog){
+  // Bootstrap-t: setiap resampel distudentisasi dengan simpangan bakunya sendiri, sehingga ketidakpastian penyebut ikut tersimulasi.
+  // (Memakai galat baku bootstrap tunggal membuat tingkat positif palsu membengkak saat blok > 1 dan hipotesis banyak.)
+  const K=items.length, rnd=sbtMulberry(424242), pStart=1/bl, idx=new Int32Array(n), sn=Math.sqrt(n);
+  const mean=new Float64Array(K), sd=new Float64Array(K), M=new Float32Array(B*K), S=new Float32Array(B*K);
+  items.forEach((it,k)=>{ let s=0,q=0; const v=it.v; for(let t=0;t<n;t++){ const x=v[t]; s+=x; q+=x*x; } mean[k]=s/n; sd[k]=Math.sqrt(Math.max(0,q/n-mean[k]*mean[k])); });
+  for(let b=0;b<B;b++){
+    idx[0]=(rnd()*n)|0; for(let t=1;t<n;t++) idx[t]= rnd()<pStart ? (rnd()*n)|0 : (idx[t-1]+1)%n;
+    for(let k=0;k<K;k++){ const v=items[k].v; let s=0,q=0; for(let t=0;t<n;t++){ const x=v[idx[t]]; s+=x; q+=x*x; } const m=s/n; M[b*K+k]=m; S[b*K+k]=Math.sqrt(Math.max(0,q/n-m*m)); }
+    if(b%25===24){ if(prog) prog(b+1,B); await new Promise(r=>setTimeout(r,0)); }
+  }
+  const tobs=Array.from(mean,(m,k)=> sd[k]>0 ? m*sn/sd[k] : -Infinity);
+  const order=tobs.map((t,k)=>k).sort((a,b)=>tobs[b]-tobs[a]);
+  const maxb=new Float64Array(B).fill(-Infinity), padj=new Array(K);
+  for(let j=K-1;j>=0;j--){ const k=order[j];
+    if(sd[k]>0) for(let b=0;b<B;b++){ const sb=S[b*K+k]; if(sb>0){ const x=(M[b*K+k]-mean[k])*sn/sb; if(x>maxb[b]) maxb[b]=x; } }
+    let c=0; for(let b=0;b<B;b++) if(maxb[b]>=tobs[k]) c++; padj[j]=(c+1)/(B+1); }
+  for(let j=1;j<K;j++) if(padj[j]<padj[j-1]) padj[j]=padj[j-1];
+  return order.map((k,j)=>({ k, mean:mean[k], t:tobs[k], p:Math.min(1,padj[j]) }));
+}
+function sbtRcSig(){ return [sbtKey(),SBT.cfg.regime,SBT.cfg.dir,+SBT.ranAt].join("|"); }
+async function sbtRealityCheck(){
+  if(!SBT.results||SBT.rcBusy) return;
+  SBT.rcBusy=true; SBT.rcMsg="Menyiapkan…"; render();
+  const upd=t=>{ SBT.rcMsg=t; const el=document.getElementById("sbtRcMsg"); if(el) el.textContent=t; };
+  try{
+    const R=SBT.results, key=sbtKey(), L=k=>sbtRegFilter(SBT.signals[k]);
+    const bm=sbtDayMap(L("__baseline"),key), days=[...bm.keys()].sort(), n=days.length;
+    if(n<30) throw new Error("hari data terlalu sedikit (<30)");
+    const di=new Map(days.map((d,i)=>[d,i])), seen=new Set();
+    const hyps=[...R.rows.filter(r=>!r.small),...R.combos,...(R.manual||[]).filter(r=>!r.small)].filter(r=>!seen.has(r.key)&&seen.add(r.key));
+    let items=hyps.map(r=>{ const pm=sbtDayMap(L(r.key),key), v=new Float64Array(n); let has=0;
+      pm.forEach((a,d)=>{ const i=di.get(d), b=bm.get(d); if(i==null||!b) return; v[i]=a[0]/a[1]-b[0]/b[1]; has++; });
+      return { key:r.key, label:r.label, v, has }; }).filter(x=>x.has>=10);
+    const total=items.length; if(total<2) throw new Error("terlalu sedikit hipotesis untuk diuji");
+    if(total>SBT_RC_MAXK) items=items.slice(0,SBT_RC_MAXK);
+    const bl=Math.max(5,sbtHoldDays(key)*2);
+    const res=await sbtRcCompute(items,n,SBT_RC_B,bl,(b,B)=>upd(`Bootstrap ${b}/${B} · ${items.length} hipotesis × ${n} hari…`));
+    SBT.rc={ sig:sbtRcSig(), n, K:items.length, total, B:SBT_RC_B, bl,
+      rows:res.map(x=>({ key:items[x.k].key, label:items[x.k].label, mean:x.mean, t:x.t, p:x.p })) };
+    SBT.rcMsg="";
+  }catch(e){ console.error("[SBT-RC]",e); SBT.rcMsg="Gagal: "+(e&&e.message||e); }
+  SBT.rcBusy=false; render();
+}
+function sbtRcHtml(R){
+  const busy=!!SBT.rcBusy, rc=SBT.rc && SBT.rc.sig===sbtRcSig() ? SBT.rc : null;
+  let h=`<div class="panel-heading" style="margin-top:16px;"><h3>🧪 Uji realitas — apakah ada yang benar-benar menang?</h3><span class="panel-heading-note">Romano–Wolf · bootstrap berblok · seluruh preset &amp; kombinasi diuji bersamaan</span></div>
+    <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin:6px 0;font-size:12px;"><button class="btn btn-primary" style="padding:5px 14px;font-size:12px;" ${busy?"disabled":""} onclick="sbtRealityCheck()">${busy?"Menghitung…":"▶ Jalankan uji realitas"}</button><span id="sbtRcMsg" style="color:${SBT.rcMsg&&SBT.rcMsg.startsWith("Gagal")?"var(--down)":"var(--muted)"};">${escapeHtml(SBT.rcMsg||"")}</span></div>`;
+  if(!rc) return h+`<div style="font-size:11px;color:var(--muted);line-height:1.5;">FDR hanya mengoreksi banyaknya tes. Uji ini lebih ketat: ia menanyakan apakah preset <i>terbaik</i> dari seluruh pencarian masih unggul setelah memperhitungkan bahwa kamu memilih pemenang dari ratusan kandidat. Perlu beberapa detik. Hasil kadaluarsa otomatis kalau backtest, metode, rezim, atau arah diubah.</div>`;
+  const ok=rc.rows.filter(r=>r.p<=0.10&&r.mean>0), top=rc.rows.slice(0,10);
+  h+=`<div style="font-size:12px;line-height:1.55;margin:4px 0;">${ok.length? pillHtml(`✅ ${ok.length} kandidat bertahan (p disesuaikan ≤ 0,10)`,"up") : pillHtml("⚠ Tidak ada yang bertahan","gold")} <span style="color:var(--muted);">${rc.K}${rc.total>rc.K?` dari ${rc.total}`:""} hipotesis · ${rc.n} hari · ${rc.B} resampel · panjang blok rata-rata ${rc.bl} hari</span></div>
+    <div class="table-wrap"><table class="data-table"><thead><tr><th>#</th><th>Preset / kombinasi</th><th>Selisih rata-rata / hari</th><th title="Selisih rata-rata dibagi galat bakunya (bootstrap-t)">t</th><th title="Peluang keunggulan sebesar ini muncul sebagai yang terbaik dari seluruh kandidat bila tidak ada keunggulan sama sekali">p disesuaikan</th><th></th></tr></thead><tbody>
+    ${top.map((r,i)=>`<tr><td>${i+1}</td><td>${escapeHtml(r.label)}</td><td class="mono" style="${sbtC(r.mean)}">${sbtF(r.mean,3)}</td><td class="mono">${isFinite(r.t)?r.t.toFixed(2):"-"}</td><td class="mono" style="${r.p<=0.10&&r.mean>0?"color:var(--up);font-weight:700;":""}">${r.p.toFixed(3)}</td><td>${r.p<=0.10&&r.mean>0?pillHtml("🧪 lolos","up"):""}</td></tr>`).join("")}
+    </tbody></table></div>
+    <div style="font-size:11px;color:var(--muted);margin-top:4px;line-height:1.5;">${ok.length?"Yang lolos masih berupa kandidat: konfirmasi lewat walk-forward, simulasi akun, uji placebo, dan Backtest (Uji Maju).":"Artinya keunggulan yang terlihat di tabel bisa dijelaskan oleh banyaknya kandidat yang dicoba. Ini bukan bukti bahwa tidak ada sinyal, tetapi data belum cukup untuk memisahkannya dari kebetulan (hari data pendek = daya uji rendah)."} Hari tanpa sinyal dihitung selisih 0, jadi preset yang jarang muncul butuh keunggulan besar. Pada data pendek (sekitar 250 hari) dengan blok panjang, p cenderung sedikit terlalu optimistis, jadi anggap p 0,05–0,10 sebagai batas, bukan bukti.</div>`;
+  return h;
+}
+// Placebo: sinyal preset diganti tanggal acak pada saham yang SAMA (jumlah sinyal per saham dipertahankan), diambil dari catatan baseline.
+// Kalau preset hanya terlihat bagus karena memilih saham-saham yang kebetulan naik, hasil placebo akan sama bagusnya.
+function sbtPlaceboRun(sg,pool,key,iter,seed){
+  if(sg.length<15||pool.length<15) return null;
+  const rnd=sbtMulberry(seed), byT=new Map(), cnt=new Map();
+  pool.forEach(s=>{ (byT.get(s.t)||byT.set(s.t,[]).get(s.t)).push(s.r[key]); });
+  sg.forEach(s=>cnt.set(s.t,(cnt.get(s.t)||0)+1));
+  const all=pool.map(s=>s.r[key]), n=sg.length, act=sg.reduce((a,s)=>a+s.r[key],0)/n, actW=sg.filter(s=>s.r[key]>0).length/n*100;
+  const groups=[...cnt.entries()].map(([t,c])=>[byT.get(t)||all,c]);
+  const pm=[], pw=[];
+  for(let it=0;it<iter;it++){ let sum=0,w=0; for(const [arr,c] of groups) for(let k=0;k<c;k++){ const r=arr[(rnd()*arr.length)|0]; sum+=r; if(r>0) w++; } pm.push(sum/n); pw.push(w/n*100); }
+  const q=(a,p)=>{ const b=[...a].sort((x,y)=>x-y); return b[Math.min(b.length-1,Math.floor(p*b.length))]; };
+  return { n, act, actW, p5:q(pm,.05), p50:q(pm,.5), p95:q(pm,.95), w50:q(pw,.5), p:(pm.filter(x=>x>=act).length+1)/(iter+1), pW:(pw.filter(x=>x>=actW).length+1)/(iter+1) };
+}
+function sbtPlaceboHtml(selKey){
+  const key=sbtKey(), cutoff=SBT.meta.cutoff, ck=[selKey,key,SBT.cfg.regime,SBT.cfg.dir,+SBT.ranAt].join("|");
+  SBT.plc=SBT.plc||{};
+  if(!SBT.plc[ck]){
+    const sg=sbtRegFilter(SBT.signals[selKey]).filter(s=>s.r[key]!=null), pl=sbtRegFilter(SBT.signals.__baseline).filter(s=>s.r[key]!=null);
+    SBT.plc={ [ck]: { all:sbtPlaceboRun(sg,pl,key,2000,777), os:sbtPlaceboRun(sg.filter(s=>s.d>cutoff),pl.filter(s=>s.d>cutoff),key,2000,778) } };
+  }
+  const P=SBT.plc[ck]; if(!P.all&&!P.os) return "";
+  const row=(lab,x)=> !x ? `<tr><td>${lab}</td><td colspan="6" style="color:var(--muted);">sinyal terlalu sedikit (&lt;15)</td></tr>` :
+    `<tr><td>${lab}</td><td class="mono">${x.n}</td><td class="mono" style="${sbtC(x.act)}">${sbtF(x.act,2)}</td><td class="mono">${sbtF(x.p50,2)} <span style="color:var(--muted);font-size:11px;">(${sbtF(x.p5,2)} … ${sbtF(x.p95,2)})</span></td><td class="mono" style="${x.p<=0.05?"color:var(--up);font-weight:700;":""}">${x.p.toFixed(3)}</td><td class="mono">${sbtF(x.actW)} vs ${sbtF(x.w50)} <span style="color:var(--muted);font-size:11px;">(p ${x.pW.toFixed(3)})</span></td><td>${x.p<=0.05&&x.act>0?pillHtml("🎭 lolos","up"):x.p<=0.10&&x.act>0?pillHtml("mendekati","gold"):pillHtml("⚠ sama dgn acak","gold")}</td></tr>`;
+  const weak=[P.all,P.os].filter(Boolean).some(x=>x.p>0.10);
+  return `<div class="panel-heading" style="margin-top:14px;"><h3>🎭 Uji placebo — ${escapeHtml(sbtLabel(selKey))}</h3><span class="panel-heading-note">tanggal sinyal diacak pada saham yang sama · 2.000 pengacakan</span></div>
+    <div class="table-wrap"><table class="data-table"><thead><tr><th>Periode</th><th>Sinyal</th><th>Rata-rata preset</th><th>Placebo median (90%)</th><th title="Peluang placebo sebaik atau lebih baik dari preset">p (rata-rata)</th><th>Win rate preset vs placebo</th><th></th></tr></thead><tbody>${row("Seluruh periode",P.all)}${row("Out-of-sample",P.os)}</tbody></table></div>
+    <div style="font-size:11px;color:var(--muted);margin-top:4px;line-height:1.5;">${weak?"Placebo sering menyamai preset: bagusnya hasil lebih mungkin berasal dari saham yang dipilih (atau tren saham itu) daripada dari <i>waktu</i> sinyal. ":"Preset mengalahkan hampir semua pengacakan tanggal pada saham yang sama, jadi waktu sinyal tampak menambah nilai. "}Placebo memakai catatan baseline (tiap 5 hari) sebagai kumpulan tanggal acak, dan tidak mengendalikan hari pasar yang sama antar saham. Lihat out-of-sample lebih dulu karena itu yang tidak dipakai untuk memilih preset.</div>`;
+}
+
+// ---------- Stres biaya: return preset pada slippage 0×, 1×, 2×, 3× + titik impas ----------
+// Return tiap sinyal sudah net fee + slippage (2 sisi × tier likuiditas). Di sini slippage per sisi diganti tanpa mengulang backtest:
+// net_x = net_sekarang + 2·tier·(slip_sekarang − slip_x). Tier disimpan di sinyal (u); sinyal lama tanpa u dianggap 1,5.
+const SBT_STRESS_MULT=[0,1,2,3];
+function sbtStressStats(list,key,slip,unit,cutoff){
+  const out=SBT_STRESS_MULT.map(()=>({n:0,sum:0,win:0})); let cs=0,cn=0;
+  for(const s of list){ const v=s.r[key]; if(v==null) continue; if(cutoff&&!(s.d>cutoff)) continue;
+    const t=s.u>0?s.u:1.5; cs+=2*t; cn++;
+    for(let q=0;q<out.length;q++){ const x=v+2*t*(slip-SBT_STRESS_MULT[q]*unit); out[q].n++; out[q].sum+=x; if(x>0) out[q].win++; } }
+  if(cn<15) return null;
+  const avg=out.map(o=>o.sum/o.n), cbar=cs/cn;
+  // titik impas: slippage per sisi (%) yang membuat rata-rata = 0. avg(s)=avg(1×)+cbar·(unit−s)
+  const be=unit+avg[SBT_STRESS_MULT.indexOf(1)]/cbar;
+  return { n:cn, avg, win:out.map(o=>o.win/o.n*100), be, cbar };
+}
+function sbtStressHtml(selKey){
+  const key=sbtKey(), C=SBT.cfg, cutoff=SBT.meta&&SBT.meta.cutoff, slip=+C.slipPct||0, unit=slip>0?slip:0.15;
+  const sg=sbtRegFilter(SBT.signals[selKey]), bs=sbtRegFilter(SBT.signals.__baseline);
+  const A=sbtStressStats(sg,key,slip,unit), O=sbtStressStats(sg,key,slip,unit,cutoff), B=sbtStressStats(bs,key,slip,unit);
+  if(!A) return "";
+  const head=SBT_STRESS_MULT.map(m=>`<th>${m}× <span style="color:var(--muted);font-weight:400;">(${(m*unit).toFixed(2).replace(".",",")}%/sisi)</span></th>`).join("");
+  const row=(lab,X,hl)=> !X ? `<tr><td>${lab}</td><td colspan="${SBT_STRESS_MULT.length+1}" style="color:var(--muted);">sinyal terlalu sedikit (&lt;15)</td></tr>` :
+    `<tr><td>${lab} <span style="color:var(--muted);font-size:11px;">n=${X.n}</span></td>${X.avg.map((v,q)=>`<td class="mono" style="${sbtC(v)}${hl&&SBT_STRESS_MULT[q]===3?"font-weight:700;":""}">${sbtF(v,2)} <span style="color:var(--muted);font-size:11px;">· win ${sbtF(X.win[q],0)}</span></td>`).join("")}<td class="mono" style="${X.be<=0?"color:var(--down);font-weight:700;":""}">${X.be<=0?"≤ 0 (rugi tanpa slippage)":sbtF(X.be,2)+" ("+(X.be/unit).toFixed(1).replace(".",",")+"×)"}</td></tr>`;
+  const dead=A.avg[3]<=0, fragile=!dead && A.be<unit*2, bOK=B && A.avg[3]>B.avg[3];
+  const verdict= dead ? pillHtml("❌ Rugi pada slippage 3×","down") : fragile ? pillHtml("⚠ Impas di bawah 2× slippage","gold") : pillHtml("✅ Tahan sampai 3×","up");
+  return `<div class="panel-heading" style="margin-top:14px;"><h3>💸 Stres biaya — ${escapeHtml(sbtLabel(selKey))}</h3><span class="panel-heading-note">rata-rata return per sinyal (%) · fee ${C.feePct}% tetap · slippage dikalikan</span></div>
+    <div style="font-size:12px;margin:4px 0;">${verdict} <span style="color:var(--muted);">${slip>0?"1× = slippage pengaturanmu":"slippage pengaturan = 0, maka 1× memakai 0,15%/sisi sebagai satuan"} · saham kurang likuid otomatis kena slippage 1,5–2× lebih besar</span></div>
+    <div class="table-wrap"><table class="data-table"><thead><tr><th>Kelompok</th>${head}<th title="Slippage per sisi yang membuat rata-rata return jadi nol (fee tetap)">Titik impas slippage</th></tr></thead><tbody>${row("Preset (seluruh)",A,true)}${row("Preset (out-of-sample)",O,true)}${row("Baseline (seluruh)",B,false)}</tbody></table></div>
+    <div style="font-size:11px;color:var(--muted);margin-top:4px;line-height:1.5;">${bOK?"Pada slippage 3× preset masih unggul dari baseline. ":"Pada slippage 3× preset tidak lagi unggul dari baseline: keunggulannya bergantung pada biaya yang optimistis. "}Preset yang sering muncul di saham kecil menanggung slippage lebih besar dari baseline, jadi selisihnya bisa menyempit saat biaya naik. Ini hanya mengubah biaya; harga isi sebenarnya (antrean, partial fill, auto-reject) tidak dimodelkan.</div>`;
+}
+
+// ---------- Konsentrasi keuntungan: per hari & per sektor ----------
+// Sinyal pada hari/sektor yang sama tidak independen. Di sini dihitung berapa persen total return datang dari 3 hari terbaik / 1 sektor terbaik,
+// dan rata-rata return per sinyal kalau bagian itu dibuang. Memakai return net (sama dengan metode terpilih).
+function sbtConcGroup(rows,keyFn,topK){
+  const g=new Map(); let tot=0;
+  rows.forEach(s=>{ const k=keyFn(s), a=g.get(k)||{k,sum:0,n:0}; a.sum+=s.v; a.n++; g.set(k,a); tot+=s.v; });
+  const arr=[...g.values()].sort((a,b)=>b.sum-a.sum), top=arr.slice(0,topK), topSet=new Set(top.map(x=>x.k));
+  const topSum=top.reduce((x,y)=>x+y.sum,0), topN=top.reduce((x,y)=>x+y.n,0), restN=rows.length-topN;
+  const busy=[...arr].sort((a,b)=>b.n-a.n).slice(0,topK).reduce((x,y)=>x+y.n,0);
+  return { groups:arr.length, top, tot, share: tot>0 ? topSum/tot*100 : null,
+    avgAll: tot/rows.length, avgRest: restN>0 ? (tot-topSum)/restN : null,
+    busyShare: busy/rows.length*100, fair: Math.min(100,topK/arr.length*100) };
+}
+function sbtConcentrationHtml(selKey){
+  const key=sbtKey(), sm=(SBT.ctx&&SBT.ctx.sektorMap)||{};
+  const rows=sbtRegFilter(SBT.signals[selKey]).filter(s=>s.r[key]!=null).map(s=>({d:s.d,t:s.t,v:s.r[key]}));
+  if(rows.length<30) return "";
+  const D=sbtConcGroup(rows,s=>s.d,3), S=sbtConcGroup(rows,s=>sm[s.t]||"-",1);
+  const tone=X=> X.share==null ? "" : X.avgRest!=null && X.avgRest<=0 ? "down" : X.share>50 ? "gold" : "up";
+  const pill=(X,what)=>{ const t=tone(X);
+    return X.share==null ? pillHtml("Total return ≤ 0, tidak ada keuntungan untuk dikonsentrasikan","gold")
+      : t==="down" ? pillHtml("❌ Tanpa "+what+" terbaik, rata-rata ≤ 0","down")
+      : t==="gold" ? pillHtml("⚠ Lebih dari separuh keuntungan dari "+what+" terbaik","gold")
+      : pillHtml("✅ Keuntungan tersebar","up"); };
+  const fmtD=d=>String(d).slice(5).replace("-","/");
+  const dTop=D.top.map(x=>`${fmtD(x.k)} (${x.n} sinyal, ${sbtF(x.sum,0,"")}%-poin)`).join(" · ");
+  const sTop=S.top[0];
+  const rowD=`<tr><td>3 hari terbaik <span style="color:var(--muted);font-size:11px;">dari ${D.groups} hari</span></td><td class="mono" style="${D.share!=null&&D.share>50?"color:var(--gold);font-weight:700;":""}">${sbtF(D.share,0)}</td><td class="mono" style="color:var(--muted);">${sbtF(D.fair,0)}</td><td class="mono" style="${sbtC(D.avgAll)}">${sbtF(D.avgAll,2)}</td><td class="mono" style="${sbtC(D.avgRest)}${D.avgRest!=null&&D.avgRest<=0?"font-weight:700;":""}">${sbtF(D.avgRest,2)}</td><td class="mono">${sbtF(D.busyShare,0)}</td></tr>`;
+  const rowS=`<tr><td>1 sektor terbaik <span style="color:var(--muted);font-size:11px;">${escapeHtml(sTop.k)} · dari ${S.groups} sektor</span></td><td class="mono" style="${S.share!=null&&S.share>50?"color:var(--gold);font-weight:700;":""}">${sbtF(S.share,0)}</td><td class="mono" style="color:var(--muted);">${sbtF(S.fair,0)}</td><td class="mono" style="${sbtC(S.avgAll)}">${sbtF(S.avgAll,2)}</td><td class="mono" style="${sbtC(S.avgRest)}${S.avgRest!=null&&S.avgRest<=0?"font-weight:700;":""}">${sbtF(S.avgRest,2)}</td><td class="mono">${sbtF(S.busyShare,0)}</td></tr>`;
+  return `<div class="panel-heading" style="margin-top:14px;"><h3>🧺 Konsentrasi keuntungan — ${escapeHtml(sbtLabel(selKey))}</h3><span class="panel-heading-note">return net · ${rows.length} sinyal · ${escapeHtml(sbtMethodLabel(key))}</span></div>
+    <div style="font-size:12px;margin:4px 0;line-height:1.7;">${pill(D,"hari")} ${S.groups>1?pill(S,"sektor"):""}</div>
+    <div class="table-wrap"><table class="data-table"><thead><tr><th>Bagian</th><th title="Persen dari total return seluruh sinyal yang datang dari bagian ini">% total return</th><th title="Porsi bila keuntungan tersebar rata (jumlah bagian ÷ jumlah kelompok)">Porsi wajar %</th><th>Rata-rata semua (%)</th><th title="Rata-rata return per sinyal setelah semua sinyal pada bagian ini dibuang">Rata-rata tanpa bagian ini (%)</th><th title="Persen sinyal yang jatuh pada bagian paling ramai">% sinyal di yang terramai</th></tr></thead><tbody>${rowD}${rowS}</tbody></table></div>
+    <div style="font-size:11px;color:var(--muted);margin-top:4px;line-height:1.5;">3 hari terbaik: ${dTop}. Kalau rata-rata tanpa bagian terbaik hilang atau negatif, keunggulan preset bertumpu pada satu kejadian pasar, bukan pola yang berulang. Sektor memakai data sektor dari daftar saham; saham tanpa sektor dikelompokkan sebagai "-".</div>`;
+}
+
+// ---------- Kapasitas likuiditas: sampai modal berapa keunggulan preset bertahan ----------
+// Ukuran tiap posisi dibatasi capPct% dari nilai transaksi harian saham pada hari sinyal; sisa dana yang tak bisa masuk menganggur (return 0).
+// Return tanpa batas tidak bergantung pada besar modal, jadi menjadi acuan; makin besar modal, makin banyak posisi yang terpotong.
+const SBT_CAP_GRID=[50,100,200,500,1000,2000,5000,10000,20000,50000,100000]; // Rp juta
+function sbtCapacityHtml(selKey){
+  const key=sbtKey(), C=SBT.cfg, capPct=+C.capPct||0; if(!SBT.ctx||!SBT.ctx.cal||!(capPct>0)) return "";
+  const cal=SBT.ctx.cal, ci={}; cal.forEach((d,i)=>ci[d]=i); const N=Math.max(1,Math.round(C.maxPos||5));
+  const list=sbtRegFilter(SBT.signals[selKey]); if(!list.some(s=>s.w>0)) return "";
+  const grid=[...new Set(SBT_CAP_GRID.concat([C.capitalM||100]))].sort((a,b)=>a-b);
+  const ref=sbtSimAccount(list,key,1e8,N,ci,cal,0); if(!ref||ref.taken<5) return "";
+  const rows=grid.map(m=>({m,a:sbtSimAccount(list,key,m*1e6,N,ci,cal,capPct)})).filter(x=>x.a);
+  const ok=rows.filter(x=>ref.ret>0 && x.a.ret>=0.5*ref.ret), cap50=ok.length?ok[ok.length-1].m:null, firstZero=rows.find(x=>x.a.ret<=0);
+  const rp=m=> m>=1000 ? "Rp "+fmtNum(m/1000)+" M" : "Rp "+fmtNum(m)+" jt";
+  const verdict= ref.ret<=0 ? pillHtml("Preset tidak untung pada simulasi akun, kapasitas tidak relevan","gold")
+    : cap50==null ? pillHtml("❌ Sudah kurang dari separuh return bahkan pada modal terkecil","down")
+    : cap50>=rows[rows.length-1].m ? pillHtml("✅ Tahan sampai modal "+rp(cap50)+" (batas terbesar yang diuji)","up")
+    : pillHtml("⚠ Return turun di bawah separuh setelah modal "+rp(cap50),cap50<500?"down":"gold");
+  const tr=rows.map(({m,a})=>`<tr style="${m===(C.capitalM||100)?"font-weight:700;":""}"><td>${rp(m)}</td><td class="mono" style="${sbtC(a.ret)}">${sbtF(a.ret,1)}</td><td class="mono">${sbtF(ref.ret>0?a.ret/ref.ret*100:null,0)}</td><td class="mono">${sbtF(a.mdd,1)}</td><td class="mono">${sbtF(a.fill,0)}</td><td class="mono">${sbtF(a.taken?a.capped/a.taken*100:null,0)}</td></tr>`).join("");
+  return `<div class="panel-heading" style="margin-top:14px;"><h3>🏗️ Kapasitas likuiditas — ${escapeHtml(sbtLabel(selKey))}</h3><span class="panel-heading-note">posisi maks ${capPct}% nilai transaksi harian · ${N} posisi · ${escapeHtml(sbtMethodLabel(key))}</span></div>
+    <div style="font-size:12px;margin:4px 0;">${verdict} <span style="color:var(--muted);">acuan tanpa batas: ${sbtF(ref.ret,1)}% (${ref.taken} posisi)${firstZero?` · impas/rugi mulai modal ${rp(firstZero.m)}`:""}</span></div>
+    <div class="table-wrap"><table class="data-table"><thead><tr><th>Modal</th><th>Return akun (%)</th><th title="Return dengan batas dibagi return tanpa batas">% dari acuan</th><th>Max DD (%)</th><th title="Rata-rata persen dana target yang benar-benar bisa masuk">Terisi (%)</th><th title="Persen posisi yang ukurannya dipotong oleh batas likuiditas">Posisi terpotong (%)</th></tr></thead><tbody>${tr}</tbody></table></div>
+    <div style="font-size:11px;color:var(--muted);margin-top:4px;line-height:1.5;">Nilai transaksi memakai harga × volume pada hari sinyal. Hanya membatasi ukuran; dampak harga akibat order besar tidak dimodelkan, sehingga kapasitas nyata bisa lebih kecil. Atur batas lewat "Batas posisi (% nilai transaksi harian)"; isi 0 untuk mematikan panel ini. Sinyal dari backtest lama tidak memuat nilai transaksi: jalankan backtest ulang.</div>`;
+}
+
+// ---------- Ekspor laporan preset terpilih (CSV / halaman cetak) ----------
+// Mengumpulkan ringkasan satu preset: parameter, statistik, signifikansi, walk-forward, uji realitas, placebo, simulasi akun, stres biaya, konsentrasi, kapasitas.
+// Angka dihitung ulang dengan fungsi yang sama dengan panel di layar, jadi sama dengan yang terlihat.
+function sbtReportData(selKey){
+  const R=SBT.results, M=SBT.meta, C=SBT.cfg, key=sbtKey(), cutoff=M.cutoff, out=[], MC=M.cfg||C;
+  const f=(x,d=2)=> x==null||typeof x!=="number"||!isFinite(x) ? "" : Number(x.toFixed(d));
+  const add=(s,m,v)=>out.push([s,m,v==null?"":v]);
+  const row=[...R.rows,...R.combos,...(R.manual||[])].find(r=>r.key===selKey);
+  const L=k=>sbtRegFilter(SBT.signals[k]);
+  const sec="Ringkasan";
+  add(sec,"Preset",sbtLabel(selKey)); add(sec,"Metode",sbtMethodLabel(key));
+  add(sec,"Dijalankan",SBT.ranAt?new Date(SBT.ranAt).toLocaleString("id-ID"):""); add(sec,"Saham teruji",M.tested+"/"+M.total);
+  add(sec,"Sinyal dari",M.minD); add(sec,"Sinyal sampai",M.maxD); add(sec,"Batas in-sample / out-of-sample",cutoff);
+  add(sec,"Lolos kriteria Layak",row?(row.ok?"ya":"tidak"):"");
+  const P1="Parameter";
+  [["Arah",C.dir],["Rezim pasar",C.regime],["Jumlah saham",MC.universeN],["Min nilai transaksi (Rp juta/hari)",MC.minValueM],["Min harga",MC.minPrice],["Fee bolak-balik (%)",MC.feePct],["Slippage per sisi (%)",MC.slipPct],["Filter aksi korporasi",MC.caFilter?"aktif":"mati"],["TP (%)",MC.tp],["SL (%)",MC.sl],["Maks tahan (hari)",MC.maxHold],["Min sinyal",C.minN],["Modal simulasi (Rp juta)",C.capitalM],["Maks posisi",C.maxPos],["Batas posisi (% nilai transaksi)",C.capPct]].forEach(([m,v])=>add(P1,m,v));
+  if(row){ const S="Statistik", st=row.st, b=R.base;
+    [["Sinyal",st.n,0],["Win rate (%)",st.win,1],["Rata-rata return (%)",st.avg,2],["Median (%)",st.med,2],["Profit factor",isFinite(st.pf)?st.pf:null,2],["Sinyal in-sample",st.nIS,0],["Win in-sample (%)",st.winIS,1],["Rata-rata in-sample (%)",st.avgIS,2],["Sinyal out-of-sample",st.nOS,0],["Win out-of-sample (%)",st.winOS,1],["Rata-rata out-of-sample (%)",st.avgOS,2]].forEach(([m,v,d])=>add(S,m,f(v,d)));
+    [["Baseline win rate (%)",b.win,1],["Baseline rata-rata (%)",b.avg,2],["Baseline win out-of-sample (%)",b.winOS,1],["Baseline rata-rata out-of-sample (%)",b.avgOS,2]].forEach(([m,v,d])=>add(S,m,f(v,d)));
+    const g=row.sig; if(g){ const Z="Signifikansi & walk-forward";
+      add(Z,"p mentah (Newey-West)",f(g.p,4)); add(Z,"q (FDR)",f(g.q,4)); add(Z,"t",f(g.t,2)); add(Z,"Hari sinyal",g.nd); add(Z,"Hari efektif",f(g.nEff,1)); add(Z,"Rata-rata selisih vs baseline / hari (%)",f(g.mean,3));
+      add(Z,"Periode unggul dari baseline",g.pos==null?"":g.pos+"/"+(g.folds?g.folds.length:0));
+      (g.folds||[]).forEach((x,i)=>add(Z,`F${i+1} ${x.from} → ${x.to} (${x.n} hari)`,f(x.mean,3))); }
+  }
+  const rc=SBT.rc && SBT.rc.sig===sbtRcSig() ? SBT.rc : null;
+  if(rc){ const Z="Uji realitas", r=rc.rows.find(x=>x.key===selKey);
+    add(Z,"Hipotesis diuji",rc.K+(rc.total>rc.K?" dari "+rc.total:"")); add(Z,"Hari",rc.n); add(Z,"Resampel",rc.B);
+    add(Z,"p disesuaikan (Romano–Wolf)",r?f(r.p,3):"tidak termasuk"); add(Z,"t",r?f(r.t,2):""); add(Z,"Selisih rata-rata / hari",r?f(r.mean,3):"");
+    add(Z,"Kandidat bertahan (p ≤ 0,10)",rc.rows.filter(x=>x.p<=0.10&&x.mean>0).length); }
+  const ck=[selKey,key,C.regime,C.dir,+SBT.ranAt].join("|"); let PL=SBT.plc&&SBT.plc[ck];
+  if(!PL){ const sg=L(selKey).filter(s=>s.r[key]!=null), pl=L("__baseline").filter(s=>s.r[key]!=null);
+    PL={ all:sbtPlaceboRun(sg,pl,key,2000,777), os:sbtPlaceboRun(sg.filter(s=>s.d>cutoff),pl.filter(s=>s.d>cutoff),key,2000,778) }; }
+  if(PL) [["Seluruh periode",PL.all],["Out-of-sample",PL.os]].forEach(([lab,x])=>{ if(!x) return; const Z="Uji placebo ("+lab+")";
+    add(Z,"Sinyal",x.n); add(Z,"Rata-rata preset (%)",f(x.act,2)); add(Z,"Placebo median (%)",f(x.p50,2)); add(Z,"Placebo 5%–95% (%)",f(x.p5,2)+" … "+f(x.p95,2)); add(Z,"p (rata-rata)",(x.p<0.001?"<0.001":f(x.p,3))); add(Z,"Win rate preset / placebo (%)",f(x.actW,1)+" / "+f(x.w50,1)); add(Z,"p (win rate)",(x.pW<0.001?"<0.001":f(x.pW,3))); });
+  if(SBT.ctx&&SBT.ctx.cal){ const cal=SBT.ctx.cal, ci={}; cal.forEach((d,i)=>ci[d]=i);
+    const cap0=Math.max(1,C.capitalM||100)*1e6, N=Math.max(1,Math.round(C.maxPos||5)), A=sbtSimAccount(L(selKey),key,cap0,N,ci,cal), B=sbtSimAccount(L("__baseline"),key,cap0,N,ci,cal);
+    if(A&&A.taken>=5){ const Z="Simulasi akun";
+      add(Z,"Modal awal (Rp)",cap0); add(Z,"Modal akhir (Rp)",Math.round(A.end)); add(Z,"Return (%)",f(A.ret,1)); add(Z,"Max drawdown (%)",f(A.mdd,1)); add(Z,"Posisi diambil",A.taken); add(Z,"Sinyal dilewati (slot penuh)",A.skipped); add(Z,"Win rate (%)",f(A.win,1)); add(Z,"Rata-rata per posisi (%)",f(A.avg,2));
+      if(B) add(Z,"Return baseline (%)",f(B.ret,1));
+      const mc=sbtMonteCarlo(A.rets,N,2000); if(mc){ const Y="Monte Carlo (2.000 pengacakan urutan)"; add(Y,"Return P5 (%)",f(mc.p5,1)); add(Y,"Return median (%)",f(mc.p50,1)); add(Y,"Return P95 (%)",f(mc.p95,1)); add(Y,"Drawdown median (%)",f(mc.ddP50,1)); add(Y,"Drawdown P95 (%)",f(mc.ddP95,1)); add(Y,"Peluang rugi (%)",f(mc.loss,1)); }
+      const capPct=+C.capPct||0;
+      if(capPct>0 && L(selKey).some(s=>s.w>0)){ const Z2="Kapasitas likuiditas (batas "+capPct+"%)", ref=sbtSimAccount(L(selKey),key,1e8,N,ci,cal,0);
+        if(ref) add(Z2,"Return tanpa batas (%)",f(ref.ret,1));
+        [...new Set(SBT_CAP_GRID.concat([C.capitalM||100]))].sort((a,b)=>a-b).forEach(m=>{ const a=sbtSimAccount(L(selKey),key,m*1e6,N,ci,cal,capPct); if(a) add(Z2,"Modal Rp "+m+" juta: return % / terisi % / terpotong %",f(a.ret,1)+" / "+f(a.fill,0)+" / "+f(a.taken?a.capped/a.taken*100:null,0)); }); }
+    } }
+  { const slip=+C.slipPct||0, unit=slip>0?slip:0.15, A=sbtStressStats(L(selKey),key,slip,unit), O=sbtStressStats(L(selKey),key,slip,unit,cutoff), B=sbtStressStats(L("__baseline"),key,slip,unit);
+    [["Preset (seluruh)",A],["Preset (out-of-sample)",O],["Baseline (seluruh)",B]].forEach(([lab,X])=>{ if(!X) return; const Z="Stres biaya — "+lab;
+      SBT_STRESS_MULT.forEach((m,q)=>add(Z,`Slippage ${m}× (${f(m*unit,2)}%/sisi): rata-rata % / win %`,f(X.avg[q],2)+" / "+f(X.win[q],0)));
+      add(Z,"Titik impas slippage per sisi (%)",f(X.be,2)); }); }
+  { const sm=(SBT.ctx&&SBT.ctx.sektorMap)||{}, rows=L(selKey).filter(s=>s.r[key]!=null).map(s=>({d:s.d,t:s.t,v:s.r[key]}));
+    if(rows.length>=30){ const D=sbtConcGroup(rows,s=>s.d,3), S=sbtConcGroup(rows,s=>sm[s.t]||"-",1), Z="Konsentrasi keuntungan";
+      add(Z,"3 hari terbaik: % total return",f(D.share,0)); add(Z,"Porsi wajar 3 hari (%)",f(D.fair,0)); add(Z,"Rata-rata tanpa 3 hari terbaik (%)",f(D.avgRest,2)); add(Z,"Tanggal 3 hari terbaik",D.top.map(x=>x.k).join(" "));
+      add(Z,"Sektor terbaik",S.top[0]?S.top[0].k:""); add(Z,"Sektor terbaik: % total return",f(S.share,0)); add(Z,"Rata-rata tanpa sektor terbaik (%)",f(S.avgRest,2)); } }
+  return out;
+}
+function sbtReportCsv(){
+  if(!SBT.results||!SBT.sel) return;
+  const rows=sbtReportData(SBT.sel), q=v=>'"'+String(v).replace(/"/g,'""')+'"';
+  const csv="\ufeff"+["bagian,metrik,nilai",...rows.map(r=>r.map(q).join(","))].join("\n");
+  const name="laporan_"+String(sbtLabel(SBT.sel)).replace(/[^A-Za-z0-9]+/g,"_").slice(0,40)+"_"+new Date().toISOString().slice(0,10)+".csv";
+  const a=document.createElement("a"); a.href=URL.createObjectURL(new Blob([csv],{type:"text/csv;charset=utf-8"})); a.download=name; a.click();
+}
+function sbtReportPrint(){
+  if(!SBT.results||!SBT.sel) return;
+  const rows=sbtReportData(SBT.sel), bySec=new Map(); rows.forEach(([s,m,v])=>{ (bySec.get(s)||bySec.set(s,[]).get(s)).push([m,v]); });
+  const body=[...bySec.entries()].map(([s,a])=>`<h2>${escapeHtml(s)}</h2><table>${a.map(([m,v])=>`<tr><td>${escapeHtml(m)}</td><td class="v">${escapeHtml(String(v))}</td></tr>`).join("")}</table>`).join("");
+  const w=window.open("","_blank"); if(!w){ alert("Pop-up diblokir. Izinkan pop-up atau pakai ekspor CSV."); return; }
+  w.document.write(`<!doctype html><meta charset="utf-8"><title>Laporan backtest — ${escapeHtml(sbtLabel(SBT.sel))}</title><style>body{font:13px/1.45 system-ui,sans-serif;margin:24px;color:#111}h1{font-size:18px;margin:0 0 4px}h2{font-size:14px;margin:18px 0 4px;border-bottom:1px solid #999;padding-bottom:2px}table{border-collapse:collapse;width:100%}td{padding:2px 6px;border-bottom:1px solid #ddd;vertical-align:top}td.v{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}.note{color:#555;font-size:11px;margin-top:16px}@media print{h2{break-after:avoid}table{break-inside:avoid}}</style><h1>Laporan backtest screener</h1><div>${escapeHtml(sbtLabel(SBT.sel))}</div>${body}<div class="note">Hasil backtest historis, bukan jaminan. Sinyal tidak independen, fee dan slippage hanya perkiraan, dan harga isi nyata (antrean, partial fill, auto-reject) tidak dimodelkan.</div>`);
+  w.document.close(); setTimeout(()=>{ try{ w.print(); }catch(e){} },300);
+}
+function sbtReportButtonsHtml(){
+  return `<div style="display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin:14px 0 0;font-size:12px;"><button class="btn btn-outline" onclick="sbtReportCsv()">📄 Ekspor laporan preset (CSV)</button><button class="btn btn-outline" onclick="sbtReportPrint()">🖨 Cetak laporan</button><span style="color:var(--muted);">parameter, statistik, q, walk-forward, uji realitas, placebo, simulasi akun, stres biaya, konsentrasi, kapasitas</span></div>`;
+}
+
+// ---------- Walk-forward penyetelan dengan parameter terkunci ----------
+// Data dibagi 5 segmen berurutan (jumlah hari sama). Putaran f = 1..4: pilih nilai parameter terbaik HANYA dari segmen sebelum f (anchored),
+// kunci, lalu ukur di segmen f. Pembanding di segmen yang sama: nilai preset sekarang, rata-rata semua nilai yang diuji (tanpa menyetel), dan baseline.
+// Yang diukur adalah return sinyal pada data yang belum dilihat saat memilih; ini menjawab "apakah proses menyetel itu sendiri menambah nilai".
+const SBT_TWF_K=5;
+function sbtTuneWalkForward(out,vals,orig,key){
+  const bl=sbtRegFilter(SBT.signals.__baseline).filter(s=>s.r[key]!=null);
+  const days=[...new Set(bl.map(s=>s.d))].sort(); if(days.length<60) return null;
+  const K=SBT_TWF_K, bounds=[]; for(let q=0;q<K;q++) bounds.push(days[Math.floor(q*days.length/K)]); bounds.push("\uffff");
+  const sets=out.map(l=>sbtRegFilter(l).filter(s=>s.r[key]!=null));
+  const agg=(list,lo,hi)=>{ let n=0,sum=0; for(const s of list) if(s.d>=lo && s.d<hi){ n++; sum+=s.r[key]; } return { n, sum, avg:n?sum/n:null }; };
+  const ci=vals.indexOf(orig), folds=[]; const tot={ ch:{n:0,sum:0}, cur:{n:0,sum:0}, all:{n:0,sum:0}, base:{n:0,sum:0}, trn:{n:0,sum:0} };
+  const add=(t,a)=>{ t.n+=a.n; t.sum+=a.sum; };
+  for(let f=1;f<K;f++){
+    const lo=bounds[f], hi=bounds[f+1], tr=sets.map(l=>agg(l,"",lo));
+    let best=-1; tr.forEach((a,i)=>{ if(a.n>=10 && (best<0 || a.avg>tr[best].avg)) best=i; });
+    const fo={ from:lo, to:(f+1<K? days[Math.floor((f+1)*days.length/K)-1] : days[days.length-1]), base:agg(bl,lo,hi) };
+    if(best<0){ fo.skip=true; folds.push(fo); continue; }
+    fo.best=best; fo.v=vals[best]; fo.train=tr[best]; fo.test=agg(sets[best],lo,hi);
+    fo.cur= ci>=0 ? agg(sets[ci],lo,hi) : null;
+    const all={n:0,sum:0}; sets.forEach(l=>add(all,agg(l,lo,hi))); fo.all={ n:all.n, avg: all.n?all.sum/all.n:null, sum:all.sum };
+    folds.push(fo); add(tot.ch,fo.test); add(tot.all,fo.all); add(tot.base,fo.base); add(tot.trn,fo.train); if(fo.cur) add(tot.cur,fo.cur);
+  }
+  const av=t=> t.n? t.sum/t.n : null, used=folds.filter(x=>!x.skip);
+  if(used.length<2) return { folds, used:used.length };
+  const beatCur=used.filter(x=>x.cur && x.test.avg!=null && x.cur.avg!=null && x.test.avg>x.cur.avg).length;
+  const beatAll=used.filter(x=>x.test.avg!=null && x.all.avg!=null && x.test.avg>x.all.avg).length;
+  const pos=used.filter(x=>x.test.avg!=null && x.test.avg>0).length;
+  return { folds, used:used.length, pooled:{ ch:av(tot.ch), cur:ci>=0?av(tot.cur):null, all:av(tot.all), base:av(tot.base), trn:av(tot.trn), n:tot.ch.n },
+    beatCur, beatAll, pos, distinct:new Set(used.map(x=>x.v)).size };
+}
+function sbtTuneWfHtml(r){
+  const w=r.wf; if(!w) return `<div style="font-size:11px;color:var(--muted);margin-top:8px;">Walk-forward terkunci butuh minimal 60 hari sinyal baseline.</div>`;
+  if(!w.pooled) return `<div style="font-size:11px;color:var(--muted);margin-top:8px;">Walk-forward terkunci: hanya ${w.used} putaran punya cukup sinyal (≥ 10) untuk memilih nilai, tidak cukup untuk disimpulkan.</div>`;
+  const P=w.pooled, d=(a,b)=> a==null||b==null ? null : a-b, n=w.used;
+  let verdict;
+  if(P.ch==null||P.ch<=0) verdict=pillHtml("❌ Nilai terkunci tidak untung di data yang belum dilihat","down");
+  else if(P.all!=null && P.ch<=P.all) verdict=pillHtml("⚠ Menyetel tidak lebih baik daripada rata-rata semua nilai","gold");
+  else if(w.beatAll>=Math.ceil(n*0.75) && w.distinct<=Math.ceil(n/2)+1) verdict=pillHtml("✅ Menyetel menambah nilai dan pilihan stabil","up");
+  else verdict=pillHtml("⚠ Unggul secara rata-rata, tapi tidak konsisten antar putaran","gold");
+  const fmtD=x=>String(x).slice(2,10);
+  const cell=(a,cls)=> a==null||a.avg==null ? `<td class="mono" style="color:var(--muted);">-</td>` : `<td class="mono" style="${sbtC(a.avg)}">${sbtF(a.avg,2)} <span style="color:var(--muted);font-size:11px;">(${a.n})</span></td>`;
+  const rows=w.folds.map((x,i)=> x.skip ? `<tr><td>Putaran ${i+1}</td><td class="mono">${fmtD(x.from)} → ${fmtD(x.to)}</td><td colspan="7" style="color:var(--muted);">tidak ada nilai dengan ≥ 10 sinyal di data sebelumnya</td></tr>`
+    : `<tr><td>Putaran ${i+1}</td><td class="mono">${fmtD(x.from)} → ${fmtD(x.to)}</td><td class="mono"><b>${x.v}</b></td>${cell(x.train)}${cell(x.test)}${cell(x.cur)}${cell(x.all)}${cell(x.base)}<td></td></tr>`).join("");
+  const pv=v=> v==null?`<td class="mono">-</td>`:`<td class="mono" style="${sbtC(v)}font-weight:700;">${sbtF(v,2)}</td>`;
+  return `<div class="panel-heading" style="margin-top:14px;"><h3>🔒 Walk-forward dengan parameter terkunci</h3><span class="panel-heading-note">${SBT_TWF_K} segmen berurutan · nilai dipilih hanya dari data sebelumnya · rata-rata return (%) <span style="font-weight:400;">(jumlah sinyal)</span></span></div>
+    <div style="font-size:12px;margin:4px 0;">${verdict} <span style="color:var(--muted);">${n} putaran · nilai terpilih berbeda: ${w.distinct} · untung di ${w.pos}/${n} putaran · mengalahkan rata-rata semua nilai di ${w.beatAll}/${n}${P.cur!=null?` · mengalahkan nilai sekarang di ${w.beatCur}/${n}`:""}</span></div>
+    <div class="table-wrap"><table class="data-table"><thead><tr><th>Putaran</th><th>Periode uji</th><th>Nilai terkunci</th><th title="Rata-rata return nilai terpilih pada data yang dipakai memilih">Data pemilihan</th><th title="Rata-rata return nilai terkunci pada periode uji, yang belum dilihat saat memilih">Uji (terkunci)</th><th>Uji (nilai sekarang)</th><th title="Rata-rata semua nilai yang diuji pada periode uji, yaitu hasil kalau tidak menyetel">Uji (rata-rata semua nilai)</th><th>Uji (baseline)</th><th></th></tr></thead><tbody>${rows}
+    <tr style="font-weight:700;"><td colspan="3">Gabungan semua putaran uji</td>${pv(P.trn)}${pv(P.ch)}${pv(P.cur)}${pv(P.all)}${pv(P.base)}<td></td></tr></tbody></table></div>
+    <div style="font-size:11px;color:var(--muted);margin-top:4px;line-height:1.5;">Selisih rata-rata data pemilihan ke uji (${sbtF(d(P.trn,P.ch),2)} poin) menunjukkan seberapa banyak hasil penyetelan hanya kebetulan; makin kecil makin baik. Yang dinilai adalah proses menyetelnya, bukan satu nilai tertentu. Putaran pertama selalu hanya dipakai untuk memilih, jadi periode uji mulai dari segmen kedua. Segmen berurutan di satu rezim pasar tetap saling berkaitan.</div>`;
+}
+
+// ---------- Manual penggunaan di dalam tab (panel lipat) ----------
+// Isi manual ada di SBT_GUIDE; tiap bagian bisa dibuka sendiri. Status buka/tutup diingat selama render ulang.
+const SBT_GUIDE=[
+["alur","🧭 1. Cara berpikir dan alur kerja",`
+<p>Alat ini menguji ke belakang semua preset screener pada data historis. Hasilnya adalah <b>penyaring kandidat, bukan bukti</b>: makin banyak preset, kombinasi, dan parameter yang dicoba, makin besar peluang ada yang tampak bagus murni karena kebetulan. Baca hasil dalam tiga lapis:</p>
+<ol>
+<li><b>Lapis 1, tabel utama:</b> win rate, rata-rata, in-sample vs out-of-sample, q (FDR), walk-forward 4 periode. Penyaring kasar.</li>
+<li><b>Lapis 2, uji ketat terhadap kebetulan:</b> uji realitas, uji placebo, dan walk-forward terkunci untuk penyetelan parameter.</li>
+<li><b>Lapis 3, realisme eksekusi:</b> simulasi akun, stres biaya, kapasitas likuiditas, konsentrasi keuntungan.</li>
+</ol>
+<p>Yang lolos ketiga lapis baru layak dipantau lewat <b>💾 Uji Maju</b>, bukan langsung dipakai besar.</p>
+<p><b>Alur singkat:</b></p>
+<ol>
+<li>Atur pengaturan di baris atas (bagian 2), lalu klik <b>▶ Jalankan Backtest</b>. Pertama kali akan menarik histori harga (±1–3 menit untuk 200 saham); setelahnya memakai cache lokal. Parameter tiap preset mengikuti pengaturan ⚙️ preset yang sedang aktif di tab Screener.</li>
+<li>Baca ringkasan di atas tabel dan tabel utama (bagian 3).</li>
+<li>Klik <b>▶ Jalankan uji realitas</b> (bagian 5) untuk melihat apakah ada kandidat yang bertahan.</li>
+<li>Klik satu baris preset. Panel detail muncul di bagian paling bawah tab (bagian 8).</li>
+<li>Opsional: setel parameter preset (bagian 7) dan nilai prosesnya lewat walk-forward terkunci.</li>
+<li>Simpan ringkasan lewat <b>Ekspor laporan</b> (bagian 9).</li>
+<li>Untuk preset yang lolos, klik <b>💾 Uji Maju</b> (bagian 10).</li>
+</ol>`],
+
+["setting","⚙️ 2. Pengaturan, perhitungan return, dan sumber data",`
+<p>Mengubah <b>Metode utama, Rezim pasar, dan Arah posisi</b> langsung menghitung ulang tabel tanpa backtest ulang. Mengubah <b>Modal simulasi, Maks posisi, dan Batas posisi</b> hanya menghitung ulang panel akun dan kapasitas. Pengaturan lain memengaruhi sinyal itu sendiri: <b>klik Jalankan Backtest lagi</b> setelah mengubahnya.</p>
+<table><tr><th>Pengaturan</th><th>Default</th><th>Fungsi</th></tr>
+<tr><td>Jumlah saham (0 = semua)</td><td>200</td><td>Jumlah saham yang diuji. Makin banyak, makin lama tetapi makin andal.</td></tr>
+<tr><td>Min nilai transaksi (Rp juta/hari)</td><td>1000</td><td>Sinyal hanya dihitung bila nilai transaksi hari itu minimal sebesar ini (default Rp 1 miliar).</td></tr>
+<tr><td>Min harga</td><td>50</td><td>Saham di bawah harga ini diabaikan.</td></tr>
+<tr><td>Fee bolak-balik (%)</td><td>0,4</td><td>Total fee beli dan jual per transaksi. Samakan dengan broker.</td></tr>
+<tr><td>Slippage per sisi (%)</td><td>0,15</td><td>Selisih harga isi dari harga acuan, per sisi, dikalikan tier likuiditas (di bawah).</td></tr>
+<tr><td>Filter aksi korporasi</td><td>Aktif</td><td>Melewati sinyal bila ada lompatan harga lebih dari 40% (split, reverse split, data rusak) di sekitar masa tahan. Biarkan aktif.</td></tr>
+<tr><td>Modal simulasi (Rp juta)</td><td>100</td><td>Modal awal simulasi akun.</td></tr>
+<tr><td>Maks posisi bersamaan</td><td>5</td><td>Jumlah slot simulasi akun; tiap posisi bernilai ekuitas dibagi jumlah slot.</td></tr>
+<tr><td>Batas posisi (% nilai transaksi harian, 0 = mati)</td><td>5</td><td>Ukuran posisi maksimum sebagai persen dari nilai transaksi harian saham. Dipakai panel Kapasitas likuiditas; 0 mematikan panelnya.</td></tr>
+<tr><td>TP (%) / SL (%)</td><td>5 / 3</td><td>Take profit dan stop loss untuk metode TP/SL.</td></tr>
+<tr><td>Maks tahan (hari)</td><td>10</td><td>Batas hari menahan posisi pada metode TP/SL.</td></tr>
+<tr><td>Histori EPS (hari kalender, 0 = lewati)</td><td>120</td><td>Untuk preset EPS (Entry Price Scanner). 0 melewatinya dan mempercepat backtest.</td></tr>
+<tr><td>Rezim pasar</td><td>Semua</td><td>Semua, hanya pasar naik, atau hanya pasar turun. Pasar naik = indeks komposit bobot-sama di atas MA50 pada hari sinyal.</td></tr>
+<tr><td>Uji kombinasi AND</td><td>Ya</td><td>Menguji semua pasangan preset yang menyala bersamaan (bagian 4). Pilih Tidak untuk mempercepat.</td></tr>
+<tr><td>Min sinyal valid</td><td>30</td><td>Preset dengan sinyal di bawah ini berstatus Sampel kecil dan tidak ikut diuji statistik.</td></tr>
+<tr><td>Arah posisi</td><td>Long</td><td>Long (beli) atau Short (jual dulu). Lihat bagian 11.</td></tr>
+<tr><td>Metode utama</td><td>Tahan 5 hari</td><td>Metode keluar yang menjadi dasar ranking dan semua panel: tahan 1/3/5/10 hari atau TP/SL.</td></tr></table>
+<p><b>Cara return dihitung</b></p>
+<ul>
+<li><b>Masuk</b> di harga buka hari bursa berikutnya setelah sinyal. Sinyal dilewati bila harga buka itu lebih dari 110% harga tutup hari sinyal.</li>
+<li><b>Keluar</b> di harga tutup hari ke-h (metode tahan), atau lebih awal bila TP/SL tersentuh. Bila satu candle menyentuh TP dan SL, SL didahulukan (konservatif). Bila harga buka melompat menembus SL, keluar di harga buka itu.</li>
+<li><b>Return net</b> = return kotor − fee bolak-balik − 2 × slippage per sisi × tier likuiditas.</li>
+<li><b>Tier likuiditas:</b> nilai transaksi hari sinyal di bawah Rp 2 miliar ×2, di bawah Rp 5 miliar ×1,5, selain itu ×1.</li>
+<li><b>Baseline:</b> sinyal acuan pada saham likuid yang lolos filter yang sama (satu dari tiap 5 hari per saham). Preset dinilai terhadap baseline, bukan terhadap nol, supaya kenaikan pasar umum tidak dihitung sebagai keunggulan preset.</li>
+<li><b>In-sample / out-of-sample:</b> sinyal sampai batas tanggal tertentu adalah in-sample, sesudahnya out-of-sample. Batasnya tertulis di ringkasan setelah backtest.</li>
+</ul>
+<p><b>Baris info di atas tabel</b></p>
+<ul>
+<li><b>🗂 Snapshot fundamental:</b> jumlah hari snapshot yang tersimpan (otomatis tiap hari bursa saat aplikasi dibuka). Preset fundamental baru bermakna setelah ±60 hari.</li>
+<li><b>📡 Entry Price Scanner:</b> jumlah hari bursa data broker yang termuat untuk preset EPS; periode dan broker mengikuti pengaturan tab EPS. Hanya tampil bila Histori EPS &gt; 0.</li>
+<li>Ringkasan: saham teruji, rentang tanggal sinyal, batas in/out-of-sample, rezim, metode, fee dan slippage, status filter aksi korporasi (dan berapa hari-sinyal dilewati), serta statistik baseline.</li>
+</ul>`],
+
+["tabel","📊 3. Membaca tabel utama",`
+<p>Satu baris = satu preset. <b>Klik judul kolom untuk mengurutkan</b>; urutan awal memakai batas bawah win rate. Klik baris untuk membuka panel detail.</p>
+<ul>
+<li><b>Sinyal:</b> jumlah sinyal. Di bawah Min sinyal valid berarti sampel kecil (baris dipudarkan).</li>
+<li><b>Win rate:</b> persentase sinyal yang untung; warna menunjukkan selisih terhadap baseline.</li>
+<li><b>Win (batas bawah):</b> batas bawah Wilson 95% dari win rate, dasar ranking, supaya preset dengan sedikit sinyal tidak naik karena untung-untungan.</li>
+<li><b>Rata-rata, Median, Profit factor:</b> rata-rata dan median return net per sinyal, serta total untung dibagi total rugi. Win 70% dengan rata-rata negatif tetap rugi.</li>
+<li><b>Win In-sample / Out-sample:</b> konsistensi antar periode; angka dalam kurung adalah jumlah sinyal.</li>
+<li><b>Win T1, T3, T5, T10, TP/SL:</b> win rate pada tiap lama tahan, tidak bergantung pada Metode utama. Berguna untuk melihat apakah keunggulan hanya muncul di satu horizon.</li>
+<li><b>Win pasar naik / pasar turun:</b> win rate menurut kondisi pasar (jumlah sinyal dalam kurung). Preset yang hanya hidup di pasar naik bagus saat bull, rapuh saat turun.</li>
+<li><b>q (FDR):</b> peluang keunggulan itu kebetulan setelah dikoreksi untuk banyaknya preset yang diuji (Benjamini–Hochberg). 🔬 = q ≤ 0,10 dan selisih terhadap baseline positif. Arahkan kursor ke angkanya untuk p mentah, t, jumlah hari sinyal, hari efektif setelah koreksi autokorelasi (Newey–West), dan selisih rata-rata terhadap baseline per hari.</li>
+<li><b>Walk-forward (x/y):</b> dari y periode berurutan, berapa yang unggul dari baseline. Arahkan kursor untuk rincian per periode. Hijau bila unggul di semuanya, merah bila di separuh atau kurang.</li>
+<li><b>Baris Baseline</b> di bawah tabel adalah pembanding semua saham likuid.</li>
+</ul>
+<p><b>Status:</b></p>
+<ul>
+<li><b>✅ Layak:</b> sinyal ≥ min valid, win rate ≥ baseline + 3 poin, rata-rata net &gt; 0, dan out-of-sample tidak negatif.</li>
+<li><b>⚠ Tidak unggul:</b> belum memenuhi syarat Layak.</li>
+<li><b>Sampel kecil:</b> sinyal kurang dari Min sinyal valid.</li>
+<li><b>↓ lemah di pasar turun:</b> win rate saat pasar turun (minimal 10 sinyal) di bawah baseline pada kondisi yang sama.</li>
+</ul>`],
+
+["combo","🔗 4. Kombinasi 2 preset (AND) otomatis",`
+<p>Bila Uji kombinasi AND = Ya, semua pasangan preset diuji: sinyal muncul pada hari ketika kedua preset menyala bersamaan (preset kejadian atau cross dianggap aktif 3 hari). Tabel menampilkan 15 terbaik dengan sinyal ≥ Min sinyal valid; jumlah pasangan yang diuji tertulis di judul.</p>
+<ul>
+<li><b>✅ Konsisten:</b> win rate ≥ baseline + 3, rata-rata &gt; 0, in-sample dan out-of-sample masing-masing minimal 10 sinyal, win in-sample ≥ baseline + 3, dan win out-of-sample ≥ baseline.</li>
+<li><b>⚠ Belum terbukti:</b> belum memenuhi syarat itu.</li>
+</ul>
+<p>Menguji ratusan pasangan membuat sebagian tampak bagus hanya karena kebetulan. Anggap hasilnya kandidat, lalu konfirmasi lewat uji realitas dan Uji Maju. Kolom q sudah memperhitungkan jumlah pasangan.</p>`],
+
+["rc","🧪 5. Uji realitas",`
+<p><b>Pertanyaan:</b> apakah preset <i>terbaik</i> dari seluruh pencarian masih unggul setelah memperhitungkan bahwa kamu memilih pemenang dari banyak kandidat? FDR mengoreksi banyaknya tes; uji ini lebih ketat.</p>
+<p><b>Cara pakai:</b> klik <b>▶ Jalankan uji realitas</b>; perlu beberapa detik dan progres tampil di samping tombol. Hasilnya label ringkas dan tabel 10 kandidat teratas.</p>
+<p><b>Cara kerja:</b> semua preset dan kombinasi yang cukup sinyal diuji bersamaan terhadap baseline pada hari yang sama, dengan Romano–Wolf step-down dan bootstrap berblok (panjang blok sekitar dua kali lama tahan, minimal 5 hari), distudentisasi di setiap resampel.</p>
+<ul>
+<li><b>Selisih rata-rata / hari:</b> keunggulan preset terhadap baseline per hari sinyal. <b>t:</b> selisih dibagi galat bakunya.</li>
+<li><b>p disesuaikan:</b> peluang keunggulan sebesar itu muncul sebagai yang terbaik bila sebenarnya tidak ada keunggulan. Hijau tebal dan ✅ bila p ≤ 0,10 dan selisih positif.</li>
+<li><b>✅ n kandidat bertahan</b> berarti ada yang lolos, tetapi lolos baru berarti kandidat. <b>⚠ Tidak ada yang bertahan</b> berarti keunggulan di tabel bisa dijelaskan oleh banyaknya kandidat yang dicoba; itu bukan bukti bahwa tidak ada keunggulan, hanya bahwa datanya belum cukup untuk membedakan.</li>
+</ul>
+<p><b>Perlu diingat:</b> hasil otomatis kedaluwarsa bila Metode utama, Rezim, Arah, atau backtest berubah. Pada data pendek (sekitar 250 hari) dengan blok panjang, p cenderung sedikit terlalu optimistis; anggap p 0,05–0,10 sebagai batas, bukan bukti (uji sintetis: tingkat positif palsu sekitar 9% pada target 10%, naik ke 13–18% pada data yang sangat bergantung antar hari). Hari tanpa sinyal dihitung selisih 0, jadi preset yang jarang muncul butuh keunggulan besar. Ada batas jumlah hipotesis; bila lebih, panel menulis jumlah yang diuji dari total.</p>`],
+
+["manual","🧩 6. Kombinasi AND manual",`
+<p>Centang 2 sampai 4 preset, lalu klik <b>Uji kombinasi</b>. Sinyal muncul pada hari ketika semua preset terpilih menyala bersamaan. Preset fundamental tidak tersedia di sini; preset EPS muncul bila data broker termuat. Hasilnya masuk tabel sendiri: bisa diklik untuk panel detail, disimpan ke Uji Maju, atau dihapus dengan tombol ✕.</p>
+<p>Makin banyak preset digabung, makin sedikit sinyalnya; kombinasi 3–4 preset hampir selalu berstatus sampel kecil. Syarat Konsisten sama dengan kombinasi otomatis. Kombinasi yang kamu pilih sendiri setelah melihat hasil ikut tersaring oleh kebetulan, jadi konfirmasi lewat Uji Maju.</p>`],
+
+["tune","🎛 7. Penyetelan parameter dan walk-forward terkunci",`
+<p><b>Tujuan:</b> melihat apakah mengubah satu parameter preset memperbaiki hasil, dan, yang lebih penting, apakah <i>proses menyetel</i> itu menambah nilai pada data yang belum dilihat.</p>
+<ol>
+<li>Pilih <b>Preset</b>, <b>Parameter</b> (hanya parameter angka yang aktif; preset fundamental, EPS, dan Buy on Weakness tidak tersedia), dan <b>Lebar langkah</b> ×1/×2/×3.</li>
+<li>Klik <b>Setel</b>. Tujuh nilai di sekitar nilai sekarang diuji; daftar nilai tampil di samping tombol. Pengaturan preset yang sebenarnya <b>tidak diubah</b> selama penyetelan.</li>
+<li>Baca tabel nilai: sinyal, win rate, rata-rata, serta hasil in-sample dan out-of-sample tiap nilai.</li>
+</ol>
+<ul>
+<li>Nilai terbaik dipilih dari <b>in-sample</b> (minimal 10 sinyal di kedua periode).</li>
+<li><b>✅ terbaik &amp; stabil:</b> rata-rata out-of-sample positif, win out-of-sample tidak di bawah baseline, dan kedua nilai tetangganya juga positif di out-of-sample: dataran landai, bukan puncak runcing.</li>
+<li><b>⚠ terbaik in-sample, belum terbukti:</b> puncaknya belum bertahan di out-of-sample atau tetangganya jatuh.</li>
+<li><b>Terapkan</b> mengubah pengaturan preset (dipakai juga di tab Screener) setelah konfirmasi; jalankan ulang backtest sesudahnya.</li>
+<li>Hasil sama di semua nilai berarti parameter itu tidak memengaruhi sinyal pada data ini.</li>
+</ul>
+<p><b>🔒 Walk-forward dengan parameter terkunci</b> muncul otomatis di bawah tabel penyetelan:</p>
+<ul>
+<li>Data dibagi <b>5 segmen berurutan</b>, ada <b>4 putaran uji</b>. Tiap putaran memilih nilai terbaik <b>hanya dari segmen sebelumnya</b>, mengunci, lalu mengukur di segmen berikutnya.</li>
+<li>Pembanding di periode uji yang sama: nilai terkunci, nilai preset sekarang, <b>rata-rata semua nilai</b> (hasil bila tidak menyetel), dan baseline. Pembanding yang adil adalah rata-rata semua nilai, karena nilai sekarang mungkin sudah dipilih dengan melihat seluruh data.</li>
+<li>Selisih data pemilihan ke uji menunjukkan seberapa banyak hasil penyetelan hanya kebetulan; makin kecil makin baik.</li>
+<li>Label: ✅ menyetel menambah nilai dan pilihan stabil · ⚠ tidak lebih baik daripada rata-rata semua nilai · ⚠ unggul rata-rata tetapi tidak konsisten antar putaran · ❌ nilai terkunci tidak untung di data yang belum dilihat.</li>
+<li>Butuh minimal 60 hari sinyal baseline.</li>
+</ul>
+<p><b>Aturan emas:</b> jangan menyetel banyak parameter berturut-turut pada data yang sama; tiap penyetelan menambah peluang kebetulan.</p>`],
+
+["detail","🔎 8. Panel detail preset (klik satu baris)",`
+<p>Panel ini ada di bagian paling bawah tab dan hanya terisi setelah satu preset dipilih. Urutannya: tombol laporan, kurva ekuitas, simulasi akun, stres biaya, kapasitas, konsentrasi, placebo, walk-forward 4 periode, sinyal terbaru.</p>
+<p><b>8.1 Kurva ekuitas.</b> Menampilkan perjalanan hasil preset. Bila sebagian besar total return datang dari beberapa sinyal besar, muncul peringatan kuning bahwa hasil terkonsentrasi di beberapa sinyal besar.</p>
+<p><b>8.2 🏦 Simulasi akun dan Monte Carlo.</b> Aturan: modal awal sesuai pengaturan, maksimal N posisi bersamaan, tiap posisi bernilai ekuitas dibagi N (sama rata, majemuk), satu posisi per saham, sinyal diproses berurutan menurut tanggal. Pada TP/SL, slot dianggap terpakai selama masa tahan maksimum (konservatif). Garis putus-putus = baseline; garis tegak = batas in/out-of-sample. Tabel sensitivitas menampilkan 3, 5, 10, dan 20 posisi. <b>Monte Carlo</b> mengacak urutan return 2.000 kali: rentang return akhir (P5, median, P95), drawdown, dan peluang rugi; ini menjawab "bagaimana bila urutan nasibnya berbeda", bukan prediksi. Tidak dimodelkan: pembulatan lot, antrean dan partial fill, auto-reject, biaya pinjam saham. Muncul bila ada minimal 5 posisi terambil.</p>
+<p><b>8.3 💸 Stres biaya.</b> Apakah preset hanya hidup pada biaya yang optimistis? Tabel menampilkan rata-rata return per sinyal dan win rate pada slippage <b>0×, 1×, 2×, 3×</b> dengan fee tetap, untuk preset (seluruh periode), preset (out-of-sample), dan baseline. 1× = slippage pengaturanmu (bila 0, satuannya 0,15% per sisi). <b>Titik impas slippage</b> adalah slippage per sisi yang membuat rata-rata jadi nol, beserta kelipatannya. Label: ✅ tahan sampai 3× · ⚠ impas di bawah 2× (rapuh) · ❌ rugi pada 3×. Perhitungan memakai tier likuiditas yang tersimpan di tiap sinyal (sinyal lama dianggap 1,5). Perlu minimal 15 sinyal per baris. Hanya biaya yang berubah; harga isi nyata tidak dimodelkan.</p>
+<p><b>8.4 🏗️ Kapasitas likuiditas.</b> Sampai modal berapa keunggulan bertahan? Ukuran posisi dibatasi persen tertentu (default 5%) dari nilai transaksi harian saham pada hari sinyal; dana yang tak bisa masuk menganggur. Panel menyapu modal dari Rp 50 juta sampai Rp 100 miliar (modal simulasimu dicetak tebal). Kolom: return akun, % dari acuan (return dengan batas dibagi return tanpa batas), max drawdown, Terisi (rata-rata persen dana target yang berhasil masuk), dan Posisi terpotong. Label ringkas menyebut modal terbesar yang returnnya masih ≥ separuh acuan dan modal tempat preset mulai impas atau rugi. Tidak muncul bila Batas posisi = 0 atau sinyal berasal dari backtest lama (jalankan ulang). Dampak harga akibat order besar tidak dimodelkan, jadi kapasitas nyata bisa lebih kecil.</p>
+<p><b>8.5 🧺 Konsentrasi keuntungan.</b> Apakah keuntungan tersebar atau bertumpu pada satu kejadian pasar? Dihitung: % total return dari 3 hari terbaik (dibanding porsi wajar = 3 ÷ jumlah hari), % dari 1 sektor terbaik (saham tanpa sektor dikelompokkan "-"), rata-rata return per sinyal tanpa bagian terbaik itu, dan % sinyal di bagian terramai. Label: ✅ tersebar · ⚠ lebih dari separuh keuntungan dari 3 hari atau sektor terbaik · ❌ tanpa bagian terbaik rata-rata nol atau negatif. Butuh minimal 30 sinyal. Ambang 50% adalah pilihan praktis, bukan angka baku.</p>
+<p><b>8.6 🎭 Uji placebo.</b> Apakah <i>waktu</i> sinyal berarti, atau preset kebetulan memilih saham yang sedang naik? Tanggal sinyal diganti tanggal acak pada <b>saham yang sama</b> (jumlah sinyal per saham dipertahankan) sebanyak 2.000 kali, diambil dari catatan baseline. Dilaporkan untuk seluruh periode dan out-of-sample. <b>p (rata-rata)</b> kecil (di bawah 0,05, hijau tebal) berarti waktu sinyalnya berarti; bila placebo sering menyamai preset (p di atas 0,10), bagusnya hasil lebih mungkin berasal dari saham yang dipilih daripada waktunya. Keterbatasan: pengacakan tidak mengendalikan hari pasar yang sama antar saham. Butuh minimal 15 sinyal.</p>
+<p><b>8.7 🧭 Walk-forward 4 periode.</b> Hasil dibagi ke 4 periode berurutan; untuk tiap periode ditampilkan selisih rata-rata return terhadap baseline pada hari sinyal yang sama. Yang dicari: unggul di hampir semua periode, bukan satu lonjakan besar. (Berbeda dari walk-forward terkunci di bagian 7, yang menilai proses menyetel parameter.)</p>
+<p><b>8.8 Sinyal terbaru.</b> 30 sinyal terakhir: tanggal, saham (klik untuk detail), harga masuk (buka hari berikutnya), dan return net menurut metode terpilih.</p>`],
+
+["ekspor","📄 9. Ekspor laporan dan CSV",`
+<ul>
+<li><b>📥 CSV semua sinyal</b> (di baris pengaturan atas): seluruh sinyal semua preset dan baseline, dengan return tiap horizon (T1, T3, T5, T10, TP/SL, dan versi short). Untuk analisis lanjutan di Excel.</li>
+<li><b>📄 Ekspor laporan preset (CSV)</b> (di atas panel detail): ringkasan satu preset dalam kolom bagian, metrik, dan nilai; terbuka benar di Excel. Nama file memuat nama preset dan tanggal.</li>
+<li><b>🖨 Cetak laporan:</b> halaman rapi per bagian dengan dialog cetak; pilih Simpan sebagai PDF untuk arsip. Bila pop-up diblokir, izinkan pop-up atau pakai CSV.</li>
+</ul>
+<p>Isi laporan preset: ringkasan (preset, metode, waktu jalan, batas in/out-of-sample, status Layak), parameter backtest, statistik preset dan baseline, signifikansi (p, q, hari efektif) dan walk-forward per periode, uji realitas (bila sudah dijalankan untuk konfigurasi yang sama), placebo, simulasi akun dan Monte Carlo, kapasitas, stres biaya, dan konsentrasi. Parameter backtest yang dilaporkan adalah yang dipakai saat backtest dijalankan; modal, maks posisi, dan batas posisi adalah nilai yang sedang terpasang. Simpan laporan sebelum mengubah pengaturan bila ingin membandingkan antar sesi.</p>`],
+
+["maju","💾 10. Uji Maju dan peringatan Dashboard",`
+<ul>
+<li><b>💾 Uji Maju</b> (tombol di tiap baris preset, kombinasi, dan kombinasi manual) menyimpan saham yang lolos preset itu <b>hari ini</b> ke tab Backtest (uji maju) untuk dipantau ke depan, memakai min harga dan nilai transaksi yang sama dengan backtest. Ini ujian terakhir pada data yang benar-benar baru. Tidak ada saham yang lolos hari ini = muncul pemberitahuan. Preset EPS butuh hasil scan di tab Entry Price Scanner lebih dulu. Hanya untuk posisi beli (Long).</li>
+<li><b>🔔 Preset ✅ Layak yang aktif hari ini</b> muncul di Dashboard: daftar preset berstatus Layak (dan kombinasi Konsisten) dari backtest terakhir beserta saham yang lolos hari ini. Tertera tanggal backtest, metode, dan rezim; bila lebih dari 7 hari, ada peringatan untuk menjalankan ulang. Preset EPS tidak ikut dicek, dan hanya untuk posisi beli. Status Layak berasal dari data lampau dan tidak menjamin hasil ke depan.</li>
+</ul>`],
+
+["short","🔻 11. Mode Short",`
+<p>Pilih <b>Arah posisi: Short</b> untuk menguji sebagai posisi jual dulu (untung bila harga turun). Preset bullish diuji sebagai lawan arah (fade); preset bertanda 🔻 adalah sinyal bearish. Fee dan slippage tetap dihitung, tetapi <b>biaya pinjam saham, ketersediaan saham, dan batas auto-reject bawah tidak dihitung</b>; di IDX short selling hanya boleh pada saham tertentu lewat pinjam-meminjam efek, jadi hasil short lebih optimistis daripada kenyataan.</p>
+<ul>
+<li>Bila backtest dijalankan sebelum data short tersedia, muncul peringatan: jalankan ulang dulu, baru pilih Short.</li>
+<li>Uji Maju dan peringatan Dashboard hanya untuk Long.</li>
+<li>Panel detail, uji realitas, dan laporan mengikuti arah yang dipilih; uji realitas kedaluwarsa bila arah diganti.</li>
+</ul>`],
+
+["batas","📌 12. Batasan preset dan data",`
+<ul>
+<li><b>Preset fundamental</b> (Deep Value, Multibagger, Growth, Defensive, Small Cap) hanya diuji pada hari yang punya snapshot, jadi baru bermakna setelah snapshot terkumpul (±60 hari). Tidak tersedia untuk kombinasi dan penyetelan.</li>
+<li><b>Belum bisa di-backtest:</b> Skor Bagger dan BSJP.</li>
+<li><b>Preset EPS</b> adalah kombinasi filter umum (bukan semua kombinasi) pada histori data broker yang lebih pendek, jadi sinyalnya lebih sedikit.</li>
+<li><b>Buy on Weakness</b> memakai fungsi aslinya dengan pengaturan ⚙️ BoW yang aktif; hanya sinyal dari bar ke-200 (butuh MA200).</li>
+<li>Data historis pendek (sekitar satu tahun) biasanya mencakup <b>satu rezim pasar</b>. Hasil bagus di satu rezim tidak menjamin rezim lain.</li>
+<li>Sinyal pada hari yang sama tidak independen. Statistik sudah dikoreksi sebagian (hari efektif, bootstrap berblok), tetapi tidak sepenuhnya.</li>
+<li>Fee dan slippage hanyalah perkiraan. Antrean, partial fill, auto-reject, dan pembulatan lot tidak dimodelkan. Saham sepi bisa membuat return tampak lebih mudah dari kenyataan.</li>
+<li>Semua hasil bersifat historis dan bukan jaminan; ini alat bantu riset, bukan saran investasi.</li>
+</ul>`],
+
+["cek","✅ 13. Daftar periksa keputusan",`
+<p>Preset layak dipertimbangkan bila <b>sebagian besar</b> ini benar:</p>
+<ol>
+<li>Status ✅ Layak dengan sinyal jauh di atas minimum, unggul di hampir semua periode walk-forward, dan q ≤ 0,10 (🔬).</li>
+<li>Bertahan di <b>uji realitas</b> (p disesuaikan ≤ 0,10).</li>
+<li><b>Placebo</b> mengalahkan hampir semua pengacakan, baik seluruh periode maupun out-of-sample.</li>
+<li><b>Stres biaya:</b> masih untung pada slippage 3× atau titik impas jauh di atas pengaturanmu, dan masih unggul dari baseline.</li>
+<li><b>Konsentrasi:</b> rata-rata tanpa 3 hari terbaik dan tanpa sektor terbaik masih positif.</li>
+<li><b>Kapasitas:</b> modal yang kamu rencanakan masih di bawah modal tempat return turun di bawah separuh acuan.</li>
+<li><b>Simulasi akun:</b> mengalahkan baseline dengan drawdown yang sanggup kamu tanggung; P5 Monte Carlo tidak menakutkan.</li>
+<li>Bila menyetel parameter: walk-forward terkunci menunjukkan penyetelan menambah nilai dan nilai terpilih stabil.</li>
+</ol>
+<p><b>Tanda bahaya:</b> bagus di in-sample tetapi negatif di out-of-sample · unggul hanya di satu periode · tidak ada yang bertahan di uji realitas padahal tabel penuh ✅ · placebo sering menyamai preset · impas di bawah 2× slippage · lebih dari separuh keuntungan dari 3 hari atau satu sektor · puncak parameter runcing · sinyal banyak di saham sepi sementara modalmu besar. Lolos semuanya tetap berarti <b>kandidat</b>: lanjutkan ke 💾 Uji Maju dengan uang kecil.</p>`],
+
+["trouble","🛠 14. Panel tidak muncul atau angka aneh",`
+<table><tr><th>Gejala</th><th>Penyebab dan solusi</th></tr>
+<tr><td>Tidak ada panel detail</td><td>Belum ada baris preset yang diklik.</td></tr>
+<tr><td>Kapasitas tidak muncul</td><td>Batas posisi diisi 0, atau sinyal dari backtest lama. Isi batas (mis. 5) dan jalankan backtest ulang.</td></tr>
+<tr><td>Stres biaya tampak aneh pada sinyal lama</td><td>Sinyal lama tidak punya tier likuiditas dan dianggap 1,5. Jalankan backtest ulang.</td></tr>
+<tr><td>Uji realitas hilang</td><td>Kedaluwarsa karena Metode utama, Rezim, Arah, atau backtest berubah. Jalankan lagi.</td></tr>
+<tr><td>Konsentrasi atau Stres biaya kosong</td><td>Sinyal kurang dari 30 (konsentrasi) atau 15 (stres biaya). Naikkan jumlah saham atau longgarkan filter.</td></tr>
+<tr><td>Placebo kosong</td><td>Sinyal preset atau baseline kurang dari 15.</td></tr>
+<tr><td>Walk-forward terkunci tidak muncul</td><td>Belum menekan Setel, atau sinyal baseline kurang dari 60 hari.</td></tr>
+<tr><td>Hasil penyetelan sama di semua nilai</td><td>Parameter tidak memengaruhi sinyal pada data ini.</td></tr>
+<tr><td>Memilih Short memunculkan peringatan</td><td>Backtest dijalankan sebelum data short tersedia. Jalankan ulang lalu pilih Short.</td></tr>
+<tr><td>Hasil berubah setelah ganti fee, slippage, TP/SL, atau jumlah saham</td><td>Pengaturan itu memengaruhi sinyal; jalankan ulang backtest.</td></tr>
+<tr><td>Preset fundamental kosong atau sedikit</td><td>Snapshot fundamental belum cukup hari (lihat baris 🗂 di atas tabel).</td></tr>
+<tr><td>Tombol Cetak tidak membuka apa-apa</td><td>Pop-up diblokir browser. Izinkan pop-up atau pakai ekspor CSV.</td></tr></table>`],
+
+["glosarium","📖 15. Glosarium",`
+<ul>
+<li><b>Baseline:</b> sinyal acuan pada saham likuid yang lolos filter yang sama.</li>
+<li><b>In-sample / out-of-sample:</b> data sebelum dan sesudah batas tanggal; out-of-sample adalah ujian yang lebih jujur.</li>
+<li><b>Batas bawah Wilson:</b> batas bawah selang kepercayaan 95% untuk win rate; menghukum sampel kecil.</li>
+<li><b>Profit factor:</b> total untung dibagi total rugi.</li>
+<li><b>FDR / q:</b> koreksi untuk banyaknya preset yang diuji (Benjamini–Hochberg). q kecil = lebih kecil kemungkinan kebetulan.</li>
+<li><b>Newey–West / hari efektif:</b> koreksi galat baku untuk sinyal yang saling berkaitan antar hari.</li>
+<li><b>Uji realitas (Romano–Wolf):</b> uji apakah pemenang terbaik dari seluruh kandidat benar-benar unggul setelah memperhitungkan seleksi.</li>
+<li><b>Bootstrap berblok:</b> pengacakan dalam blok hari berurutan agar ketergantungan antar hari terjaga.</li>
+<li><b>Placebo:</b> pengacakan tanggal sinyal pada saham yang sama untuk menguji apakah waktu sinyal berarti.</li>
+<li><b>Walk-forward:</b> pengujian berurutan menurut waktu; versi terkunci memilih parameter hanya dari data sebelumnya.</li>
+<li><b>Slippage / tier likuiditas:</b> selisih harga isi dari harga acuan; pengali menurut nilai transaksi saham (×1, ×1,5, ×2).</li>
+<li><b>Titik impas slippage:</b> slippage per sisi yang membuat rata-rata return jadi nol.</li>
+<li><b>Drawdown:</b> penurunan dari puncak ekuitas ke titik terendah berikutnya.</li>
+<li><b>Monte Carlo:</b> simulasi berulang dengan urutan return diacak untuk melihat rentang hasil.</li>
+<li><b>Uji Maju:</b> memantau hasil preset ke depan setelah disimpan, sebagai ujian akhir pada data yang benar-benar baru.</li>
+</ul>`]
+];
+function sbtGuideToggle(id,o){ (SBT.guideOpen||(SBT.guideOpen={}))[id]=!!o; }
+function sbtGuideHtml(){
+  const op=SBT.guideOpen||{};
+  const style=`<style>.sbtg{font-size:12.5px;line-height:1.6}.sbtg p{margin:6px 0}.sbtg ul,.sbtg ol{margin:4px 0 8px 20px;padding:0}.sbtg li{margin:2px 0}.sbtg table{border-collapse:collapse;width:100%;margin:6px 0;font-size:12px}.sbtg td,.sbtg th{border:1px solid var(--border,#ddd);padding:3px 7px;vertical-align:top;text-align:left}.sbtg summary{cursor:pointer;font-weight:600}.sbtg details.sbtg-sec{border-top:1px solid var(--border,#ddd);padding:6px 0}.sbtg details.sbtg-sec>summary{font-size:13px}</style>`;
+  const secs=SBT_GUIDE.map(([id,title,body])=>`<details class="sbtg-sec" ${op[id]?"open":""} ontoggle="sbtGuideToggle('${id}',this.open)"><summary>${title}</summary>${body}</details>`).join("");
+  return `${style}<details class="sbtg" style="margin:8px 0;border:1px solid var(--border,#ddd);border-radius:6px;padding:8px 12px;" ${op.__root?"open":""} ontoggle="if(event.target===this)sbtGuideToggle('__root',this.open)"><summary style="font-size:13.5px;">📖 Manual penggunaan (klik untuk membuka)</summary><div style="color:var(--muted);margin:6px 0 4px;">Panduan lengkap semua fitur tab ini. Bagian bisa dibuka satu per satu. Hasil backtest adalah penyaring kandidat, bukan jaminan.</div>${secs}</details>`;
 }
 
 // ---------- pasang ke sidebar (tanpa perlu edit index.html) ----------
@@ -30703,7 +31386,14 @@ document.querySelectorAll('#tabs .tab-btn[data-tab="rekaptren"]').forEach(b=>(b.
 //    diketahui setelah close). Entry yang gap > +10% dari close dilewati.
 //  - Exit: tahan N hari (close hari ke-N) ATAU skema TP/SL (kena SL dulu
 //    kalau TP & SL tersentuh di hari yang sama = konservatif).
-//  - Return NET: sudah dikurangi fee bolak-balik (default 0,4%).
+//  - Return NET: sudah dikurangi fee bolak-balik (default 0,4%) DAN slippage
+//    (default 0,15% per sisi, ×1,5 bila nilai transaksi hari sinyal < Rp5 M,
+//    ×2 bila < Rp2 M).
+//  - Filter aksi korporasi: sinyal dilewati bila ada lompatan harga > 40%
+//    (split / reverse split / data rusak) dalam 5 hari sebelum sampai masa tahan.
+//  - Uji signifikansi memakai galat baku Newey-West (koreksi autokorelasi harian).
+//  - Simulasi akun: modal, maks posisi bersamaan, ukuran posisi sama rata,
+//    satu posisi per saham; plus Monte Carlo urutan transaksi.
 //  - Pembanding "Baseline": semua saham likuid, tiap 5 hari, tanpa filter
 //    apa pun. Preset hanya berguna kalau mengalahkan baseline ini.
 //  - Skor ranking = batas bawah Wilson 95% dari win rate (menghukum sampel
@@ -30719,10 +31409,11 @@ document.querySelectorAll('#tabs .tab-btn[data-tab="rekaptren"]').forEach(b=>(b.
 // "BPJS" memakai pendekatan RVOL>2 & CLV>0.7 untuk tone bandar.
 // ==========================================================================
 const SBT = {
-  running:false, msg:"", pct:0, results:null, sel:null, ranAt:null, meta:null,
-  cfg:{ dir:"long", universeN:200, minValueM:1000, minPrice:50, feePct:0.4, tp:5, sl:3, maxHold:10, primary:"h5", minN:30, epsDays:120, combo:1, regime:"all" },
+  running:false, msg:"", pct:0, results:null, sel:null, ranAt:null, meta:null, caSkip:0,
+  cfg:{ dir:"long", capPct:5, universeN:200, minValueM:1000, minPrice:50, feePct:0.4, slipPct:0.15, caFilter:1, maxPos:5, capitalM:100, tp:5, sl:3, maxHold:10, primary:"h5", minN:30, epsDays:120, combo:1, regime:"all" },
 };
 const SBT_HORIZONS = [["h1","T+1",1],["h3","T+3",3],["h5","T+5",5],["h10","T+10",10]];
+const SBT_CA_JUMP = 0.40; // lompatan harian > 40% = hampir pasti split/reverse split/data rusak (ARA IDX maks 35%)
 const SBT_START = 100; // indeks bar pertama yang boleh jadi sinyal (butuh MA100)
 
 function sbtSma(a,p){ const n=a.length, o=new Array(n).fill(null); let s=0; for(let i=0;i<n;i++){ s+=a[i]; if(i>=p) s-=a[i-p]; if(i>=p-1) o[i]=s/p; } return o; }
@@ -30786,6 +31477,12 @@ function sbtBuildCtx(bars, ext, fund){
     if(nc>=15){ X.fnet20[i]=ns; X.fup20[i]=up; }
     if(c5>=4) X.fnet5[i]=n5;
   }
+  // ---- deteksi aksi korporasi / data rusak: lompatan close->close atau close->open > SBT_CA_JUMP
+  // X.ca[k] = jumlah lompatan pada bar 0..k (jumlah kumulatif)
+  X.ca=new Int32Array(n); let caN=0;
+  for(let k=1;k<n;k++){ const pc=c[k-1];
+    if(!(pc>0) || !(c[k]>0) || Math.abs(c[k]/pc-1)>SBT_CA_JUMP || (o[k]>0 && Math.abs(o[k]/pc-1)>SBT_CA_JUMP)) caN++;
+    X.ca[k]=caN; }
   return X;
 }
 // Baris "saham" sintetis untuk bowEval() -- memakai fungsi ASLI Buy on Weakness + BOW_CFG aktif
@@ -30980,7 +31677,13 @@ function sbtStats(list, key, cutoff){
 function sbtTrade(X,i,cfg){
   const j0=i+1; if(j0>=X.n) return null;
   const e=X.o[j0]; if(!(e>0) || e>X.c[i]*1.10) return null;
-  const fee=cfg.feePct, r={};
+  if(cfg.caFilter && X.ca){
+    const end=Math.min(X.n-1, i+Math.max(10,cfg.maxHold||10)+1), st=Math.max(0,i-5);
+    if(X.ca[end]-X.ca[st]>0){ SBT.caSkip++; return null; }
+  }
+  // biaya bolak-balik = fee + slippage 2 sisi; slippage naik untuk saham kurang likuid pada hari sinyal
+  const val=X.c[i]*X.v[i], tier= val<2e9 ? 2 : val<5e9 ? 1.5 : 1;
+  const fee=cfg.feePct+2*(cfg.slipPct||0)*tier, r={};
   SBT_HORIZONS.forEach(([k,,hz])=>{ const ex=i+hz; r[k]= ex<X.n ? (X.c[ex]/e-1)*100-fee : null; });
   const tpP=e*(1+cfg.tp/100), slP=e*(1-cfg.sl/100), last=i+cfg.maxHold;
   r.tpsl=null;
@@ -30994,7 +31697,7 @@ function sbtTrade(X,i,cfg){
     if(out==null) out=X.c[last];
     r.tpsl=(out/e-1)*100-fee;
   }
-  // arah SHORT: untung kalau harga turun (tanpa biaya pinjam saham)
+  // arah SHORT: untung kalau harga turun (tanpa biaya pinjam saham; fee & slippage tetap dihitung)
   SBT_HORIZONS.forEach(([k,,hz])=>{ const ex=i+hz; r["s_"+k]= ex<X.n ? (1-X.c[ex]/e)*100-fee : null; });
   r.s_tpsl=null;
   if(last<X.n){
@@ -31007,7 +31710,7 @@ function sbtTrade(X,i,cfg){
     if(out==null) out=X.c[last];
     r.s_tpsl=(1-out/e)*100-fee;
   }
-  return { e, r };
+  return { e, r, u:tier, w:val };
 }
 
 // ---------- Snapshot fundamental harian (tabel fundamental_snapshot) ----------
@@ -31084,7 +31787,7 @@ async function sbtRun(){
   if(typeof PS==="undefined" || typeof psEnsureData!=="function"){ SBT.msg="Modul data histori (Pattern Scanner) tidak tersedia."; render(); return; }
   if(PS.running){ SBT.msg="Pattern Scanner sedang berjalan — coba lagi setelah selesai."; render(); return; }
   const cfg={...SBT.cfg};
-  SBT.running=true; SBT.msg=""; SBT.pct=0; render();
+  SBT.running=true; SBT.msg=""; SBT.pct=0; SBT.caSkip=0; render();
   const prog=(txt,pct)=>{ SBT.msg=txt; SBT.pct=pct||0; const el=document.getElementById("sbtProg"); if(el) el.innerHTML=sbtProgHtml(); };
   try{
     // universe: top-N likuiditas (turnover) dari data screener
@@ -31124,7 +31827,7 @@ async function sbtRun(){
         for(let i=SBT_START;i<X.n-1;i++){
           if(!liq(i)) continue;
           const trI=sbtTrade(X,i,cfg); if(!trI) continue;
-          const rec={ t:tk, d:X.t[i], e:trI.e, r:trI.r, m: regimeMap[X.t[i]]===undefined ? null : regimeMap[X.t[i]] };
+          const rec={ t:tk, d:X.t[i], e:trI.e, r:trI.r, u:trI.u, w:trI.w, m: regimeMap[X.t[i]]===undefined ? null : regimeMap[X.t[i]] };
           if(i%5===0) sigs.__baseline.push(rec);
           for(let si=0;si<m;si++){
             if(SBT_STRATS[si].fund && X.fund[i-1]==null) continue; // butuh snapshot kemarin agar "baru muncul" valid
@@ -31147,13 +31850,77 @@ async function sbtRun(){
     SBT.manualKeys=[]; if(SBT.tune) SBT.tune.res=null;
     SBT.ctx={ tickers, sektorMap, epsFilters, regimeMap };
     SBT.signals=sigs;
-    SBT.meta={ cfg, tested, total:tickers.length, minD, maxD, cutoff };
+    SBT.ctx.cal=Object.keys(regimeMap).sort();
+    SBT.meta={ cfg, tested, total:tickers.length, minD, maxD, cutoff, caSkip:SBT.caSkip };
     SBT.results=sbtAggregate();
     SBT.ranAt=new Date();
     sbtPersistLayak();
     SBT.sel = SBT.results.rows.length? SBT.results.rows[0].key : null;
   }catch(e){ console.error("[SBT]",e); SBT.msg="Gagal: "+(e&&e.message||e); SBT.results=null; }
   SBT.running=false; render();
+}
+// ---------- Uji signifikansi (FDR) + walk-forward ----------
+// Unit uji = HARI sinyal: rata-rata return sinyal hari itu dikurangi rata-rata baseline hari yang sama (berpasangan).
+// Posisi yang tumpang-tindih membuat hari berdekatan berkorelasi, jadi jumlah hari efektif = hari / lama tahan (konservatif).
+function sbtLgamma(x){ const c=[76.18009172947146,-86.50532032941677,24.01409824083091,-1.231739572450155,0.1208650973866179e-2,-0.5395239384953e-5]; let y=x, t=x+5.5; t-=(x+0.5)*Math.log(t); let ser=1.000000000190015; for(let j=0;j<6;j++) ser+=c[j]/++y; return -t+Math.log(2.5066282746310005*ser/x); }
+function sbtBetacf(a,b,x){ const MAXIT=200, EPS=3e-12, FPMIN=1e-300; let qab=a+b,qap=a+1,qam=a-1,c=1,d=1-qab*x/qap; if(Math.abs(d)<FPMIN)d=FPMIN; d=1/d; let h=d;
+  for(let m=1;m<=MAXIT;m++){ const m2=2*m; let aa=m*(b-m)*x/((qam+m2)*(a+m2)); d=1+aa*d; if(Math.abs(d)<FPMIN)d=FPMIN; c=1+aa/c; if(Math.abs(c)<FPMIN)c=FPMIN; d=1/d; h*=d*c;
+    aa=-(a+m)*(qab+m)*x/((a+m2)*(qap+m2)); d=1+aa*d; if(Math.abs(d)<FPMIN)d=FPMIN; c=1+aa/c; if(Math.abs(c)<FPMIN)c=FPMIN; d=1/d; const del=d*c; h*=del; if(Math.abs(del-1)<EPS) break; }
+  return h; }
+function sbtBetai(a,b,x){ if(x<=0) return 0; if(x>=1) return 1; const bt=Math.exp(sbtLgamma(a+b)-sbtLgamma(a)-sbtLgamma(b)+a*Math.log(x)+b*Math.log(1-x));
+  return x<(a+1)/(a+b+2) ? bt*sbtBetacf(a,b,x)/a : 1-bt*sbtBetacf(b,a,1-x)/b; }
+// p satu sisi: peluang rata-rata ≥ t bila sebenarnya tidak ada keunggulan
+function sbtTp1(t,df){ const x=df/(df+t*t), tail=0.5*sbtBetai(df/2,0.5,x); return t>=0 ? tail : 1-tail; }
+function sbtDayMap(list,key){ const m=new Map(); (list||[]).forEach(s=>{ const v=s.r[key]; if(v==null) return; const a=m.get(s.d)||[0,0]; a[0]+=v; a[1]++; m.set(s.d,a); }); return m; }
+function sbtHoldDays(key){ const k=key.startsWith("s_")?key.slice(2):key; if(k==="tpsl") return Math.max(1,SBT.cfg.maxHold||10); const h=SBT_HORIZONS.find(x=>x[0]===k); return h?h[2]:5; }
+const SBT_WF_K=4;
+function sbtSignif(list,key,bm){
+  const pm=sbtDayMap(list,key), d=[];
+  pm.forEach((a,day)=>{ const b=bm.get(day); if(b) d.push([day,a[0]/a[1]-b[0]/b[1]]); });
+  d.sort((x,y)=> x[0]<y[0]?-1:x[0]>y[0]?1:0);
+  const nd=d.length, hz=sbtHoldDays(key);
+  const out={ nd, nEff:nd/hz, mean:null, t:null, p:null, q:null, folds:[], pos:null, lag:0, rho1:null, nwInfl:null };
+  if(nd>=SBT_WF_K*3){ const sz=nd/SBT_WF_K;
+    for(let f=0;f<SBT_WF_K;f++){ const seg=d.slice(Math.round(f*sz),Math.round((f+1)*sz)); if(!seg.length) continue;
+      out.folds.push({ from:seg[0][0], to:seg[seg.length-1][0], n:seg.length, mean:seg.reduce((a,b)=>a+b[1],0)/seg.length }); }
+    out.pos=out.folds.filter(f=>f.mean>0).length; }
+  if(nd>=24){
+    // Koreksi autokorelasi: galat baku rata-rata Newey-West (bobot Bartlett, lag = lama tahan).
+    // Hari sinyal yang berdekatan memakai posisi yang tumpang-tindih sehingga selisihnya berkorelasi positif;
+    // t-test biasa lalu terlalu optimistis. Dipakai yang PALING KONSERVATIF dari: iid, Newey-West, dan aturan hari/lama-tahan.
+    const mean=d.reduce((a,b)=>a+b[1],0)/nd, xs=d.map(a=>a[1]-mean);
+    const g0=xs.reduce((a,x)=>a+x*x,0)/nd*(nd/(nd-1));
+    if(g0>0){
+      const Lg=Math.max(1,Math.min(Math.max(hz,2)+1, Math.floor(nd/4)));
+      let sNW=g0, c1=0;
+      for(let l=1;l<=Lg;l++){ let c=0; for(let t=l;t<nd;t++) c+=xs[t]*xs[t-l]; c/=nd; if(l===1) c1=c; sNW+=2*(1-l/(Lg+1))*c; }
+      const vIid=g0/nd, vNW=Math.max(sNW,g0)/nd, vHz=g0*hz/nd, vM=Math.max(vIid,vNW,vHz);
+      const nEff=g0/vM;
+      out.lag=Lg; out.rho1=c1/g0; out.nwInfl=Math.sqrt(vM/vIid); out.nEff=nEff; out.mean=mean;
+      if(nEff>=8){ out.t=mean/Math.sqrt(vM); out.p=sbtTp1(out.t,nEff-1); }
+    }
+  }
+  return out;
+}
+// Benjamini–Hochberg: m = SEMUA hipotesis yang pernah dilihat (yang tak punya p dianggap p=1)
+function sbtApplyFdr(items,m){
+  const withP=items.filter(x=>x.sig&&x.sig.p!=null).sort((a,b)=>a.sig.p-b.sig.p), M=Math.max(m,withP.length);
+  let prev=1; for(let i=withP.length-1;i>=0;i--){ const q=Math.min(prev, withP[i].sig.p*M/(i+1)); withP[i].sig.q=q; prev=q; }
+}
+function sbtSigCells(r){
+  const g=r.sig||{}, K=g.folds?g.folds.length:0;
+  const qTitle= g.p==null ? "data belum cukup untuk uji" : `p mentah ${g.p.toFixed(4)} · t ${g.t.toFixed(2)} · ${g.nd} hari sinyal (efektif ${g.nEff.toFixed(1)} setelah koreksi autokorelasi: lag ${g.lag}, ρ1 ${g.rho1==null?"-":g.rho1.toFixed(2)}, galat baku ×${g.nwInfl==null?"-":g.nwInfl.toFixed(2)}) · rata-rata selisih vs baseline ${sbtF(g.mean,2)} per hari`;
+  const qOk=g.q!=null && g.q<=0.10 && g.mean>0;
+  const wfTitle= K ? g.folds.map((f,i)=>`F${i+1} ${f.from}→${f.to}: ${sbtF(f.mean,2)}`).join(" | ") : "data belum cukup";
+  return `<td class="mono" title="${escapeHtml(qTitle)}" style="${qOk?"color:var(--up);font-weight:700;":""}">${g.q==null?"-":g.q.toFixed(3)}${qOk?" 🔬":""}</td>`+
+         `<td class="mono" title="${escapeHtml(wfTitle)}" style="${g.pos===K&&K?"color:var(--up);font-weight:700;":(g.pos!=null&&g.pos<=K/2?"color:var(--down);":"")}">${g.pos==null?"-":g.pos+"/"+K}</td>`;
+}
+function sbtWfHtml(selKey){
+  const key=sbtKey(), bm=sbtDayMap(sbtRegFilter(SBT.signals.__baseline),key), g=sbtSignif(sbtRegFilter(SBT.signals[selKey]),key,bm);
+  if(!g.folds.length) return "";
+  return `<div class="panel-heading" style="margin-top:14px;"><h3>🧭 Walk-forward — ${escapeHtml(sbtLabel(selKey))}</h3><span class="panel-heading-note">${SBT_WF_K} periode berurutan · selisih return vs baseline pada hari sinyal yang sama</span></div>
+    <div class="table-wrap"><table class="data-table"><thead><tr><th>Periode</th><th>Dari</th><th>Sampai</th><th>Hari sinyal</th><th>Selisih rata-rata / hari</th></tr></thead><tbody>${g.folds.map((f,i)=>`<tr><td>F${i+1}</td><td class="mono">${f.from}</td><td class="mono">${f.to}</td><td class="mono">${f.n}</td><td class="mono" style="${sbtC(f.mean)}">${sbtF(f.mean,2)}</td></tr>`).join("")}</tbody></table></div>
+    <div style="font-size:11px;color:var(--muted);margin-top:4px;line-height:1.5;">${g.pos}/${g.folds.length} periode unggul dari baseline. Preset yang bagus hanya di satu periode biasanya hasil kebetulan atau kondisi pasar tertentu. Yang dicari: unggul di hampir semua periode, bukan satu lonjakan besar.</div>`;
 }
 function sbtAggregate(){
   const M=SBT.meta, key=sbtKey(), cutoff=M.cutoff;
@@ -31180,7 +31947,12 @@ function sbtAggregate(){
   const manual=(SBT.manualKeys||[]).filter(k=>SBT.signals[k] && sbtKeyVisible(k)).map(k=>{ const st=sbtStats(L(k), key, cutoff), small=st.n<SBT.cfg.minN;
     const ok=!small && st.win>=base.win+3 && st.avg>0 && st.nIS>=10 && st.nOS>=10 && st.winIS>=base.win+3 && st.winOS>=base.win;
     return { key:k, label:sbtLabel(k), st, ok, small }; });
-  return { base, baseReg, rows, combos, manual, comboTested: SBT.cfg.combo ? nElig*(nElig-1)/2 : 0 };
+  const bm=sbtDayMap(L("__baseline"), key);
+  const hyp=[...rows.filter(r=>!r.small), ...combos, ...manual.filter(r=>!r.small)];
+  hyp.forEach(r=>{ r.sig=sbtSignif(L(r.key), key, bm); });
+  const mAll=rows.length + Object.keys(SBT.signals).filter(k=>k.startsWith("combo:") && sbtKeyVisible(k)).length;
+  sbtApplyFdr(hyp, mAll);
+  return { base, baseReg, rows, combos, manual, mTests:mAll, comboTested: SBT.cfg.combo ? nElig*(nElig-1)/2 : 0 };
 }
 function sbtLabel(k){
   if(k.startsWith("combo:")) return k.slice(6).split("+").map(x=>sbtLabel(x)).join("  +  ");
@@ -31193,6 +31965,7 @@ function sbtMethodLabel(k){ const sh=k.startsWith("s_"); if(sh) k=k.slice(2); co
 // ---------- Simpan hasil preset HARI INI ke Backtest (Uji Maju) ----------
 function sbtPassToday(key,s,epsRows){
   if(key.startsWith("bear_")) return false;
+  if(key==="gapgo_t1"){ try{ const g=ggCompute(s, ggS().params); return !!(g.lolos && g.gapPct>0); }catch(e){ return false; } }
   if(key.startsWith("combo:")) return key.slice(6).split("+").every(k=>sbtPassToday(k,s,epsRows));
   if(key.startsWith("eps_")){ const def=SBT_EPS_DEFS.find(d=>d[0]===key); const r=epsRows && epsRows.get(s.ticker); return !!(def && r && def[2](r)); }
   try{ return !!presetPass(key,s); }catch(e){ return false; }
@@ -31243,7 +32016,7 @@ async function sbtSaveForward(key){
   await saveGenericListToBacktest("sbt", label);
 }
 function sbtSet(k,v){ if(k==="dir" && v==="short" && SBT.signals && !Object.values(SBT.signals).some(l=>l&&l.length&&l[0].r.s_h5!==undefined)){ alert("Hasil backtest ini belum memuat data short. Klik Jalankan Backtest ulang dulu, lalu pilih Short."); render(); return; }
-  if(k==="primary"||k==="regime"||k==="dir"){ SBT.cfg[k]=v; if(SBT.results&&SBT.meta){ SBT.results=sbtAggregate(); sbtPersistLayak(); if(SBT.sel && !sbtKeyVisible(SBT.sel)) SBT.sel=SBT.results.rows.length?SBT.results.rows[0].key:null; } render(); return; } const n=Number(v); if(isFinite(n)) SBT.cfg[k]=n; }
+  if(k==="primary"||k==="regime"||k==="dir"){ SBT.cfg[k]=v; if(SBT.results&&SBT.meta){ SBT.results=sbtAggregate(); sbtPersistLayak(); if(SBT.sel && !sbtKeyVisible(SBT.sel)) SBT.sel=SBT.results.rows.length?SBT.results.rows[0].key:null; } render(); return; } const n=Number(v); if(isFinite(n)){ SBT.cfg[k]=n; if(k==="maxPos"||k==="capitalM"||k==="capPct"){ if(k==="maxPos") SBT.cfg[k]=Math.max(1,Math.round(n)); if(SBT.meta) render(); } } }
 function sbtSel(k){ SBT.sel=k; render(); }
 function sbtProgHtml(){ return SBT.running ? `<div style="margin:8px 0;"><div style="height:6px;background:var(--border,#ddd);border-radius:4px;overflow:hidden;"><div style="height:100%;width:${Math.min(100,SBT.pct).toFixed(0)}%;background:var(--gold,#f90);"></div></div><div style="font-size:12px;color:var(--muted);margin-top:4px;">${escapeHtml(SBT.msg||"")}</div></div>` : (SBT.msg?`<div style="font-size:12px;color:var(--down);margin:8px 0;">${escapeHtml(SBT.msg)}</div>`:""); }
 function sbtExportCsv(){
@@ -31261,22 +32034,23 @@ function renderScreenerBt(){
   const inp=(k,l,step,w)=>`<label style="font-size:12px;display:flex;flex-direction:column;gap:2px;">${l}<input type="number" value="${C[k]}" step="${step||1}" style="width:${w||90}px;" onchange="sbtSet('${k}',this.value)" ${SBT.running?"disabled":""}></label>`;
   let h=`<div class="panel"><div class="panel-heading"><h3>🏆 Backtest Screener</h3><span class="panel-heading-note">uji semua preset pada data historis — pilih yang win rate-nya konsisten</span></div>
    <div style="display:flex;flex-wrap:wrap;gap:12px;align-items:flex-end;margin:10px 0;">
-     ${inp("universeN","Jumlah saham (0 = semua)",50,130)}${inp("minValueM","Min nilai transaksi (Rp juta/hari)",100,170)}${inp("minPrice","Min harga",10,80)}${inp("feePct","Fee bolak-balik (%)",0.05,110)}
+     ${inp("universeN","Jumlah saham (0 = semua)",50,130)}${inp("minValueM","Min nilai transaksi (Rp juta/hari)",100,170)}${inp("minPrice","Min harga",10,80)}${inp("feePct","Fee bolak-balik (%)",0.05,110)}${inp("slipPct","Slippage per sisi (%)",0.05,120)}<label style="font-size:12px;display:flex;flex-direction:column;gap:2px;" title="Lewati sinyal bila ada lompatan harga >40% (split/reverse split/data rusak) di sekitar masa tahan">Filter aksi korporasi<select onchange="sbtSet('caFilter',this.value)" ${SBT.running?"disabled":""}><option value="1" ${C.caFilter?"selected":""}>Aktif</option><option value="0" ${C.caFilter?"":"selected"}>Mati</option></select></label>${inp("capitalM","Modal simulasi (Rp juta)",10,130)}${inp("maxPos","Maks posisi bersamaan",1,130)}${inp("capPct","Batas posisi (% nilai transaksi harian, 0 = mati)",0.5,190)}
      ${inp("tp","TP (%)",0.5,70)}${inp("sl","SL (%)",0.5,70)}${inp("maxHold","Maks tahan (hari)",1,110)}${inp("epsDays","Histori EPS (hari kalender, 0=lewati)",30,190)}<label style="font-size:12px;display:flex;flex-direction:column;gap:2px;">Rezim pasar<select onchange="sbtSet('regime',this.value)" ${SBT.running?"disabled":""}>${[["all","Semua"],["up","Hanya pasar naik"],["down","Hanya pasar turun"]].map(([k,l])=>`<option value="${k}" ${C.regime===k?"selected":""}>${l}</option>`).join("")}</select></label><label style="font-size:12px;display:flex;flex-direction:column;gap:2px;">Uji kombinasi AND<select onchange="sbtSet('combo',this.value)" ${SBT.running?"disabled":""}><option value="1" ${C.combo?"selected":""}>Ya</option><option value="0" ${C.combo?"":"selected"}>Tidak</option></select></label>${inp("minN","Min sinyal valid",5,100)}
      <label style="font-size:12px;display:flex;flex-direction:column;gap:2px;">Arah posisi<select onchange="sbtSet('dir',this.value)" ${SBT.running?"disabled":""}><option value="long" ${C.dir!=="short"?"selected":""}>Long (beli)</option><option value="short" ${C.dir==="short"?"selected":""}>Short (jual dulu)</option></select></label>
      <label style="font-size:12px;display:flex;flex-direction:column;gap:2px;">Metode utama (dasar ranking)<select onchange="sbtSet('primary',this.value)" ${SBT.running?"disabled":""}>${[...SBT_HORIZONS.map(h=>[h[0],"Tahan "+h[1]]),["tpsl","TP/SL"]].map(([k,l])=>`<option value="${k}" ${C.primary===k?"selected":""}>${l}</option>`).join("")}</select></label>
      <button class="btn btn-primary" onclick="sbtRun()" ${SBT.running?"disabled":""}>${SBT.running?"Memproses…":"▶ Jalankan Backtest"}</button>
      ${R?`<button class="btn btn-outline" onclick="sbtExportCsv()">📥 CSV semua sinyal</button>`:""}
    </div><div id="sbtProg">${sbtProgHtml()}</div>`;
+  h+=sbtGuideHtml();
   if(!R){
     h+=`<div class="empty-box">Klik <b>Jalankan Backtest</b>. Pertama kali akan menarik histori harga (±1–3 menit untuk 200 saham), setelahnya memakai cache lokal.<br><span style="font-size:12px;color:var(--muted)">Parameter tiap preset mengikuti pengaturan ⚙️ preset yang sedang aktif di tab Screener.</span></div></div>`;
     return h;
   }
   h+=`<div style="font-size:12px;margin-bottom:6px;color:${SBT.fundErr?"var(--down)":"var(--muted)"};">🗂 Snapshot fundamental: ${SBT.fundErr?escapeHtml(SBT.fundErr):`${SBT.fundDays} hari tersimpan${SBT.fundDays<60?" — preset fundamental belum bermakna sebelum ±60 hari (disimpan otomatis tiap hari bursa saat aplikasi dibuka)":""}`}</div>`;
   if(C.epsDays>0) h+=`<div style="font-size:12px;margin-bottom:6px;color:${SBT.epsErr?"var(--down)":"var(--muted)"};">📡 Entry Price Scanner: ${SBT.epsErr?escapeHtml(SBT.epsErr):`${SBT.epsRaw?SBT.epsRaw.tradingDateCount:0} hari bursa data broker · periode ${escapeHtml(String(state.epsFilters?.periode||"1m"))}, broker ${escapeHtml(String(state.epsFilters?.broker||"both"))} (ikut pengaturan tab EPS)`}</div>`;
-  h+=`<div style="font-size:12px;color:var(--muted);margin-bottom:8px;">${M.tested}/${M.total} saham · sinyal ${M.minD} → ${M.maxD} · In-sample ≤ ${M.cutoff}, Out-of-sample sesudahnya · rezim: <b>${C.regime==='up'?'hanya pasar naik':C.regime==='down'?'hanya pasar turun':'semua'}</b> (indeks komposit bobot-sama vs MA50) · metode: <b>${escapeHtml(sbtMethodLabel(sbtKey()))}</b> · return NET fee ${C.feePct}% · baseline: win ${sbtF(R.base.win)} (n=${R.base.n}), rata-rata ${sbtF(R.base.avg,2)}</div>`;
+  h+=`<div style="font-size:12px;color:var(--muted);margin-bottom:8px;">${M.tested}/${M.total} saham · sinyal ${M.minD} → ${M.maxD} · In-sample ≤ ${M.cutoff}, Out-of-sample sesudahnya · rezim: <b>${C.regime==='up'?'hanya pasar naik':C.regime==='down'?'hanya pasar turun':'semua'}</b> (indeks komposit bobot-sama vs MA50) · metode: <b>${escapeHtml(sbtMethodLabel(sbtKey()))}</b> · return NET fee ${C.feePct}% + slippage ${C.slipPct}%/sisi${C.caFilter?` · filter aksi korporasi aktif${M.caSkip?` (${M.caSkip} hari-sinyal dilewati)`:""}`:" · filter aksi korporasi MATI"} · baseline: win ${sbtF(R.base.win)} (n=${R.base.n}), rata-rata ${sbtF(R.base.avg,2)}</div>`;
   if(C.dir==="short") h+=`<div style="font-size:12px;color:var(--gold);margin-bottom:6px;line-height:1.5;">🔻 Mode SHORT: return dihitung dari harga turun (entry open besok, fee ${C.feePct}%). Preset bullish diuji sebagai "lawan arah" (fade), preset 🔻 adalah sinyal bearish. Di IDX short selling hanya boleh pada saham tertentu lewat pinjam-meminjam efek; biaya pinjam, ketersediaan saham, dan batas auto-reject bawah tidak dihitung, jadi hasil short lebih optimistis daripada kenyataan. Uji Maju & peringatan dashboard hanya untuk posisi beli.</div>`;
-  h+=`<div class="table-wrap"><table class="data-table"><thead><tr><th>#</th>${sbtTh("main","label","Preset")}${sbtTh("main","n","Sinyal")}${sbtTh("main","win","Win rate")}${sbtTh("main","lb","Win (batas bawah)","Batas bawah Wilson 95% — dasar ranking")}${sbtTh("main","avg","Rata-rata")}${sbtTh("main","med","Median")}${sbtTh("main","pf","Profit factor")}${sbtTh("main","winIS","Win In-sample")}${sbtTh("main","winOS","Win Out-sample")}${SBT_HORIZONS.map(x=>sbtTh("main",x[0],"Win "+x[1])).join("")}${sbtTh("main","tpsl","Win TP/SL")}${sbtTh("main","regup","Win pasar naik","Win rate saat indeks komposit di atas MA50 (n)")}${sbtTh("main","regdn","Win pasar turun","Win rate saat indeks komposit di bawah MA50 (n)")}${sbtTh("main","verdict","Verdict")}<th></th></tr></thead><tbody>`;
+  h+=`<div class="table-wrap"><table class="data-table"><thead><tr><th>#</th>${sbtTh("main","label","Preset")}${sbtTh("main","n","Sinyal")}${sbtTh("main","win","Win rate")}${sbtTh("main","lb","Win (batas bawah)","Batas bawah Wilson 95% — dasar ranking")}${sbtTh("main","avg","Rata-rata")}${sbtTh("main","med","Median")}${sbtTh("main","pf","Profit factor")}${sbtTh("main","winIS","Win In-sample")}${sbtTh("main","winOS","Win Out-sample")}${SBT_HORIZONS.map(x=>sbtTh("main",x[0],"Win "+x[1])).join("")}${sbtTh("main","tpsl","Win TP/SL")}${sbtTh("main","regup","Win pasar naik","Win rate saat indeks komposit di atas MA50 (n)")}${sbtTh("main","regdn","Win pasar turun","Win rate saat indeks komposit di bawah MA50 (n)")}${sbtTh("main","q","q (FDR)","Peluang keunggulan ini kebetulan setelah dikoreksi untuk banyaknya preset yang diuji. 🔬 = q ≤ 0,10")}${sbtTh("main","wf","Walk-forward","Jumlah periode (dari 4 berurutan) yang unggul dari baseline")}${sbtTh("main","verdict","Verdict")}<th></th></tr></thead><tbody>`;
   sbtSortRows("main",R.rows).forEach((r,i)=>{ const s=r.st;
     h+=`<tr onclick="sbtSel('${r.key}')" style="cursor:pointer;${SBT.sel===r.key?"background:rgba(255,170,0,.12);":""}${r.small?"opacity:.6;":""}">
       <td class="mono">${i+1}</td><td><b>${escapeHtml(r.label)}</b></td><td class="mono">${s.n}</td>
@@ -31285,7 +32059,7 @@ function renderScreenerBt(){
       <td class="mono">${sbtF(s.winIS)} <span style="color:var(--muted);font-size:11px">(${s.nIS})</span></td><td class="mono">${sbtF(s.winOS)} <span style="color:var(--muted);font-size:11px">(${s.nOS})</span></td>
       ${SBT_HORIZONS.map(x=>`<td class="mono">${sbtF(r.all[x[0]].win)}</td>`).join("")}<td class="mono">${sbtF(r.all.tpsl.win)}</td>
       <td class="mono">${sbtF(r.reg.up.win)} <span style="color:var(--muted);font-size:11px">(${r.reg.up.n})</span></td><td class="mono">${sbtF(r.reg.down.win)} <span style="color:var(--muted);font-size:11px">(${r.reg.down.n})</span></td>
-      <td>${r.small?pillHtml("Sampel kecil","muted"):(r.ok?pillHtml("✅ Layak","up"):pillHtml("⚠ Tidak unggul","gold"))}${r.regWeak&&!r.small?" "+pillHtml("↓ lemah di pasar turun","down"):""}</td>
+      ${sbtSigCells(r)}<td>${r.small?pillHtml("Sampel kecil","muted"):(r.ok?pillHtml("✅ Layak","up"):pillHtml("⚠ Tidak unggul","gold"))}${r.regWeak&&!r.small?" "+pillHtml("↓ lemah di pasar turun","down"):""}</td>
       <td><button class="btn btn-outline" style="padding:3px 8px;font-size:11px;white-space:nowrap;" title="Simpan saham yang lolos preset ini HARI INI ke Backtest (Uji Maju)" onclick="event.stopPropagation();sbtSaveForward('${r.key}')">💾 Uji Maju</button></td></tr>`; });
   h+=`<tr style="border-top:2px solid var(--border,#ccc);"><td></td><td><i>Baseline (semua saham likuid)</i></td><td class="mono">${R.base.n}</td><td class="mono">${sbtF(R.base.win)}</td><td class="mono">${sbtF(R.base.lb)}</td><td class="mono" style="${sbtC(R.base.avg)}">${sbtF(R.base.avg,2)}</td><td class="mono">${sbtF(R.base.med,2)}</td><td class="mono">${R.base.pf==null?"-":R.base.pf.toFixed(2)}</td><td class="mono">${sbtF(R.base.winIS)}</td><td class="mono">${sbtF(R.base.winOS)}</td><td colspan="${SBT_HORIZONS.length+1}"></td><td class="mono">${sbtF(R.baseReg.up.win)} <span style="color:var(--muted);font-size:11px">(${R.baseReg.up.n})</span></td><td class="mono">${sbtF(R.baseReg.down.win)} <span style="color:var(--muted);font-size:11px">(${R.baseReg.down.n})</span></td><td></td><td></td></tr>`;
   h+=`</tbody></table></div>`;
@@ -31293,21 +32067,21 @@ function renderScreenerBt(){
     h+=`<div class="panel-heading" style="margin-top:16px;"><h3>🔗 Kombinasi 2 preset (AND)</h3><span class="panel-heading-note">${R.comboTested} pasangan diuji · 15 terbaik dengan ≥ ${C.minN} sinyal · preset "cross" dianggap aktif 3 hari</span></div>`;
     if(!R.combos.length) h+=`<div class="empty-box">Tidak ada kombinasi dengan sinyal ≥ ${C.minN}. Turunkan "Min sinyal valid" atau perbesar jumlah saham.</div>`;
     else {
-      h+=`<div class="table-wrap"><table class="data-table"><thead><tr><th>#</th>${sbtTh("combo","label","Kombinasi")}${sbtTh("combo","n","Sinyal")}${sbtTh("combo","win","Win rate")}${sbtTh("combo","lb","Win (batas bawah)")}${sbtTh("combo","avg","Rata-rata")}${sbtTh("combo","pf","Profit factor")}${sbtTh("combo","winIS","Win In-sample")}${sbtTh("combo","winOS","Win Out-sample")}${sbtTh("combo","verdict","Verdict")}<th></th></tr></thead><tbody>`;
+      h+=`<div class="table-wrap"><table class="data-table"><thead><tr><th>#</th>${sbtTh("combo","label","Kombinasi")}${sbtTh("combo","n","Sinyal")}${sbtTh("combo","win","Win rate")}${sbtTh("combo","lb","Win (batas bawah)")}${sbtTh("combo","avg","Rata-rata")}${sbtTh("combo","pf","Profit factor")}${sbtTh("combo","winIS","Win In-sample")}${sbtTh("combo","winOS","Win Out-sample")}${sbtTh("combo","q","q (FDR)","Peluang keunggulan ini kebetulan setelah dikoreksi untuk banyaknya preset yang diuji. 🔬 = q ≤ 0,10")}${sbtTh("combo","wf","Walk-forward","Jumlah periode (dari 4 berurutan) yang unggul dari baseline")}${sbtTh("combo","verdict","Verdict")}<th></th></tr></thead><tbody>`;
       sbtSortRows("combo",R.combos.slice(0,15)).forEach((r,i)=>{ const s=r.st;
         h+=`<tr onclick="sbtSel('${r.key}')" style="cursor:pointer;${SBT.sel===r.key?"background:rgba(255,170,0,.12);":""}"><td class="mono">${i+1}</td><td><b>${escapeHtml(r.label)}</b></td><td class="mono">${s.n}</td>
           <td class="mono" style="font-weight:700;${sbtC(s.win-R.base.win)}">${sbtF(s.win)}</td><td class="mono">${sbtF(s.lb)}</td><td class="mono" style="${sbtC(s.avg)}">${sbtF(s.avg,2)}</td><td class="mono">${s.pf==null?"-":(isFinite(s.pf)?s.pf.toFixed(2):"∞")}</td>
           <td class="mono">${sbtF(s.winIS)} <span style="color:var(--muted);font-size:11px">(${s.nIS})</span></td><td class="mono">${sbtF(s.winOS)} <span style="color:var(--muted);font-size:11px">(${s.nOS})</span></td>
-          <td>${r.ok?pillHtml("✅ Konsisten","up"):pillHtml("⚠ Belum terbukti","gold")}</td>
+          ${sbtSigCells(r)}<td>${r.ok?pillHtml("✅ Konsisten","up"):pillHtml("⚠ Belum terbukti","gold")}</td>
           <td><button class="btn btn-outline" style="padding:3px 8px;font-size:11px;white-space:nowrap;" title="Simpan saham yang lolos kombinasi ini HARI INI ke Backtest (Uji Maju)" onclick="event.stopPropagation();sbtSaveForward('${r.key}')">💾 Uji Maju</button></td></tr>`; });
       h+=`</tbody></table></div><div style="font-size:12px;color:var(--gold);margin-top:6px;line-height:1.5;">⚠ Menguji ${R.comboTested} pasangan sekaligus membuat sebagian tampak bagus hanya karena kebetulan. "Konsisten" butuh win rate di atas baseline di periode awal DAN akhir. Anggap hasil di sini sebagai kandidat, lalu konfirmasi lewat Backtest (Uji Maju).</div>`;
     }
   }
-  h+=sbtManualHtml(R)+sbtTuneHtml(R);
+  h+=sbtRcHtml(R)+sbtManualHtml(R)+sbtTuneHtml(R);
   h+=`<div style="font-size:12px;color:var(--muted);margin-top:8px;line-height:1.5;">✅ <b>Layak</b> = sinyal ≥ min valid, win rate ≥ baseline + 3 poin, rata-rata net &gt; 0, dan out-sample tidak negatif. Urutan memakai <b>batas bawah Wilson</b> supaya preset dengan sedikit sinyal tidak menang karena kebetulan. Jangan hanya melihat win rate: win 70% dengan rata-rata negatif tetap rugi — cek <b>Rata-rata</b> dan <b>Profit factor</b>.<br>Preset fundamental (Deep Value, Multibagger, Growth, Defensive, Small Cap) hanya diuji pada hari yang punya snapshot, jadi baru bermakna setelah snapshot terkumpul. Belum bisa di-backtest: Skor Bagger dan BSJP. Preset EPS adalah kombinasi filter umum (bukan semua kombinasi) pada histori data broker yang lebih pendek, jadi jumlah sinyalnya lebih sedikit. Buy on Weakness memakai fungsi aslinya dengan pengaturan ⚙️ BoW yang aktif; hanya sinyal dari bar ke-200 (butuh MA200).</div>`;
   // detail sinyal terbaru preset terpilih
   if(SBT.sel && SBT.signals[SBT.sel]){
-    h+=sbtEquityHtml(SBT.sel);
+    h+=sbtReportButtonsHtml()+sbtEquityHtml(SBT.sel)+sbtAccountHtml(SBT.sel)+sbtStressHtml(SBT.sel)+sbtCapacityHtml(SBT.sel)+sbtConcentrationHtml(SBT.sel)+sbtPlaceboHtml(SBT.sel)+sbtWfHtml(SBT.sel);
     const lab=sbtLabel(SBT.sel), key=sbtKey();
     const last=[...SBT.signals[SBT.sel]].sort((a,b)=>a.d<b.d?1:-1).slice(0,30);
     h+=`<div class="panel-heading" style="margin-top:14px;"><h3>Sinyal terbaru — ${escapeHtml(lab)}</h3><span class="panel-heading-note">30 terakhir · return ${escapeHtml(sbtMethodLabel(key))}</span></div>
@@ -31327,6 +32101,7 @@ function sbtSortVal(r,col){
     case "pf": return st.pf; case "winIS": return st.winIS; case "winOS": return st.winOS;
     case "regup": return r.reg&&r.reg.up.win; case "regdn": return r.reg&&r.reg.down.win;
     case "verdict": return r.small?0:(r.ok?2:1);
+    case "q": return r.sig&&r.sig.q!=null?r.sig.q:null; case "wf": return r.sig&&r.sig.pos!=null?r.sig.pos:null;
     default: return r.all&&r.all[col]?r.all[col].win:null;
   }
 }
@@ -31340,8 +32115,9 @@ function sbtSortRows(tbl,rows){
 }
 function sbtSort(tbl,col){
   const m=SBT.sortBy||(SBT.sortBy={}), S=m[tbl]||(m[tbl]={col:null,dir:-1});
-  if(S.col!==col){ S.col=col; S.dir= col==="label"?1:-1; }
-  else if((col==="label"?S.dir===1:S.dir===-1)) S.dir=-S.dir;
+  const asc=(col==="label"||col==="q");
+  if(S.col!==col){ S.col=col; S.dir= asc?1:-1; }
+  else if(asc?S.dir===1:S.dir===-1) S.dir=-S.dir;
   else { S.col=null; S.dir=-1; }
   render();
 }
@@ -31380,7 +32156,7 @@ async function sbtManRun(){
           if(!idx.every((_,q)=>act(q,i))) continue;
           if(idx.every((_,q)=>act(q,i-1))) continue; // hanya hari kombinasi "baru muncul"
           const trI=sbtTrade(X,i,cfg); if(!trI) continue;
-          out.push({ t:tk, d:X.t[i], e:trI.e, r:trI.r, m: regimeMap[X.t[i]]===undefined ? null : regimeMap[X.t[i]] });
+          out.push({ t:tk, d:X.t[i], e:trI.e, r:trI.r, u:trI.u, w:trI.w, m: regimeMap[X.t[i]]===undefined ? null : regimeMap[X.t[i]] });
         }
       }
       if(done%8===0){ SBT.manMsg="Menghitung kombinasi "+done+"/"+tickers.length+" saham…"; const el=document.getElementById("sbtManMsg"); if(el) el.textContent=SBT.manMsg; await new Promise(r=>setTimeout(r,0)); }
@@ -31403,12 +32179,12 @@ function sbtManualHtml(R){
     <div style="display:flex;flex-wrap:wrap;gap:6px 14px;margin:6px 0;">${elig.map(s=>`<label style="font-size:12px;display:flex;align-items:center;gap:5px;cursor:pointer;"><input type="checkbox" ${sel.has(s.key)?"checked":""} ${busy?"disabled":""} onchange="sbtManToggle('${s.key}',this)"> ${escapeHtml(s.label)}</label>`).join("")}</div>
     <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:8px;"><button id="sbtManBtn" class="btn btn-primary" style="padding:5px 14px;font-size:12px;" ${(sel.size<2||busy)?"disabled":""} onclick="sbtManRun()">Uji kombinasi</button><span id="sbtManInfo" style="font-size:12px;color:var(--muted);">${sel.size} dipilih (min 2, maks 4)</span><span id="sbtManMsg" style="font-size:12px;color:${SBT.manMsg&&SBT.manMsg.startsWith("Gagal")?"var(--down)":"var(--muted)"};">${escapeHtml(SBT.manMsg||"")}</span></div>`;
   if(!R.manual.length) return h+`<div style="font-size:12px;color:var(--muted);">Belum ada kombinasi manual. Preset fundamental tidak tersedia di sini (datanya belum cukup).${SBT.epsRaw?"":" Preset EPS muncul kalau data broker termuat."} Preset "kejadian" (cross) dianggap aktif 3 hari, sama seperti kombinasi otomatis.</div>`;
-  h+=`<div class="table-wrap"><table class="data-table"><thead><tr>${sbtTh("manual","label","Kombinasi")}${sbtTh("manual","n","Sinyal")}${sbtTh("manual","win","Win rate")}${sbtTh("manual","lb","Win (batas bawah)")}${sbtTh("manual","avg","Rata-rata")}${sbtTh("manual","pf","Profit factor")}${sbtTh("manual","winIS","Win In-sample")}${sbtTh("manual","winOS","Win Out-sample")}${sbtTh("manual","verdict","Verdict")}<th></th></tr></thead><tbody>`;
+  h+=`<div class="table-wrap"><table class="data-table"><thead><tr>${sbtTh("manual","label","Kombinasi")}${sbtTh("manual","n","Sinyal")}${sbtTh("manual","win","Win rate")}${sbtTh("manual","lb","Win (batas bawah)")}${sbtTh("manual","avg","Rata-rata")}${sbtTh("manual","pf","Profit factor")}${sbtTh("manual","winIS","Win In-sample")}${sbtTh("manual","winOS","Win Out-sample")}${sbtTh("manual","q","q (FDR)","Peluang keunggulan ini kebetulan setelah dikoreksi untuk banyaknya preset yang diuji. 🔬 = q ≤ 0,10")}${sbtTh("manual","wf","Walk-forward","Jumlah periode (dari 4 berurutan) yang unggul dari baseline")}${sbtTh("manual","verdict","Verdict")}<th></th></tr></thead><tbody>`;
   sbtSortRows("manual",R.manual).forEach(r=>{ const s=r.st;
     h+=`<tr onclick="sbtSel('${r.key}')" style="cursor:pointer;${SBT.sel===r.key?"background:rgba(255,170,0,.12);":""}${r.small?"opacity:.7;":""}"><td><b>${escapeHtml(r.label)}</b></td><td class="mono">${s.n}</td>
       <td class="mono" style="font-weight:700;${sbtC(s.win!=null?s.win-R.base.win:null)}">${sbtF(s.win)}</td><td class="mono">${sbtF(s.lb)}</td><td class="mono" style="${sbtC(s.avg)}">${sbtF(s.avg,2)}</td><td class="mono">${s.pf==null?"-":(isFinite(s.pf)?s.pf.toFixed(2):"∞")}</td>
       <td class="mono">${sbtF(s.winIS)} <span style="color:var(--muted);font-size:11px">(${s.nIS})</span></td><td class="mono">${sbtF(s.winOS)} <span style="color:var(--muted);font-size:11px">(${s.nOS})</span></td>
-      <td>${r.small?pillHtml("Sampel kecil","muted"):(r.ok?pillHtml("✅ Konsisten","up"):pillHtml("⚠ Belum terbukti","gold"))}</td>
+      ${sbtSigCells(r)}<td>${r.small?pillHtml("Sampel kecil","muted"):(r.ok?pillHtml("✅ Konsisten","up"):pillHtml("⚠ Belum terbukti","gold"))}</td>
       <td style="white-space:nowrap;"><button class="btn btn-outline" style="padding:3px 8px;font-size:11px;" onclick="event.stopPropagation();sbtSaveForward('${r.key}')">💾 Uji Maju</button> <button class="btn btn-outline" style="padding:3px 8px;font-size:11px;" title="Hapus kombinasi ini" onclick="event.stopPropagation();sbtManDel('${r.key}')">✕</button></td></tr>`; });
   return h+`</tbody></table></div><div style="font-size:11px;color:var(--muted);margin-top:4px;line-height:1.5;">Makin banyak preset digabung, makin sedikit sinyalnya. Kombinasi 3–4 preset hampir selalu berstatus sampel kecil. Verdict Konsisten memakai syarat yang sama dengan kombinasi otomatis; kombinasi yang Anda pilih sendiri setelah melihat hasil juga ikut tersaring oleh kebetulan, jadi konfirmasi lewat Uji Maju.</div>`;
 }
@@ -31452,7 +32228,7 @@ async function sbtTuneRun(){
             if(!(X.c[i]>=cfg.minPrice && X.c[i]*X.v[i]>=cfg.minValueM*1e6)) continue;
             if(!raw(i)||raw(i-1)) continue;
             const trI=sbtTrade(X,i,cfg); if(!trI) continue;
-            out[vi].push({ t:tk, d:X.t[i], e:trI.e, r:trI.r, m: regimeMap[X.t[i]]===undefined ? null : regimeMap[X.t[i]] });
+            out[vi].push({ t:tk, d:X.t[i], e:trI.e, r:trI.r, u:trI.u, w:trI.w, m: regimeMap[X.t[i]]===undefined ? null : regimeMap[X.t[i]] });
           }
         });
       }
@@ -31467,6 +32243,7 @@ async function sbtTuneRun(){
       rows[best].stable = b.avgOS>0 && b.winOS>=bs.winOS && nb.every(x=>x.st.avgOS!=null && x.st.avgOS>0); }
     const same=rows.every(r=>r.st.n===rows[0].st.n && r.st.avg===rows[0].st.avg);
     T.res={ rows, best, same, param:T.param, key:T.key, base:bs, label:(sbtTuneParams(T.key).find(p=>p.k===T.param)||{}).l||T.param };
+    try{ T.res.wf=sbtTuneWalkForward(out,vals,orig,key); }catch(e){ console.error("[SBT tune wf]",e); T.res.wf=null; }
     T.msg="";
   }catch(e){ console.error("[SBT tune]",e); T.msg="Gagal: "+(e&&e.message||e); }
   finally{ P[T.param]=orig; }
@@ -31500,6 +32277,7 @@ function sbtTuneHtml(R){
       <td>${note}</td><td>${x.isCur?"":`<button class="btn btn-outline" style="padding:3px 8px;font-size:11px;" onclick="sbtTuneApply('${r.key}','${r.param}',${x.v})">Terapkan</button>`}</td></tr>`; });
   h+=`</tbody></table></div>`;
   h+=`<div style="font-size:12px;line-height:1.55;margin-top:6px;color:var(--gold);">⚠ Menguji ${r.rows.length} nilai berarti yang tertinggi di in-sample sebagian pasti kebetulan. Percayai nilai yang (1) masih positif di out-sample, dan (2) tetangganya juga positif, yaitu dataran yang landai, bukan puncak runcing. ${r.best<0?"Tidak ada nilai dengan ≥ 10 sinyal di kedua periode, jadi tidak ada yang dinyatakan terbaik.":""} Jangan menyetel banyak parameter berturut-turut pada data yang sama.</div>`;
+  h+=sbtTuneWfHtml(r);
   return h;
 }
 
@@ -31530,3 +32308,477 @@ function sbtTuneHtml(R){
     }
   }catch(e){ console.warn("[SBT] gagal memasang menu:", e); }
 })();
+
+
+// ==========================================================================
+// 🚀 GAP UP & GO — screener day trade (beli pagi saat gap-up bertahan)
+//
+// Ide: saham yang BUKA di atas close kemarin (gap up), gap-nya TIDAK terisi,
+// dan harga lanjut naik (close > open, menembus High kemarin, volume ramai).
+// Dipakai pagi hari (±09:00–10:00 WIB), keluar di hari yang sama
+// (day trade murni: target kena, stop kena, atau paling lambat sebelum 15:50).
+//
+// Memakai data snapshot harian yang SUDAH ada di stocks_screener (open,
+// prev close, prev high, high/low/close, volume ratio, turnover, EMA20,
+// bid/offer). BUKAN data candle intraday 5/15 menit, jadi ini bukan
+// Opening Range Breakout murni. Kalau data harga belum live (hanya EOD
+// kemarin), hasilnya = kondisi kemarin, bukan kondisi pagi ini.
+//
+// Semua threshold bisa diubah lewat panel ⚙️ Params di tab dan disimpan ke
+// localStorage. State & default sengaja dibungkus fungsi (bukan const
+// top-level) supaya aman kalau render() dipanggil dari hash URL (#gapgo)
+// sebelum baris ini dieksekusi.
+// ==========================================================================
+function ggDefaultParams(){
+  return {
+    minTurnover: 5e9,      // Kriteria 1: turnover harian minimum (Rp)
+    minGapPct: 1.0,        // Kriteria 2: gap minimum (open vs prev close, %)
+    maxGapPct: 8.0,        // Kriteria 2: gap maksimum (hindari gap terlalu liar / ARA)
+    maxGapFill: 0.5,       // Kriteria 3: maksimum bagian gap yang boleh terisi (0 = tidak boleh, 1 = boleh penuh)
+    minCloseProx: 0.6,     // Kriteria 4: close harus di atas open DAN di top (1 - X) range hari ini
+    minVolRatio: 1.2,      // Kriteria 6: vs 20-day average volume (longgar, volume pagi baru sebagian)
+    minBidAskRatio: 1.10,  // Kriteria 8: rasio antrian bid/offer minimum
+    tp1Pct: 2.0, tp2Pct: 3.5, slPct: 1.5, // Trade plan default (%) — R:R ke TP1 ≈ 1.33 sebelum fee
+    feePct: 0.4,           // Estimasi fee beli+jual (bolak-balik, %)
+    modal: 0,              // Modal (Rp) untuk ukuran posisi; 0 = tidak dihitung
+    riskPct: 1.0           // Risiko maksimum per trade (% dari modal)
+  };
+}
+function ggS(){
+  if(!window.__ggState){
+    let p = ggDefaultParams();
+    try{
+      const raw = localStorage.getItem("ihsg_gapgo_params_v1");
+      if(raw) p = { ...p, ...JSON.parse(raw) };
+    }catch(e){}
+    window.__ggState = { params: p, search: "", sort: "score", preset: "strict", expanded: null, paramsOpen: false, infoOpen: false, simulator: false };
+  }
+  return window.__ggState;
+}
+function ggSaveParams(){
+  const g = ggS();
+  if(g.simulator) return; // mode simulator: jangan menimpa parameter tersimpan
+  try{ localStorage.setItem("ihsg_gapgo_params_v1", JSON.stringify(g.params)); }catch(e){}
+}
+
+function ggCompute(s, params){
+  const p = params || ggDefaultParams();
+  const num = v => (v===null || v===undefined || v==="" || isNaN(v)) ? null : Number(v);
+  const turnover = num(s.turnover) ?? num(s.valueTraded);
+  const volRatio = num(s.volRatio);
+  const cOpen = num(s.cOpen), cHigh = num(s.cHigh), cLow = num(s.cLow), cClose = num(s.cClose);
+  const prevClose = num(s.prevClose), prevHigh = num(s.prevHigh);
+  const emaFast = num(s.ema20) ?? num(s.ma21);
+  const bidVol = num(s.bidVolume), offerVol = num(s.offerVolume);
+  const hasOB = bidVol != null && offerVol != null && offerVol > 0;
+  const bidAsk = hasOB ? bidVol / offerVol : null;
+
+  const hasGapData = cOpen != null && cOpen > 0 && prevClose != null && prevClose > 0;
+  const gapSize = hasGapData ? cOpen - prevClose : null;
+  const gapPct = hasGapData ? (gapSize / prevClose) * 100 : null;
+
+  // Bagian gap yang sudah terisi hari ini: 0 = low tidak pernah turun ke bawah open,
+  // 1 = low sudah menyentuh/menembus prev close (gap terisi penuh).
+  let fillRatio = null;
+  if(hasGapData && gapSize > 0 && cLow != null){
+    fillRatio = clamp01((cOpen - Math.max(cLow, prevClose)) / gapSize);
+  }
+  const proximity = (cClose!=null && cHigh!=null && cLow!=null && cHigh > cLow) ? (cClose - cLow) / (cHigh - cLow) : null;
+
+  const gapOk = gapPct != null ? (gapPct >= p.minGapPct && gapPct <= p.maxGapPct) : null;
+  const holdOk = fillRatio != null ? fillRatio <= p.maxGapFill : (hasGapData ? false : null);
+  const strongOk = (cClose!=null && cOpen!=null && proximity!=null) ? (cClose > cOpen && proximity >= p.minCloseProx) : null;
+  const breakOk = (cClose!=null && prevHigh!=null) ? cClose > prevHigh : null;
+  const trendOk = (cClose!=null && emaFast!=null) ? cClose > emaFast : null;
+
+  const checks = [
+    { label:`Turnover ≥ Rp ${fmtNum(p.minTurnover)}`, pass: turnover != null && turnover >= p.minTurnover, na: turnover == null },
+    { label:`Gap up ${p.minGapPct}%–${p.maxGapPct}% (open vs close kemarin)`, pass: !!gapOk, na: gapOk == null },
+    { label:`Gap bertahan (terisi ≤ ${(p.maxGapFill*100).toFixed(0)}%)`, pass: !!holdOk, na: holdOk == null },
+    { label:`Close > Open & di top ${((1-p.minCloseProx)*100).toFixed(0)}% range hari ini`, pass: !!strongOk, na: strongOk == null },
+    { label:"Close menembus High kemarin", pass: !!breakOk, na: breakOk == null },
+    { label:`Volume Ratio ≥ ${p.minVolRatio}x (vs 20-ADV)`, pass: volRatio != null && volRatio >= p.minVolRatio, na: volRatio == null },
+    { label:"Trend: Close > EMA20", pass: !!trendOk, na: trendOk == null },
+    { label:`Orderbook: Bid/Offer ≥ ${p.minBidAskRatio}x`, pass: hasOB ? bidAsk >= p.minBidAskRatio : false, na: !hasOB }
+  ];
+  const passedCount = checks.filter(c => c.pass).length;
+  const naCount = checks.filter(c => c.na).length;
+  // Sama seperti BSJP: kriteria tanpa data (na) tidak menggugurkan, tapi semua yang PUNYA data harus lolos.
+  const lolos = hasGapData && checks.every(c => c.pass || c.na);
+
+  // --- Skor komposit 0-100 ---
+  let gapScore = 0;
+  if(gapPct != null && gapPct > 0){
+    const ideal = Math.min(4, p.maxGapPct);
+    if(gapPct < p.minGapPct) gapScore = 10 * (gapPct / p.minGapPct);
+    else if(gapPct <= ideal) gapScore = 20;
+    else if(gapPct <= p.maxGapPct) gapScore = 20 * (1 - 0.6 * (gapPct - ideal) / Math.max(0.0001, p.maxGapPct - ideal));
+    else gapScore = 0;
+  }
+  const holdScore = fillRatio != null ? 15 * (1 - fillRatio) : 0;
+  const volScore = volRatio != null ? 20 * clamp01((volRatio - 1) / 2.5) : 10;
+  const strengthScore = proximity != null ? 15 * clamp01(proximity) : 7.5;
+  const breakScore = breakOk == null ? 5 : (breakOk ? 10 : 0);
+  const liqScore = turnover != null ? 10 * clamp01(turnover / 20e9) : 5;
+  const obScore = hasOB ? 10 * clamp01(bidAsk - 1) : 5;
+  const score = Math.max(0, Math.min(100, Math.round(gapScore + holdScore + volScore + strengthScore + breakScore + liqScore + obScore)));
+
+  let signal, signalTone;
+  if(!hasGapData){ signal = "NO DATA"; signalTone = "muted"; }
+  else if(gapPct <= 0){ signal = "NO GAP"; signalTone = "muted"; }
+  else if(gapPct > p.maxGapPct){ signal = "OVEREXTENDED"; signalTone = "gold"; }
+  else if(!lolos){ signal = "AVOID"; signalTone = "down"; }
+  else if(score >= 80){ signal = "STRONG_GO"; signalTone = "up"; }
+  else if(score >= 65){ signal = "GO"; signalTone = "up"; }
+  else if(score >= 50){ signal = "WATCH"; signalTone = "gold"; }
+  else { signal = "AVOID"; signalTone = "down"; }
+
+  // --- Trade plan day trade: entry di harga terakhir, keluar di hari yang sama ---
+  const entry = cClose;
+  const tp1 = entry != null ? entry * (1 + p.tp1Pct / 100) : null;
+  const tp2 = entry != null ? entry * (1 + p.tp2Pct / 100) : null;
+  const sl = entry != null ? entry * (1 - p.slPct / 100) : null;
+  const rr = (entry != null && sl != null && tp1 != null && (entry - sl) > 0) ? (tp1 - entry) / (entry - sl) : null;
+  const feePctNum = Math.max(0, Number(p.feePct) || 0);
+  const feeCost = entry != null ? entry * feePctNum / 100 : null;
+  const netRr = (entry != null && sl != null && tp1 != null && feeCost != null && ((entry - sl) + feeCost) > 0)
+    ? ((tp1 - entry) - feeCost) / ((entry - sl) + feeCost) : null;
+  let lots = null, lotCost = null, riskRp = null;
+  if(entry != null && sl != null && entry > 0 && Number(p.modal) > 0 && Number(p.riskPct) > 0){
+    riskRp = Number(p.modal) * Number(p.riskPct) / 100;
+    const perShareRisk = (entry - sl) + feeCost;
+    if(perShareRisk > 0){
+      const byRisk = Math.floor(riskRp / perShareRisk / 100);
+      const byCapital = Math.floor(Number(p.modal) / (entry * 100));
+      lots = Math.max(0, Math.min(byRisk, byCapital));
+      lotCost = lots * 100 * entry;
+    }
+  }
+
+  const flags = [];
+  if(gapPct != null && gapPct > 0 && volRatio != null && volRatio < 1) flags.push("Gap tanpa dukungan volume (Volume Ratio < 1x) — rawan fade");
+  if(gapPct != null && gapPct > 0 && cClose != null && cOpen != null && cClose < cOpen) flags.push("Gap sudah memudar: harga sekarang di bawah open");
+  if(fillRatio != null && fillRatio >= 1) flags.push("Gap sudah terisi penuh (low menyentuh close kemarin) — tesis Gap & Go batal");
+
+  return {
+    checks, passedCount, naCount, totalChecks: checks.length, lolos,
+    score, breakdown: { gapScore, holdScore, volScore, strengthScore, breakScore, liqScore, obScore },
+    signal, signalTone, flags,
+    gapPct, fillRatio, breakOk,
+    tradePlan: { entry, tp1, tp2, sl, rr, netRr, lots, lotCost, riskRp, gapFillLevel: prevClose, dayLow: cLow },
+    metrics: { volRatio, proximity, bidAsk: hasOB ? bidAsk : null, turnover }
+  };
+}
+
+function ggPresets(){
+  return [
+    { key:"strict", label:"Strict Gap & Go", desc:"Gap up yang lolos SEMUA 8 kriteria (kriteria tanpa data dihitung netral).",
+      filter: s => s.gg.lolos && s.gg.gapPct > 0 },
+    { key:"breakhigh", label:"Gap + Break High Kemarin", desc:"Gap up dan harga sudah di atas High kemarin.",
+      filter: s => s.gg.gapPct != null && s.gg.gapPct > 0 && s.gg.breakOk === true },
+    { key:"hot", label:"Volume Panas (≥2x)", desc:"Gap up dengan Volume Ratio ≥ 2x rata-rata 20 hari.",
+      filter: s => s.gg.gapPct != null && s.gg.gapPct > 0 && s.gg.metrics.volRatio != null && s.gg.metrics.volRatio >= 2 },
+    { key:"gapall", label:"Semua Gap Up", desc:"Semua saham yang buka di atas close kemarin, tanpa filter lain.",
+      filter: s => s.gg.gapPct != null && s.gg.gapPct > 0 },
+    { key:"all", label:"All Screened", desc:"Semua saham dalam universe screener.", filter: () => true }
+  ];
+}
+
+function ggPill(sig, tone){
+  const bg = tone==="up" ? "rgba(16,185,129,0.15)" : tone==="down" ? "rgba(239,68,68,0.15)" : tone==="gold" ? "rgba(234,179,8,0.15)" : "color-mix(in srgb, currentColor 8%, transparent)";
+  const fg = tone==="up" ? "var(--up)" : tone==="down" ? "var(--down)" : tone==="gold" ? "var(--gold)" : "var(--muted)";
+  return `<span style="display:inline-block;padding:3px 9px;border-radius:999px;font-size:10.5px;font-weight:700;letter-spacing:.03em;background:${bg};color:${fg};">${sig}</span>`;
+}
+
+function ggTradePlanCard(s){
+  const g = s.gg, tp = g.tradePlan, bd = g.breakdown, m = g.metrics;
+  const pctFrom = v => (tp.entry != null && v != null && tp.entry > 0) ? ((v - tp.entry) / tp.entry) * 100 : null;
+  const fp = v => v != null ? `${v>=0?'+':''}${v.toFixed(2)}%` : "-";
+  const box = (icon, label, val, sub, tone) => `
+    <div style="flex:1 1 140px;background:color-mix(in srgb, currentColor 4%, transparent);border:1px solid var(--border);border-left:3px solid ${tone?`var(--${tone})`:'var(--muted)'};border-radius:8px;padding:10px 12px;">
+      <div style="font-size:10.5px;color:var(--muted);font-weight:700;margin-bottom:4px;white-space:nowrap;">${icon} ${label}</div>
+      <div class="mono" style="font-size:16px;font-weight:800;color:${tone?`var(--${tone})`:'var(--text)'};">${val!=null ? "Rp "+fmtNum(Math.round(val)) : "-"}</div>
+      <div style="font-size:10.5px;color:var(--muted);margin-top:2px;">${sub}</div>
+    </div>`;
+  const bar = (label, pts, max, color) => `
+    <div style="flex:1 1 150px;">
+      <div style="font-size:10.5px;color:var(--muted);display:flex;justify-content:space-between;"><span>${label}</span><span class="mono">${pts.toFixed(1)}/${max}</span></div>
+      ${bsjpScoreBar(pts, max, color)}
+    </div>`;
+  const checklist = g.checks.map(c => {
+    const icon = c.na ? "➖" : (c.pass ? "✅" : "❌");
+    return `<div style="font-size:12px;padding:2px 0;${c.na?'color:var(--muted);':''}">${icon} ${escapeHtml(c.label)}${c.na?' <span style="font-size:10.5px;">(tanpa data, netral)</span>':''}</div>`;
+  }).join("");
+  const flags = g.flags.length ? `<div style="margin-top:8px;font-size:12px;color:var(--gold);">${g.flags.map(f => `⚠️ ${escapeHtml(f)}`).join("<br>")}</div>` : "";
+  const sizing = tp.lots != null
+    ? `<div style="font-size:12px;margin-top:8px;">📐 Ukuran posisi: <b class="mono">${fmtNum(tp.lots)} lot</b> (± Rp ${fmtNum(Math.round(tp.lotCost))}), risiko maks Rp ${fmtNum(Math.round(tp.riskRp))} termasuk fee.</div>`
+    : `<div style="font-size:12px;margin-top:8px;color:var(--muted);">📐 Isi Modal di ⚙️ Params untuk menghitung ukuran posisi.</div>`;
+  return `
+    <div style="padding:10px 4px;">
+      <div style="display:flex;gap:10px;flex-wrap:wrap;">
+        ${box("🎯","Entry (harga terakhir)", tp.entry, `Gap ${g.gapPct!=null?fp(g.gapPct):'-'} · Skor ${g.score}`, "teal")}
+        ${box("✅","TP1", tp.tp1, fp(pctFrom(tp.tp1)), "up")}
+        ${box("🏁","TP2", tp.tp2, fp(pctFrom(tp.tp2)), "up")}
+        ${box("🛑","Stop Loss", tp.sl, fp(pctFrom(tp.sl)), "down")}
+      </div>
+      <div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:10px;">
+        ${box("🧱","Batas Gap Terisi (close kemarin)", tp.gapFillLevel, "Kalau harga kembali ke sini, tesis Gap & Go batal — keluar", "gold")}
+        ${box("📉","Low Hari Ini", tp.dayLow, "Acuan stop struktural alternatif", null)}
+      </div>
+      <div style="font-size:12px;margin-top:10px;">
+        R:R ke TP1: <b class="mono">${tp.rr!=null?tp.rr.toFixed(2):'-'}</b>
+        · setelah fee: <b class="mono">${tp.netRr!=null?tp.netRr.toFixed(2):'-'}</b>
+        · Vol Ratio: <b class="mono">${m.volRatio!=null?m.volRatio.toFixed(2)+'x':'-'}</b>
+        · Posisi close di range: <b class="mono">${m.proximity!=null?(m.proximity*100).toFixed(0)+'%':'-'}</b>
+        · Gap terisi: <b class="mono">${g.fillRatio!=null?(g.fillRatio*100).toFixed(0)+'%':'-'}</b>
+      </div>
+      ${sizing}
+      ${flags}
+      <div style="display:flex;gap:14px;flex-wrap:wrap;margin-top:12px;">
+        ${bar("Kualitas gap", bd.gapScore, 20, "var(--teal)")}
+        ${bar("Gap bertahan", bd.holdScore, 15, "var(--up)")}
+        ${bar("Volume", bd.volScore, 20, "var(--gold)")}
+        ${bar("Kekuatan close", bd.strengthScore, 15, "var(--up)")}
+        ${bar("Break High kemarin", bd.breakScore, 10, "var(--teal)")}
+        ${bar("Likuiditas", bd.liqScore, 10, "var(--gold)")}
+        ${bar("Orderbook", bd.obScore, 10, "var(--teal)")}
+      </div>
+      <div style="margin-top:12px;">${checklist}</div>
+      <div style="margin-top:10px;font-size:11px;color:var(--muted);">Day trade: tidak dibawa menginap. Keluar saat TP/SL kena, gap terisi, atau paling lambat sebelum penutupan (±15:50). Angka TP/SL adalah titik awal, bukan hasil backtest.</div>
+    </div>`;
+}
+
+function renderGapGo(){
+  const g = ggS();
+  const p = g.params;
+  const list = enriched();
+  list.forEach(s => { s.gg = ggCompute(s, p); });
+  const phase = (typeof computeBsjpMarketPhase === "function") ? computeBsjpMarketPhase() : { label:"-", tone:"muted", closingInMin:null, clock:"-" };
+  const presets = ggPresets();
+  const active = presets.find(x => x.key === g.preset) || presets[0];
+
+  const q = g.search.trim().toLowerCase();
+  let rows = list.filter(s => !q || s.ticker.toLowerCase().includes(q)).filter(active.filter);
+  rows.sort((a, b) => {
+    if(g.sort === "gap") return (b.gg.gapPct ?? -999) - (a.gg.gapPct ?? -999);
+    if(g.sort === "changePct") return (b.changePct || 0) - (a.changePct || 0);
+    if(g.sort === "volRatio") return (b.volRatio || 0) - (a.volRatio || 0);
+    if(g.sort === "turnover") return (b.turnover || 0) - (a.turnover || 0);
+    return b.gg.score - a.gg.score;
+  });
+  rows = rows.slice(0, 200);
+
+  const gapUps = list.filter(s => s.gg.gapPct != null && s.gg.gapPct > 0);
+  const strictN = list.filter(s => s.gg.lolos && s.gg.gapPct > 0).length;
+  const strongN = list.filter(s => s.gg.signal === "STRONG_GO").length;
+  const avgGap = gapUps.length ? gapUps.reduce((a, s) => a + s.gg.gapPct, 0) / gapUps.length : null;
+
+  const statCard = (label, val, tone) => `<div class="summary-card" style="min-width:150px;"><div class="summary-lbl">${label}</div><div class="summary-val" style="${tone?`color:${tone};`:""}font-size:16px;">${val}</div></div>`;
+
+  const headerBar = `
+    <div class="panel" style="flex-wrap:wrap;gap:10px;align-items:center;">
+      <span class="pill pill-up" style="display:inline-flex;align-items:center;gap:6px;">🚀 Gap Up &amp; Go (${fmtNum(list.length)} saham)</span>
+      <span class="pill" style="background:rgba(6,182,212,0.12);color:var(--teal);border:1px solid rgba(6,182,212,0.3);">${phase.label}${phase.closingInMin!=null?` · tutup ${phase.closingInMin} mnt lagi`:""}</span>
+      <span class="pill" style="background:color-mix(in srgb, currentColor 5%, transparent);color:var(--muted);border:1px solid var(--border);">🕐 ${phase.clock} WIB</span>
+      <div style="margin-left:auto;display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
+        <label style="display:flex;align-items:center;gap:6px;font-size:11.5px;color:var(--muted);cursor:pointer;" title="Mode Simulator: ubah parameter tanpa menimpa Pengaturan tersimpan">
+          <input type="checkbox" id="ggSimulatorChk" ${g.simulator?"checked":""}> Simulator${g.simulator?" (aktif)":""}
+        </label>
+        <button class="btn btn-outline" id="ggParamsToggleBtn">⚙️ Params</button>
+        <button class="btn btn-outline" id="ggRefreshBtn" title="Refresh data">🔄</button>
+      </div>
+    </div>`;
+
+  const statsBar = `
+    <div class="summary-grid" style="margin-bottom:0;">
+      ${statCard("Saham Gap Up", fmtNum(gapUps.length), "var(--teal)")}
+      ${statCard("Rata-rata Gap", avgGap!=null ? `+${avgGap.toFixed(2)}%` : "-", "var(--up)")}
+      ${statCard("Lolos Strict", fmtNum(strictN), "var(--gold)")}
+      ${statCard("STRONG_GO", fmtNum(strongN), "var(--up)")}
+      ${statCard("Tampil (preset ini)", fmtNum(rows.length))}
+    </div>`;
+
+  const presetsBar = `
+    <div class="panel bsjp-presets-bar">
+      <span style="font-size:10.5px;color:var(--muted);text-transform:uppercase;font-weight:700;white-space:nowrap;">Radar Presets:</span>
+      <div class="bsjp-preset-list">
+        ${presets.map(pr => {
+          const cnt = list.filter(pr.filter).length;
+          return `<button class="btn ${g.preset===pr.key?'btn-primary':'btn-outline'}" data-gg-preset="${pr.key}" title="${escapeHtml(pr.desc)}">${pr.label} <span class="count-badge" style="margin-left:4px;">${cnt}</span></button>`;
+        }).join("")}
+      </div>
+    </div>`;
+
+  const infoPanel = `
+    <details class="panel" id="ggInfoDetails" style="flex-direction:column;align-items:stretch;" ${g.infoOpen?"open":""}>
+      <summary style="cursor:pointer;font-weight:700;font-size:13px;display:flex;justify-content:space-between;">
+        <span>🚀 Apa itu Gap Up &amp; Go?</span><span style="color:var(--muted);font-size:11px;">Buka / tutup</span>
+      </summary>
+      <div style="font-size:12.5px;line-height:1.6;margin-top:10px;">
+        Saham yang <b>buka di atas close kemarin</b> (gap up), gap-nya <b>tidak terisi</b>, lalu harga lanjut naik dengan volume ramai. Dipakai <b>pagi hari (±09:00–10:00 WIB)</b> dan ditutup di hari yang sama.
+        <ul style="margin:8px 0 0 18px;padding:0;">
+          <li><b>Kriteria (8):</b> turnover, gap 1–8%, gap bertahan, close &gt; open &amp; kuat di range, close &gt; High kemarin, volume ratio, di atas EMA20, bid/offer. Kriteria tanpa data dihitung netral.</li>
+          <li><b>Skor 0–100:</b> kualitas gap 20, gap bertahan 15, volume 20, kekuatan close 15, break High kemarin 10, likuiditas 10, orderbook 10.</li>
+          <li><b>Sinyal:</b> STRONG_GO ≥ 80, GO ≥ 65, WATCH ≥ 50, AVOID kalau ada kriteria gagal. OVEREXTENDED kalau gap di atas batas maksimum.</li>
+        </ul>
+        <div style="margin-top:8px;"><b>Backtest:</b> (1) centang kandidat saat entry (pagi) lalu <b>💾 Simpan ke Backtest</b> untuk uji maju; (2) di tab <b>🏆 Backtest Screener</b> ada preset <b>🚀 Gap Up &amp; Go (beli open besok)</b> yang menguji sinyal ini di data historis dengan entry open hari berikutnya (bukan day trade pagi).</div>
+        <div style="margin-top:8px;color:var(--gold);">Catatan: memakai snapshot harian (open, high, low, close), bukan candle 5/15 menit, jadi bukan Opening Range Breakout murni. Jalankan update harga live dulu; kalau data masih EOD kemarin, hasilnya = kondisi kemarin.</div>
+      </div>
+    </details>`;
+
+  const paramDefs = [
+    ["minTurnover","Turnover min (Rp)",1e8], ["minGapPct","Gap min (%)",0.1], ["maxGapPct","Gap maks (%)",0.1],
+    ["maxGapFill","Gap terisi maks (0–1)",0.05], ["minCloseProx","Posisi close min (0–1)",0.05], ["minVolRatio","Volume Ratio min",0.1],
+    ["minBidAskRatio","Bid/Offer min",0.05], ["tp1Pct","TP1 (%)",0.1], ["tp2Pct","TP2 (%)",0.1], ["slPct","Stop Loss (%)",0.1],
+    ["feePct","Fee bolak-balik (%)",0.05], ["modal","Modal (Rp)",1e6], ["riskPct","Risiko per trade (%)",0.1]
+  ];
+  const paramsPanel = g.paramsOpen ? `
+    <div class="panel" style="flex-direction:column;align-items:stretch;">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
+        <div style="font-weight:700;font-size:13px;">⚙️ Parameter Gap Up &amp; Go${g.simulator?" — Mode Simulator (tidak disimpan)":""}</div>
+        <button class="btn btn-outline" id="ggResetParamsBtn">Reset default</button>
+      </div>
+      <div style="display:flex;gap:10px;flex-wrap:wrap;">
+        ${paramDefs.map(([k, label, step]) => `<div class="field" style="min-width:150px;"><label style="font-size:10.5px;">${label}</label><input type="number" step="${step}" data-gg-param="${k}" value="${p[k]}"></div>`).join("")}
+      </div>
+    </div>` : "";
+
+  const toolbar = `
+    <div class="panel" style="gap:8px;flex-wrap:wrap;align-items:center;">
+      <input id="ggSearchInput" type="text" placeholder="Cari kode saham" value="${escapeHtml(g.search)}" style="background:color-mix(in srgb, currentColor 6%, transparent);border:1px solid var(--border);color:var(--text);font-size:12px;border-radius:8px;padding:7px 10px;">
+      <select id="ggSortSelect" style="background:color-mix(in srgb, currentColor 6%, transparent);border:1px solid var(--border);color:var(--text);font-size:12px;border-radius:8px;padding:7px 10px;">
+        <option value="score" ${g.sort==="score"?"selected":""}>Urutkan: Skor</option>
+        <option value="gap" ${g.sort==="gap"?"selected":""}>Urutkan: Gap %</option>
+        <option value="changePct" ${g.sort==="changePct"?"selected":""}>Urutkan: Perubahan %</option>
+        <option value="volRatio" ${g.sort==="volRatio"?"selected":""}>Urutkan: Volume Ratio</option>
+        <option value="turnover" ${g.sort==="turnover"?"selected":""}>Urutkan: Turnover</option>
+      </select>
+    </div>`;
+
+  const pc = v => v != null ? `${v>=0?'+':''}${v.toFixed(2)}%` : "-";
+  const tableRows = rows.map(s => `
+    <tr>
+      ${backtestRowCheckbox("gapgo", { ticker: s.ticker, price: Math.round(s.cClose||0) })}
+      <td class="ticker-cell"><button class="ticker-link" data-detail="${s.ticker}" title="Lihat detail ${s.ticker}">${s.ticker}</button></td>
+      <td>${fmtNum(s.cClose)}</td>
+      <td style="color:${(s.gg.gapPct||0)>=0?'var(--up)':'var(--down)'};">${pc(s.gg.gapPct)}</td>
+      <td>${s.gg.fillRatio!=null ? (s.gg.fillRatio*100).toFixed(0)+'%' : '-'}</td>
+      <td style="color:${(s.changePct||0)>=0?'var(--up)':'var(--down)'};">${s.changePct!=null ? pc(s.changePct) : '-'}</td>
+      <td>${s.volRatio!=null ? s.volRatio.toFixed(2)+'x' : '-'}</td>
+      <td>${s.turnover!=null ? fmtCap(s.turnover) : '-'}</td>
+      <td>${s.gg.passedCount}/${s.gg.totalChecks}</td>
+      <td class="mono" style="font-weight:700;">${s.gg.score}</td>
+      <td>${ggPill(s.gg.signal, s.gg.signalTone)}${s.gg.flags.length ? ` <span title="${escapeHtml(s.gg.flags.join(' | '))}" style="cursor:help;">⚠️</span>` : ""}</td>
+      <td><button class="btn btn-outline" data-gg-expand="${s.ticker}" style="padding:4px 10px;font-size:11px;">${g.expanded===s.ticker?"Tutup":"Trade Plan"}</button></td>
+    </tr>
+    ${g.expanded===s.ticker ? `<tr><td colspan="12" style="background:color-mix(in srgb, currentColor 4%, transparent);">${ggTradePlanCard(s)}</td></tr>` : ""}
+  `).join("");
+
+  const resultsPanel = `
+    <div class="panel" style="flex-direction:column;align-items:stretch;">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
+        <div class="filter-section-title" style="margin:0;">🚀 Radar Gap Up &amp; Go · ${escapeHtml(active.label)} <span class="count-badge">${rows.length} saham</span><span class="line"></span></div>
+      </div>
+      ${!rows.length ? `<div class="empty-box">Tidak ada saham yang cocok preset "${escapeHtml(active.label)}". Pastikan harga live sudah di-update (data open &amp; prev close terisi), atau coba preset lain / ubah parameter di Params.</div>` : `
+      ${renderBacktestSaveBar("gapgo", rows.map(s => ({
+        ticker: s.ticker, price: Math.round(s.cClose||0),
+        kriteria: `Gap Up & Go · ${active.label}`,
+        keterangan: `Gap: ${s.gg.gapPct!=null?s.gg.gapPct.toFixed(2)+'%':'-'}; Kriteria: ${s.gg.passedCount}/${s.gg.totalChecks}; Skor: ${s.gg.score}; Sinyal: ${s.gg.signal}; Vol Ratio: ${s.volRatio!=null?s.volRatio.toFixed(2)+'x':'-'}`
+      })))}
+      <div class="table-wrap">
+        <table class="mono">
+          <thead><tr><th></th><th>Kode</th><th>Harga</th><th>Gap%</th><th>Gap Terisi</th><th>1D%</th><th>Vol Ratio</th><th>Turnover</th><th>Kriteria</th><th>Skor</th><th>Sinyal</th><th></th></tr></thead>
+          <tbody>${tableRows}</tbody>
+        </table>
+      </div>`}
+    </div>`;
+
+  return headerBar + statsBar + presetsBar + infoPanel + paramsPanel + toolbar + resultsPanel;
+}
+
+function ggBind(){
+  const g = ggS();
+  bindSearchInputPreservingCursor("ggSearchInput", v => { g.search = v; });
+  const sortSel = document.getElementById("ggSortSelect");
+  if(sortSel) sortSel.onchange = e => { g.sort = e.target.value; render(); };
+  document.querySelectorAll("[data-gg-preset]").forEach(b => { b.onclick = () => { g.preset = b.dataset.ggPreset; render(); }; });
+  document.querySelectorAll("[data-gg-expand]").forEach(b => { b.onclick = () => { g.expanded = g.expanded === b.dataset.ggExpand ? null : b.dataset.ggExpand; render(); }; });
+  document.querySelectorAll("[data-gg-param]").forEach(inp => {
+    inp.onchange = () => {
+      const v = Number(inp.value);
+      if(!isFinite(v)) return;
+      g.params[inp.dataset.ggParam] = v;
+      ggSaveParams();
+      render();
+    };
+  });
+  const pt = document.getElementById("ggParamsToggleBtn");
+  if(pt) pt.onclick = () => { g.paramsOpen = !g.paramsOpen; render(); };
+  const rb = document.getElementById("ggResetParamsBtn");
+  if(rb) rb.onclick = () => { g.params = ggDefaultParams(); ggSaveParams(); render(); };
+  const sim = document.getElementById("ggSimulatorChk");
+  if(sim) sim.onchange = e => {
+    g.simulator = e.target.checked;
+    if(!g.simulator){
+      // keluar dari simulator: kembalikan parameter yang tersimpan
+      g.params = ggDefaultParams();
+      try{ const raw = localStorage.getItem("ihsg_gapgo_params_v1"); if(raw) g.params = { ...g.params, ...JSON.parse(raw) }; }catch(err){}
+    }
+    render();
+  };
+  const info = document.getElementById("ggInfoDetails");
+  if(info) info.ontoggle = () => { g.infoOpen = info.open; };
+  const refresh = document.getElementById("ggRefreshBtn");
+  if(refresh) refresh.onclick = () => { if(typeof loadLive === "function") loadLive(); else render(); };
+}
+
+// ---------- pasang tombol ke sidebar (tanpa perlu edit index.html) ----------
+(function ggInstallNav(){
+  try{
+    if(document.querySelector('#tabs .tab-btn[data-tab="gapgo"]')) return;
+    const ref = document.querySelector('#tabs .tab-btn[data-tab="bsjp"]') || document.querySelector('#tabs .tab-btn[data-tab="screener"]');
+    if(!ref) return;
+    const wrap = ref.closest("li") || ref, clone = wrap.cloneNode(true);
+    const btn = clone.matches(".tab-btn") ? clone : clone.querySelector(".tab-btn");
+    btn.dataset.tab = "gapgo"; btn.classList.remove("active"); btn.removeAttribute("id");
+    const lab = btn.querySelector(".tab-label, .label, span:last-child");
+    if(lab && lab !== btn) lab.textContent = "🚀 Gap Up & Go"; else btn.textContent = "🚀 Gap Up & Go";
+    if(btn.tagName === "A") btn.setAttribute("href", "#/gapgo");
+    wrap.after(clone);
+    bindInternalLink(btn, () => selectMainTab("gapgo"));
+  }catch(e){ console.warn("[GapGo] gagal memasang menu:", e); }
+})();
+
+
+// ==========================================================================
+// 🚀 Gap Up & Go untuk 🏆 Backtest Screener (SBT) — varian yang BISA diuji historis
+//
+// Sinyal dihitung dari candle hari i (gap up bertahan, close kuat, break High
+// kemarin, volume ramai, di atas EMA21), entry = OPEN hari berikutnya (aturan
+// standar SBT, tanpa look-ahead). Ini BUKAN day trade pagi: data historis hanya
+// candle harian, jadi entry pagi di hari gap tidak bisa disimulasikan jujur.
+// Kriteria orderbook tidak ada di histori (dilewati). EMA20 di tab diganti EMA21
+// (seri yang tersedia di SBT). Threshold mengikuti ⚙️ Params tab Gap Up & Go.
+// ==========================================================================
+if(typeof SBT_STRATS !== "undefined"){
+  SBT_STRATS.push({
+    key: "gapgo_t1", label: "🚀 Gap Up & Go (beli open besok)",
+    f: (X, i) => {
+      const P = ggS().params;
+      const o = X.o[i], h = X.h[i], l = X.l[i], c = X.c[i], pc = X.c[i-1], ph = X.h[i-1];
+      if(!(o > 0 && pc > 0 && c > 0 && h > l)) return false;
+      const gapPct = (o - pc) / pc * 100;
+      if(!(gapPct >= P.minGapPct && gapPct <= P.maxGapPct)) return false;
+      const fill = clamp01((o - Math.max(l, pc)) / (o - pc));
+      if(fill > P.maxGapFill) return false;                    // gap bertahan
+      if(!(c > o)) return false;                               // close di atas open
+      if((c - l) / (h - l) < P.minCloseProx) return false;     // close kuat di range
+      if(!(c > ph)) return false;                              // menembus High kemarin
+      const vr = X.volMA20[i] > 0 ? X.v[i] / X.volMA20[i] : null;
+      if(!(vr != null && vr >= P.minVolRatio)) return false;   // volume ramai
+      if(X.ema21[i] != null && !(c > X.ema21[i])) return false; // di atas EMA21
+      const tv = X.val[i] > 0 ? X.val[i] : c * X.v[i];
+      return tv >= P.minTurnover;
+    }
+  });
+}
