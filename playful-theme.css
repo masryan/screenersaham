@@ -300,3 +300,82 @@ tbody tr:hover td.col-freeze { background: var(--surface-hover); }
   .summary-val { font-size: 22px; }
   .modal { border-radius: 24px 24px 0 0; }
 }
+
+/* =============================================================
+   MARKET RADAR — status tombol aktif vs tidak aktif
+   Penyebab: gaya .bs2-chip di app.js hanya berlaku di dalam
+   .broker-stalker-page, sedangkan halaman Radar tidak berada di
+   dalamnya, sehingga tombol tampil sebagai tombol bawaan browser.
+   Selektor memakai atribut [data-radar] agar app.js tidak perlu diubah.
+   ============================================================= */
+.panel button[data-radar] {
+  font-family: inherit;
+  font-size: 12.5px;
+  font-weight: 700;
+  line-height: 1.2;
+  padding: 8px 14px;
+  min-height: 36px;
+  border-radius: 999px;
+  border: 1.5px solid var(--border-light);
+  background: var(--surface);
+  color: var(--muted);
+  cursor: pointer;
+  transition: background .15s, color .15s, border-color .15s, box-shadow .15s;
+  -webkit-tap-highlight-color: transparent;
+}
+.panel button[data-radar]:active { transform: scale(.96); }
+
+/* AKTIF: terisi penuh gradien ungu, teks putih, ada centang */
+.panel button[data-radar].active {
+  background: var(--gold-grad);
+  border-color: transparent;
+  color: #fff;
+  box-shadow: 0 6px 14px -6px rgba(99, 70, 230, 0.65);
+}
+.panel button[data-radar].active::before {
+  content: "✓";
+  margin-right: 5px;
+  font-weight: 800;
+}
+
+/* Pilihan Off / M / S: segmen kecil menyatu */
+.panel button[data-radar^="win:"] {
+  min-width: 40px;
+  padding: 7px 11px;
+  border-radius: 10px;
+}
+.panel button[data-radar^="win:"].active::before { content: none; }
+/* "Off" yang aktif dibuat abu-abu, bukan ungu: artinya grup dimatikan */
+.panel button[data-radar$=":off"].active {
+  background: var(--surface2);
+  color: var(--text);
+  border-color: var(--border-light);
+  box-shadow: none;
+}
+.panel button[data-radar$=":off"].active::before { content: none; }
+
+/* Tombol aksi (bukan toggle): Preset, Reset, Muat data, Histori */
+.panel button[data-radar^="preset:"],
+.panel button[data-radar="loadaccum"],
+.panel button[data-radar="reloadhist"] {
+  background: rgba(124, 58, 237, 0.08);
+  border-color: rgba(124, 58, 237, 0.30);
+  color: var(--gold);
+  border-style: dashed;
+}
+
+.panel button[data-radar]:disabled { opacity: .4; cursor: not-allowed; }
+
+/* Label seksi (TOP N PER GRUP, dst.) dan grid pengaturan */
+.panel .bs2-label {
+  display: block;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: .05em;
+  color: var(--muted);
+  margin: 0 0 6px;
+}
+.panel .bs2-chipset { display: flex; flex-wrap: wrap; gap: 6px; }
+.panel .bsx-grid { display: flex; flex-wrap: wrap; gap: 14px 24px; }
+.panel .bsx-grid > div { min-width: 100%; }
+@media (min-width: 560px) { .panel .bsx-grid > div { min-width: 0; } }
