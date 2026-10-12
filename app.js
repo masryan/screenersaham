@@ -1339,7 +1339,7 @@ async function fetchAndSaveBrokerActivityBulk(brokerCodes, rangeFrom, rangeTo){
         const SAVE_BATCH = 1000;
         updateBrokerActivityProgressUI({ phase: "simpan", rows: rows.length, saveDone: 0, saveTotal: Math.ceil(rows.length / SAVE_BATCH) });
         for(let i = 0; i < rows.length; i += SAVE_BATCH){
-          brokerCachesClear(); await supaFetch(`${SUPABASE_URL}/broker_activity?on_conflict=broker_code,trade_date,stock_code,side`, {
+          await supaFetch(`${SUPABASE_URL}/broker_activity?on_conflict=broker_code,trade_date,stock_code,side`, {
             method: "POST",
             headers: { ...getSupaHeaders(), "Prefer": "resolution=merge-duplicates,return=minimal" },
             body: JSON.stringify(rows.slice(i, i + SAVE_BATCH))
@@ -1643,7 +1643,7 @@ async function fetchAndSaveBrokerSummaryBulk(tickers, rangeFrom, rangeTo, opts =
           state.stockbitBrokerBulkResults.push({ ticker, date: `${fromDate}..${toDate}`, ok:false, msg: "Tidak ada baris broker valid di respons ini." });
         } else {
           try{
-            brokerCachesClear(); await supaFetch(`${SUPABASE_URL}/broker_activity?on_conflict=broker_code,trade_date,stock_code,side`, {
+            await supaFetch(`${SUPABASE_URL}/broker_activity?on_conflict=broker_code,trade_date,stock_code,side`, {
               method: "POST",
               headers: { ...getSupaHeaders(), "Prefer": "resolution=merge-duplicates,return=minimal" },
               body: JSON.stringify(rows)
@@ -3966,6 +3966,10 @@ let state = {
   portoView: "list", // "list" = tabel transaksi apa adanya, "posisi" = agregat per ticker (avg harga tertimbang)
   portoFilterJenis: "Semua", // filter tab Portofolio: "Semua" / "Investasi" / "Scalping" / "Swing" -- 3 porto Stockbit terpisah yg diupload jadi satu tabel
   tab: "screener", search: "", activePresets: [], presetMode: "and",
+  // --- Screener Pro (Filter Cepat + Advanced Filters + Radar Score) --- lihat SCREENER PRO di bawah getFiltered()
+  proQuick: [], proPanelOpen: true, proPeriod: "7D", proSets: [], proTrack: [], proUni: {}, proTrackOpen: false,
+  proAdv: { signal:"", flag:"", minValueM:"", minRadar:"", minScore:"", minVolRatio:"", minForeign5B:"", minRs1m:"", polaBias:"", polaKey:"", polaStatus:"", minPola:"", exDivMax:"", earnMax:"", topN:"" },
+
   // Mode untuk preset "🟢 EMA9×21 Golden Cross": 'fresh' = HANYA yang cross
   // persis di hari data terakhir (ketat, sering 0 hasil), 'all' = semua yang
   // EMA9 > EMA21 saat ini termasuk yang sudah cross beberapa hari lalu
@@ -4688,6 +4692,7 @@ function rsiGaugeHtml(value){
 }
 
 function loadSettings(){
+  proLoad();
   try{ const wl=JSON.parse(localStorage.getItem(LS_WATCHLIST)||"[]"); state.watchlist=new Set(wl); }catch(e){}
   try{ state.backtests=JSON.parse(localStorage.getItem(LS_BACKTEST)||"[]"); }catch(e){}
   try{ state.portfolio=JSON.parse(localStorage.getItem(LS_PORTO)||"[]"); }catch(e){}
@@ -5773,10 +5778,6 @@ async function loadLive(opts){
     if (skipStatic) {
        // dipertahankan
     } else if (Array.isArray(backtestRes)) {
-       // Data keluar (harga/alasan) dipertahankan dari salinan lokal kalau kolom
-       // exit_price/exit_reason belum ada di server, supaya tidak hilang saat refresh.
-       const _btPrevExit = new Map();
-       (state.backtests || []).forEach(s0 => (s0.items || []).forEach(i0 => _btPrevExit.set(String(s0.id) + "|" + i0.ticker, i0)));
        state.backtests = backtestRes.map(b => ({
          id: b.id, date: b.session_date,
          // Guard Array: sesi tanpa relasi backtest_items (null/undefined)
@@ -5790,9 +5791,7 @@ async function loadLive(opts){
             // tanggal sesi (b.session_date, format "YYYY-MM-DD" dari Supabase)
             // supaya kolom "Tanggal Entry"/"Hari" tetap menampilkan sesuatu
             // yang masuk akal, bukan kosong.
-            entryDate: it.entry_date || b.session_date || null,
-            exitPrice: (it.exit_price != null && it.exit_price !== "") ? Number(it.exit_price) : ((_btPrevExit.get(String(b.id) + "|" + it.ticker) || {}).exitPrice ?? null),
-            exitReason: it.exit_reason || ((_btPrevExit.get(String(b.id) + "|" + it.ticker) || {}).exitReason) || ""
+            entryDate: it.entry_date || b.session_date || null
          }))
        })).sort((a,b) => String(b.id).localeCompare(String(a.id)));
        saveBacktests();
@@ -7921,7 +7920,7 @@ async function saveDetailBrokerSummaryRows(){
   if(!rows.length){ state.detailBsMsg = "Belum ada baris terisi."; state.detailBsMsgError = true; render(); return; }
 
   try {
-    brokerCachesClear(); await supaFetch(`${SUPABASE_URL}/broker_activity?on_conflict=broker_code,trade_date,stock_code,side`, {
+    await supaFetch(`${SUPABASE_URL}/broker_activity?on_conflict=broker_code,trade_date,stock_code,side`, {
       method: "POST",
       headers: { ...getSupaHeaders(), "Prefer": "resolution=merge-duplicates,return=representation" },
       body: JSON.stringify(rows)
@@ -11217,7 +11216,6 @@ function wireBacktestSaveControls(scopeEl){
         eps: "Entry Price Scanner",
         orca: "Kraken Flow (ORCA)",
         bsjp: "BSJP (Beli Sore, Jual Pagi)",
-        gapgo: "Gap Up & Go (day trade)",
         patternscan: "Chart Pattern Scanner",
         smartpick: `Smart Pick — ${spTitleFor(state.spListOpenDefId)}`
       };
@@ -11391,9 +11389,6 @@ function exportBacktestToExcel(id) {
       "Harga Tertinggi": period.highPeriod ?? "-",
       "Capai P/L (%)": period.maxPL != null ? parseFloat(period.maxPL.toFixed(2)) : "-",
       "Hari": hariSejak ?? "-",
-      "Harga Keluar": item.exitPrice ?? "-",
-      "Alasan Keluar": item.exitReason || "-",
-      "P/L Keluar (%)": btExitPL(item) != null ? parseFloat(btExitPL(item).toFixed(2)) : "-",
       "Filter / Keterangan": item.filterStr || "-"
     };
   });
@@ -11415,9 +11410,6 @@ function exportBacktestToExcel(id) {
     {wch: 16}, // Harga Tertinggi
     {wch: 14}, // Capai P/L (%)
     {wch: 8},  // Hari
-    {wch: 13}, // Harga Keluar
-    {wch: 18}, // Alasan Keluar
-    {wch: 14}, // P/L Keluar (%)
     {wch: 50}  // Keterangan
   ];
   worksheet['!cols'] = wscols;
@@ -11453,9 +11445,6 @@ function exportAllBacktestToExcel() {
         "Harga Tertinggi": period.highPeriod ?? "-",
         "Capai P/L (%)": period.maxPL != null ? parseFloat(period.maxPL.toFixed(2)) : "-",
         "Hari": hariSejak ?? "-",
-        "Harga Keluar": item.exitPrice ?? "-",
-        "Alasan Keluar": item.exitReason || "-",
-        "P/L Keluar (%)": btExitPL(item) != null ? parseFloat(btExitPL(item).toFixed(2)) : "-",
         "Filter / Keterangan": item.filterStr || "-"
       });
     });
@@ -11482,9 +11471,6 @@ function exportAllBacktestToExcel() {
     {wch: 16}, // Harga Tertinggi
     {wch: 14}, // Capai P/L (%)
     {wch: 8},  // Hari
-    {wch: 13}, // Harga Keluar
-    {wch: 18}, // Alasan Keluar
-    {wch: 14}, // P/L Keluar (%)
     {wch: 50}  // Keterangan
   ];
   worksheet['!cols'] = wscols;
@@ -12382,6 +12368,10 @@ function enrichOne(s, rekapDefs){
     };
     // BSJP butuh band.tone (dihitung di atas), makanya dihitung terakhir
     // dari objek `merged`, bukan `s` mentah.
+    // Screener Pro: Radar Score 0-100, sinyal, flag, & hasil 6 Filter Cepat (lihat proComputeRadar()).
+    Object.assign(merged, proComputeRadar(merged));
+    Object.assign(merged, pscFields(merged.ticker)); // kolom & filter Pola Chart
+    Object.assign(merged, ccFields(merged.ticker));  // kolom & filter Jadwal Korporasi
     merged.bsjp = computeBsjpEngine(merged, state.bsjpParams || BSJP_DEFAULT_PARAMS);
     // Rekap Preset/Screener (lihat rekapScreenerDefs()/computeStockRekap()
     // dekat SMART_PICK_DEFS) -- digabung TERAKHIR karena butuh merged.bsjp &
@@ -12396,7 +12386,51 @@ function enrichOne(s, rekapDefs){
 }
 function enriched(){
   const rekapDefs = rekapScreenerDefs();
-  return state.stocks.map(s => enrichOne(s, rekapDefs));
+  const out = state.stocks.map(s => enrichOne(s, rekapDefs));
+  try{ tgvfRankPass(out); }catch(e){ console.warn("[TopGVF]", e); }
+  return out;
+}
+// ==========================================================================
+// 🚀 TOP GAINER + TOP VOLUME + TOP FREKUENSI
+// Peringkat dihitung lintas seluruh saham yang sedang dimuat (bukan per saham), jadi dilakukan di sini setelah semua baris di-enrich.
+// Universe: harga > Rp50 (bukan gocap), volume > 0, tidak suspend. Gainer = hanya yang naik (changePct > 0).
+// Lolos bila rank gainer, rank volume, dan rank frekuensi SEMUANYA <= N (default 20, diatur di panel Pro). Seri diberi rank yang sama.
+// Catatan: pakai volume/frekuensi/perubahan hari ini dari baris stocks_screener (atau yang di-patch live), bukan histori.
+// ==========================================================================
+const TGVF_DEFAULT_N = 20;
+function tgvfN(){
+  const n = parseInt(state.proAdv && state.proAdv.topN, 10);
+  return n > 0 ? Math.min(n, 500) : TGVF_DEFAULT_N;
+}
+function tgvfRankPass(list){
+  const N = tgvfN();
+  const uni = list.filter(s => !s.suspended && spNum(s.cClose) != null && s.cClose > 50 && spNum(s.cVol) != null && s.cVol > 0);
+  const rankBy = (arr, val) => { // dense-free competition rank: 1 + jumlah yang LEBIH besar
+    const vals = arr.map(val).filter(v => v != null).sort((a, b) => b - a);
+    const m = new Map(); vals.forEach((v, i) => { if(!m.has(v)) m.set(v, i + 1); });
+    return m;
+  };
+  const gain = rankBy(uni.filter(s => spNum(s.changePct) > 0), s => spNum(s.changePct));
+  const vol  = rankBy(uni, s => spNum(s.cVol));
+  const freq = rankBy(uni.filter(s => spNum(s.frequency) > 0), s => spNum(s.frequency));
+  const inUni = new Set(uni);
+  list.forEach(s => {
+    const ok = inUni.has(s);
+    const g = ok && spNum(s.changePct) > 0 ? gain.get(spNum(s.changePct)) : null;
+    const v = ok ? vol.get(spNum(s.cVol)) : null;
+    const f = ok && spNum(s.frequency) > 0 ? freq.get(spNum(s.frequency)) : null;
+    s.rankGain = g ?? null; s.rankVol = v ?? null; s.rankFreq = f ?? null;
+    s.rankGvfMax = (g != null && v != null && f != null) ? Math.max(g, v, f) : null; // makin kecil makin kuat
+    const pass = s.rankGvfMax != null && s.rankGvfMax <= N;
+    if(s.proQuick) s.proQuick.top_gvf = pass; else s.proQuick = { top_gvf: pass };
+  });
+}
+function tgvfCell(s){
+  if(s.rankGain == null && s.rankVol == null && s.rankFreq == null) return `<td class="muted">-</td>`;
+  const N = tgvfN(), f = r => r == null ? "-" : r;
+  const part = (r) => `<span style="color:${r != null && r <= N ? "var(--up)" : "var(--muted)"};">${f(r)}</span>`;
+  const all = s.rankGvfMax != null && s.rankGvfMax <= N;
+  return `<td class="mono" style="white-space:nowrap;" title="Rank Gainer / Volume / Frekuensi (lolos bila ketiganya <= ${N})">${all ? "🚀 " : ""}${part(s.rankGain)}/${part(s.rankVol)}/${part(s.rankFreq)}</td>`;
 }
 
 // ==========================================
@@ -12864,6 +12898,616 @@ function presetPass(preset, s){
   return true;
 }
 function isPresetOn(key){ return state.activePresets.includes(key); }
+
+// ==========================================================================
+// 📡 SCREENER PRO — Filter Cepat, Radar Score, Advanced Filters
+// Skema SENDIRI berbasis data yang sudah ada di app ini (volume, frekuensi,
+// net asing IDX, bandarmologi proxy, tren/RSI, likuiditas). BUKAN prediksi
+// harga: ini ranking "seberapa banyak sinyal aktivitas yang sedang menyala".
+// Semua threshold ada di SP_CFG supaya mudah disetel.
+// ==========================================================================
+const SP_CFG = {
+  liqActive: 2e9,     // Rp, minimal nilai transaksi utk "Active/Hot"
+  liqWhale: 5e9,      // Rp, minimal nilai transaksi utk "Whale Hunt"
+  liqIlliquid: 1e9,   // di bawah ini skor Radar dipotong (susah dieksekusi)
+  hotRatio: 2.0,      // RVOL utk "Hot Today"
+  stealthRatio: 1.5, stealthMaxMove: 1.5,   // Stealth: volume naik tapi harga diam (%)
+  consensusMin: 4     // dari 6 kondisi searah
+};
+const SP_QUICK_DEFS = [
+  { key:"active_today", label:"⚡ Active Today", tip:"Likuid (nilai transaksi >= Rp2 M) dan volume hari ini >= rata-rata 20 hari" },
+  { key:"hot_today",    label:"🔥 Hot Today",    tip:"RVOL >= 2x, harga naik, nilai transaksi >= Rp2 M" },
+  { key:"whale_hunt",   label:"🐋 Whale Hunt",   tip:"Indikasi uang gede masuk (akumulasi kuat) dan nilai transaksi >= Rp5 M" },
+  { key:"foreign_in",   label:"🌍 Foreign In",   tip:"Net asing 1 hari dan 5 hari sama-sama positif (data resmi IDX)" },
+  { key:"consensus",    label:"🤝 Consensus",    tip:"Minimal 4 dari 6 sinyal searah: tren bullish, close > EMA21, RSI7 > 50, volume >= 1.3x, bandarmologi naik, net asing 5D positif" },
+  { key:"rs_leader",    label:"💪 RS Leader",    tip:"Mengalahkan pasar: return 1 bulan minimal 5 poin di atas benchmark proxy IHSG dan return 1 minggu juga di atas benchmark, nilai transaksi >= Rp2 M" },
+  { key:"stealth",      label:"🥷 Stealth",      tip:"Volume >= 1.5x tapi harga bergerak <= 1.5% dengan aliran asing/bandar positif: akumulasi diam-diam" },
+  { key:"top_gvf",      label:"🚀 Gainer+Vol+Frek", tip:"Masuk Top N kenaikan harga (%), Top N volume, DAN Top N frekuensi transaksi hari ini di antara seluruh saham (N diatur di kolom 'Top N' panel Pro, default 20). Peringkat dihitung dari data yang tampil sekarang; saham gocap (<= Rp50), tanpa volume, atau suspend tidak ikut. Belum tersedia di Backtest karena butuh peringkat seluruh pasar per hari." }
+];
+function spNum(v){ return (v===null || v===undefined || v==="" || isNaN(v)) ? null : Number(v); }
+
+// --- Kekuatan Relatif (RS) vs "IHSG" ---
+// Tabel market_index hanya menyimpan 1 baris harga IHSG (tanpa riwayat 1 minggu/1 bulan), jadi benchmark RS di sini adalah
+// PROXY: rata-rata return seluruh saham tertimbang market cap (cara yang sama dengan estimasi perubahan IHSG di tab BSJP).
+// Bukan angka resmi IHSG, tapi cukup untuk membedakan saham yang menang/kalah dari pasar. RS = return saham - benchmark (poin %).
+let _proBenchCache = { t: 0, v: { week: null, month: null, ytd: null } };
+function proBench(){
+  const nowMs = Date.now();
+  if(nowMs - _proBenchCache.t < 1500) return _proBenchCache.v;
+  const st = state.stocks || [];
+  const calc = key => {
+    let w = 0, a = 0;
+    for(const s of st){
+      const cap = spNum(s.marketCap), r = spNum(s[key]);
+      if(cap != null && cap > 0 && r != null && Math.abs(r) <= 300){ w += cap; a += cap * r; }
+    }
+    return w > 0 ? a / w : null;
+  };
+  _proBenchCache = { t: nowMs, v: { week: calc("weekChangePct"), month: calc("monthChangePct"), ytd: calc("ytdPct") } };
+  return _proBenchCache.v;
+}
+function proBenchNote(){
+  const b = proBench(), f = v => v == null ? "-" : (v >= 0 ? "+" : "") + v.toFixed(2) + "%";
+  return `RS memakai benchmark proxy IHSG (rata-rata return saham tertimbang market cap, bukan angka resmi IHSG): 1W ${f(b.week)}, 1M ${f(b.month)}, YTD ${f(b.ytd)}.`;
+}
+function proComputeRadar(s){
+  const ratio = spNum(s.volRatio), chg = spNum(s.changePct), clv = spNum(s.clv);
+  const f1 = spNum(s.foreignNet1D), f5 = spNum(s.foreignNet5D);
+  const fw = proForeignWin(s);   // net asing sesuai periode terpilih (1D/7D/14D/1M)
+  const liq = spLiquidity(s);
+  const bandUp = !!(s.band && s.band.tone === "up");
+  const gede = /akumulasi|^ya$/i.test(String(s.uangGedeMasuk || ""));
+  const trendUp = trendTone(s.trendHarga) === "up";
+  const aboveEma21 = s.cClose!=null && s.ema21!=null && s.cClose > s.ema21;
+  const aboveEma89 = s.cClose!=null && s.ema89!=null && s.cClose > s.ema89;
+  const rsi7 = spNum(s.rsi7);
+
+  // --- skor transparan 0-100 ---
+  const vol = ratio==null ? 0 : clamp01((ratio - 0.8) / 2.2) * 25;                                   // 25: RVOL 0.8x..3x
+  let fgn = 0;                                                                                       // 20: net asing 5D + konsistensi hari asing+
+  if(fw != null && fw > 0) fgn += clamp01(fw / proForeignScale()) * 12;
+  if(s.foreignUpDays != null){ const d = s.flowDays || 20; fgn += clamp01((s.foreignUpDays / d - 0.4) / 0.4) * 8; }
+  const bdr = (bandUp ? 10 : 0) + (gede ? 5 : 0);                                                    // 15: bandar/uang gede
+  const trd = (aboveEma21 ? 7 : 0) + (aboveEma89 ? 7 : 0) + (trendUp ? 6 : 0);                       // 20: tren
+  const mom = rsi7==null ? 0 : (rsi7 >= 50 && rsi7 <= 75 ? 10 : (rsi7 > 75 ? 5 : (rsi7 >= 40 ? 4 : 0))); // 10: momentum RSI7
+  const act = ((s.freqRatio!=null && s.freqRatio >= 1.3) ? 5 : 0) + clamp01(liq / 5e9) * 5;           // 10: frekuensi + likuiditas
+  let score = vol + fgn + bdr + trd + mom + act;
+  const illiquid = liq < SP_CFG.liqIlliquid;
+  if(illiquid) score *= 0.7;
+  score = Math.round(Math.max(0, Math.min(100, score)));
+
+  // --- Filter Cepat ---
+  const q = {};
+  q.active_today = liq >= SP_CFG.liqActive && ratio != null && ratio >= 1;
+  q.hot_today    = liq >= SP_CFG.liqActive && ratio != null && ratio >= SP_CFG.hotRatio && chg != null && chg > 0;
+  q.whale_hunt   = liq >= SP_CFG.liqWhale && (gede || (ratio != null && ratio >= 2 && clv != null && clv >= 0.7));
+  q.foreign_in   = f1 != null && fw != null && f1 > 0 && fw > 0 && (state.proPeriod !== "1D" || (f5 != null && f5 > 0));
+  const votes = [trendUp, aboveEma21, rsi7 != null && rsi7 > 50, ratio != null && ratio >= 1.3, bandUp, fw != null && fw > 0].filter(Boolean).length;
+  q.consensus    = votes >= SP_CFG.consensusMin;
+  q.stealth      = ratio != null && ratio >= SP_CFG.stealthRatio && chg != null && Math.abs(chg) <= SP_CFG.stealthMaxMove && ((fw != null && fw > 0) || bandUp);
+
+  const bm = proBench();
+  const rs1w = (spNum(s.weekChangePct) != null && bm.week != null) ? spNum(s.weekChangePct) - bm.week : null;
+  const rs1m = (spNum(s.monthChangePct) != null && bm.month != null) ? spNum(s.monthChangePct) - bm.month : null;
+  const rsYtd = (spNum(s.ytdPct) != null && bm.ytd != null) ? spNum(s.ytdPct) - bm.ytd : null;
+  q.rs_leader    = liq >= SP_CFG.liqActive && rs1m != null && rs1m >= 5 && rs1w != null && rs1w > 0;
+  const signal = score >= 70 ? "Strong" : score >= 50 ? "Watch" : score >= 30 ? "Neutral" : "Weak";
+  const tone = score >= 70 ? "up" : score >= 50 ? "gold" : "muted";
+  const flag = q.whale_hunt ? "🐋 Whale" : q.stealth ? "🥷 Stealth" : q.foreign_in ? "🌍 Asing Masuk" : (ratio != null && ratio >= SP_CFG.hotRatio) ? "🔥 Spike Vol" : (illiquid ? "⚠️ Kurang Likuid" : "-");
+  return { radarScore: score, radarSignal: signal, radarTone: tone, radarFlag: flag, radarVotes: votes, radarForeignWin: fw, rs1w, rs1m, rsYtd, proQuick: q };
+}
+function proPass(s){
+  const q = state.proQuick || [];
+  if(q.length && !q.every(k => s.proQuick && s.proQuick[k])) return false;
+  const a = state.proAdv || {};
+  if(a.signal && s.radarSignal !== a.signal) return false;
+  if(a.flag && s.radarFlag !== a.flag) return false;
+  const ge = (val, min, mult) => { if(min === "" || min == null) return true; const n = spNum(val); return n != null && n >= parseFloat(min) * (mult || 1); };
+  if(!ge(spLiquidity(s), a.minValueM, 1e6)) return false;
+  if(!ge(s.radarScore, a.minRadar)) return false;
+  if(!ge(s.fundTechScore, a.minScore)) return false;
+  if(!ge(s.volRatio, a.minVolRatio)) return false;
+  if(!ge(s.radarForeignWin, a.minForeign5B, 1e9)) return false;
+  if(!ge(s.rs1m, a.minRs1m)) return false;
+  if(!pscMatch(s, a)) return false;
+  if(!ccMatch(s, a)) return false;
+  return true;
+}
+// ==========================================================================
+// 📐 POLA CHART di Screener — kolom & filter dari hasil Chart Pattern Scanner
+// Sumber: tabel `pattern_scan_results` (diisi scan-patterns.mjs), timeframe 1D, pola berstatus Failed tidak ikut.
+// Dibaca sekali per 5 menit (bukan tiap render), lalu dipetakan per ticker. Tidak ada tabel/scan baru.
+// Satu saham bisa punya beberapa pola: kolom menampilkan yang skornya tertinggi, filter lolos bila SALAH SATU polanya memenuhi semua kriteria pola yang aktif.
+// ==========================================================================
+const PSC = { map: new Map(), at: 0, loading: false, ok: null, scannedAt: "" };
+const PSC_TTL = 5 * 60 * 1000;
+async function pscEnsure(force){
+  if(PSC.loading) return;
+  if(!force && PSC.at && Date.now() - PSC.at < PSC_TTL) return;
+  if(typeof SUPABASE_URL === "undefined" || !SUPABASE_URL || !SUPABASE_KEY) return;
+  PSC.loading = true; PSC.at = Date.now(); // diset di awal: kalau gagal, tidak diulang tiap render
+  try{
+    const rows = []; let off = 0;
+    for(let guard = 0; guard < 30; guard++){
+      const q = `pattern_scan_results?tf=eq.1D&status=neq.failed&select=ticker,pattern,label,bias,status,score,age,scanned_at&order=score.desc,ticker.asc&limit=1000&offset=${off}`;
+      const r = await fetch(`${SUPABASE_URL}/${q}`, { headers: getSupaHeaders(), cache: "no-store" });
+      if(!r.ok) throw new Error("HTTP " + r.status);
+      const part = await r.json();
+      if(!Array.isArray(part)) throw new Error("respons bukan array");
+      rows.push(...part); off += part.length;
+      if(part.length < 1000) break;
+    }
+    const m = new Map(); let last = "";
+    rows.forEach(x => {
+      const tk = String(x.ticker || "").toUpperCase(); if(!tk) return;
+      if(x.scanned_at && x.scanned_at > last) last = x.scanned_at;
+      (m.get(tk) || m.set(tk, []).get(tk)).push({ key: x.pattern, label: x.label || x.pattern, bias: x.bias, status: x.status, score: Number(x.score) || 0, age: x.age == null ? null : Number(x.age) });
+    });
+    PSC.map = m; PSC.ok = true; PSC.scannedAt = last;
+  }catch(e){
+    console.warn("[PolaChart]", e); PSC.ok = false;
+  }finally{
+    PSC.loading = false;
+    if(state.tab === "screener") render();
+  }
+}
+function pscFields(ticker){
+  const list = PSC.map.get(String(ticker || "").toUpperCase());
+  if(!list || !list.length) return { polaScore: null, polaLabel: null, polaBias: null, polaStatus: null, polaList: null };
+  const best = list[0]; // sudah urut skor menurun dari server
+  return { polaScore: best.score, polaLabel: best.label, polaBias: best.bias, polaStatus: best.status, polaList: list };
+}
+// PS_PATTERNS didefinisikan jauh di bawah (blok Pattern Scanner); render pertama dari hash URL bisa jalan sebelum itu (TDZ) -> bungkus try/catch.
+function pscPatternOptions(sel){
+  try{
+    return [...new Set(Object.values(PS_PATTERNS).map(v => v.cat))].map(c =>
+      `<optgroup label="${c}">${Object.entries(PS_PATTERNS).filter(([k, v]) => v.cat === c).map(([k, v]) => `<option value="${k}" ${sel === k ? "selected" : ""}>${v.label}</option>`).join("")}</optgroup>`).join("");
+  }catch(e){ return ""; }
+}
+function pscMatch(s, a){
+  const mn = a.minPola === "" || a.minPola == null ? null : parseFloat(a.minPola);
+  if(!a.polaBias && !a.polaKey && !a.polaStatus && (mn == null || isNaN(mn))) return true;
+  return (s.polaList || []).some(p =>
+    (!a.polaBias || p.bias === a.polaBias) && (!a.polaKey || p.key === a.polaKey) &&
+    (!a.polaStatus || p.status === a.polaStatus) && (mn == null || isNaN(mn) || p.score >= mn));
+}
+function pscCell(s){
+  if(s.polaScore == null) return `<td class="muted">-</td>`;
+  const tone = s.polaBias === "bullish" ? "up" : s.polaBias === "bearish" ? "down" : "muted";
+  const mark = s.polaStatus === "confirmed" ? "✓ " : "";
+  const more = s.polaList.length > 1 ? ` <span style="font-size:10.5px;color:var(--muted);">+${s.polaList.length - 1}</span>` : "";
+  const tip = s.polaList.map(p => `${p.label} (${p.status}, skor ${p.score})`).join("; ");
+  return `<td style="white-space:nowrap;" title="${escapeHtml(tip)}">${pillHtml(mark + s.polaLabel, tone)} <span class="mono" style="font-size:11px;">${s.polaScore}</span>${more}</td>`;
+}
+// ==========================================================================
+// 📅 JADWAL KORPORASI di Screener — ex-dividen, tanggal bayar dividen, earnings berikutnya
+// Sumber: kolom ex_dividend_date / dividend_pay_date / next_earnings_date di tabel `stocks`,
+// diisi sync-idx-full.mjs dari Yahoo (calendarEvents). Cakupan Yahoo untuk saham .JK TIDAK merata:
+// kolom kosong = Yahoo tidak punya tanggalnya, bukan berarti tidak ada jadwal. Ex-dividen dari Yahoo
+// kadang tanggal yang SUDAH LEWAT (terakhir) — makanya sel menandai "lewat" dan filter hanya menghitung yang akan datang.
+// Dibaca sekali per 30 menit langsung dari `stocks` (bukan view), hanya baris yang punya minimal satu tanggal.
+// ==========================================================================
+const CC = { map: new Map(), at: 0, loading: false, ok: null, err: "" };
+const CC_TTL = 30 * 60 * 1000;
+function ccDayStart(iso){ // "YYYY-MM-DD" -> epoch ms awal hari lokal; null kalau tidak valid
+  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(iso || "")); if(!m) return null;
+  const t = new Date(+m[1], +m[2] - 1, +m[3]).getTime(); return isNaN(t) ? null : t;
+}
+async function ccEnsure(force){
+  if(CC.loading) return;
+  if(!force && CC.at && Date.now() - CC.at < CC_TTL) return;
+  if(typeof SUPABASE_URL === "undefined" || !SUPABASE_URL || !SUPABASE_KEY) return;
+  CC.loading = true; CC.at = Date.now(); // diset di awal: kalau gagal, tidak diulang tiap render
+  try{
+    const rows = []; let off = 0;
+    for(let guard = 0; guard < 10; guard++){
+      const q = `stocks?select=ticker,ex_dividend_date,dividend_pay_date,next_earnings_date&or=(ex_dividend_date.not.is.null,dividend_pay_date.not.is.null,next_earnings_date.not.is.null)&order=ticker.asc&limit=1000&offset=${off}`;
+      const r = await fetch(`${SUPABASE_URL}/${q}`, { headers: getSupaHeaders(), cache: "no-store" });
+      if(!r.ok){
+        let msg = "HTTP " + r.status;
+        try{ const j = await r.json(); if(j && (j.message || j.hint)) msg += " — " + (j.message || j.hint); }catch(e){}
+        throw new Error(msg);
+      }
+      const part = await r.json();
+      if(!Array.isArray(part)) throw new Error("respons bukan array");
+      rows.push(...part); off += part.length;
+      if(part.length < 1000) break;
+    }
+    const m = new Map();
+    rows.forEach(x => {
+      const tk = String(x.ticker || "").toUpperCase(); if(!tk) return;
+      m.set(tk, { ex: x.ex_dividend_date || null, pay: x.dividend_pay_date || null, earn: x.next_earnings_date || null });
+    });
+    CC.map = m; CC.ok = true; CC.err = "";
+  }catch(e){
+    console.warn("[JadwalKorporasi]", e); CC.ok = false; CC.err = String(e && e.message || e);
+  }finally{
+    CC.loading = false;
+    if(state.tab === "screener") render();
+  }
+}
+function ccFields(ticker){
+  const x = CC.map.get(String(ticker || "").toUpperCase());
+  const empty = { exDivDate: null, payDivDate: null, nextEarnDate: null, exDivTs: null, payDivTs: null, earnTs: null, exDivDays: null, payDivDays: null, earnDays: null };
+  if(!x) return empty;
+  const t0 = new Date(); const today = new Date(t0.getFullYear(), t0.getMonth(), t0.getDate()).getTime();
+  const ex = ccDayStart(x.ex), pay = ccDayStart(x.pay), earn = ccDayStart(x.earn);
+  const days = t => t == null ? null : Math.round((t - today) / 864e5);
+  return { exDivDate: x.ex, payDivDate: x.pay, nextEarnDate: x.earn, exDivTs: ex, payDivTs: pay, earnTs: earn, exDivDays: days(ex), payDivDays: days(pay), earnDays: days(earn) };
+}
+// Filter: "Ex-dividen dalam N hari" / "Earnings dalam N hari" — hanya tanggal yang HARI INI atau ke depan.
+function ccMatch(s, a){
+  const chk = (days, max) => {
+    if(max === "" || max == null) return true;
+    const n = parseFloat(max); if(isNaN(n)) return true;
+    return days != null && days >= 0 && days <= n;
+  };
+  return chk(s.exDivDays, a.exDivMax) && chk(s.earnDays, a.earnMax);
+}
+function ccCell(iso, days){
+  if(!iso) return `<td class="muted">-</td>`;
+  const t = ccDayStart(iso); if(t == null) return `<td class="muted">-</td>`;
+  const txt = new Date(t).toLocaleDateString("id-ID", { day: "2-digit", month: "short", year: "2-digit" });
+  let tag, tone;
+  if(days == null){ tag = ""; tone = "muted"; }
+  else if(days < 0){ tag = `lewat ${-days}h`; tone = "muted"; }
+  else if(days === 0){ tag = "hari ini"; tone = "gold"; }
+  else { tag = `H-${days}`; tone = days <= 14 ? "up" : "muted"; }
+  return `<td style="white-space:nowrap;" title="${escapeHtml(iso)}">${pillHtml(txt, tone)}${tag ? ` <span style="font-size:10.5px;color:var(--muted);">${tag}</span>` : ""}</td>`;
+}
+function proRadarCell(s){
+  const sc = s.radarScore;
+  if(sc == null) return `<td>-</td>`;
+  const col = sc >= 70 ? "var(--up)" : sc >= 50 ? "var(--gold)" : "var(--muted)";
+  return `<td><div style="display:flex;align-items:center;gap:7px;min-width:92px;"><span class="mono" style="font-weight:800;color:${col};width:24px;text-align:right;">${sc}</span><div style="flex:1;height:5px;border-radius:3px;background:rgba(128,128,128,0.2);overflow:hidden;"><div style="width:${sc}%;height:100%;background:${col};"></div></div></div></td>`;
+}
+
+// --- Periode aliran asing (tab 1D/7D/14D/1M) ---
+// DB hanya punya net asing 1D/5D/20D, jadi 7D memakai 5D, 14D & 1M memakai 20D. 3M belum ada datanya (dinonaktifkan).
+const PRO_PERIODS = [
+  { k:"1D", label:"1D", note:"data 1 hari" }, { k:"7D", label:"7D", note:"memakai data 5 hari" },
+  { k:"14D", label:"14D", note:"memakai data 20 hari" }, { k:"1M", label:"1M", note:"memakai data 20 hari" },
+  { k:"3M", label:"3M", note:"belum ada datanya", disabled:true }
+];
+function proForeignWin(s){
+  const p = state.proPeriod;
+  return spNum(p === "1D" ? s.foreignNet1D : (p === "7D" ? s.foreignNet5D : s.foreignNet20D));
+}
+function proForeignScale(){ return state.proPeriod === "1D" ? 2e9 : (state.proPeriod === "7D" ? 5e9 : 10e9); }
+function proSetPeriod(k){ state.proPeriod = k; proSave(); state.page = 1; render(); }
+
+// --- Simpan otomatis + set filter bernama (localStorage) ---
+const LS_PRO_STATE = "ihsg_screener_pro_v1", LS_PRO_SETS = "ihsg_screener_pro_sets_v1";
+function proSave(){
+  try{ localStorage.setItem(LS_PRO_STATE, JSON.stringify({ quick: state.proQuick, adv: state.proAdv, period: state.proPeriod })); }catch(e){}
+}
+function proLoad(){
+  try{
+    const o = JSON.parse(localStorage.getItem(LS_PRO_STATE) || "null");
+    if(o){
+      if(Array.isArray(o.quick)) state.proQuick = o.quick.filter(k => SP_QUICK_DEFS.some(d => d.key === k));
+      if(o.adv && typeof o.adv === "object") state.proAdv = { ...state.proAdv, ...o.adv };
+      if(PRO_PERIODS.some(p => p.k === o.period && !p.disabled)) state.proPeriod = o.period;
+    }
+  }catch(e){}
+  try{ const tr = JSON.parse(localStorage.getItem(LS_PRO_TRACK) || "null"); if(tr && Array.isArray(tr.snaps)){ state.proTrack = tr.snaps; state.proUni = tr.uni || {}; } }catch(e){}
+  try{ const sets = JSON.parse(localStorage.getItem(LS_PRO_SETS) || "[]"); if(Array.isArray(sets)) state.proSets = sets; }catch(e){}
+}
+function proSaveSet(){
+  const el = document.getElementById("proSetName");
+  const name = (el && el.value || "").trim();
+  if(!name){ alert("Isi nama set filter dulu."); return; }
+  const item = { name, quick: [...state.proQuick], adv: { ...state.proAdv }, period: state.proPeriod };
+  const i = state.proSets.findIndex(x => x.name.toLowerCase() === name.toLowerCase());
+  if(i >= 0) state.proSets[i] = item; else state.proSets.push(item);
+  try{ localStorage.setItem(LS_PRO_SETS, JSON.stringify(state.proSets)); }catch(e){}
+  render();
+}
+function proLoadSet(i){
+  const it = state.proSets[i]; if(!it) return;
+  state.proQuick = [...it.quick]; state.proAdv = { ...state.proAdv, ...it.adv };
+  if(PRO_PERIODS.some(p => p.k === it.period && !p.disabled)) state.proPeriod = it.period;
+  proSave(); state.page = 1; render();
+}
+function proDeleteSet(i){
+  const it = state.proSets[i]; if(!it) return;
+  if(!confirm('Hapus set filter "' + it.name + '"?')) return;
+  state.proSets.splice(i, 1);
+  try{ localStorage.setItem(LS_PRO_SETS, JSON.stringify(state.proSets)); }catch(e){}
+  render();
+}
+
+// --- Alert "Strong baru" + Pelacak Uji Maju hasil Filter Cepat ---
+// Alert: saham yang HARI INI berstatus Radar Strong tapi kemarin (hari buka terakhir sebelumnya) belum.
+// Dasar pembanding disimpan per periode aliran asing di localStorage. Pertama kali dibuka = hanya merekam dasar (tanpa alert).
+// Pelacak: tombol "Rekam" menyimpan hasil tiap Filter Cepat + harga close saat itu; hari-hari berikutnya
+// dihitung return sampai harga terbaru, dibandingkan rata-rata return saham likuid lain (baseline pasar) pada tanggal rekam yang sama.
+// BUKAN backtest historis penuh — datanya baru terkumpul seiring kamu merekam, jadi sampel awal kecil.
+const LS_PRO_TRACK = "ihsg_screener_pro_track_v1", LS_PRO_ALERT = "ihsg_screener_pro_alert_v1";
+function proStrongNow(list){
+  return list.filter(s => s.radarSignal === "Strong" && spLiquidity(s) >= SP_CFG.liqIlliquid).map(s => s.ticker);
+}
+function proAlertCheck(list){
+  if(!list || !list.length) return [];
+  const date = todayLocalISO(), per = state.proPeriod, strong = proStrongNow(list);
+  let all = {}; try{ all = JSON.parse(localStorage.getItem(LS_PRO_ALERT) || "{}") || {}; }catch(e){ all = {}; }
+  const before = JSON.stringify(all);
+  let st = all[per];
+  if(!st){ st = { prev: null, today: { date, set: strong }, seen: [], seenDate: date }; }
+  else if(st.today.date !== date){ st = { prev: st.today.set, today: { date, set: strong }, seen: [], seenDate: date }; }
+  else { st.today.set = strong; }
+  all[per] = st;
+  const after = JSON.stringify(all);
+  if(after !== before){ try{ localStorage.setItem(LS_PRO_ALERT, after); }catch(e){} }
+  if(!Array.isArray(st.prev)) return [];
+  const prev = new Set(st.prev), seen = new Set(st.seenDate === date ? st.seen : []);
+  return strong.filter(t => !prev.has(t) && !seen.has(t));
+}
+function proAlertDismiss(){
+  let all = {}; try{ all = JSON.parse(localStorage.getItem(LS_PRO_ALERT) || "{}") || {}; }catch(e){}
+  const st = all[state.proPeriod]; if(!st) return;
+  st.seen = [...new Set([...(st.seenDate === todayLocalISO() ? st.seen : []), ...proStrongNow(enriched())])];
+  st.seenDate = todayLocalISO();
+  try{ localStorage.setItem(LS_PRO_ALERT, JSON.stringify(all)); }catch(e){}
+  render();
+}
+function proTrackSave(){
+  try{ localStorage.setItem(LS_PRO_TRACK, JSON.stringify({ snaps: state.proTrack, uni: state.proUni })); }catch(e){
+    alert("Gagal menyimpan rekaman (penyimpanan browser penuh?).");
+  }
+}
+function proSnapshot(){
+  const list = enriched();
+  if(!list.length){ alert("Data screener belum dimuat."); return; }
+  const date = todayLocalISO();
+  const top = arr => arr.filter(s => s.cClose > 0).sort((a, b) => (b.radarScore || 0) - (a.radarScore || 0)).slice(0, 50).map(s => [s.ticker, s.cClose]);
+  const f = {};
+  for(const d of SP_QUICK_DEFS) f[d.key] = top(list.filter(s => s.proQuick && s.proQuick[d.key]));
+  f.strong = top(list.filter(s => s.radarSignal === "Strong" && spLiquidity(s) >= SP_CFG.liqIlliquid));
+  const uni = {}; list.forEach(s => { if(s.cClose > 0 && spLiquidity(s) >= SP_CFG.liqActive) uni[s.ticker] = s.cClose; });
+  const sn = { date, period: state.proPeriod, f };
+  const i = state.proTrack.findIndex(x => x.date === date);
+  if(i >= 0) state.proTrack[i] = sn; else state.proTrack.push(sn);
+  state.proTrack.sort((a, b) => a.date < b.date ? -1 : 1);
+  state.proTrack = state.proTrack.slice(-60);
+  state.proUni[date] = uni;
+  const keep = new Set(state.proTrack.map(x => x.date));
+  Object.keys(state.proUni).forEach(d => { if(!keep.has(d)) delete state.proUni[d]; });
+  proTrackSave(); render();
+}
+function proTrackReset(){
+  if(!confirm("Hapus semua rekaman Uji Maju Filter Cepat?")) return;
+  state.proTrack = []; state.proUni = {}; proTrackSave(); render();
+}
+function proTrackStats(list){
+  const now = {}; list.forEach(s => { if(s.cClose > 0) now[s.ticker] = s.cClose; });
+  const today = todayLocalISO(), base = {};
+  for(const d of Object.keys(state.proUni || {})){
+    if(d >= today) continue;
+    const u = state.proUni[d], rs = [];
+    for(const t in u){ if(now[t] && u[t] > 0) rs.push(now[t] / u[t] - 1); }
+    base[d] = rs.length ? rs.reduce((a, b) => a + b, 0) / rs.length : null;
+  }
+  const keys = [...SP_QUICK_DEFS.map(d => ({ key: d.key, label: d.label })), { key: "strong", label: "📡 Radar Strong" }];
+  return keys.map(k => {
+    const rs = [], ex = []; let snaps = 0;
+    for(const sn of state.proTrack){
+      if(sn.date >= today) continue;
+      const arr = sn.f[k.key]; if(!arr || !arr.length) continue;
+      let used = false;
+      for(const [t, p] of arr){
+        if(!now[t] || !(p > 0)) continue;
+        const r = now[t] / p - 1; rs.push(r); used = true;
+        if(base[sn.date] != null) ex.push(r - base[sn.date]);
+      }
+      if(used) snaps++;
+    }
+    const avg = a => a.length ? a.reduce((x, y) => x + y, 0) / a.length : null;
+    const sorted = [...rs].sort((a, b) => a - b);
+    const med = sorted.length ? (sorted.length % 2 ? sorted[(sorted.length - 1) / 2] : (sorted[sorted.length / 2 - 1] + sorted[sorted.length / 2]) / 2) : null;
+    return { label: k.label, snaps, n: rs.length, avg: avg(rs), win: rs.length ? rs.filter(r => r > 0).length / rs.length : null, med, excess: avg(ex) };
+  });
+}
+function proTrackHtml(list){
+  const open = !!state.proTrackOpen;
+  const today = todayLocalISO();
+  const nSnap = state.proTrack.length, nEval = state.proTrack.filter(x => x.date < today).length;
+  const pct = v => v == null ? "-" : `<span style="color:${v >= 0 ? "var(--up)" : "var(--down)"}">${v >= 0 ? "+" : ""}${(v * 100).toFixed(2)}%</span>`;
+  let body = "";
+  if(open){
+    const rows = proTrackStats(list).map(r => `<tr><td>${r.label}</td><td class="mono">${r.snaps}</td><td class="mono">${r.n}</td><td class="mono">${pct(r.avg)}</td><td class="mono">${r.win != null ? (r.win * 100).toFixed(0) + "%" : "-"}</td><td class="mono">${pct(r.med)}</td><td class="mono">${pct(r.excess)}</td></tr>`).join("");
+    body = `
+      <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin:8px 0;">
+        <button type="button" class="btn btn-outline" style="font-size:11.5px;padding:6px 10px;" onclick="proSnapshot()">📸 Rekam Hasil Hari Ini</button>
+        ${nSnap ? `<button type="button" class="btn btn-outline" style="font-size:11.5px;padding:6px 10px;color:var(--down);" onclick="proTrackReset()">🗑 Reset Rekaman</button>` : ""}
+        <span style="font-size:11px;color:var(--muted);">${nSnap} tanggal terekam, ${nEval} sudah bisa dihitung (return dihitung dari harga rekam sampai harga terbaru)</span>
+      </div>
+      ${nEval ? `<div style="overflow-x:auto;"><table class="data-table" style="font-size:12px;"><thead><tr><th>Filter</th><th>Tgl</th><th>Sinyal</th><th>Rata-rata</th><th>Win</th><th>Median</th><th>vs Pasar</th></tr></thead><tbody>${rows}</tbody></table></div>` : `<div style="font-size:12px;color:var(--muted);">Belum ada yang bisa dihitung. Rekam hari ini setelah data ter-update, lalu buka lagi di hari bursa berikutnya.</div>`}
+      <div style="font-size:11px;color:var(--muted);margin-top:6px;line-height:1.5;">"vs Pasar" = selisih return terhadap rata-rata saham likuid (nilai transaksi &gt;= Rp2 M) yang direkam pada tanggal yang sama. Satu tanggal = banyak saham yang saling berkorelasi, jadi sampel efektifnya jauh lebih kecil dari kolom "Sinyal"; baru layak dibaca setelah puluhan tanggal terkumpul. Filter berbasis aliran asing mengikuti periode saat merekam. Ini pelacak maju, bukan backtest historis penuh, dan bukan jaminan hasil.</div>`;
+  }
+  return `
+      <div style="margin-top:12px;border-top:1px solid var(--border);padding-top:10px;">
+        <div style="cursor:pointer;user-select:none;font-size:12.5px;font-weight:700;" onclick="state.proTrackOpen=${!open}; render();"><span style="display:inline-block;transition:transform .15s;transform:rotate(${open ? 90 : 0}deg);">▶</span> 📈 Uji Maju Filter Cepat (rekam &amp; lacak) <span style="font-weight:400;color:var(--muted);font-size:11px;">${nSnap} rekaman</span></div>
+        ${body}
+      </div>`;
+}
+
+// --- Kirim alert "Strong baru" ke Telegram (dari browser, pakai sendTelegramDirect) ---
+// Opt-in lewat checkbox di panel. Hanya jalan selama tab app terbuka; tiap ticker dikirim maksimal sekali per hari.
+// Kalau gagal kirim, tidak dicoba ulang selama 5 menit supaya tidak membanjiri request tiap render.
+const LS_PRO_TG = "ihsg_screener_pro_tg_v1", LS_PRO_TG_SENT = "ihsg_screener_pro_tgsent_v1";
+function proTgOn(){ try{ return localStorage.getItem(LS_PRO_TG) === "1"; }catch(e){ return false; } }
+function proTgToggle(on){
+  try{ localStorage.setItem(LS_PRO_TG, on ? "1" : "0"); }catch(e){}
+  state.proTgMsg = ""; state.proTgFailAt = 0; render();
+}
+async function proTelegramNotify(tickers, list){
+  if(!proTgOn() || !tickers.length || state.proTgBusy) return;
+  if(state.proTgFailAt && Date.now() - state.proTgFailAt < 300000) return;
+  const date = todayLocalISO();
+  let rec = { date, sent: [] };
+  try{ const o = JSON.parse(localStorage.getItem(LS_PRO_TG_SENT) || "null"); if(o && o.date === date && Array.isArray(o.sent)) rec = o; }catch(e){}
+  const sent = new Set(rec.sent);
+  const fresh = tickers.filter(t => !sent.has(t));
+  if(!fresh.length) return;
+  state.proTgBusy = true;
+  const by = {}; list.forEach(s => { by[s.ticker] = s; });
+  const lines = fresh.slice(0, 20).map(t => {
+    const s = by[t] || {};
+    const chg = s.changePct != null ? ` ${s.changePct >= 0 ? "+" : ""}${s.changePct.toFixed(2)}%` : "";
+    const flag = s.radarFlag && s.radarFlag !== "-" ? " " + s.radarFlag : "";
+    return `• <b>${escapeHtml(t)}</b> — Radar ${s.radarScore ?? "-"}, ${s.cClose != null ? fmtNum(s.cClose) : "-"}${chg}${escapeHtml(flag)}`;
+  });
+  const msg = `📡 <b>Radar Strong baru</b> (aliran asing ${state.proPeriod})\n` + lines.join("\n")
+    + (fresh.length > 20 ? `\n+${fresh.length - 20} lainnya` : "") + "\n\nRanking sinyal aktivitas, bukan rekomendasi beli/jual.";
+  const res = await sendTelegramDirect(msg);
+  state.proTgBusy = false;
+  if(res.ok){
+    rec.sent = [...sent, ...fresh];
+    try{ localStorage.setItem(LS_PRO_TG_SENT, JSON.stringify(rec)); }catch(e){}
+    state.proTgMsg = `✅ Terkirim ${fresh.length} ticker`; state.proTgFailAt = 0;
+  } else { state.proTgFailAt = Date.now(); state.proTgMsg = "❌ " + res.error; }
+  render();
+}
+function proTgRowHtml(){
+  const on = proTgOn(), ok = !!(state.telegramBotToken && state.telegramChatId);
+  return `
+      <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-top:10px;">
+        <label style="display:flex;gap:6px;align-items:center;font-size:12px;cursor:pointer;"><input type="checkbox" class="custom-checkbox" ${on ? "checked" : ""} onchange="proTgToggle(this.checked)"> 📨 Kirim alert Strong baru ke Telegram</label>
+        <span style="font-size:11px;color:var(--muted);">${ok ? "Bot Token &amp; Chat ID sudah terisi" : "isi Bot Token &amp; Chat ID dulu di ⚙️ Pengaturan"} · hanya jalan selama tab ini terbuka · maks. sekali per ticker per hari</span>
+        ${state.proTgMsg ? `<span style="font-size:11px;">${escapeHtml(state.proTgMsg)}</span>` : ""}
+      </div>`;
+}
+
+// --- Kirim hasil ke Watchlist + ekspor/impor set filter (JSON) ---
+function proToWatchlist(){
+  const rows = getFiltered().filter(s => s.ticker).sort((a, b) => (b.radarScore || 0) - (a.radarScore || 0));
+  if(!rows.length){ alert("Tidak ada saham pada hasil filter saat ini."); return; }
+  const top = rows.slice(0, 50);
+  const baru = top.filter(s => !state.watchlist.has(s.ticker)).length;
+  const extra = rows.length > 50 ? ` Hasil filter ada ${rows.length} saham, dibatasi 50 teratas menurut Radar.` : "";
+  if(!confirm(`Tambahkan ${top.length} saham (${baru} baru) ke Watchlist? Harga close sekarang dicatat sebagai harga entry.${extra}`)) return;
+  addTickersToWatchlistBulk(top.map(s => s.ticker));
+}
+function proExportSets(){
+  const payload = { app: "ihsg-screener-pro", version: 1, exportedAt: new Date().toISOString(), sets: state.proSets };
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" }));
+  a.download = "screener-pro-sets.json";
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+}
+function proImportSets(file){
+  if(!file) return;
+  const rd = new FileReader();
+  rd.onload = () => {
+    let data;
+    try{ data = JSON.parse(String(rd.result || "")); }catch(e){ alert("File bukan JSON yang valid."); return; }
+    const arr = Array.isArray(data) ? data : (data && Array.isArray(data.sets) ? data.sets : null);
+    if(!arr){ alert("Format tidak dikenali: tidak ada daftar set filter."); return; }
+    const advKeys = Object.keys(state.proAdv || {});
+    let added = 0, skipped = 0;
+    for(const it of arr){
+      const name = it && typeof it.name === "string" ? it.name.trim().slice(0, 60) : "";
+      if(!name){ skipped++; continue; }
+      const quick = Array.isArray(it.quick) ? it.quick.filter(k => SP_QUICK_DEFS.some(d => d.key === k)) : [];
+      const adv = {};
+      if(it.adv && typeof it.adv === "object"){
+        for(const k of advKeys){ const v = it.adv[k]; if(typeof v === "string" || typeof v === "number") adv[k] = String(v).slice(0, 40); }
+      }
+      const period = PRO_PERIODS.some(p => p.k === it.period && !p.disabled) ? it.period : "7D";
+      const item = { name, quick, adv, period };
+      const i = state.proSets.findIndex(x => x.name.toLowerCase() === name.toLowerCase());
+      if(i >= 0) state.proSets[i] = item; else state.proSets.push(item);
+      added++;
+    }
+    try{ localStorage.setItem(LS_PRO_SETS, JSON.stringify(state.proSets)); }catch(e){}
+    alert(`Impor selesai: ${added} set masuk${skipped ? `, ${skipped} dilewati (tanpa nama)` : ""}. Set dengan nama yang sama ditimpa.`);
+    render();
+  };
+  rd.onerror = () => alert("Gagal membaca file.");
+  rd.readAsText(file);
+}
+function proToggleQuick(key){
+  const q = state.proQuick || [];
+  state.proQuick = q.includes(key) ? q.filter(k => k !== key) : [...q, key];
+  proSave(); state.page = 1; render();
+}
+function proSetAdv(field, val){ state.proAdv[field] = val; proSave(); state.page = 1; render(); }
+function proReset(){
+  state.proQuick = [];
+  state.proAdv = { signal:"", flag:"", minValueM:"", minRadar:"", minScore:"", minVolRatio:"", minForeign5B:"", minRs1m:"", polaBias:"", polaKey:"", polaStatus:"", minPola:"", exDivMax:"", earnMax:"", topN:"" };
+  proSave(); state.page = 1; render();
+}
+function renderProPanel(list){
+  const q = state.proQuick || [], a = state.proAdv || {};
+  const open = state.proPanelOpen !== false;
+  pscEnsure();
+  ccEnsure();
+  const alertNew = proAlertCheck(list);
+  if(alertNew.length) proTelegramNotify(alertNew, list);
+  const active = q.length + Object.values(a).filter(v => v !== "" && v != null).length;
+  const cnt = k => list.filter(s => s.proQuick && s.proQuick[k]).length;
+  const pills = SP_QUICK_DEFS.map(d => `<button type="button" class="pill ${q.includes(d.key) ? "pill-up" : "pill-muted"}" onclick="proToggleQuick('${d.key}')" title="${d.tip}">${d.label} <span style="opacity:.7;font-size:10.5px;">${cnt(d.key)}</span></button>`).join("");
+  const sty = "background:color-mix(in srgb, currentColor 6%, transparent);border:1px solid var(--border);color:var(--text);font-size:12.5px;border-radius:8px;padding:8px 10px;width:100%;";
+  const sel = (label, field, opts) => `<div class="field" style="min-width:130px;flex:1 1 130px;"><label>${label}</label><select style="${sty}" onchange="proSetAdv('${field}', this.value)"><option value="">Semua</option>${opts.map(o => `<option value="${o}" ${a[field] === o ? "selected" : ""}>${o}</option>`).join("")}</select></div>`;
+  const inp = (label, field, ph) => `<div class="field" style="min-width:120px;flex:1 1 120px;"><label>${label}</label><input type="number" step="any" style="${sty}" value="${a[field] ?? ""}" placeholder="${ph}" onchange="proSetAdv('${field}', this.value)"></div>`;
+  const flags = ["🐋 Whale", "🥷 Stealth", "🌍 Asing Masuk", "🔥 Spike Vol", "⚠️ Kurang Likuid"];
+  return `
+    <div class="panel" style="flex-direction:column;align-items:stretch;margin-bottom:16px;border:1px solid rgba(34,211,238,0.3);">
+      <div class="filter-section-title" style="cursor:pointer;display:flex;align-items:center;justify-content:space-between;gap:10px;user-select:none;" onclick="state.proPanelOpen=${!open}; render();">
+        <span style="display:flex;align-items:center;gap:8px;"><span style="display:inline-block;transition:transform .15s;transform:rotate(${open ? 90 : 0}deg);">▶</span>📡 Screener Pro — Filter Cepat &amp; Radar ${active ? `<span class="pill pill-up" style="font-size:10.5px;padding:1px 8px;">${active} aktif</span>` : ""}${alertNew.length ? `<span class="pill pill-gold" style="font-size:10.5px;padding:1px 8px;">🔔 ${alertNew.length} Strong baru</span>` : ""}</span>
+        <span class="line" style="flex:1;"></span>
+      </div>
+      ${open ? `
+      ${alertNew.length ? `<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:10px;padding:8px 10px;border-radius:8px;background:rgba(245,158,11,0.10);border:1px solid rgba(245,158,11,0.35);">
+        <span style="font-size:12px;font-weight:700;">🔔 Baru masuk Radar Strong (belum Strong di hari sebelumnya):</span>
+        ${alertNew.slice(0, 30).map(t => `<button type="button" class="ticker-link" data-detail="${escapeHtml(t)}">${escapeHtml(t)}</button>`).join(" ")}
+        ${alertNew.length > 30 ? `<span style="font-size:11px;color:var(--muted);">+${alertNew.length - 30} lainnya</span>` : ""}
+        <button type="button" class="btn btn-outline" style="font-size:11px;padding:3px 9px;margin-left:auto;" onclick="proAlertDismiss()">Tandai sudah dilihat</button>
+      </div>` : ""}
+      <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-bottom:10px;">
+        <span style="font-size:11.5px;color:var(--muted);margin-right:4px;">Periode aliran asing:</span>
+        ${PRO_PERIODS.map(p => `<button type="button" class="pill ${state.proPeriod === p.k ? "pill-gold" : "pill-muted"}" ${p.disabled ? "disabled" : `onclick="proSetPeriod('${p.k}')"`} style="padding:3px 12px;font-size:11.5px;${p.disabled ? "opacity:.4;cursor:not-allowed;" : ""}" title="${p.note}">${p.label}</button>`).join("")}
+        <span style="font-size:10.5px;color:var(--muted);">${(PRO_PERIODS.find(p => p.k === state.proPeriod) || {}).note || ""}</span>
+      </div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:12px;">${pills}
+        ${active ? `<button type="button" class="btn btn-outline" style="font-size:11.5px;padding:4px 10px;" onclick="proReset()">✖ Reset</button>` : ""}
+      </div>
+      <div class="filter-toolbar" style="gap:10px;">
+        ${sel("Signal Radar", "signal", ["Strong", "Watch", "Neutral", "Weak"])}
+        ${sel("Flag", "flag", flags)}
+        ${inp("Min Nilai Transaksi (Rp juta)", "minValueM", "mis. 2000")}
+        ${inp("Min Radar (0-100)", "minRadar", "mis. 60")}
+        ${inp("Min Skor Gabungan", "minScore", "mis. 50")}
+        ${inp("Min RVOL (x)", "minVolRatio", "mis. 1.5")}
+        ${inp("Min Net Asing periode (Rp miliar)", "minForeign5B", "mis. 1")}
+        ${inp("Min RS 1M vs IHSG (poin %)", "minRs1m", "mis. 5")}
+        ${sel("Bias Pola Chart", "polaBias", ["bullish", "bearish", "neutral"])}
+        <div class="field" style="min-width:150px;flex:1 1 150px;"><label>Pola Chart</label><select style="${sty}" onchange="proSetAdv('polaKey', this.value)"><option value="">Semua</option>${pscPatternOptions(a.polaKey)}</select></div>
+        ${sel("Status Pola", "polaStatus", ["confirmed", "developing"])}
+        ${inp("Min Skor Pola (0-100)", "minPola", "mis. 70")}
+        ${inp("Top N Gainer+Vol+Frek (default 20)", "topN", "20")}
+        ${inp("Ex-dividen dalam (hari)", "exDivMax", "mis. 14")}
+        ${inp("Earnings dalam (hari)", "earnMax", "mis. 30")}
+      </div>
+      <div style="font-size:11px;color:var(--muted);margin-top:6px;">📐 Pola Chart: ${PSC.loading ? "memuat hasil scan…" : PSC.ok === false ? "gagal memuat tabel pattern_scan_results (kolom & filter pola kosong)" : PSC.map.size ? `${PSC.map.size} saham punya pola (timeframe 1D, tanpa yang Failed)${PSC.scannedAt ? " · dipindai " + new Date(PSC.scannedAt).toLocaleString("id-ID") : ""}. Saham dengan beberapa pola lolos bila salah satunya memenuhi semua kriteria pola yang diisi.` : "belum ada hasil scan — jalankan scan-patterns.mjs"}</div>
+      <div style="font-size:11px;color:var(--muted);margin-top:6px;">📅 Jadwal Korporasi: ${CC.loading ? "memuat…" : CC.ok === false ? `gagal membaca kolom jadwal dari tabel stocks (${escapeHtml(CC.err)}) — pastikan migrasi SQL 09 sudah dijalankan dan tabel stocks bisa dibaca` : CC.map.size ? `${CC.map.size} saham punya minimal satu tanggal dari Yahoo (cakupan tidak merata; kosong ≠ tidak ada jadwal). Filter hanya menghitung tanggal hari ini atau ke depan.` : "belum ada tanggal — jalankan sync-idx-full.mjs (tanpa --skip-fundamentals) setelah migrasi SQL"}</div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-top:12px;">
+        <input id="proSetName" type="text" placeholder="Nama set filter..." style="${sty}width:200px;">
+        <button type="button" class="btn btn-outline" style="font-size:11.5px;padding:6px 10px;" onclick="proSaveSet()">💾 Simpan Set</button>
+        ${(state.proSets || []).length ? `<button type="button" class="btn btn-outline" style="font-size:11.5px;padding:6px 10px;" onclick="proExportSets()" title="Unduh semua set filter sebagai file JSON">⬇ Ekspor Set</button>` : ""}
+        <label class="btn btn-outline" style="font-size:11.5px;padding:6px 10px;cursor:pointer;margin:0;" title="Impor set filter dari file JSON hasil ekspor">⬆ Impor Set<input type="file" accept=".json,application/json" style="display:none;" onchange="proImportSets(this.files[0]); this.value='';"></label>
+        <button type="button" class="btn btn-outline" style="font-size:11.5px;padding:6px 10px;" onclick="proToWatchlist()" title="Tambahkan hasil filter saat ini (maks. 50 teratas menurut Radar) ke Watchlist">⭐ Hasil → Watchlist</button>
+        ${(state.proSets || []).length ? `<select style="${sty}width:auto;" onchange="if(this.value!==''){proLoadSet(+this.value);}"><option value="">📂 Muat set...</option>${state.proSets.map((x, i) => `<option value="${i}">${escapeHtml(x.name)}</option>`).join("")}</select>
+        <select style="${sty}width:auto;" onchange="if(this.value!==''){proDeleteSet(+this.value);}"><option value="">🗑 Hapus set...</option>${state.proSets.map((x, i) => `<option value="${i}">${escapeHtml(x.name)}</option>`).join("")}</select>` : ""}
+      </div>
+      ${proTgRowHtml()}
+      ${proTrackHtml(list)}
+      <div style="font-size:11px;color:var(--muted);margin-top:8px;line-height:1.5;">Pilihan filter tersimpan otomatis di browser ini. Filter Cepat digabung AND (harus lolos semua yang dipilih), dan berlaku bersama preset, filter & rules lain. Radar Score 0-100 = volume (25) + aliran asing (20) + bandar/uang gede (15) + tren (20) + momentum RSI7 (10) + frekuensi &amp; likuiditas (10); dipotong 30% bila nilai transaksi &lt; Rp1 M. Ini ranking sinyal aktivitas, bukan prediksi harga. Klik header kolom 📡 Radar untuk mengurutkan. Periode aliran asing memengaruhi komponen asing di Radar, Foreign In, Consensus, Stealth, dan filter Min Net Asing. ${proBenchNote()}</div>` : ""}
+    </div>`;
+}
+
 function togglePreset(key){
   state.activePresets = isPresetOn(key)
     ? state.activePresets.filter(k => k !== key)
@@ -12878,6 +13522,9 @@ function getFiltered(){
     if(hideGocap && (s.cClose <= 50 || !s.cVol)) return false;
     if(state.search && !String(s.ticker || "").toLowerCase().includes(state.search.toLowerCase())) return false;
     
+    // --- SCREENER PRO: Filter Cepat (AND) + Advanced Filters ---
+    if(!proPass(s)) return false;
+
     // --- PRESET DSI (bisa multi-pilih) ---
     // Mode "and" (default): saham harus lolos SEMUA preset terpilih.
     // Mode "or": cukup lolos SALAH SATU. Logika tiap preset ada di presetPass().
@@ -12939,9 +13586,7 @@ function getFiltered(){
     if(!inRange(s.ytdPct, rf.ytdPct)) return false;
 
     if(state.customRules && state.customRules.length){
-      for(const rule of state.customRules){
-        if(!evalCustomRule(s, rule)) return false;
-      }
+      if(!evalRuleSet(s, state.customRules)) return false;
     }
 
     return true;
@@ -13642,7 +14287,7 @@ function rekapScreenerDefs(){
   });
   (state.customPresets||[]).forEach(p => {
     if(!Array.isArray(p.rules) || !p.rules.length) return; // rules kosong -- dilewati, tidak informatif
-    defs.push({ id:`custom_${p.id}`, label:p.name, source:"Preset Kustom", test: s => p.rules.every(rule => evalCustomRule(s, rule)) });
+    defs.push({ id:`custom_${p.id}`, label:p.name, source:"Preset Kustom", test: s => evalRuleSet(s, p.rules) });
   });
   BSJP_PRESETS.forEach(p => {
     if(p.key === "all") return; // "All Screened" selalu lolos semua saham -- tidak informatif
@@ -14246,12 +14891,11 @@ function render(){
     else if(state.tab==="target") content.innerHTML = renderTargetBandar();
     else if(state.tab==="eps") content.innerHTML = renderEntryPriceScanner();
     else if(state.tab==="kraken") content.innerHTML = renderKrakenFlow();
-    else if(state.tab==="radar") content.innerHTML = renderMarketRadar();
     else if(state.tab==="bsjp") content.innerHTML = renderBsjp();
-    else if(state.tab==="gapgo") content.innerHTML = renderGapGo();
     else if(state.tab==="wsdebug") content.innerHTML = renderWsDebug();
     else if(state.tab==="patternscan") content.innerHTML = renderPatternScanner();
     else if(state.tab==="screenerbt") content.innerHTML = (typeof SBT==="object" && SBT) ? renderScreenerBt() : `<div class="empty-box">Memuat…</div>`;
+    else if(state.tab==="insideraccum") content.innerHTML = (typeof INS==="object" && INS) ? renderInsiderAccum() : `<div class="empty-box">Memuat…</div>`;
     else if(state.tab==="gainloss") content.innerHTML = (typeof GL==="object" && GL) ? renderGainLoss() : `<div class="empty-box">Memuat…</div>`; // GL didefinisikan di akhir file
     else if(state.tab==="about") content.innerHTML = renderPanduan(); // alias lama, redirect ke Panduan
     else if(state.tab==="panduan") content.innerHTML = renderPanduan();
@@ -14267,7 +14911,6 @@ function render(){
   }
 
   attachContentEvents();
-  if(state.tab==="gapgo" && typeof ggBind==="function") ggBind();
   if(state.tab==="patternscan" && typeof psBind==="function") psBind();
   if(state.tab==="gainloss" && typeof GL==="object" && GL && typeof glBind==="function") glBind();
   if(state.tab==="chart" && state.selectedTicker) drawChartSVG();
@@ -14673,6 +15316,17 @@ const SCREENER_COLUMNS = [
   { key:"band.label", label:"Bandarmologi (proxy vol.)", group:"Bandarmologi", cell:s=>`<td>${pillHtml(s.band.label, s.band.tone)}</td>` },
   { key:"foreignNet20D", label:"Net Asing 20H (IDX)", group:"Bandarmologi", cell:s=>`<td class="mono" style="color:${(s.foreignNet20D??0)>=0?'var(--up)':'var(--down)'}">${s.foreignNet20D!=null?fmtRp(s.foreignNet20D):'-'}</td>` },
   { key:"foreignUpDays", label:"Hari Asing +", group:"Bandarmologi", cell:s=>`<td class="mono">${s.foreignUpDays!=null?`${s.foreignUpDays}/${s.flowDays??20}`:'-'}</td>` },
+  { key:"radarScore", label:"📡 Radar", group:"Analisa", cell:s=>proRadarCell(s) },
+  { key:"radarSignal", label:"Signal Radar", group:"Analisa", cell:s=>`<td>${pillHtml(s.radarSignal||"-", s.radarTone||"muted")}</td>` },
+  { key:"radarForeignWin", label:"Net Asing (periode Pro)", group:"Bandarmologi", cell:s=>`<td class="mono" style="color:${(s.radarForeignWin??0)>=0?'var(--up)':'var(--down)'}">${s.radarForeignWin!=null?fmtRp(s.radarForeignWin):'-'}</td>` },
+  { key:"rs1m", label:"RS 1M vs IHSG (poin)", group:"Analisa", cell:s=>`<td class="mono" style="color:${(s.rs1m??0)>=0?'var(--up)':'var(--down)'}">${s.rs1m!=null?((s.rs1m>=0?'+':'')+s.rs1m.toFixed(2)):'-'}</td>` },
+  { key:"rs1w", label:"RS 1W vs IHSG (poin)", group:"Analisa", cell:s=>`<td class="mono" style="color:${(s.rs1w??0)>=0?'var(--up)':'var(--down)'}">${s.rs1w!=null?((s.rs1w>=0?'+':'')+s.rs1w.toFixed(2)):'-'}</td>` },
+  { key:"polaScore", label:"📐 Pola Chart", group:"Analisa", cell:s=>pscCell(s) },
+  { key:"rankGvfMax", label:"🚀 Rank G/V/F", group:"Analisa", cell:s=>tgvfCell(s) },
+  { key:"exDivTs", label:"📅 Ex-Dividen", group:"Fundamental", cell:s=>ccCell(s.exDivDate, s.exDivDays) },
+  { key:"payDivTs", label:"💰 Bayar Dividen", group:"Fundamental", cell:s=>ccCell(s.payDivDate, s.payDivDays) },
+  { key:"earnTs", label:"📊 Earnings Berikut", group:"Fundamental", cell:s=>ccCell(s.nextEarnDate, s.earnDays) },
+  { key:"radarFlag", label:"Flag Radar", group:"Analisa", cell:s=>`<td style="white-space:nowrap;">${s.radarFlag||"-"}</td>` },
   { key:"uangGedeMasuk", label:"Uang Gede Masuk", group:"Bandarmologi", cell:s=>`<td>${pillHtml(s.uangGedeMasuk||"-", s.uangGedeMasuk==="Ya"?"up":"muted")}</td>` },
   { key:"isBBSqueeze", label:"BB Squeeze", group:"Teknikal", cell:s=>`<td>${pillHtml(s.isBBSqueeze||"-", s.isBBSqueeze==="Ya"?"gold":"muted")}</td>` },
   { key:"bbWidth", label:"BB Width", group:"Teknikal", cell:s=>`<td class="mono">${s.bbWidth??"-"}</td>` },
@@ -14829,6 +15483,7 @@ const RULE_METRICS = [
   { key:"npm", label:"Net Profit Margin (%)" }, { key:"opm", label:"Operating Margin (%)" },
   { key:"revenueGrowth", label:"Revenue Growth (%)" }, { key:"earningsGrowth", label:"Earnings Growth (%)" },
   { key:"divYield", label:"Dividend Yield (%)" }, { key:"dividendRate", label:"Dividend Rate" },
+  { key:"exDivDays", label:"Hari ke Ex-Dividen (negatif = lewat)" }, { key:"earnDays", label:"Hari ke Earnings (negatif = lewat)" },
   { key:"payoutRatio", label:"Payout Ratio (%)" }, { key:"beta", label:"Beta" },
   { key:"der", label:"DER" }, { key:"currentRatio", label:"Current Ratio" },
   { key:"marketCap", label:"Market Cap" }, { key:"sharesOutstanding", label:"Shares Outstanding" },
@@ -14953,7 +15608,7 @@ const RULE_METRIC_CATS = [
   { id:"technical", label:"Teknikal" }, { id:"price", label:"Harga & Volume" },
 ];
 const RULE_CAT_FUND = new Set(["per","forwardPer","pbv","eps","bookValue","psr","peg","roe","roa","npm","opm","revenueGrowth","earningsGrowth",
-  "divYield","dividendRate","payoutRatio","beta","der","currentRatio","marketCap","sharesOutstanding","indexLq45","valuasi","capCategory","capTier",
+  "divYield","dividendRate","exDivDays","earnDays","payoutRatio","beta","der","currentRatio","marketCap","sharesOutstanding","indexLq45","valuasi","capCategory","capTier",
   "fundScore60","fundTechScore"]);
 const RULE_CAT_BANDAR = new Set(["foreignNet1D","foreignNet5D","foreignNet20D","foreignUpDays","avgTicket","crossingPct","flowDays","band","uangGedeMasuk",
   "top5BuyBrokers","top5SellBrokers"]);
@@ -15169,6 +15824,10 @@ function ruleBConstArray(rule){
   return (rule.bConst!==null && rule.bConst!==undefined && rule.bConst!=="") ? [rule.bConst] : [];
 }
 function ruleDescription(rule){
+  const gp = rule.grp ? `[${rule.grp}] ` : "";
+  return gp + ruleDescriptionBase(rule);
+}
+function ruleDescriptionBase(rule){
   const aLabel = ruleMetricLabel(rule.aKey);
   if(rule.op === "between"){
     return `${aLabel} antara ${rule.bConstMin} dan ${rule.bConstMax}`;
@@ -15278,6 +15937,25 @@ function evalCustomRule(s, rule){
   const mult = parseFloat(rule.mult);
   if(isNaN(mult)) return false;
   return cmp(aVal, mult * bVal);
+}
+// --- Rules Kustom: AND + grup OR ---
+// Rule tanpa grup (rule.grp kosong) = berdiri sendiri, digabung AND seperti dulu (kompatibel dengan rule/preset lama).
+// Rule dengan huruf grup yang sama (A/B/C/D) = cukup SALAH SATU lolos (OR) di dalam grup itu; antar-grup dan
+// rule mandiri tetap AND. Contoh: [A] RSI7 cross 25 ATAU [A] MACD cross, DAN likuid.
+const RULE_GROUPS = ["A", "B", "C", "D"];
+function evalRuleSet(s, rules){
+  if(!Array.isArray(rules) || !rules.length) return true;
+  const groups = {};
+  for(const rule of rules){
+    if(!rule.grp){ if(!evalCustomRule(s, rule)) return false; }
+    else (groups[rule.grp] = groups[rule.grp] || []).push(rule);
+  }
+  for(const g of Object.keys(groups)){
+    // Rule kategori dengan checklist kosong = nonaktif (lihat evalCustomRule) -> jangan ikut menentukan hasil OR.
+    const live = groups[g].filter(r => !(isCategoryMetric(r.aKey) && !ruleBConstArray(r).length));
+    if(live.length && !live.some(r => evalCustomRule(s, r))) return false;
+  }
+  return true;
 }
 function saveCustomRules(){ localStorage.setItem(LS_CUSTOM_RULES, JSON.stringify(state.customRules)); }
 
@@ -15676,6 +16354,7 @@ function renderRuleBuilder(){
             )
       }
       ${(isCat || isBroker || r.op === "between") ? "" : `<button type="button" class="rule-btype-toggle" data-rule-field="toggleBType" data-rule-id="${r.id}" title="${r.bType==='const' ? 'Ganti jadi: bandingkan dengan metrik lain' : 'Ganti jadi: bandingkan dengan angka tetap'}">${r.bType==='const' ? '🔢' : '📊'}</button>`}
+      <select class="rule-op" data-rule-field="grp" data-rule-id="${r.id}" title="Grup OR: rule dengan huruf yang sama cukup salah satu yang lolos. Kosong = rule mandiri (AND)." style="max-width:92px;">${["", ...RULE_GROUPS].map(g => `<option value="${g}" ${(r.grp||"")===g ? "selected" : ""}>${g ? "OR grup " + g : "AND"}</option>`).join("")}</select>
       <button type="button" class="rule-del" data-rule-del="${r.id}" title="Hapus rule">✕</button>
     </div>
   `;
@@ -15703,7 +16382,7 @@ function renderRuleBuilder(){
         ${RULE_TEMPLATES.map(t => `<button type="button" class="btn btn-outline" data-rule-template="${t.key}" title="${escapeHtml(t.desc)}">${t.label}</button>`).join("")}
         <button type="button" class="btn btn-outline" id="savePresetBtn" ${state.presetsLoading?'disabled':''}>💾 Simpan sebagai Preset...</button>
         ${state.customRules.length ? `<button type="button" class="btn btn-outline" id="resetRulesBtn" title="Kosongkan semua rule kustom" style="color:#f87171;border-color:rgba(239,68,68,0.3);">↺ Reset</button>` : ""}
-        ${state.customRules.length ? `<span style="font-size:12px;color:var(--muted);">${state.customRules.length} rule aktif — otomatis diterapkan ke tabel di bawah (AND, semua harus terpenuhi).</span>` : ""}
+        ${state.customRules.length ? `<span style="font-size:12px;color:var(--muted);">${state.customRules.length} rule aktif — otomatis diterapkan ke tabel di bawah (rule mandiri = AND; rule dengan grup OR yang sama cukup salah satu lolos).</span>` : ""}
       </div>` : ""}
       <div style="display:flex;align-items:center;gap:10px;margin-top:14px;flex-wrap:wrap;padding-top:12px;border-top:1px solid var(--border);">
         <label style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;flex:1 1 100%;">Sortir Hasil (opsional)</label>
@@ -15740,6 +16419,7 @@ const DEFAULT_VISIBLE_COLS = [
   "sektor", "baggerScoreTotal", "stockbitLive", "cClose", "changePct", "cVol", "frequency",
   "per", "pbv", "roe", "divYield", "valuasi",
   "trendHarga", "rsi7", "cekMacd",
+  "radarScore", "radarSignal", "radarFlag", "polaScore",
   "foreignNet20D", "keyakinanNaik", "rekomendasi", "rekapPreset"
 ];
 const LS_VISIBLE_COLS = "ihsg_visible_cols_v1";
@@ -15884,6 +16564,7 @@ function renderScreener(){
         </div>
       </div>
     </div>
+    ${renderProPanel(list)}
     ${renderRuleBuilder()}
     <div class="panel" style="flex-direction:column;align-items:stretch;">
       ${sectionHeader("filter", "🔍 Filter & Screener", state.screenerFilterOpen)}
@@ -16894,42 +17575,6 @@ function occurrenceDetailRows(occurrences, mode){
   </td></tr>`;
 }
 
-// ---------- Catatan KELUAR per item Backtest (harga keluar + alasan) ----------
-// Untuk menilai uji maju day trade: isi harga keluar nyata dan alasannya (TP/SL/gap terisi/...).
-// Disimpan lokal (localStorage) dan, kalau kolom server tersedia, ke backtest_items.exit_price/exit_reason:
-//   ALTER TABLE backtest_items ADD COLUMN exit_price numeric, ADD COLUMN exit_reason text;
-const BT_EXIT_REASONS = ["TP", "SL", "Gap terisi", "Tutup hari (close)", "Manual", "Lainnya"];
-let _btExitSyncWarned = false;
-function btExitPL(item){
-  const ep = Number(item && item.exitPrice), en = Number(item && item.entryPrice);
-  return (ep > 0 && en > 0) ? ((ep - en) / en) * 100 : null;
-}
-async function setBacktestExit(sessionId, ticker, field, rawValue){
-  const session = state.backtests.find(b => String(b.id) === String(sessionId));
-  const item = session && session.items.find(it => it.ticker === ticker);
-  if(!item) return;
-  if(field === "price"){
-    const v = parseFloat(String(rawValue).replace(",", "."));
-    item.exitPrice = (Number.isFinite(v) && v > 0) ? v : null;
-  } else {
-    item.exitReason = String(rawValue || "");
-  }
-  saveBacktests();
-  render();
-  try{
-    await supaFetch(`${SUPABASE_URL}/backtest_items?session_id=eq.${sessionId}&ticker=eq.${ticker}`, {
-      method: "PATCH",
-      headers: { ...getSupaHeaders(), "Prefer": "return=minimal" },
-      body: JSON.stringify({ exit_price: item.exitPrice, exit_reason: item.exitReason || null })
-    });
-  }catch(e){
-    if(!_btExitSyncWarned){
-      _btExitSyncWarned = true;
-      showError(`Catatan keluar tersimpan lokal, tapi belum tersinkron ke server (kolom exit_price/exit_reason mungkin belum ada): ${e.message}`);
-    }
-  }
-}
-
 function renderBacktest(){
   const tickerOptions = [...new Set(state.stocks.map(s=>s.ticker))].map(t=>`<option value="${t}">`).join("");
   const sessionOptions = `<option value="">+ Buat sesi baru</option>` +
@@ -16985,7 +17630,7 @@ function renderBacktest(){
   }
 
   const sessions = state.backtests.map(session => {
-    let winCount = 0, lossCount = 0, winCountMax = 0, lossCountMax = 0, totalPL = 0, maxPL = -Infinity, minPL = Infinity, validItems = 0, exitN = 0, exitWin = 0, exitSum = 0; const exitReasons = {};
+    let winCount = 0, lossCount = 0, winCountMax = 0, lossCountMax = 0, totalPL = 0, maxPL = -Infinity, minPL = Infinity, validItems = 0;
 
     const rowData = session.items.map(item => {
       const liveData = state.stocks.find(s => s.ticker === item.ticker);
@@ -17023,15 +17668,6 @@ function renderBacktest(){
         else if (periodMaxPL < 0) lossCountMax++;
       }
 
-      const plExit = btExitPL(item);
-      if (plExit != null) {
-        exitN++; exitSum += plExit; if (plExit > 0) exitWin++;
-        const rk = item.exitReason || "Tanpa alasan"; exitReasons[rk] = (exitReasons[rk] || 0) + 1;
-      }
-      const exitTone = (plExit ?? 0) > 0 ? "up" : (plExit ?? 0) < 0 ? "down" : "muted";
-      const exitKey = `${session.id}|${item.ticker}`;
-      const exitReasonOpts = [""].concat(BT_EXIT_REASONS).concat((item.exitReason && !BT_EXIT_REASONS.includes(item.exitReason)) ? [item.exitReason] : [])
-        .map(r => `<option value="${escapeHtml(r)}" ${r === (item.exitReason || "") ? "selected" : ""}>${r ? escapeHtml(r) : "— pilih —"}</option>`).join("");
       const tone = plTone;
       const plStr = plText(pl);
       const filterStr = item.filterStr || "-";
@@ -17049,7 +17685,7 @@ function renderBacktest(){
       return { sortKey: {
           ticker: item.ticker, sumber: item.sumber || "Screener", tglEntry: item.entryDate,
           hargaEntry: item.entryPrice, hargaLive: currentPrice, pl, hargaTertinggi: period.highPeriod,
-          plMax: periodMaxPL, hari: hariSejak, plExit,
+          plMax: periodMaxPL, hari: hariSejak,
         }, html: `<tr>
         <td class="ticker-cell"><button class="ticker-link" data-bt-add-porto="${session.id}|${item.ticker}" title="Tambah ${item.ticker} ke Portofolio (harga &amp; tanggal entry otomatis terisi)">${item.ticker}</button> <button type="button" class="link-btn" data-bt-detail="${item.ticker}" title="Buka detail ${item.ticker}">Detail</button></td>
         <td>${sumberPill}</td>
@@ -17062,9 +17698,6 @@ function renderBacktest(){
         <td class="mono" title="${escapeHtml(noHistTip) || `Harga tertinggi sejak tanggal entry (dari data historical harian)${historyTip}`}">${fmtNum(period.highPeriod)}</td>
         <td class="mono" style="color:var(--${maxTone}); font-weight:700; font-size:14px;" title="${escapeHtml(noHistTip) || `P/L maksimum: (Harga Tertinggi periode − Harga Entry) ÷ Harga Entry${historyTip}`}">${plText(periodMaxPL)}</td>
         <td class="mono">${hariStr}</td>
-        <td><input type="number" step="any" min="0" data-bt-exit="price" data-bt-key="${exitKey}" value="${item.exitPrice ?? ""}" placeholder="harga keluar" title="Harga keluar nyata (saat TP/SL/gap terisi/tutup)" style="width:96px;padding:4px 6px;font-size:12px;"></td>
-        <td><select data-bt-exit="reason" data-bt-key="${exitKey}" title="Alasan keluar" style="padding:4px 6px;font-size:12px;">${exitReasonOpts}</select></td>
-        <td class="mono" style="color:var(--${exitTone}); font-weight:700;" title="P/L realisasi = (Harga Keluar − Harga Entry) ÷ Harga Entry (belum dikurangi fee)">${plExit == null ? "-" : plText(plExit)}</td>
         <td><a class="link-btn" href="#/chart/${encodeURIComponent(item.ticker)}" data-chart="${item.ticker}">Chart</a></td>
         <td><button class="link-btn" style="color:#f87171;" data-del-bt-item="${session.id}|${item.ticker}">Hapus</button></td>
       </tr>` };
@@ -17072,7 +17705,7 @@ function renderBacktest(){
     const sortedRowData = tableSortRows(`backtestSession-${session.id}`, rowData, {
       ticker: r=>r.sortKey.ticker, sumber: r=>r.sortKey.sumber, tglEntry: r=>r.sortKey.tglEntry,
       hargaEntry: r=>r.sortKey.hargaEntry, hargaLive: r=>r.sortKey.hargaLive, pl: r=>r.sortKey.pl,
-      hargaTertinggi: r=>r.sortKey.hargaTertinggi, plMax: r=>r.sortKey.plMax, hari: r=>r.sortKey.hari, plExit: r=>r.sortKey.plExit,
+      hargaTertinggi: r=>r.sortKey.hargaTertinggi, plMax: r=>r.sortKey.plMax, hari: r=>r.sortKey.hari,
     });
     const rows = sortedRowData.map(r => r.html).join("");
 
@@ -17120,13 +17753,12 @@ function renderBacktest(){
           </div>
         </div>
         ${sessionSummary}
-        ${exitN > 0 ? `<div style="font-size:12px;margin:-4px 0 14px;padding:8px 12px;border:1px solid var(--border);border-radius:8px;"><b>Realisasi keluar:</b> ${exitN} dari ${session.items.length} item · win rate ${Math.round(exitWin / exitN * 100)}% (${exitWin}/${exitN}) · rata-rata ${(exitSum / exitN) > 0 ? "+" : ""}${(exitSum / exitN).toFixed(2)}% · ${Object.entries(exitReasons).map(([k, v]) => escapeHtml(k) + " " + v).join(", ")}</div>` : ""}
         <div class="table-wrap">
           <table class="mono">
             <thead>
               <tr>
                 ${tableSortTh(`backtestSession-${session.id}`,"Ticker","ticker")}${tableSortTh(`backtestSession-${session.id}`,"Sumber","sumber")}${tableSortTh(`backtestSession-${session.id}`,"Tanggal Entry","tglEntry")}<th>Kriteria Screener</th><th>Filter / Keterangan</th>${tableSortTh(`backtestSession-${session.id}`,"Harga Entry","hargaEntry")}
-                ${tableSortTh(`backtestSession-${session.id}`,"Harga Live","hargaLive")}${tableSortTh(`backtestSession-${session.id}`,"Profit / Loss","pl")}${tableSortTh(`backtestSession-${session.id}`,"Harga Tertinggi","hargaTertinggi")}${tableSortTh(`backtestSession-${session.id}`,"Capai P/L","plMax")}${tableSortTh(`backtestSession-${session.id}`,"Hari","hari")}<th>Harga Keluar</th><th>Alasan Keluar</th>${tableSortTh(`backtestSession-${session.id}`,"P/L Keluar","plExit")}<th>Aksi</th><th></th>
+                ${tableSortTh(`backtestSession-${session.id}`,"Harga Live","hargaLive")}${tableSortTh(`backtestSession-${session.id}`,"Profit / Loss","pl")}${tableSortTh(`backtestSession-${session.id}`,"Harga Tertinggi","hargaTertinggi")}${tableSortTh(`backtestSession-${session.id}`,"Capai P/L","plMax")}${tableSortTh(`backtestSession-${session.id}`,"Hari","hari")}<th>Aksi</th><th></th>
               </tr>
             </thead>
             <tbody>${rows}</tbody>
@@ -17951,121 +18583,7 @@ function bsScanFromEpsRaw(raw){
   return d;
 }
 
-// ---------- Cache perangkat Pindai Akumulasi (IndexedDB) ----------
-// Sama seperti Broker Nyangkut: kalau RPC eps_scan_daily_v2_activity tidak
-// bisa dipakai, data ditarik lewat paging broker_activity (puluhan ribu baris).
-// Hasilnya disimpan PER TANGGAL di perangkat; scan berikutnya cukup menarik
-// tanggal terakhir yang ada di cache (+ yang lebih baru). Cache dibuang kalau
-// ada penyimpanan broker_activity baru dari aplikasi ini, umur tarik-penuh
-// terakhir > 24 jam, URL backend berubah, atau tombol "Tarik penuh" ditekan.
-const LS_BSSCAN_RPC_FAIL = "ihsg_bsscan_rpc_fail_at";
-const BSSCAN_IDB_KEY = "bsscan_days_v1";
-const BSSCAN_FULL_REFRESH_MS = 24 * 3600 * 1000;
-
-async function idbKvGet(key){
-  try{
-    const db = await bsTrapIdbOpen();
-    return await new Promise(resolve => {
-      const r = db.transaction(BSTRAP_IDB.store, "readonly").objectStore(BSTRAP_IDB.store).get(key);
-      r.onsuccess = () => { db.close(); resolve(r.result || null); };
-      r.onerror = () => { db.close(); resolve(null); };
-    });
-  }catch(e){ return null; }
-}
-async function idbKvSet(key, value){
-  try{
-    const db = await bsTrapIdbOpen();
-    await new Promise(resolve => {
-      const tx = db.transaction(BSTRAP_IDB.store, "readwrite");
-      tx.objectStore(BSTRAP_IDB.store).put(value, key);
-      tx.oncomplete = () => { db.close(); resolve(); };
-      tx.onerror = tx.onabort = () => { db.close(); resolve(); };
-    });
-  }catch(e){}
-}
-async function idbKvDel(keys){
-  try{
-    const db = await bsTrapIdbOpen();
-    await new Promise(resolve => {
-      const tx = db.transaction(BSTRAP_IDB.store, "readwrite");
-      keys.forEach(k => tx.objectStore(BSTRAP_IDB.store).delete(k));
-      tx.oncomplete = () => { db.close(); resolve(); };
-      tx.onerror = tx.onabort = () => { db.close(); resolve(); };
-    });
-  }catch(e){}
-}
-// Dipanggil setiap kali aplikasi ini menyimpan data ke broker_activity.
-function brokerCachesClear(){ return idbKvDel([BSTRAP_IDB.key, BSSCAN_IDB_KEY]); }
-
-// Baris mentah -> { tanggal: [[saham, broker, net], ...] }
-function bsScanRowsToByDate(rows){
-  const maps = new Map();
-  rows.forEach(r => {
-    const stock = String(r.stock_code || "").toUpperCase(), broker = String(r.broker_code || "").toUpperCase();
-    const date = r.trade_date ? String(r.trade_date).slice(0, 10) : "";
-    if(!stock || !broker || !date) return;
-    const sign = String(r.side).toLowerCase() === "buy" ? 1 : -1;
-    const val = sign * (Number(r.value_idr) || 0);
-    let m = maps.get(date); if(!m){ m = new Map(); maps.set(date, m); }
-    const key = stock + "|" + broker;
-    let e = m.get(key); if(!e){ e = [stock, broker, 0]; m.set(key, e); }
-    e[2] += val;
-  });
-  const out = {};
-  maps.forEach((m, d) => { out[d] = [...m.values()]; });
-  return out;
-}
-function bsScanBuildData(byDate, source, fetchedAt){
-  const d = bsScanNewData();
-  Object.keys(byDate).forEach(date => byDate[date].forEach(a => bsScanAddNet(d, a[0], a[1], date, a[2])));
-  const stocks = new Set(); d.pairs.forEach(e => stocks.add(e.stock));
-  return { pairs: d.pairs, dates: [...d.dates].sort(), source, fetchedAt: fetchedAt || new Date().toISOString(), stockCount: stocks.size };
-}
-// Tampilkan cache langsung (tanpa jaringan) saat mode ini dibuka pertama kali.
-async function bsScanHydrate(){
-  const sc = state.bsScan;
-  const cache = await idbKvGet(BSSCAN_IDB_KEY);
-  if(sc.data || sc.loading) return;
-  if(!cache || cache.supa !== SUPABASE_URL || !cache.byDate) return;
-  const d = bsScanBuildData(cache.byDate, "cache", cache.savedAt);
-  if(!d.dates.length || !d.pairs.size) return;
-  sc.data = d; sc.limit = 100; sc.err = false;
-  sc.msg = "Data dari cache perangkat — klik SCAN ULANG untuk mengambil hari terbaru.";
-  render();
-}
-async function bsScanFetchRows(fromDate){
-  const PAGE = 1000;
-  const qs = new URLSearchParams({
-    trade_date: `gte.${fromDate}`,
-    select: "stock_code,trade_date,side,broker_code,value_idr",
-    // 4 kolom ini unik per baris -> paging offset konsisten (tidak ada baris
-    // terlewat/dobel di batas halaman seperti kalau urutannya tidak unik).
-    order: "trade_date.asc,stock_code.asc,side.asc,broker_code.asc"
-  });
-  let pageErr = null;
-  const rows = await fetchAllPagesParallel(async (offset) => {
-    if(pageErr) return null;
-    const q = new URLSearchParams(qs);
-    q.set("limit", String(PAGE)); q.set("offset", String(offset));
-    const res = await fetch(`${SUPABASE_URL}/broker_activity?${q}`, { headers: getSupaHeaders(), cache: "no-store" });
-    if(!res.ok){ pageErr = new Error(`HTTP ${res.status} ${res.statusText}`); return null; }
-    const page = await res.json();
-    if(page && page.message){ pageErr = new Error(page.message); return null; }
-    return page;
-  }, PAGE, {
-    maxConcurrent: 5,
-    onProgress: (n) => {
-      const el = document.getElementById("bsScanProgress");
-      if(el) el.textContent = `Menarik data broker_activity... ${n.toLocaleString("id-ID")} baris`;
-    }
-  });
-  if(pageErr) throw pageErr;
-  return rows;
-}
-
-// opts.full = true -> abaikan cache & catatan "RPC gagal", tarik ulang semuanya.
-async function runBsScan(opts){
-  opts = opts || {};
+async function runBsScan(){
   const sc = state.bsScan;
   if(sc.loading) return;
   if(!SUPABASE_URL || !SUPABASE_KEY){ openSettings(); return; }
@@ -18074,57 +18592,54 @@ async function runBsScan(opts){
     // Butuh 2x jendela terpanjang (1 bulan = 22 hari bursa) supaya status
     // BARU/BALIK/ULANG punya periode pembanding.
     const cutoff = epsCutoffDate(BS_SCAN_PERIOD_DAYS["1m"] * 2 + 2);
+    let built = null, source = "";
+    const fast = await tryFastEpsScanV2Activity(cutoff);
+    if(fast && fast.stockCount){ built = bsScanFromEpsRaw(fast); source = "eps_scan_daily_v2_activity"; }
 
-    // Jalur 1: RPC. Kalau gagal, jangan dicoba lagi selama 6 jam.
-    let skipRpc = false;
-    if(!opts.full){
-      try{ const at = Number(localStorage.getItem(LS_BSSCAN_RPC_FAIL) || 0); skipRpc = at > 0 && Date.now() - at < 6 * 3600 * 1000; }catch(e){}
+    if(!built || !built.pairs.size){
+      const d = bsScanNewData();
+      const PAGE = 1000;
+      const qs = new URLSearchParams({
+        trade_date: `gte.${cutoff}`,
+        select: "stock_code,trade_date,side,broker_code,value_idr",
+        order: "trade_date.asc,stock_code.asc"
+      });
+      let pageErr = null;
+      const rows = await fetchAllPagesParallel(async (offset) => {
+        if(pageErr) return null;
+        const q = new URLSearchParams(qs);
+        q.set("limit", String(PAGE)); q.set("offset", String(offset));
+        const res = await fetch(`${SUPABASE_URL}/broker_activity?${q}`, { headers: getSupaHeaders(), cache: "no-store" });
+        if(!res.ok){ pageErr = new Error(`HTTP ${res.status} ${res.statusText}`); return null; }
+        const page = await res.json();
+        if(page && page.message){ pageErr = new Error(page.message); return null; }
+        return page;
+      }, PAGE, {
+        maxConcurrent: 5,
+        onProgress: (n) => {
+          const el = document.getElementById("bsScanProgress");
+          if(el) el.textContent = `Menarik data broker_activity... ${n.toLocaleString("id-ID")} baris`;
+        }
+      });
+      if(pageErr) throw pageErr;
+      rows.forEach(r => {
+        const sign = String(r.side).toLowerCase() === "buy" ? 1 : -1;
+        bsScanAddNet(d, String(r.stock_code || "").toUpperCase(), String(r.broker_code || "").toUpperCase(), r.trade_date, sign * (Number(r.value_idr) || 0));
+      });
+      built = d; source = "broker_activity";
     }
-    const fast = skipRpc ? null : await tryFastEpsScanV2Activity(cutoff);
-    if(fast && fast.stockCount){
-      const built = bsScanFromEpsRaw(fast);
-      if(built.pairs.size){
-        try{ localStorage.removeItem(LS_BSSCAN_RPC_FAIL); }catch(e){}
-        const stocks = new Set(); built.pairs.forEach(e => stocks.add(e.stock));
-        sc.data = { pairs: built.pairs, dates: [...built.dates].sort(), source: "eps_scan_daily_v2_activity", fetchedAt: new Date().toISOString(), stockCount: stocks.size };
-        sc.msg = ""; sc.limit = 100; sc.loading = false; render(); return;
-      }
-    }
-    if(!skipRpc){ try{ localStorage.setItem(LS_BSSCAN_RPC_FAIL, String(Date.now())); }catch(e){} }
 
-    // Jalur 2: paging broker_activity + cache harian di perangkat.
-    if(opts.full) await idbKvDel([BSSCAN_IDB_KEY]);
-    const cache = opts.full ? null : await idbKvGet(BSSCAN_IDB_KEY);
-    const dayKeys = cache && cache.byDate ? Object.keys(cache.byDate).sort() : [];
-    const usable = !!(cache && cache.supa === SUPABASE_URL && dayKeys.length && cache.lastFullAt
-      && (Date.now() - Date.parse(cache.lastFullAt)) < BSSCAN_FULL_REFRESH_MS);
-    const byDate = usable ? cache.byDate : {};
-    let fromDate = cutoff;
-    if(usable){
-      fromDate = dayKeys[dayKeys.length - 1]; // tanggal terakhir ditarik ulang (bisa belum lengkap saat di-cache)
-      sc.data = bsScanBuildData(byDate, "cache", cache.savedAt); sc.limit = 100;
-      sc.msg = `Menampilkan cache — memperbarui dari ${fromDate}...`;
-    }else{
-      sc.msg = "RPC eps_scan_daily_v2_activity tidak tersedia — memuat lewat paging broker_activity (lebih lambat, hasilnya disimpan ke cache perangkat)...";
-    }
-    render();
-
-    const rows = await bsScanFetchRows(fromDate);
-    Object.assign(byDate, bsScanRowsToByDate(rows)); // tanggal yang ditarik menimpa versi cache
-    Object.keys(byDate).forEach(d => { if(d < cutoff) delete byDate[d]; });
-
-    const built = bsScanBuildData(byDate, usable ? "cache" : "broker_activity");
     if(!built.pairs.size){
       sc.data = null;
       sc.msg = "Belum ada data broker_activity. Tarik dulu Broker Activity untuk beberapa kode broker di Broker Stalker > Lacak Broker.";
       sc.err = true;
     }else{
-      sc.data = built; sc.msg = ""; sc.limit = 100;
-      const nowIso = new Date().toISOString();
-      idbKvSet(BSSCAN_IDB_KEY, { v: 1, supa: SUPABASE_URL, savedAt: nowIso, lastFullAt: usable ? cache.lastFullAt : nowIso, byDate });
+      const stocks = new Set(); built.pairs.forEach(e => stocks.add(e.stock));
+      sc.data = { pairs: built.pairs, dates: [...built.dates].sort(), source, fetchedAt: new Date().toISOString(), stockCount: stocks.size };
+      sc.msg = ""; sc.limit = 100;
     }
   }catch(e){
-    sc.msg = "Gagal memuat data broker: " + e.message + (sc.data ? " (menampilkan data cache)" : ""); sc.err = true;
+    sc.msg = "Gagal memuat data broker: " + e.message; sc.err = true;
   }
   sc.loading = false;
   render();
@@ -18406,7 +18921,6 @@ function exportBsScanToExcel(){
 
 function renderBsScan(){
   const sc = state.bsScan, f = sc.filters;
-  if(!sc.data && !sc.loading && !sc.cacheTried){ sc.cacheTried = true; bsScanHydrate(); }
   const res = sc.data ? bsScanCompute() : null;
   const N = BS_SCAN_PERIOD_DAYS[f.period] || 5;
   const ffAvailable = (state.stocks || []).some(s => s.freeFloatPct != null);
@@ -18436,7 +18950,6 @@ function renderBsScan(){
           <button type="button" class="bs2-chip" id="bsScanFfBtn" ${sc.ffImporting ? "disabled" : ""} title="Impor daftar free float (.xlsx/.csv dari BEI) ke tabel stock_free_float">${sc.ffImporting ? "Mengimpor…" : "📥 Impor Free Float"}</button>
           <input type="file" id="bsScanFfFile" accept=".xlsx,.xls,.csv" style="display:none;">
           <button type="button" class="bs2-chip active" id="bsScanRunBtn" ${sc.loading ? "disabled" : ""}>${sc.loading ? "Memuat…" : (sc.data ? "⟳ SCAN ULANG" : "⟳ SCAN")}</button>
-          <button type="button" class="bs2-chip" id="bsScanFullBtn" ${sc.loading ? "disabled" : ""} title="Hapus cache perangkat lalu tarik ulang semua data">Tarik penuh</button>
         </div>
       </div>
       <div style="font-size:11px;color:var(--muted);margin:8px 0 2px;line-height:1.5;">${escapeHtml(dateLine)}</div>
@@ -18531,8 +19044,6 @@ function wireBsScanControls(){
   const sc = state.bsScan;
   const runBtn = document.getElementById("bsScanRunBtn");
   if(runBtn) runBtn.onclick = () => runBsScan();
-  const fullBtn = document.getElementById("bsScanFullBtn");
-  if(fullBtn) fullBtn.onclick = () => runBsScan({ full: true });
   const expBtn = document.getElementById("bsScanExportBtn");
   if(expBtn) expBtn.onclick = () => exportBsScanToExcel();
   const ffBtn = document.getElementById("bsScanFfBtn"), ffFile = document.getElementById("bsScanFfFile");
@@ -18676,200 +19187,71 @@ async function bsTrapTryRpc(cutoff){
   }
 }
 
-// ---------- Cache perangkat (IndexedDB) ----------
-// Jalur paging broker_activity menarik puluhan ribu baris (di HP/4G bisa lama).
-// Hasilnya disimpan PER TANGGAL di IndexedDB perangkat ini. Scan berikutnya
-// cukup menarik tanggal terakhir yang ada di cache (+ tanggal yang lebih baru),
-// lalu digabung ke cache -- bukan menarik ulang 30 hari bursa.
-// Cache dibuang otomatis kalau: (a) ada penarikan/penyimpanan broker_activity
-// baru dari aplikasi ini (data lama bisa ter-backfill), (b) umur tarik-penuh
-// terakhir > 24 jam, (c) URL backend berubah, atau (d) tombol "Tarik penuh".
-const LS_BSTRAP_RPC_FAIL = "ihsg_bstrap_rpc_fail_at";
-const BSTRAP_IDB = { db: "ihsg_cache_v1", store: "kv", key: "bstrap_days_v1" };
-const BSTRAP_FULL_REFRESH_MS = 24 * 3600 * 1000;
-
-function bsTrapIdbOpen(){
-  return new Promise((resolve, reject) => {
-    if(typeof indexedDB === "undefined"){ reject(new Error("IndexedDB tidak tersedia")); return; }
-    const req = indexedDB.open(BSTRAP_IDB.db, 1);
-    req.onupgradeneeded = () => {
-      if(!req.result.objectStoreNames.contains(BSTRAP_IDB.store)) req.result.createObjectStore(BSTRAP_IDB.store);
-    };
-    req.onsuccess = () => resolve(req.result);
-    req.onerror = () => reject(req.error);
-  });
-}
-async function bsTrapCacheGet(){
-  try{
-    const db = await bsTrapIdbOpen();
-    return await new Promise(resolve => {
-      const r = db.transaction(BSTRAP_IDB.store, "readonly").objectStore(BSTRAP_IDB.store).get(BSTRAP_IDB.key);
-      r.onsuccess = () => { db.close(); resolve(r.result || null); };
-      r.onerror = () => { db.close(); resolve(null); };
-    });
-  }catch(e){ return null; }
-}
-async function bsTrapCacheSet(value){
-  try{
-    const db = await bsTrapIdbOpen();
-    await new Promise(resolve => {
-      const tx = db.transaction(BSTRAP_IDB.store, "readwrite");
-      tx.objectStore(BSTRAP_IDB.store).put(value, BSTRAP_IDB.key);
-      tx.oncomplete = () => { db.close(); resolve(); };
-      tx.onerror = tx.onabort = () => { db.close(); resolve(); };
-    });
-  }catch(e){}
-}
-async function bsTrapCacheClear(){
-  try{
-    const db = await bsTrapIdbOpen();
-    await new Promise(resolve => {
-      const tx = db.transaction(BSTRAP_IDB.store, "readwrite");
-      tx.objectStore(BSTRAP_IDB.store).delete(BSTRAP_IDB.key);
-      tx.oncomplete = () => { db.close(); resolve(); };
-      tx.onerror = tx.onabort = () => { db.close(); resolve(); };
-    });
-  }catch(e){}
-}
-
-// Baris mentah broker_activity -> { tanggal: [[saham, broker, net, bv, sh], ...] }
-// (buy & sell digabung per pasangan per hari; bv/sh hanya dari baris buy ber-lot).
-function bsTrapRowsToByDate(rows){
-  const maps = new Map();
-  rows.forEach(r => {
-    const stock = String(r.stock_code || "").toUpperCase(), broker = String(r.broker_code || "").toUpperCase();
-    const date = r.trade_date ? String(r.trade_date).slice(0, 10) : "";
-    if(!stock || !broker || !date) return;
-    const val = Number(r.value_idr) || 0, lot = Number(r.lot) || 0;
-    const isBuy = String(r.side).toLowerCase() === "buy";
-    let m = maps.get(date); if(!m){ m = new Map(); maps.set(date, m); }
-    const key = stock + "|" + broker;
-    let e = m.get(key); if(!e){ e = [stock, broker, 0, 0, 0]; m.set(key, e); }
-    e[2] += isBuy ? val : -val;
-    if(isBuy && val > 0 && lot > 0){ e[3] += val; e[4] += lot * 100; } // 1 lot = 100 lembar
-  });
-  const out = {};
-  maps.forEach((m, d) => { out[d] = [...m.values()]; });
-  return out;
-}
-
-// byDate -> struktur yang dipakai bsTrapCompute(): pairs[saham|broker].days[tanggal] = {bv, sh, net}
-function bsTrapBuildData(byDate, source, fetchedAt){
-  const pairs = new Map();
-  const dates = Object.keys(byDate).sort();
-  let rowCount = 0;
-  dates.forEach(d => {
-    const arr = byDate[d];
-    rowCount += arr.length;
-    arr.forEach(a => {
-      const key = a[0] + "|" + a[1];
-      let e = pairs.get(key);
-      if(!e){ e = { stock: a[0], broker: a[1], days: {} }; pairs.set(key, e); }
-      e.days[d] = { bv: a[3], sh: a[4], net: a[2] };
-    });
-  });
-  return { pairs, dates, rowCount, source, fetchedAt: fetchedAt || new Date().toISOString() };
-}
-
-// Tampilkan cache langsung (tanpa jaringan) saat mode ini dibuka pertama kali.
-async function bsTrapHydrate(){
-  const t = state.bsTrap;
-  const cache = await bsTrapCacheGet();
-  if(t.data || t.loading) return;
-  if(!cache || cache.supa !== SUPABASE_URL || !cache.byDate) return;
-  const d = bsTrapBuildData(cache.byDate, "cache", cache.savedAt);
-  if(!d.dates.length) return;
-  t.data = d; t.limit = 100; t.err = false;
-  t.msg = "Data dari cache perangkat — klik SCAN ULANG untuk mengambil hari terbaru.";
-  render();
-}
-
-async function bsTrapFetchActivityRows(fromDate){
-  const PAGE = 1000;
-  const qs = new URLSearchParams({
-    trade_date: `gte.${fromDate}`,
-    select: "stock_code,trade_date,side,broker_code,value_idr,lot",
-    // order tanpa "rank" (broker_activity tidak punya kolom itu, beda dengan
-    // broker_summary) -- kombinasi 4 kolom ini tetap unik per baris karena
-    // on_conflict broker_activity adalah broker_code,trade_date,stock_code,side
-    order: "trade_date.asc,stock_code.asc,side.asc,broker_code.asc"
-  });
-  let pageErr = null;
-  const rows = await fetchAllPagesParallel(async (offset) => {
-    if(pageErr) return null;
-    const q = new URLSearchParams(qs);
-    q.set("limit", String(PAGE)); q.set("offset", String(offset));
-    const res = await fetch(`${SUPABASE_URL}/broker_activity?${q}`, { headers: getSupaHeaders(), cache: "no-store" });
-    if(!res.ok){ pageErr = new Error(`HTTP ${res.status} ${res.statusText}`); return null; }
-    const page = await res.json();
-    if(page && page.message){ pageErr = new Error(page.message); return null; }
-    return page;
-  }, PAGE, {
-    maxConcurrent: 5,
-    onProgress: (n) => {
-      const el = document.getElementById("bsTrapProgress");
-      if(el) el.textContent = `Menarik data broker_activity... ${n.toLocaleString("id-ID")} baris`;
-    }
-  });
-  if(pageErr) throw pageErr;
-  return rows;
-}
-
-// opts.full = true -> abaikan cache & catatan "RPC gagal", tarik ulang semuanya.
-async function runBsTrap(opts){
-  opts = opts || {};
+async function runBsTrap(){
   const t = state.bsTrap;
   if(t.loading) return;
   if(!SUPABASE_URL || !SUPABASE_KEY){ openSettings(); return; }
   t.loading = true; t.msg = "Memuat data broker_activity (30 hari bursa)..."; t.err = false; render();
   try{
     const cutoff = epsCutoffDate(Math.max(...BS_TRAP_WINDOWS) + 2);
-
-    // Jalur 1: RPC (dihitung di server). Kalau RPC gagal, jangan dicoba lagi
-    // selama 6 jam supaya tidak menunggu timeout tiap kali SCAN.
-    let skipRpc = false;
-    if(!opts.full){
-      try{ const at = Number(localStorage.getItem(LS_BSTRAP_RPC_FAIL) || 0); skipRpc = at > 0 && Date.now() - at < 6 * 3600 * 1000; }catch(e){}
-    }
-    const fast = skipRpc ? null : await bsTrapTryRpc(cutoff);
+    const fast = await bsTrapTryRpc(cutoff);
     if(fast){
-      try{ localStorage.removeItem(LS_BSTRAP_RPC_FAIL); }catch(e){}
       t.data = fast; t.msg = ""; t.limit = 100; t.loading = false; render(); return;
     }
-    if(!skipRpc){ try{ localStorage.setItem(LS_BSTRAP_RPC_FAIL, String(Date.now())); }catch(e){} }
-
-    // Jalur 2: paging broker_activity + cache harian di perangkat.
-    if(opts.full) await bsTrapCacheClear();
-    const cache = opts.full ? null : await bsTrapCacheGet();
-    const dayKeys = cache && cache.byDate ? Object.keys(cache.byDate).sort() : [];
-    const usable = !!(cache && cache.supa === SUPABASE_URL && dayKeys.length && cache.lastFullAt
-      && (Date.now() - Date.parse(cache.lastFullAt)) < BSTRAP_FULL_REFRESH_MS);
-    const byDate = usable ? cache.byDate : {};
-    let fromDate = cutoff;
-    if(usable){
-      fromDate = dayKeys[dayKeys.length - 1]; // tanggal terakhir ikut ditarik ulang (bisa belum lengkap saat di-cache)
-      t.data = bsTrapBuildData(byDate, "cache", cache.savedAt); t.limit = 100;
-      t.msg = `Menampilkan cache — memperbarui dari ${fromDate}...`;
-    }else{
-      t.msg = "RPC bs_trap_scan_activity belum tersedia — memuat lewat paging broker_activity (lebih lambat, hasilnya disimpan ke cache perangkat)...";
-    }
+    t.msg = "RPC bs_trap_scan_activity belum tersedia — memuat lewat paging broker_activity (lebih lambat)...";
     render();
+    const PAGE = 1000;
+    const qs = new URLSearchParams({
+      trade_date: `gte.${cutoff}`,
+      select: "stock_code,trade_date,side,broker_code,value_idr,lot",
+      // order tanpa "rank" (broker_activity tidak punya kolom itu, beda dengan
+      // broker_summary) -- kombinasi 4 kolom ini tetap unik per baris karena
+      // on_conflict broker_activity adalah broker_code,trade_date,stock_code,side
+      order: "trade_date.asc,stock_code.asc,side.asc,broker_code.asc"
+    });
+    let pageErr = null;
+    const rows = await fetchAllPagesParallel(async (offset) => {
+      if(pageErr) return null;
+      const q = new URLSearchParams(qs);
+      q.set("limit", String(PAGE)); q.set("offset", String(offset));
+      const res = await fetch(`${SUPABASE_URL}/broker_activity?${q}`, { headers: getSupaHeaders(), cache: "no-store" });
+      if(!res.ok){ pageErr = new Error(`HTTP ${res.status} ${res.statusText}`); return null; }
+      const page = await res.json();
+      if(page && page.message){ pageErr = new Error(page.message); return null; }
+      return page;
+    }, PAGE, {
+      maxConcurrent: 5,
+      onProgress: (n) => {
+        const el = document.getElementById("bsTrapProgress");
+        if(el) el.textContent = `Menarik data broker_activity... ${n.toLocaleString("id-ID")} baris`;
+      }
+    });
+    if(pageErr) throw pageErr;
 
-    const rows = await bsTrapFetchActivityRows(fromDate);
-    Object.assign(byDate, bsTrapRowsToByDate(rows)); // tanggal yang ditarik menimpa versi cache
-    Object.keys(byDate).forEach(d => { if(d < cutoff) delete byDate[d]; });
+    const pairs = new Map(), dateSet = new Set();
+    rows.forEach(r => {
+      const stock = String(r.stock_code || "").toUpperCase(), broker = String(r.broker_code || "").toUpperCase();
+      if(!stock || !broker || !r.trade_date) return;
+      const val = Number(r.value_idr) || 0, lot = Number(r.lot) || 0;
+      const isBuy = String(r.side).toLowerCase() === "buy";
+      const key = stock + "|" + broker;
+      let e = pairs.get(key);
+      if(!e){ e = { stock, broker, days: {} }; pairs.set(key, e); }
+      const d = (e.days[r.trade_date] ||= { bv: 0, sh: 0, net: 0 });
+      d.net += isBuy ? val : -val;
+      if(isBuy && val > 0 && lot > 0){ d.bv += val; d.sh += lot * 100; } // 1 lot = 100 lembar
+      dateSet.add(r.trade_date);
+    });
 
-    if(!Object.keys(byDate).length){
+    if(!pairs.size){
       t.data = null; t.err = true;
       t.msg = "Belum ada data broker_activity. Tarik dulu Broker Activity untuk beberapa kode broker di Broker Stalker > Lacak Broker.";
     }else{
-      const nowIso = new Date().toISOString();
-      t.data = bsTrapBuildData(byDate, usable ? "cache" : "paging", nowIso);
+      t.data = { pairs, dates: [...dateSet].sort(), rowCount: rows.length, source: "paging", fetchedAt: new Date().toISOString() };
       t.msg = ""; t.limit = 100;
-      bsTrapCacheSet({ v: 1, supa: SUPABASE_URL, savedAt: nowIso, lastFullAt: usable ? cache.lastFullAt : nowIso, byDate });
     }
   }catch(e){
-    t.msg = "Gagal memuat data broker: " + e.message + (t.data ? " (menampilkan data cache)" : ""); t.err = true;
+    t.msg = "Gagal memuat data broker: " + e.message; t.err = true;
   }
   t.loading = false;
   render();
@@ -18934,7 +19316,6 @@ function bsTrapCompute(){
 // ---------- 3) Tampilan ----------
 function renderBsTrap(){
   const t = state.bsTrap, f = t.filters;
-  if(!t.data && !t.loading && !t.cacheTried){ t.cacheTried = true; bsTrapHydrate(); }
   const res = t.data ? bsTrapCompute() : null;
   const chips = (key, opts, current) => opts.map(([v, lab]) =>
     `<button type="button" class="bs2-chip ${String(current) === String(v) ? "active" : ""}" data-bstrap="${key}:${v}">${lab}</button>`).join("");
@@ -18942,7 +19323,7 @@ function renderBsTrap(){
   const dateLine = t.data
     ? `data ${fmtDateID(t.data.dates[0])} – ${fmtDateID(t.data.dates[t.data.dates.length - 1])} · ${t.data.dates.length} hari bursa · ` + (t.data.source === "rpc"
         ? `${t.data.pairs.size.toLocaleString("id-ID")} pasangan kandidat (avg > close di minimal satu jendela) · sumber: RPC bs_trap_scan_activity`
-        : `${t.data.pairs.size.toLocaleString("id-ID")} pasangan broker–saham · ${t.data.rowCount.toLocaleString("id-ID")} baris · sumber: ${t.data.source === "cache" ? "cache perangkat + update harian" : "paging broker_activity"}`)
+        : `${t.data.pairs.size.toLocaleString("id-ID")} pasangan broker–saham · ${t.data.rowCount.toLocaleString("id-ID")} baris · sumber: paging broker_activity`)
     : "Belum ada data — klik SCAN untuk memuat data broker_activity semua saham.";
   const shortNote = t.data && t.data.dates.length < Math.max(...BS_TRAP_WINDOWS)
     ? `<div style="font-size:11px;color:var(--gold);margin-top:6px;">Data baru mencakup ${t.data.dates.length} hari bursa — jendela 30D sebenarnya lebih pendek dari 30 hari.</div>` : "";
@@ -18952,7 +19333,7 @@ function renderBsTrap(){
       <div class="bs2-head">
         <div class="bs2-card-title" style="margin-bottom:0;"><span>BROKER NYANGKUT</span>
           <span class="pill pill-teal" style="font-size:9px;">AVG BELI &gt; CLOSE</span></div>
-        <span style="display:flex;gap:6px;flex-wrap:wrap;"><button type="button" class="bs2-chip active" id="bsTrapRunBtn" ${t.loading ? "disabled" : ""}>${t.loading ? "Memuat…" : (t.data ? "⟳ SCAN ULANG" : "⟳ SCAN")}</button><button type="button" class="bs2-chip" id="bsTrapFullBtn" title="Hapus cache perangkat lalu tarik ulang semua data" ${t.loading ? "disabled" : ""}>Tarik penuh</button></span>
+        <button type="button" class="bs2-chip active" id="bsTrapRunBtn" ${t.loading ? "disabled" : ""}>${t.loading ? "Memuat…" : (t.data ? "⟳ SCAN ULANG" : "⟳ SCAN")}</button>
       </div>
       <div style="font-size:11px;color:var(--muted);margin:8px 0 2px;line-height:1.5;">${escapeHtml(dateLine)}</div>
       ${shortNote}
@@ -19024,8 +19405,6 @@ function wireBsTrapControls(){
   const t = state.bsTrap;
   const runBtn = document.getElementById("bsTrapRunBtn");
   if(runBtn) runBtn.onclick = () => runBsTrap();
-  const fullBtn = document.getElementById("bsTrapFullBtn");
-  if(fullBtn) fullBtn.onclick = () => runBsTrap({ full: true });
 
   document.querySelectorAll("[data-bstrap-win]").forEach(btn => btn.onclick = () => {
     const n = Number(btn.dataset.bstrapWin), cur = t.filters.windows;
@@ -20108,6 +20487,116 @@ async function searchBrokerStalker(){
   applyBrokerStalkerView(); // sekaligus menghitung brokerStalkerRows (filter/urut default) + render()
 }
 
+
+// ==========================================================================
+// 🗺️ HEATMAP SEKTOR (treemap) — tab Sektoral
+// Ukuran kotak = market cap atau nilai transaksi, warna = perubahan (harian/1W/1M) atau RS 1M vs benchmark proxy IHSG.
+// Tiap sektor menampilkan saham terbesar (maks. HM_TOP_PER_SEKTOR) supaya tetap terbaca. Klik saham = buka detail,
+// klik nama sektor = buka Screener terfilter sektor itu. Layout: squarified treemap dua level.
+// ==========================================================================
+const HM_W = 160, HM_H = 90, HM_TOP_PER_SEKTOR = 12;
+const HM_COLOR_DEFS = {
+  day:   { label: "Hari ini", get: s => s.changePct, range: 3, unit: "%" },
+  week:  { label: "1 Minggu", get: s => s.weekChangePct, range: 6, unit: "%" },
+  month: { label: "1 Bulan", get: s => s.monthChangePct, range: 12, unit: "%" },
+  rs1m:  { label: "RS 1M vs IHSG", get: s => s.rs1m, range: 10, unit: " poin" }
+};
+const HM_SIZE_DEFS = {
+  mcap:  { label: "Market Cap", get: s => spNum(s.marketCap) },
+  value: { label: "Nilai Transaksi", get: s => { const v = spLiquidity(s); return v > 0 ? v : null; } }
+};
+function hmSquarify(items, x, y, w, h){
+  const out = [];
+  let rest = items.filter(i => i.v > 0).sort((a, b) => b.v - a.v);
+  if(!rest.length || w <= 0 || h <= 0) return out;
+  const total = rest.reduce((a, i) => a + i.v, 0), scale = (w * h) / total;
+  rest = rest.map(i => ({ ...i, a: i.v * scale }));
+  let cx = x, cy = y, cw = w, ch = h;
+  const worst = (r, side, area) => {
+    const mx = Math.max(...r.map(i => i.a)), mn = Math.min(...r.map(i => i.a));
+    return Math.max((side * side * mx) / (area * area), (area * area) / (side * side * mn));
+  };
+  while(rest.length){
+    const side = Math.min(cw, ch);
+    let row = [rest[0]], rowArea = rest[0].a, k = 1;
+    while(k < rest.length){
+      const nr = [...row, rest[k]], na = rowArea + rest[k].a;
+      if(worst(nr, side, na) <= worst(row, side, rowArea)){ row = nr; rowArea = na; k++; } else break;
+    }
+    if(cw >= ch){
+      const rw = rowArea / ch; let yy = cy;
+      row.forEach(it => { const hh = it.a / rw; out.push({ ...it, x: cx, y: yy, w: rw, h: hh }); yy += hh; });
+      cx += rw; cw -= rw;
+    } else {
+      const rh = rowArea / cw; let xx = cx;
+      row.forEach(it => { const ww = it.a / rh; out.push({ ...it, x: xx, y: cy, w: ww, h: rh }); xx += ww; });
+      cy += rh; ch -= rh;
+    }
+    rest = rest.slice(row.length);
+  }
+  return out;
+}
+function hmColor(v, range){
+  if(v == null || !isFinite(v)) return "rgba(128,128,128,0.18)";
+  const a = 0.18 + 0.72 * Math.min(1, Math.abs(v) / range);
+  return v >= 0 ? `rgba(16,185,129,${a.toFixed(2)})` : `rgba(239,68,68,${a.toFixed(2)})`;
+}
+function hmFmt(v, unit){ return v == null || !isFinite(v) ? "-" : (v >= 0 ? "+" : "") + v.toFixed(2) + (unit === "%" ? "%" : ""); }
+function hmGoSektor(sek){
+  state.filters.sektor = [sek]; state.page = 1; selectMainTab("screener");
+}
+function proHeatmapHtml(data){
+  const sizeKey = HM_SIZE_DEFS[state.hmSize] ? state.hmSize : "mcap";
+  const colKey = HM_COLOR_DEFS[state.hmColor] ? state.hmColor : "day";
+  const sz = HM_SIZE_DEFS[sizeKey], cd = HM_COLOR_DEFS[colKey];
+  const open = state.hmOpen !== false;
+  const bySek = {};
+  (data || []).forEach(s => {
+    const v = sz.get(s); if(v == null || v <= 0 || !s.ticker) return;
+    (bySek[s.sektor || "Tidak Diketahui"] = bySek[s.sektor || "Tidak Diketahui"] || []).push({ s, v });
+  });
+  const sektors = Object.entries(bySek).map(([name, arr]) => {
+    arr.sort((a, b) => b.v - a.v);
+    const top = arr.slice(0, HM_TOP_PER_SEKTOR);
+    const v = top.reduce((a, i) => a + i.v, 0);
+    let wsum = 0, wv = 0; top.forEach(i => { const c = cd.get(i.s); if(c != null && isFinite(c)){ wsum += i.v; wv += i.v * c; } });
+    return { name, v, items: top, avg: wsum > 0 ? wv / wsum : null, n: arr.length };
+  });
+  const btn = (cur, key, label, setter) => `<button type="button" class="pill ${cur === key ? "pill-gold" : "pill-muted"}" style="padding:3px 12px;font-size:11.5px;" onclick="${setter}">${label}</button>`;
+  let body = "";
+  if(open){
+    if(!sektors.length){
+      body = `<div style="font-size:12px;color:var(--muted);">Belum ada data ${sz.label.toLowerCase()} untuk digambar.</div>`;
+    } else {
+      const secRects = hmSquarify(sektors.map(x => ({ ...x })), 0, 0, HM_W, HM_H);
+      const tiles = secRects.map(sec => {
+        const hd = Math.min(4.2, sec.h * 0.28), showHd = sec.w >= 14 && sec.h >= 7;
+        const ix = sec.x + 0.25, iy = sec.y + (showHd ? hd : 0.25), iw = sec.w - 0.5, ih = sec.h - (showHd ? hd : 0.25) - 0.25;
+        const kids = hmSquarify(sec.items.map(i => ({ v: i.v, s: i.s })), ix, iy, iw, ih).map(k => {
+          const c = cd.get(k.s), showTxt = k.w >= 7 && k.h >= 4.5, showPct = k.h >= 8 && k.w >= 9;
+          return `<div data-detail="${escapeHtml(k.s.ticker)}" title="${escapeHtml(k.s.ticker)} · ${escapeHtml(cd.label)} ${hmFmt(c, cd.unit)}" style="position:absolute;left:${(k.x / HM_W * 100).toFixed(3)}%;top:${(k.y / HM_H * 100).toFixed(3)}%;width:${(k.w / HM_W * 100).toFixed(3)}%;height:${(k.h / HM_H * 100).toFixed(3)}%;box-sizing:border-box;border:1px solid var(--bg, #0b1220);background:${hmColor(c, cd.range)};overflow:hidden;cursor:pointer;display:flex;flex-direction:column;align-items:center;justify-content:center;font-size:10px;line-height:1.25;">${showTxt ? `<b>${escapeHtml(k.s.ticker)}</b>${showPct ? `<span style="opacity:.85;">${hmFmt(c, cd.unit)}</span>` : ""}` : ""}</div>`;
+        }).join("");
+        const head = showHd ? `<div onclick="hmGoSektor(${JSON.stringify(sec.name).replace(/"/g, "&quot;")})" title="Buka Screener untuk sektor ${escapeHtml(sec.name)}" style="position:absolute;left:0;top:0;width:100%;height:${(hd / sec.h * 100).toFixed(2)}%;display:flex;align-items:center;gap:6px;padding:0 6px;font-size:10.5px;font-weight:700;white-space:nowrap;overflow:hidden;cursor:pointer;">${escapeHtml(sec.name)} <span style="font-weight:600;color:${sec.avg == null ? "var(--muted)" : (sec.avg >= 0 ? "var(--up)" : "var(--down)")};">${hmFmt(sec.avg, cd.unit)}</span></div>` : "";
+        return `<div style="position:absolute;left:${(sec.x / HM_W * 100).toFixed(3)}%;top:${(sec.y / HM_H * 100).toFixed(3)}%;width:${(sec.w / HM_W * 100).toFixed(3)}%;height:${(sec.h / HM_H * 100).toFixed(3)}%;box-sizing:border-box;border:1px solid var(--border);background:rgba(128,128,128,0.06);">${head}</div>${kids}`;
+      }).join("");
+      body = `<div style="position:relative;width:100%;aspect-ratio:${HM_W}/${HM_H};min-height:260px;border-radius:8px;overflow:hidden;">${tiles}</div>
+        <div style="font-size:11px;color:var(--muted);margin-top:8px;line-height:1.5;">Ukuran = ${sz.label}, warna = ${cd.label} (hijau naik, merah turun; makin pekat makin besar, penuh di ±${cd.range}${cd.unit === "%" ? "%" : " poin"}). Tiap sektor menampilkan maksimal ${HM_TOP_PER_SEKTOR} saham terbesar, angka di nama sektor = rata-rata tertimbang ukuran kotak. Klik saham untuk detail, klik nama sektor untuk membuka Screener sektor itu. ${colKey === "rs1m" ? "RS memakai benchmark proxy IHSG (tertimbang market cap), bukan angka resmi IHSG." : ""}</div>`;
+    }
+  }
+  return `
+    <div class="panel" style="margin-bottom:16px;">
+      <div class="filter-section-title" style="cursor:pointer;display:flex;align-items:center;justify-content:space-between;gap:10px;user-select:none;" onclick="state.hmOpen=${!open}; render();">
+        <span style="display:flex;align-items:center;gap:8px;"><span style="display:inline-block;transition:transform .15s;transform:rotate(${open ? 90 : 0}deg);">▶</span>🗺️ HEATMAP SEKTOR</span><span class="line" style="flex:1;"></span>
+      </div>
+      ${open ? `<div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-bottom:10px;">
+        <span style="font-size:11.5px;color:var(--muted);">Ukuran:</span>
+        ${Object.entries(HM_SIZE_DEFS).map(([k, d]) => btn(sizeKey, k, d.label, `state.hmSize='${k}'; render();`)).join("")}
+        <span style="font-size:11.5px;color:var(--muted);margin-left:10px;">Warna:</span>
+        ${Object.entries(HM_COLOR_DEFS).map(([k, d]) => btn(colKey, k, d.label, `state.hmColor='${k}'; render();`)).join("")}
+      </div>` : ""}
+      ${body}
+    </div>`;
+}
 function renderSektoral(){
   const data = enriched();
   if(!data.length){
@@ -20124,6 +20613,7 @@ function renderSektoral(){
   const worstSektor = groups.length ? groups[groups.length-1] : null;
 
   return `
+    ${proHeatmapHtml(data)}
     <div class="panel">
       <div class="filter-section-title"><span>📊 RINGKASAN PASAR PER SEKTOR</span><span class="line"></span></div>
       <div class="summary-grid">
@@ -23248,9 +23738,12 @@ function renderSmartPick(){
 // (versi lama cuma menyebut 6 hal dari puluhan fitur yang sudah ada).
 // ==========================================
 const ABOUT_TAB_GUIDE = [
+  { icon:"📡", title:"Screener Pro (Radar &amp; Filter Cepat)", tone:"teal",
+    desc:"Panel di atas tab Screener: 7 <b>Filter Cepat</b> (Active Today, Hot Today, Whale Hunt, Foreign In, Consensus, Stealth, RS Leader = mengalahkan pasar) dengan kolom <b>RS 1M/1W vs IHSG</b> (benchmark proxy tertimbang market cap) yang digabung AND, <b>Radar Score 0-100</b> (volume, aliran asing, bandar/uang gede, tren, momentum RSI7, frekuensi &amp; likuiditas) dengan Signal Strong/Watch/Neutral/Weak dan Flag, <b>Advanced Filters</b> (signal, flag, nilai transaksi, radar, skor gabungan, RVOL, net asing), tab <b>Periode aliran asing</b> 1D/7D/14D/1M, serta <b>Simpan/Muat Set</b> filter bernama (bisa diekspor/diimpor sebagai JSON) dan tombol <b>⭐ Hasil → Watchlist</b>. Ada juga <b>🔔 Alert Strong baru</b> (saham yang baru masuk Radar Strong dibanding hari sebelumnya, opsional dikirim ke Telegram selama tab terbuka) dan <b>📈 Uji Maju</b>: rekam hasil tiap Filter Cepat setiap hari, lalu lihat rata-rata return, win rate, dan selisih terhadap pasar seiring data terkumpul. Pilihan filter tersimpan otomatis di browser. Tambahkan kolom 📡 Radar lewat tombol Kolom untuk mengurutkan hasil. Ada pula kolom &amp; filter <b>📐 Pola Chart</b> (bias, pola, status, skor dari Chart Pattern Scanner), dan ketujuh Filter Cepat bisa diuji historis di <b>🏆 Backtest Screener</b> (preset berlabel “· Filter Cepat”; Whale Hunt dan RS Leader memakai proxy, lihat catatan di tab itu).",
+    catatan:"Radar adalah ranking sinyal aktivitas dari data yang sudah ada, bukan prediksi harga. Data net asing hanya 1D/5D/20D: 7D memakai 5D, 14D &amp; 1M memakai 20D, 3M belum tersedia." },
   { icon:"📋", title:"Screener", tone:"teal",
     desc:"Tabel utama semua saham IHSG dengan filter teknikal &amp; fundamental siap pakai, preset DSI (Eri Ginanjar, RSI Cross, Golden Cross, Super Uptrend, Volatility Breakout, Pullback Uptrend), plus Rule Builder kustom untuk menyusun kombinasi filter sendiri (mirip \"Edit Screener\" Stockbit) — bisa disimpan sebagai preset pribadi. Panel <b>Klasifikasi Emiten</b> juga punya filter status notasi khusus &amp; perdagangan BEI: LQ45, Syariah, Suspend, Unsuspend, FCA, FCA Out (semuanya dari klasifikasi Stockbit, tabel <code>index_membership</code> — perlu sync sekali lewat \"🔄 Sync Klasifikasi Stockbit\" di ⚙️ Pengaturan → Live Data Stockbit).",
-    catatan:"Rule Builder saat ini menggabungkan semua rule dengan AND (seluruh syarat harus terpenuhi bersamaan, belum ada OR/grouping)." },
+    catatan:"Rule Builder menggabungkan rule dengan AND; pilih \"OR grup A/B/C/D\" di baris rule agar rule dengan huruf grup yang sama cukup salah satu yang lolos (antar-grup tetap AND)." },
   { icon:"✨", title:"Smart Pick", tone:"gold",
     desc:"5 sinyal siap pakai — Area Demand, Throwback/Retest Breakout, Liquidity Sweep, Bull Divergence, Early Breakout — dihitung dari data live yang sama dengan Screener. Tombol \"Finalisasi Signal (EOD)\" mengunci snapshot harian ke database supaya win-rate &amp; rata-rata return tiap sinyal bisa dilacak dari waktu ke waktu.",
     catatan:"Ini scoring rule-based dari data yang sudah ada, bukan model AI/machine learning — hasil bisa berubah tiap refresh sebelum difinalisasi." },
@@ -24232,7 +24725,7 @@ async function saveBrokerSummaryRows(){
   if(!rows.length){ state.bsMsg = "Belum ada baris terisi."; state.bsMsgError = true; render(); return; }
 
   try {
-    brokerCachesClear(); await supaFetch(`${SUPABASE_URL}/broker_activity?on_conflict=broker_code,trade_date,stock_code,side`, {
+    await supaFetch(`${SUPABASE_URL}/broker_activity?on_conflict=broker_code,trade_date,stock_code,side`, {
       method: "POST",
       headers: { ...getSupaHeaders(), "Prefer": "resolution=merge-duplicates,return=representation" },
       body: JSON.stringify(rows)
@@ -26162,365 +26655,6 @@ function orcaSegBtn(group, key, label, active){
   return `<button type="button" class="btn ${active?'btn-primary':'btn-outline'}" data-orca-seg="${group}" data-orca-value="${key}" style="padding:7px 12px;font-size:11.5px;">${label}</button>`;
 }
 
-// ==========================================================================
-// 📡 MARKET RADAR — preset ala "Market Radar" Stockbit (Most Trending, Top
-// Gain, Aggression, Top Akum/Distribusi), lengkap dengan aturan "Kuncinya":
-//   1) Kalau akumulasi minus, Aggression harus > 1 Bio (Rp 1 M) dan lebih
-//      besar 1-2x dari akumulasi. Makin bagus kalau keduanya di atas 1 Bio.
-//   2) Tradeflow Aggression konsisten naik terus.
-//
-// Tiap grup punya jendela: Off / M (Momentum = 5 hari bursa terakhir) /
-// S (Session = hari terakhir). Saham harus masuk Top N di SEMUA grup aktif;
-// urutan akhir = rata-rata peringkat di grup-grup itu.
-//
-// SUMBER DATA (semua sudah ada di aplikasi, tidak ada endpoint baru):
-//   - Trending & Price : state.stocks (hari terakhir) + tabel flows (5 hari).
-//   - Flow (Akum/Dist) : net beli-jual broker dari broker_activity, lewat data
-//                        Pindai Akumulasi (state.bsScan) -- hanya broker yang
-//                        sudah pernah ditarik lewat Lacak Broker.
-//   - Aggression       : ESTIMASI, bukan HAKA/HAKI asli. Aplikasi ini belum
-//                        punya data tradebook, jadi dihitung dari OHLC harian:
-//                        nilai transaksi x posisi close dalam range
-//                        ((C-L)-(H-C))/(H-L). Akan lebih akurat kalau suatu
-//                        saat ada data HAKA/HAKI asli -- cukup ganti
-//                        radarCalc().
-// ==========================================================================
-const LS_RADAR = "ihsg_radar_v1";
-const RADAR_GROUPS = [
-  { id: "trend", title: "MOST TRENDING", picks: [["active", "Most Active"], ["value", "Most Value"]] },
-  { id: "price", title: "PRICE",         picks: [["gain", "Top Gain"], ["loss", "Top Loss"]] },
-  { id: "flow",  title: "FLOW",          picks: [["accum", "Top Accum"], ["dist", "Top Dist"]] },
-  { id: "aggr",  title: "AGGRESSION",    picks: [["haka", "Top HAKA"], ["haki", "Top HAKI"]] },
-];
-const RADAR_TOPN = [30, 50, 100, 200];
-const RADAR_MINVAL = [0, 1e9, 5e9, 1e10];
-const RADAR_MINAGGR = [5e8, 1e9, 2e9, 5e9];
-
-function radarDefaults(){
-  // Preset "Cuan Senin": Most Trending (M), Top Gain (S), Aggression (M), Akum/Dist Off.
-  return {
-    groups: {
-      trend: { win: "M",   pick: "active" },
-      price: { win: "S",   pick: "gain" },
-      flow:  { win: "off", pick: "accum" },
-      aggr:  { win: "M",   pick: "haka" },
-    },
-    topN: 100, minValue: 1e9, rules: true, minAggr: 1e9, mult: 1,
-  };
-}
-function radarState(){
-  if(!state.radar){
-    const R = radarDefaults();
-    try{
-      const f = JSON.parse(localStorage.getItem(LS_RADAR) || "null");
-      if(f && typeof f === "object"){
-        RADAR_GROUPS.forEach(g => {
-          const sg = f.groups && f.groups[g.id];
-          if(sg && ["off", "M", "S"].includes(sg.win)) R.groups[g.id].win = sg.win;
-          if(sg && g.picks.some(p => p[0] === sg.pick)) R.groups[g.id].pick = sg.pick;
-        });
-        if(RADAR_TOPN.includes(f.topN)) R.topN = f.topN;
-        if(RADAR_MINVAL.includes(f.minValue)) R.minValue = f.minValue;
-        if(typeof f.rules === "boolean") R.rules = f.rules;
-        if(RADAR_MINAGGR.includes(f.minAggr)) R.minAggr = f.minAggr;
-        if(f.mult === 1 || f.mult === 2) R.mult = f.mult;
-      }
-    }catch(e){}
-    R.hist = { loading: false, err: "", byTicker: null, loadedAt: null, tried: false };
-    state.radar = R;
-  }
-  return state.radar;
-}
-function radarSave(){
-  const R = radarState();
-  try{ localStorage.setItem(LS_RADAR, JSON.stringify({ groups: R.groups, topN: R.topN, minValue: R.minValue, rules: R.rules, minAggr: R.minAggr, mult: R.mult })); }catch(e){}
-}
-
-// Histori harian 5-6 hari bursa dari tabel flows (dipaging: 1 hari ~ 950 baris).
-async function loadRadarHistory(){
-  const R = radarState(), h = R.hist;
-  if(h.loading) return;
-  if(!SUPABASE_URL || !SUPABASE_KEY){ openSettings(); return; }
-  h.loading = true; h.err = ""; render();
-  try{
-    const d = new Date(); d.setDate(d.getDate() - 14);
-    const cutoff = toLocalISODate(d);
-    const PAGE = 1000;
-    let pageErr = null;
-    const rows = await fetchAllPagesParallel(async (offset) => {
-      if(pageErr) return null;
-      const q = new URLSearchParams({
-        date: `gte.${cutoff}`, select: "ticker,date,high,low,close,value,frequency",
-        order: "date.desc,ticker.asc", limit: String(PAGE), offset: String(offset)
-      });
-      const res = await fetch(`${SUPABASE_URL}/flows?${q}`, { headers: getSupaHeaders(), cache: "no-store" });
-      if(!res.ok){ pageErr = new Error(`HTTP ${res.status} ${res.statusText}`); return null; }
-      const page = await res.json();
-      if(page && page.message){ pageErr = new Error(page.message); return null; }
-      return page;
-    }, PAGE, { maxConcurrent: 5 });
-    if(pageErr) throw pageErr;
-    const by = {};
-    rows.forEach(r => {
-      const t = String(r.ticker || "").toUpperCase();
-      if(!t || !r.date) return;
-      (by[t] || (by[t] = [])).push(r);
-    });
-    Object.keys(by).forEach(t => { by[t].sort((a, b) => a.date < b.date ? 1 : -1); by[t] = by[t].slice(0, 6); }); // terbaru dulu
-    h.byTicker = by; h.loadedAt = new Date().toISOString();
-  }catch(e){
-    h.err = "Gagal menarik histori flows: " + e.message;
-  }
-  h.loading = false;
-  render();
-}
-
-// Posisi close dalam range harian: +1 = close di high (didominasi beli agresif), -1 = di low.
-function radarClv(h, l, c){
-  h = Number(h); l = Number(l); c = Number(c);
-  if(!(h > l) || !Number.isFinite(c)) return 0;
-  return Math.max(-1, Math.min(1, ((c - l) - (h - c)) / (h - l)));
-}
-
-// Akumulasi broker per saham dari data Pindai Akumulasi: S = hari terakhir, M = 5 hari bursa terakhir.
-function radarAccumIndex(){
-  const sc = state.bsScan && state.bsScan.data;
-  if(!sc || !sc.dates || !sc.dates.length) return null;
-  if(sc._radarIdx) return sc._radarIdx;
-  const last = sc.dates[sc.dates.length - 1], m5 = sc.dates.slice(-5);
-  const idx = new Map();
-  sc.pairs.forEach(e => {
-    let r = idx.get(e.stock); if(!r){ r = { S: 0, M: 0 }; idx.set(e.stock, r); }
-    r.S += e.days[last] || 0;
-    m5.forEach(d => { r.M += e.days[d] || 0; });
-  });
-  idx.lastDate = last;
-  sc._radarIdx = idx;
-  return idx;
-}
-
-// Metrik semua saham (S = session, M = momentum 5 hari).
-function radarCalc(){
-  const H = radarState().hist.byTicker, acc = radarAccumIndex();
-  const out = [];
-  (state.stocks || []).forEach(s => {
-    const close = Number(s.cClose);
-    if(!(close > 0)) return;
-    const t = s.ticker;
-    const valueS = Number(s.valueTraded != null ? s.valueTraded : s.turnover) || 0;
-    const freqS = Number(s.frequency) || 0;
-    const chgS = s.changePct != null && Number.isFinite(Number(s.changePct)) ? Number(s.changePct) : null;
-    const aggrS = valueS * radarClv(s.cHigh, s.cLow, s.cClose);
-    const hist = H && H[t] ? H[t] : [];
-    const last5 = hist.slice(0, 5);
-    const m = { ticker: t, name: s.name || "", close, valueS, freqS, chgS, aggrS };
-    if(last5.length >= 3){
-      m.valueM = last5.reduce((a, r) => a + (Number(r.value) || 0), 0);
-      m.freqM = last5.reduce((a, r) => a + (Number(r.frequency) || 0), 0) / last5.length;
-      const oldest = hist[Math.min(5, hist.length - 1)];
-      m.chgM = oldest && Number(oldest.close) > 0 ? (Number(hist[0].close) / Number(oldest.close) - 1) * 100 : chgS;
-      const daily = last5.map(r => (Number(r.value) || 0) * radarClv(r.high, r.low, r.close)); // terbaru dulu
-      m.aggrM = daily.reduce((a, v) => a + v, 0);
-      let run = 0; m.series = daily.slice().reverse().map(v => (run += v));
-      const pos = daily.filter(v => v > 0).length;
-      m.posDays = pos; m.nDays = daily.length;
-      m.consistent = daily.length >= 3 && pos >= Math.ceil(daily.length * 0.8) && m.aggrM > 0;
-      m.histOk = true;
-    }else{
-      m.valueM = valueS; m.freqM = freqS; m.chgM = chgS; m.aggrM = aggrS;
-      m.series = null; m.consistent = null; m.histOk = false;
-    }
-    const a = acc ? acc.get(t) : null;
-    m.accumS = a ? a.S : null; m.accumM = a ? a.M : null;
-    out.push(m);
-  });
-  return out;
-}
-
-function radarMetric(m, gid, pick, win){
-  const W = win === "S" ? "S" : "M";
-  if(gid === "trend") return pick === "active" ? m["freq" + W] : m["value" + W];
-  if(gid === "price") return m["chg" + W];
-  if(gid === "flow") return m["accum" + W];
-  return m["aggr" + W];
-}
-function radarQualifies(gid, pick, v){
-  if(v == null || !Number.isFinite(v)) return false;
-  if(gid === "trend") return v > 0;
-  const positive = (gid === "price" && pick === "gain") || (gid === "flow" && pick === "accum") || (gid === "aggr" && pick === "haka");
-  return positive ? v > 0 : v < 0;
-}
-function radarBiggerIsBetter(gid, pick){
-  return gid === "trend" || pick === "gain" || pick === "accum" || pick === "haka";
-}
-
-function radarCompute(){
-  const R = radarState();
-  const active = RADAR_GROUPS.filter(g => R.groups[g.id].win !== "off");
-  if(!active.length) return { active, out: [], total: 0, afterRank: 0 };
-  const pool = radarCalc().filter(m => m.valueS >= R.minValue);
-  const rankMaps = {};
-  active.forEach(g => {
-    const { win, pick } = R.groups[g.id];
-    const big = radarBiggerIsBetter(g.id, pick);
-    const list = pool.map(m => ({ m, v: radarMetric(m, g.id, pick, win) })).filter(x => radarQualifies(g.id, pick, x.v));
-    list.sort((a, b) => big ? b.v - a.v : a.v - b.v);
-    const map = new Map(); list.slice(0, R.topN).forEach((x, i) => map.set(x.m.ticker, i + 1));
-    rankMaps[g.id] = map;
-  });
-  let out = pool.filter(m => active.every(g => rankMaps[g.id].has(m.ticker)));
-  const afterRank = out.length;
-  out.forEach(m => { m.score = active.reduce((a, g) => a + rankMaps[g.id].get(m.ticker), 0) / active.length; });
-
-  // Aturan "Kuncinya" -- jendela Aggression/Flow mengikuti grupnya (kalau Off: M).
-  const wAg = R.groups.aggr.win !== "off" ? R.groups.aggr.win : "M";
-  const wFl = R.groups.flow.win !== "off" ? R.groups.flow.win : wAg;
-  out.forEach(m => {
-    const ag = m["aggr" + wAg], ac = m["accum" + wFl];
-    m.rAgg = ag > R.minAggr;
-    if(ac == null){ m.rFlow = null; }
-    else if(ac < 0){ m.rFlow = ag > R.minAggr && ag >= Math.abs(ac) * R.mult; }
-    else { m.rFlow = true; }
-    m.rBoth = ac != null && ac > R.minAggr && ag > R.minAggr; // keduanya di atas 1 Bio = lebih bagus
-    m.rPass = m.rAgg && m.rFlow !== false && m.consistent !== false;
-    m.aggrShown = ag; m.accumShown = ac;
-  });
-  if(R.rules) out = out.filter(m => m.rPass);
-  out.sort((a, b) => a.score - b.score || b.aggrShown - a.aggrShown);
-  return { active, out, total: pool.length, afterRank, wAg, wFl };
-}
-
-function radarSpark(series){
-  if(!series || series.length < 2) return `<span style="color:var(--muted);">-</span>`;
-  const w = 64, h = 20, min = Math.min(...series), max = Math.max(...series), rng = (max - min) || 1;
-  const pts = series.map((v, i) => `${(i / (series.length - 1) * (w - 2) + 1).toFixed(1)},${(h - 1 - ((v - min) / rng) * (h - 2)).toFixed(1)}`).join(" ");
-  const up = series[series.length - 1] >= series[0];
-  return `<svg width="${w}" height="${h}" viewBox="0 0 ${w} ${h}" aria-hidden="true"><polyline points="${pts}" fill="none" stroke="${up ? "var(--up)" : "var(--down)"}" stroke-width="1.8" stroke-linejoin="round" stroke-linecap="round"/></svg>`;
-}
-
-function renderMarketRadar(){
-  const R = radarState(), h = R.hist;
-  if(!h.byTicker && !h.loading && !h.tried){ h.tried = true; setTimeout(loadRadarHistory, 0); }
-  if(!state.bsScan.data && !state.bsScan.loading && !state.bsScan.cacheTried){ state.bsScan.cacheTried = true; setTimeout(bsScanHydrate, 0); }
-
-  const chip = (act, label, on, extra) => `<button type="button" class="bs2-chip ${on ? "active" : ""}" data-radar="${act}" ${extra || ""}>${label}</button>`;
-  const groupCard = g => {
-    const gs = R.groups[g.id], off = gs.win === "off";
-    const wins = [["off", "Off"], ["M", "M"], ["S", "S"]].map(([v, l]) => chip(`win:${g.id}:${v}`, l, gs.win === v)).join("");
-    const picks = g.picks.map(([v, l]) => chip(`pick:${g.id}:${v}`, l, !off && gs.pick === v, off ? 'style="opacity:.45;"' : "")).join("");
-    return `<div class="panel" style="flex-direction:column;align-items:stretch;gap:10px;padding:14px;">
-      <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;">
-        <span style="font-size:11px;font-weight:800;letter-spacing:.05em;color:var(--muted);">${g.title}</span>
-        <span style="display:flex;gap:4px;">${wins}</span></div>
-      <div style="display:flex;gap:6px;flex-wrap:wrap;">${picks}</div></div>`;
-  };
-
-  const res = radarCompute();
-  const acc = radarAccumIndex();
-  const needAccum = R.groups.flow.win !== "off";
-  const histLine = h.loading ? `<span style="color:var(--gold);">⏳ Menarik histori 5 hari dari flows…</span>`
-    : h.err ? `<span style="color:var(--down);">${escapeHtml(h.err)}</span>`
-    : h.byTicker ? `Histori flows: ${Object.keys(h.byTicker).length} emiten`
-    : "Histori flows belum dimuat";
-  const accLine = acc ? `Akumulasi broker s/d ${fmtDateID(acc.lastDate)} · ${acc.size} saham`
-    : (state.bsScan.loading ? `<span style="color:var(--gold);">⏳ Memuat data akumulasi broker…</span>` : "Data akumulasi broker belum dimuat");
-
-  const settings = `
-    <div class="panel" style="flex-direction:column;align-items:stretch;gap:12px;">
-      <div style="display:flex;flex-wrap:wrap;gap:8px;align-items:center;">
-        <span class="bs2-label" style="margin:0;">PRESET</span>
-        ${chip("preset:cuan", "🚀 Cuan Senin", false)}${chip("preset:reset", "Reset", false)}
-        <span style="font-size:11px;color:var(--muted);">M = Momentum (5 hari bursa) · S = Session (hari terakhir)</span>
-      </div>
-      <div class="bsx-grid">
-        <div><label class="bs2-label">TOP N PER GRUP</label><div class="bs2-chipset">${RADAR_TOPN.map(n => chip("topn:" + n, "Top " + n, R.topN === n)).join("")}</div></div>
-        <div><label class="bs2-label">MIN NILAI TRANSAKSI</label><div class="bs2-chipset">${RADAR_MINVAL.map(v => chip("minval:" + v, v ? fmtCap(v).replace(/^\+/, "") : "Semua", R.minValue === v)).join("")}</div></div>
-        <div><label class="bs2-label">ATURAN "KUNCINYA"</label><div class="bs2-chipset">${chip("rules:1", "Aktif", R.rules)}${chip("rules:0", "Nonaktif", !R.rules)}</div></div>
-        <div><label class="bs2-label">MIN AGGRESSION</label><div class="bs2-chipset">${RADAR_MINAGGR.map(v => chip("minaggr:" + v, fmtCap(v).replace(/^\+/, ""), R.minAggr === v)).join("")}</div></div>
-        <div><label class="bs2-label">AGGR ≥ N × |AKUM| (saat akum minus)</label><div class="bs2-chipset">${chip("mult:1", "1×", R.mult === 1)}${chip("mult:2", "2×", R.mult === 2)}</div></div>
-      </div>
-      <div style="font-size:11px;color:var(--muted);line-height:1.6;">
-        ${histLine} · ${accLine}
-        ${acc ? "" : ` <button type="button" class="bs2-chip" data-radar="loadaccum" ${state.bsScan.loading ? "disabled" : ""}>Muat data akumulasi</button>`}
-        <button type="button" class="bs2-chip" data-radar="reloadhist" ${h.loading ? "disabled" : ""}>⟳ Histori</button>
-        ${needAccum && !acc ? `<div style="color:var(--gold);margin-top:4px;">Grup FLOW aktif tapi data akumulasi belum ada — hasil kosong sampai dimuat.</div>` : ""}
-      </div>
-    </div>`;
-
-  const info = `
-    <details class="panel" style="flex-direction:column;align-items:stretch;">
-      <summary style="cursor:pointer;font-weight:700;font-size:13px;">ℹ️ Cara baca &amp; batas data</summary>
-      <div style="margin-top:10px;font-size:12px;line-height:1.7;color:var(--muted);display:flex;flex-direction:column;gap:6px;">
-        <div><b style="color:var(--text);">Cara kerja:</b> tiap grup aktif (M/S) mengambil Top N saham; yang lolos hanya saham yang ada di <b>semua</b> grup aktif, diurutkan dari rata-rata peringkat.</div>
-        <div><b style="color:var(--text);">Aturan "Kuncinya":</b> (1) Aggression &gt; batas minimum; kalau akumulasi minus, Aggression juga ≥ N× |akumulasi|. Badge ★ = akumulasi &amp; Aggression sama-sama di atas batas. (2) Aggression konsisten naik = minimal 80% hari (dari 5) positif dan totalnya positif; grafik kecil = kumulatif Aggression.</div>
-        <div style="color:var(--gold);"><b>Aggression di sini ESTIMASI</b>, bukan HAKA/HAKI asli: nilai transaksi × posisi close dalam range harian. Aplikasi ini belum punya data tradebook, jadi angkanya bisa meleset dari Market Radar Stockbit — pakai sebagai penyaring awal, lalu cek chart Trade Flow di Stockbit.</div>
-        <div><b style="color:var(--text);">Akumulasi</b> berasal dari broker_activity (hanya broker yang pernah ditarik lewat Lacak Broker), jadi bisa lebih kecil dari angka Stockbit.</div>
-      </div>
-    </details>`;
-
-  let body;
-  if(!state.stocks || !state.stocks.length){
-    body = `<div class="empty-box">Data saham belum dimuat.</div>`;
-  }else if(!res.active.length){
-    body = `<div class="empty-box">Aktifkan minimal satu grup (pilih M atau S), atau tekan preset <b>🚀 Cuan Senin</b>.</div>`;
-  }else if(!res.out.length){
-    body = `<div class="empty-box">Tidak ada saham yang lolos (${res.afterRank} lolos peringkat grup dari ${res.total} saham).${R.rules ? " Coba <b>Nonaktifkan</b> aturan Kuncinya, naikkan Top N, atau turunkan Min Aggression." : " Coba naikkan Top N atau matikan salah satu grup."}</div>`;
-  }else{
-    const wAg = res.wAg, wFl = res.wFl;
-    const pct = v => v == null ? "-" : `<span style="color:${v >= 0 ? "var(--up)" : "var(--down)"};font-weight:700;">${v >= 0 ? "+" : ""}${v.toFixed(2)}%</span>`;
-    const tag = (ok, label) => `<span class="pill ${ok === null ? "pill-muted" : ok ? "pill-up" : "pill-down"}" style="font-size:9px;margin-right:3px;">${label} ${ok === null ? "?" : ok ? "✓" : "✗"}</span>`;
-    const rows = res.out.slice(0, 50).map((m, i) => `<tr>
-      <td class="mono" style="color:var(--muted);">${i + 1}</td>
-      <td><button type="button" class="ticker-link" data-detail="${escapeHtml(m.ticker)}" style="font-weight:800;font-size:14px;">${escapeHtml(m.ticker)}</button>${m.rBoth ? ` <span title="Akumulasi &amp; Aggression sama-sama di atas batas" style="color:var(--gold);">★</span>` : ""}
-        <div style="font-size:10px;color:var(--muted);max-width:150px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${escapeHtml(m.name)}</div></td>
-      <td class="mono"><div style="font-weight:800;">${fmtNum(Math.round(m.close))}</div><div style="font-size:11px;">${pct(m.chgS)}</div></td>
-      <td class="mono">${fmtCap(m.valueS)}</td>
-      <td class="mono" style="color:${m.aggrShown >= 0 ? "var(--up)" : "var(--down)"};font-weight:800;">${fmtRp(m.aggrShown)}<div style="font-size:9px;color:var(--muted);font-weight:500;">estimasi ${wAg}</div></td>
-      <td class="mono" style="color:${m.accumShown == null ? "var(--muted)" : m.accumShown >= 0 ? "var(--up)" : "var(--down)"};">${m.accumShown == null ? "-" : fmtRp(m.accumShown)}${m.accumShown == null ? "" : `<div style="font-size:9px;color:var(--muted);">${wFl}</div>`}</td>
-      <td>${radarSpark(m.series)}${m.histOk ? `<div style="font-size:9px;color:var(--muted);">${m.posDays}/${m.nDays} hari +</div>` : ""}</td>
-      <td style="white-space:nowrap;">${tag(m.rAgg, "AGR")}${tag(m.rFlow, "FLOW")}${tag(m.consistent, "KONS")}</td>
-      <td class="mono">${m.score.toFixed(1)}</td></tr>`).join("");
-    body = `
-      <div style="font-size:11.5px;color:var(--muted);margin-bottom:8px;">${res.out.length} saham lolos (dari ${res.afterRank} yang lolos peringkat grup, ${res.total} saham dipindai) · menampilkan ${Math.min(50, res.out.length)} teratas</div>
-      <div class="table-wrap"><table class="bsx-table"><thead><tr>
-        <th>#</th><th>SAHAM</th><th>HARGA</th><th>NILAI</th><th>AGGR (EST)</th><th>AKUM</th><th>TREN AGGR</th><th>ATURAN</th><th>SKOR</th>
-      </tr></thead><tbody>${rows}</tbody></table></div>`;
-  }
-
-  return `
-    <div class="panel" style="flex-direction:column;align-items:stretch;gap:4px;">
-      <div class="filter-section-title" style="margin:0;"><span>📡 MARKET RADAR</span><span class="line"></span></div>
-      <div style="font-size:12px;color:var(--muted);line-height:1.6;">Preset ala Market Radar Stockbit: Most Trending, Price, Flow, dan Aggression — dengan aturan "Kuncinya" (Aggression &gt; 1 Bio &amp; konsisten naik).</div>
-    </div>
-    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:12px;margin:12px 0;">${RADAR_GROUPS.map(groupCard).join("")}</div>
-    ${settings}
-    <div style="margin:12px 0;">${info}</div>
-    ${body}`;
-}
-
-function radarAction(a){
-  const R = radarState(), p = String(a).split(":");
-  if(p[0] === "win" && R.groups[p[1]] && ["off", "M", "S"].includes(p[2])) R.groups[p[1]].win = p[2];
-  else if(p[0] === "pick" && R.groups[p[1]]) R.groups[p[1]].pick = p[2];
-  else if(p[0] === "preset"){
-    const d = radarDefaults();
-    if(p[1] === "reset"){ Object.keys(d.groups).forEach(k => { d.groups[k].win = "off"; }); d.rules = false; }
-    Object.assign(R, d);
-  }
-  else if(p[0] === "topn") R.topN = Number(p[1]);
-  else if(p[0] === "minval") R.minValue = Number(p[1]);
-  else if(p[0] === "rules") R.rules = p[1] === "1";
-  else if(p[0] === "minaggr") R.minAggr = Number(p[1]);
-  else if(p[0] === "mult") R.mult = Number(p[1]) === 2 ? 2 : 1;
-  else if(p[0] === "loadaccum"){ runBsScan(); return; }
-  else if(p[0] === "reloadhist"){ loadRadarHistory(); return; }
-  radarSave();
-  render();
-}
-function wireRadarControls(){
-  document.querySelectorAll("[data-radar]").forEach(b => { b.onclick = () => radarAction(b.dataset.radar); });
-}
-
 function renderKrakenFlow(){
   const result = computeOrcaResults();
   const rows = result.rows;
@@ -28019,9 +28153,6 @@ function attachContentEvents(){
     render();
   });
 
-  document.querySelectorAll("[data-bt-exit]").forEach(el=>{
-    el.onchange = ()=>{ const [sid,tk] = el.dataset.btKey.split("|"); setBacktestExit(sid, tk, el.dataset.btExit, el.value); };
-  });
   document.querySelectorAll("[data-del-bt-item]").forEach(btn=>{
     btn.onclick = ()=>{ const [sid,tk] = btn.dataset.delBtItem.split("|"); deleteBacktestItem(sid,tk); };
   });
@@ -28370,7 +28501,6 @@ function attachContentEvents(){
   wireBsScanControls();
   wireBsTrapControls();
   wireBsSignalControls();
-  wireRadarControls();
   bindSearchInputPreservingCursor("stalkerResultSearch", v => {
     state.brokerStalkerResultSearch = v;
     state.brokerStalkerRows = brokerStalkerFilteredSorted();
@@ -28488,7 +28618,6 @@ function selectMainTab(tab){
   if(state.tab === "rekap" && !state.rekapHistory.length && !state.rekapHistoryLoading) loadRekapHistory();
   if(state.tab === "eps" && !state.epsRaw && !state.epsScanning) ensureEpsDataLoaded();
   if(state.tab === "kraken") ensureOrcaHistoryLoaded();
-  if(state.tab === "radar"){ const _R = radarState(); if(!_R.hist.byTicker && !_R.hist.loading){ _R.hist.tried = true; loadRadarHistory(); } }
   render();
 }
 
@@ -29487,7 +29616,7 @@ async function evaluateLiveAlerts(ticker, livePrice, liveVol){
       const condKey = "preset_" + presetId;
       if(isLiveAlertOnCooldown(ticker, condKey)) continue;
       if(!liveEnriched) liveEnriched = enrichOne(buildLiveStockRow(raw, livePrice, liveVol));
-      const passes = preset.rules.every(rule => evalCustomRule(liveEnriched, rule));
+      const passes = evalRuleSet(liveEnriched, preset.rules);
       if(passes){
         const msg = `🎯 <b>${escapeHtml(ticker)}</b> lolos preset "${escapeHtml(preset.name)}" (live)\nHarga: ${fmtNum(livePrice)} (${pct>=0?"+":""}${pct.toFixed(2)}%)`
           + formatTradePlanTelegram(liveEnriched || raw, livePrice);
@@ -31959,6 +32088,203 @@ function glBind(){
   }catch(e){ console.warn("[GainLoss] gagal memasang menu:", e); }
 })();
 
+// ==========================================================================
+// 🕵️ INSIDER AKUMULASI (tab "insideraccum") — saham mana yang sedang dibeli insider
+//
+// SUMBER: endpoint Stockbit insider/company/majorholder yang SUDAH dipakai tab "🕵️ Insider" di Detail Emiten
+// (stockbitFetchInsider + parseStockbitInsider; butuh Token Stockbit di ⚙️ Pengaturan). Endpoint itu per ticker,
+// jadi pemindaian dilakukan per saham (maks. 3 halaman tiap saham, 3 permintaan paralel) lalu hasilnya di-cache
+// di browser selama 6 jam supaya pindai ulang cepat. Dipindai: N saham paling likuid atau Watchlist.
+//
+// DEFINISI "AKUMULASI": dalam jendela N hari, total lembar yang DIBELI insider/pemegang saham utama (action BUY)
+// lebih besar daripada yang DIJUAL (action SELL). Transfer/CROSS/stock split tidak dihitung. Baris yang sama dari
+// sumber IDX dan KSEI (tanggal, nama, aksi, jumlah identik) dihitung sekali. Nilai Rp = lembar x harga transaksi
+// (kalau tidak ada harga, memakai harga penutupan terakhir).
+//
+// CATATAN: laporan insider tertunda beberapa hari dari transaksi sebenarnya, dan pembelian insider bukan jaminan
+// harga naik. Skema respons dikonfirmasi dari contoh response Stockbit; kalau hasil kosong padahal ada data,
+// cek "Lihat JSON mentah" di tab Insider Detail Emiten untuk saham itu.
+// `var` disengaja (lihat catatan GL): render dari hash URL bisa jalan sebelum blok ini dieksekusi.
+// ==========================================================================
+var INS = { days:30, universe:"100", minBuyers:1, source:"ALL", sort:"value", running:false, abort:false, msg:"", progTxt:"", progPct:0, sel:null };
+var INS_LS = "ihsg_insider_scan_v1";
+var INS_TTL = 6 * 3600 * 1000;
+var INS_MAX_PAGES = 3;
+var INS_CACHE = null;
+
+function insCache(){
+  if(INS_CACHE) return INS_CACHE;
+  try{ const o = JSON.parse(localStorage.getItem(INS_LS) || "null"); INS_CACHE = (o && typeof o === "object" && o.v === 1 && o.t && typeof o.t === "object") ? o.t : {}; }
+  catch(e){ INS_CACHE = {}; }
+  return INS_CACHE;
+}
+function insSave(){
+  try{ localStorage.setItem(INS_LS, JSON.stringify({ v:1, t:insCache() })); }
+  catch(e){ // penuh: buang entri tertua lalu coba sekali lagi
+    try{ const c = insCache(); Object.keys(c).sort((a, b) => c[a].at - c[b].at).slice(0, Math.ceil(Object.keys(c).length / 2)).forEach(k => delete c[k]); localStorage.setItem(INS_LS, JSON.stringify({ v:1, t:c })); }catch(e2){}
+  }
+}
+function insSinceISO(days){ const d = new Date(Date.now() - days * 864e5); return toLocalISODate(d); }
+
+// Tarik & ringkas transaksi insider satu saham (hanya BUY/SELL dalam jendela waktu).
+async function insFetchTicker(tk, since){
+  const ev = [];
+  for(let page = 1; page <= INS_MAX_PAGES; page++){
+    const res = await stockbitFetchInsider(tk, { dateStart: since, page });
+    if(res.error) return { err: res.error };
+    const parsed = parseStockbitInsider(res.raw) || [];
+    parsed.forEach(r => {
+      if(!r.date || r.date < since || !(r.isBuy || r.isSell)) return;
+      ev.push({ d:r.date, n:String(r.name || "-"), a:r.isBuy ? "B" : "S", s:Math.abs(Number(r.changesShares) || 0), p:r.price || null,
+                pc:Math.abs(Number(r.changesPct) || 0), b:r.entityType || "", src:r.source || "" });
+    });
+    const next = res.raw && ((res.raw.data && res.raw.data.paginate && res.raw.data.paginate.next_page) || (res.raw.paginate && res.raw.paginate.next_page));
+    if(!next || !parsed.length) break;
+  }
+  return { ev };
+}
+
+// Murni (bisa diuji): cache + konfigurasi -> daftar saham yang lolos akumulasi.
+function insAggregate(cache, tickers, cfg, priceOf){
+  const since = insSinceISO(cfg.days), out = [];
+  let withTrades = 0;
+  for(const tk of tickers){
+    const ent = cache[tk]; if(!ent || !Array.isArray(ent.ev)) continue;
+    const seen = new Set(), ev = [];
+    ent.ev.forEach(e => {
+      if(e.d < since) return;
+      if(cfg.source !== "ALL" && String(e.src).toUpperCase() !== cfg.source) return;
+      const k = e.d + "|" + e.n + "|" + e.a + "|" + e.s; if(seen.has(k)) return; seen.add(k); ev.push(e);
+    });
+    if(!ev.length) continue;
+    withTrades++;
+    let bs = 0, ss = 0, bv = 0, sv = 0, bp = 0, sp = 0, nB = 0, nS = 0, last = "";
+    const buyers = new Map();
+    const px = priceOf ? priceOf(tk) : null;
+    ev.forEach(e => {
+      const val = e.s * (e.p || px || 0);
+      if(e.a === "B"){ bs += e.s; bv += val; bp += e.pc; nB++; if(e.d > last) last = e.d; const o = buyers.get(e.n) || { n:e.n, s:0, b:e.b }; o.s += e.s; buyers.set(e.n, o); }
+      else { ss += e.s; sv += val; sp += e.pc; nS++; }
+    });
+    const pass = (bs + ss > 0) ? bs > ss : nB > nS;
+    if(!pass || buyers.size < cfg.minBuyers) continue;
+    out.push({ ticker:tk, buyShares:bs, sellShares:ss, net:bs - ss, netVal:bv - sv, nBuy:nB, nSell:nS, buyers:[...buyers.values()].sort((a, b) => b.s - a.s),
+               lastBuy:last, pctAdd:bp - sp });
+  }
+  const cmp = { value:(a, b) => (b.netVal - a.netVal) || (b.net - a.net), buyers:(a, b) => (b.buyers.length - a.buyers.length) || (b.netVal - a.netVal),
+                recent:(a, b) => (a.lastBuy < b.lastBuy ? 1 : a.lastBuy > b.lastBuy ? -1 : 0), shares:(a, b) => b.net - a.net }[cfg.sort] || ((a, b) => b.netVal - a.netVal);
+  out.sort(cmp);
+  return { rows: out, withTrades };
+}
+
+function insUniverse(){
+  let list = (typeof enriched === "function" ? enriched() : []).filter(s => s.ticker);
+  if(INS.universe === "watchlist") return list.filter(s => state.watchlist && state.watchlist.has(s.ticker)).map(s => s.ticker);
+  list.sort((a, b) => (b.turnover ?? b.valueTraded ?? 0) - (a.turnover ?? a.valueTraded ?? 0));
+  return list.slice(0, parseInt(INS.universe, 10) || 100).map(s => s.ticker);
+}
+function insProg(){
+  const t = document.getElementById("insProgTxt"), b = document.getElementById("insProgBar");
+  if(t) t.textContent = INS.progTxt; if(b) b.style.width = (INS.progPct || 0) + "%";
+}
+async function insRun(){
+  if(INS.running){ INS.abort = true; return; }
+  if(!state.stockbitToken){ INS.msg = 'Token Stockbit belum diisi. Buka "⚙️ Pengaturan" → Live Data Stockbit.'; render(); return; }
+  const tickers = insUniverse();
+  if(!tickers.length){ INS.msg = INS.universe === "watchlist" ? "Watchlist masih kosong." : "Data saham belum termuat — buka tab Screener dulu."; render(); return; }
+  const since = insSinceISO(INS.days), cache = insCache(), now = Date.now();
+  const need = tickers.filter(tk => { const c = cache[tk]; return !(c && now - c.at < INS_TTL && c.days >= INS.days); });
+  INS.running = true; INS.abort = false; INS.msg = ""; INS.progTxt = ""; INS.progPct = 0; render();
+  let done = 0, ok = 0, errs = 0, firstErr = "", gi = 0;
+  const worker = async () => {
+    while(gi < need.length && !INS.abort){
+      const tk = need[gi++];
+      const r = await insFetchTicker(tk, since);
+      if(r.err){ errs++; if(!firstErr) firstErr = r.err; }
+      else { ok++; cache[tk] = { at: Date.now(), days: INS.days, ev: r.ev }; }
+      done++; INS.progTxt = `Memindai insider ${done}/${need.length}…`; INS.progPct = need.length ? done / need.length * 100 : 100; insProg();
+      if(ok === 0 && errs >= 6){ INS.abort = true; break; } // token/endpoint bermasalah: jangan lanjut menembak ratusan request gagal
+      await new Promise(r2 => setTimeout(r2, 120));
+    }
+  };
+  try{
+    await Promise.all(Array.from({ length: Math.min(3, Math.max(1, need.length)) }, worker));
+    insSave();
+    if(ok === 0 && errs > 0) INS.msg = `Semua permintaan gagal. Contoh error: ${firstErr}`;
+    else if(INS.abort) INS.msg = `Dibatalkan setelah ${done}/${need.length} saham.`;
+    else INS.msg = need.length ? `Selesai: ${ok} saham ditarik${errs ? `, ${errs} gagal (${firstErr})` : ""}; sisanya dari cache.` : "Semua saham sudah ada di cache (kurang dari 6 jam). Klik 🗑 Hapus cache untuk tarik ulang.";
+  }catch(e){ INS.msg = "Gagal: " + (e && e.message || e); }
+  INS.running = false; INS.abort = false; render();
+}
+function insSet(k, v){ INS[k] = (k === "days" || k === "minBuyers") ? Number(v) : v; render(); }
+function insClear(){ if(!confirm("Hapus cache hasil pindai insider di browser ini?")) return; INS_CACHE = {}; try{ localStorage.removeItem(INS_LS); }catch(e){} INS.msg = "Cache dihapus."; render(); }
+
+function renderInsiderAccum(){
+  const sty = "background:color-mix(in srgb, currentColor 6%, transparent);border:1px solid var(--border);color:var(--text);font-size:12.5px;border-radius:8px;padding:8px 10px;";
+  const opt = (cur, arr) => arr.map(([v, l]) => `<option value="${v}" ${String(cur) === String(v) ? "selected" : ""}>${l}</option>`).join("");
+  const sel = (label, key, arr) => `<div class="field" style="min-width:120px;"><label>${label}</label><select style="${sty}" onchange="insSet('${key}', this.value)">${opt(INS[key], arr)}</select></div>`;
+  const list = (typeof enriched === "function" ? enriched() : []);
+  const sm = new Map(list.map(s => [s.ticker, s]));
+  const tickers = insUniverse(), cache = insCache();
+  const scanned = tickers.filter(tk => cache[tk]).length;
+  const R = insAggregate(cache, tickers, INS, tk => { const s = sm.get(tk); return s && s.cClose > 0 ? s.cClose : null; });
+  const rows = R.rows.slice(0, 100);
+  const body = rows.map((r, i) => {
+    const s = sm.get(r.ticker) || {};
+    const chg = s.changePct != null ? `<span style="color:${s.changePct >= 0 ? "var(--up)" : "var(--down)"}">${s.changePct >= 0 ? "+" : ""}${Number(s.changePct).toFixed(2)}%</span>` : "-";
+    const names = r.buyers.slice(0, 4).map(b => `${b.n}${b.b ? " (" + b.b + ")" : ""}: ${fmtNum(b.s)}`).join("\n");
+    const strong = r.buyers.length >= 2 && r.sellShares === 0;
+    return `<tr><td>${i + 1}</td>
+      <td class="ticker-cell"><button class="ticker-link" data-detail="${escapeHtml(r.ticker)}" title="Lihat detail ${escapeHtml(r.ticker)}">${escapeHtml(r.ticker)}</button> ${strong ? pillHtml("Kuat", "up") : ""}</td>
+      <td class="mono">${s.cClose != null ? fmtNum(s.cClose) : "-"}</td><td class="mono">${chg}</td>
+      <td class="mono" style="color:var(--up)">+${fmtNum(r.net)}</td>
+      <td class="mono">${r.netVal ? fmtCompactID(r.netVal) : "-"}</td>
+      <td class="mono" title="${escapeHtml(names)}">${r.buyers.length} <span style="font-size:10.5px;color:var(--muted);">${escapeHtml(r.buyers[0].n.slice(0, 22))}${r.buyers.length > 1 ? " +" + (r.buyers.length - 1) : ""}</span></td>
+      <td class="mono">${r.nBuy} / ${r.nSell}</td>
+      <td class="mono">${escapeHtml(r.lastBuy || "-")}</td>
+      <td class="mono">${r.pctAdd ? (r.pctAdd >= 0 ? "+" : "") + r.pctAdd.toFixed(3) : "-"}</td>
+      <td>${s.radarSignal ? pillHtml(escapeHtml(s.radarSignal), s.radarTone || "muted") : "-"}</td></tr>`;
+  }).join("");
+  return `
+    <div class="panel" style="flex-direction:column;align-items:stretch;">
+      <div class="panel-heading"><h3>🕵️ Insider Akumulasi</h3><span class="panel-heading-note">saham yang lebih banyak DIBELI daripada DIJUAL insider &amp; pemegang saham utama · sumber Stockbit (IDX/KSEI)</span></div>
+      <div class="filter-toolbar" style="gap:10px;align-items:flex-end;">
+        ${sel("Jendela waktu", "days", [[7, "7 hari"], [14, "14 hari"], [30, "30 hari"], [60, "60 hari"], [90, "90 hari"]])}
+        ${sel("Saham dipindai", "universe", [["50", "50 terlikuid"], ["100", "100 terlikuid"], ["200", "200 terlikuid"], ["watchlist", "Watchlist"]])}
+        ${sel("Min. jumlah pembeli", "minBuyers", [[1, "1+"], [2, "2+"], [3, "3+"]])}
+        ${sel("Sumber data", "source", [["ALL", "IDX + KSEI"], ["IDX", "IDX saja"], ["KSEI", "KSEI saja"]])}
+        ${sel("Urutkan", "sort", [["value", "Nilai net beli"], ["buyers", "Jumlah pembeli"], ["recent", "Beli terbaru"], ["shares", "Lembar net beli"]])}
+        <button type="button" class="btn ${INS.running ? "btn-outline" : "btn-primary"}" style="padding:9px 16px;" onclick="insRun()">${INS.running ? "■ Batal" : "▶ Pindai Insider"}</button>
+        <button type="button" class="btn btn-outline" style="padding:9px 12px;font-size:12px;" onclick="insClear()" title="Hapus hasil pindai yang tersimpan di browser">🗑 Hapus cache</button>
+      </div>
+      ${INS.running ? `<div class="ps-prog" style="height:4px;background:color-mix(in srgb, currentColor 10%, transparent);border-radius:4px;overflow:hidden;margin:8px 0;"><div id="insProgBar" style="height:100%;width:${INS.progPct || 0}%;background:var(--gold);transition:width .2s;"></div></div><div id="insProgTxt" style="font-size:12px;color:var(--muted);">${escapeHtml(INS.progTxt || "Memulai…")}</div>` : ""}
+      ${INS.msg ? `<div style="font-size:12px;margin-top:8px;color:var(--gold);">${escapeHtml(INS.msg)}</div>` : ""}
+      <div style="font-size:11.5px;color:var(--muted);margin-top:8px;line-height:1.55;">${scanned}/${tickers.length} saham sudah terpindai (cache 6 jam) · ${R.withTrades} punya transaksi beli/jual insider dalam ${INS.days} hari · <b>${R.rows.length}</b> lolos akumulasi${R.rows.length > 100 ? " (100 teratas ditampilkan)" : ""}.</div>
+    </div>
+    <div class="panel" style="flex-direction:column;align-items:stretch;margin-top:12px;">
+      ${rows.length ? `<div class="table-wrap"><table class="data-table"><thead><tr><th>#</th><th>Ticker</th><th>Harga</th><th>%</th><th title="Lembar dibeli dikurangi dijual">Net Beli (lbr)</th><th title="Lembar x harga transaksi insider (bila tidak ada harga: harga close)">≈ Nilai</th><th title="Arahkan kursor ke angka untuk melihat nama pembeli">Pembeli</th><th title="Jumlah transaksi beli / jual">Trx B/J</th><th>Beli Terakhir</th><th title="Perubahan kepemilikan dalam poin persen (beli dikurangi jual)">Δ % Milik</th><th>Radar</th></tr></thead><tbody>${body}</tbody></table></div>`
+      : `<div class="empty-box">${scanned ? "Belum ada saham yang lolos akumulasi dengan pengaturan ini. Coba perpanjang jendela waktu atau turunkan Min. pembeli." : "Klik “▶ Pindai Insider” untuk menarik data insider dari Stockbit. Butuh Token Stockbit di ⚙️ Pengaturan."}</div>`}
+      <div style="font-size:11px;color:var(--muted);margin-top:8px;line-height:1.55;">“Kuat” = minimal 2 pembeli berbeda dan tidak ada penjualan dalam jendela waktu. Laporan insider tertunda beberapa hari dari transaksi aslinya, dan pembelian insider bukan jaminan harga naik: pakai sebagai salah satu sinyal bersama Radar, Pola Chart, dan aliran asing. Transfer, CROSS, dan stock split tidak dihitung sebagai pembelian.</div>
+    </div>`;
+}
+
+// ---------- pasang ke sidebar (tanpa perlu edit index.html) ----------
+(function insInstallNav(){
+  try{
+    if(document.querySelector('#tabs .tab-btn[data-tab="insideraccum"]')) return;
+    const ref = document.querySelector('#tabs .tab-btn[data-tab="gainloss"]') || document.querySelector('#tabs .tab-btn[data-tab="patternscan"]') || document.querySelector('#tabs .tab-btn[data-tab="screener"]');
+    if(!ref) return;
+    const wrap = ref.closest("li") || ref, clone = wrap.cloneNode(true);
+    const btn = clone.matches(".tab-btn") ? clone : clone.querySelector(".tab-btn");
+    btn.dataset.tab = "insideraccum"; btn.classList.remove("active"); btn.removeAttribute("id");
+    const lab = btn.querySelector(".tab-label, .label, span:last-child");
+    if(lab && lab !== btn) lab.textContent = "🕵️ Insider Akumulasi"; else btn.textContent = "🕵️ Insider Akumulasi";
+    if(btn.tagName === "A") btn.setAttribute("href", "#/insideraccum");
+    wrap.after(clone);
+    bindInternalLink(btn, () => selectMainTab("insideraccum"));
+  }catch(e){ console.warn("[InsiderAkumulasi] gagal memasang menu:", e); }
+})();
+
 // Rekap Tren sudah digabung ke tab "gainloss" -> buang tombol lamanya kalau masih ada di markup.
 document.querySelectorAll('#tabs .tab-btn[data-tab="rekaptren"]').forEach(b=>(b.closest("li") || b).remove());
 
@@ -32014,6 +32340,9 @@ document.querySelectorAll('#tabs .tab-btn[data-tab="rekaptren"]').forEach(b=>(b.
 //  - Skor ranking = batas bawah Wilson 95% dari win rate (menghukum sampel
 //    kecil), bukan win rate mentah. Kolom In/Out-sample membandingkan 70%
 //    periode awal vs 30% periode akhir untuk mendeteksi hasil kebetulan.
+//
+// FILTER CEPAT (Screener Pro) ikut diuji sebagai preset "fc_*" (lihat SBT_FC_DEFS): kondisi dihitung ulang dari data historis,
+// Whale Hunt hanya cabang proxy, net asing periode 1D, RS Leader memakai benchmark proxy dari saham yang diuji.
 //
 // YANG TIDAK BISA DI-BACKTEST (butuh snapshot historis yang tidak disimpan):
 //  Deep Value, Multibagger, Growth, Defensive, Small Cap (fundamental),
@@ -32234,6 +32563,47 @@ const SBT_EPS_DEFS = [
   ["eps_menyatu_menanjak","EPS: Menyatu + Menanjak (semua posisi)", r=>r.konvergensi==="menyatu" && r.tanjakan==="menanjak"],
 ];
 SBT_EPS_DEFS.forEach(([key,label,pred])=> SBT_STRATS.push({ key, label, eps:true, f:(X,i)=>{ const r=X.epsRow && X.epsRow[i]; return !!r && pred(r); } }));
+// ---------- Filter Cepat (Screener Pro) sebagai preset backtest ----------
+// Kondisinya sama dengan proComputeRadar(), dihitung ulang dari data HISTORIS sampai hari i (tanpa melihat masa depan).
+// Tidak persis sama dengan versi live, karena sebagian input live tidak punya riwayat:
+//  - 🐋 Whale Hunt: hanya cabang proxy (RVOL>=2 & CLV>=0.7 & nilai >= Rp5 M); sinyal "uang gede masuk" tidak ada riwayatnya.
+//  - 🌍/🤝/🥷: net asing memakai periode 1D (hari ini > 0, dan 5 hari > 0 untuk Foreign In); butuh data arus asing (tabel flows).
+//  - 💪 RS Leader: benchmark proxy dihitung dari saham yang ikut diuji (bobot market cap SAAT INI), bukan seluruh pasar.
+// Preset-preset ini ikut menambah jumlah pengujian, jadi koreksi FDR (kolom q) untuk preset lain sedikit lebih ketat.
+const SBT_FC_LIQ = (X,i)=> X.val[i]>0 ? X.val[i] : X.c[i]*X.v[i];
+const SBT_FC_RATIO = (X,i)=> X.volMA20[i]>0 ? X.v[i]/X.volMA20[i] : null;
+const SBT_FC_CHG = (X,i)=> i>=1 && X.c[i-1]>0 ? (X.c[i]/X.c[i-1]-1)*100 : null;
+const SBT_FC_CLV = (X,i)=>{ const rg=X.h[i]-X.l[i]; return rg>0 ? ((X.c[i]-X.l[i])-(X.h[i]-X.c[i]))/rg : null; };
+const SBT_FC_BANDUP = (X,i,ratio)=> ratio!=null && ratio>=1 && X.c[i]>X.o[i]; // sama dengan bandarmologi(): akumulasi / minat beli naik
+const SBT_FC_DEFS = [
+  [ "active_today", i=>0, (X,i)=>{ const r=SBT_FC_RATIO(X,i); return SBT_FC_LIQ(X,i)>=SP_CFG.liqActive && r!=null && r>=1; } ],
+  [ "hot_today", i=>0, (X,i)=>{ const r=SBT_FC_RATIO(X,i), c=SBT_FC_CHG(X,i); return SBT_FC_LIQ(X,i)>=SP_CFG.liqActive && r!=null && r>=SP_CFG.hotRatio && c!=null && c>0; } ],
+  [ "whale_hunt", i=>0, (X,i)=>{ const r=SBT_FC_RATIO(X,i), cl=SBT_FC_CLV(X,i); return SBT_FC_LIQ(X,i)>=SP_CFG.liqWhale && r!=null && r>=2 && cl!=null && cl>=0.7; }, " (proxy)" ],
+  [ "foreign_in", i=>0, (X,i)=> !!X.hasExt && X.fnet[i]!=null && X.fnet5[i]!=null && X.fnet[i]>0 && X.fnet5[i]>0, "", true ],
+  [ "consensus", i=>0, (X,i)=>{ const r=SBT_FC_RATIO(X,i);
+      const votes=[ sbtTrend(X,i)==="Bullish", sbtGt(X.c[i],X.ema21[i]), X.rsi7[i]!=null && X.rsi7[i]>50, r!=null && r>=1.3, SBT_FC_BANDUP(X,i,r), X.fnet[i]!=null && X.fnet[i]>0 ].filter(Boolean).length;
+      return votes>=SP_CFG.consensusMin; }, "", true ],
+  [ "rs_leader", i=>20, (X,i)=>{ const B=SBT.fcBench && SBT.fcBench[X.t[i]]; if(!B || i<20 || !(X.c[i-5]>0) || !(X.c[i-20]>0)) return false;
+      const rs1w=(X.c[i]/X.c[i-5]-1)*100-B.w, rs1m=(X.c[i]/X.c[i-20]-1)*100-B.m;
+      return SBT_FC_LIQ(X,i)>=SP_CFG.liqActive && rs1m>=5 && rs1w>0; }, " (proxy pasar)" ],
+  [ "stealth", i=>0, (X,i)=>{ const r=SBT_FC_RATIO(X,i), c=SBT_FC_CHG(X,i);
+      return r!=null && r>=SP_CFG.stealthRatio && c!=null && Math.abs(c)<=SP_CFG.stealthMaxMove && ((X.fnet[i]!=null && X.fnet[i]>0) || SBT_FC_BANDUP(X,i,r)); }, "", true ],
+];
+SBT_FC_DEFS.forEach(([k,st,f,suffix,ext])=>{
+  const d=SP_QUICK_DEFS.find(x=>x.key===k);
+  SBT_STRATS.push({ key:"fc_"+k, label:(d?d.label:k)+(suffix||"")+" · Filter Cepat", start:Math.max(st(),20), f, ext:!!ext, fc:true });
+});
+// Benchmark proxy per tanggal: rata-rata return 1W (5 bar) & 1M (20 bar) saham yang diuji, tertimbang market cap saat ini.
+function sbtFcBench(tickers, list){
+  const cap={}; (list||[]).forEach(s=>{ const m=spNum(s.marketCap); if(s.ticker && m!=null && m>0) cap[s.ticker]=m; });
+  const acc={};
+  tickers.forEach(tk=>{ const w=cap[tk], b=PS.cache[tk]||[]; if(!w) return;
+    for(let k=20;k<b.length;k++){ if(!(b[k-5].c>0) || !(b[k-20].c>0) || !(b[k].c>0)) continue;
+      const rw=(b[k].c/b[k-5].c-1)*100, rm=(b[k].c/b[k-20].c-1)*100; if(Math.abs(rw)>300 || Math.abs(rm)>300) continue;
+      const a=acc[b[k].t]||(acc[b[k].t]={ sw:0, w:0, m:0, n:0 }); a.sw+=w; a.w+=w*rw; a.m+=w*rm; a.n++; } });
+  const out={}; Object.keys(acc).forEach(d=>{ const a=acc[d]; if(a.n>=10 && a.sw>0) out[d]={ w:a.w/a.sw, m:a.m/a.sw }; });
+  return out;
+}
 SBT.epsRaw=null; SBT.epsCutoff=""; SBT.epsErr="";
 async function sbtLoadEps(tickers){
   SBT.epsErr="";
@@ -32419,6 +32789,7 @@ async function sbtRun(){
     const sektorMap={}; list.forEach(s=>{ sektorMap[s.ticker]=s.sektor; });
     const epsFilters={ periode:state.epsFilters?.periode||"1m", broker:state.epsFilters?.broker||"both" };
     const regimeMap=sbtRegime(tickers);
+    SBT.fcBench=sbtFcBench(tickers, list); // benchmark proxy untuk preset 💪 RS Leader
     const sigs={}; SBT_STRATS.forEach(s=>sigs[s.key]=[]); sigs.__baseline=[];
     let minD="9999", maxD="0000", done=0, tested=0;
     for(const tk of tickers){
@@ -32580,9 +32951,9 @@ function sbtMethodLabel(k){ const sh=k.startsWith("s_"); if(sh) k=k.slice(2); co
 // ---------- Simpan hasil preset HARI INI ke Backtest (Uji Maju) ----------
 function sbtPassToday(key,s,epsRows){
   if(key.startsWith("bear_")) return false;
-  if(key==="gapgo_t1"){ try{ const g=ggCompute(s, ggS().params); return !!(g.lolos && g.gapPct>0); }catch(e){ return false; } }
   if(key.startsWith("combo:")) return key.slice(6).split("+").every(k=>sbtPassToday(k,s,epsRows));
   if(key.startsWith("eps_")){ const def=SBT_EPS_DEFS.find(d=>d[0]===key); const r=epsRows && epsRows.get(s.ticker); return !!(def && r && def[2](r)); }
+  if(key.startsWith("fc_")) return !!(s.proQuick && s.proQuick[key.slice(3)]); // Filter Cepat: pakai hasil live (Periode aliran asing sesuai pilihan saat ini)
   try{ return !!presetPass(key,s); }catch(e){ return false; }
 }
 // ---------- Peringatan dashboard: preset ✅ Layak yang menghasilkan saham HARI INI ----------
@@ -32923,477 +33294,3 @@ function sbtTuneHtml(R){
     }
   }catch(e){ console.warn("[SBT] gagal memasang menu:", e); }
 })();
-
-
-// ==========================================================================
-// 🚀 GAP UP & GO — screener day trade (beli pagi saat gap-up bertahan)
-//
-// Ide: saham yang BUKA di atas close kemarin (gap up), gap-nya TIDAK terisi,
-// dan harga lanjut naik (close > open, menembus High kemarin, volume ramai).
-// Dipakai pagi hari (±09:00–10:00 WIB), keluar di hari yang sama
-// (day trade murni: target kena, stop kena, atau paling lambat sebelum 15:50).
-//
-// Memakai data snapshot harian yang SUDAH ada di stocks_screener (open,
-// prev close, prev high, high/low/close, volume ratio, turnover, EMA20,
-// bid/offer). BUKAN data candle intraday 5/15 menit, jadi ini bukan
-// Opening Range Breakout murni. Kalau data harga belum live (hanya EOD
-// kemarin), hasilnya = kondisi kemarin, bukan kondisi pagi ini.
-//
-// Semua threshold bisa diubah lewat panel ⚙️ Params di tab dan disimpan ke
-// localStorage. State & default sengaja dibungkus fungsi (bukan const
-// top-level) supaya aman kalau render() dipanggil dari hash URL (#gapgo)
-// sebelum baris ini dieksekusi.
-// ==========================================================================
-function ggDefaultParams(){
-  return {
-    minTurnover: 5e9,      // Kriteria 1: turnover harian minimum (Rp)
-    minGapPct: 1.0,        // Kriteria 2: gap minimum (open vs prev close, %)
-    maxGapPct: 8.0,        // Kriteria 2: gap maksimum (hindari gap terlalu liar / ARA)
-    maxGapFill: 0.5,       // Kriteria 3: maksimum bagian gap yang boleh terisi (0 = tidak boleh, 1 = boleh penuh)
-    minCloseProx: 0.6,     // Kriteria 4: close harus di atas open DAN di top (1 - X) range hari ini
-    minVolRatio: 1.2,      // Kriteria 6: vs 20-day average volume (longgar, volume pagi baru sebagian)
-    minBidAskRatio: 1.10,  // Kriteria 8: rasio antrian bid/offer minimum
-    tp1Pct: 2.0, tp2Pct: 3.5, slPct: 1.5, // Trade plan default (%) — R:R ke TP1 ≈ 1.33 sebelum fee
-    feePct: 0.4,           // Estimasi fee beli+jual (bolak-balik, %)
-    modal: 0,              // Modal (Rp) untuk ukuran posisi; 0 = tidak dihitung
-    riskPct: 1.0           // Risiko maksimum per trade (% dari modal)
-  };
-}
-function ggS(){
-  if(!window.__ggState){
-    let p = ggDefaultParams();
-    try{
-      const raw = localStorage.getItem("ihsg_gapgo_params_v1");
-      if(raw) p = { ...p, ...JSON.parse(raw) };
-    }catch(e){}
-    window.__ggState = { params: p, search: "", sort: "score", preset: "strict", expanded: null, paramsOpen: false, infoOpen: false, simulator: false };
-  }
-  return window.__ggState;
-}
-function ggSaveParams(){
-  const g = ggS();
-  if(g.simulator) return; // mode simulator: jangan menimpa parameter tersimpan
-  try{ localStorage.setItem("ihsg_gapgo_params_v1", JSON.stringify(g.params)); }catch(e){}
-}
-
-function ggCompute(s, params){
-  const p = params || ggDefaultParams();
-  const num = v => (v===null || v===undefined || v==="" || isNaN(v)) ? null : Number(v);
-  const turnover = num(s.turnover) ?? num(s.valueTraded);
-  const volRatio = num(s.volRatio);
-  const cOpen = num(s.cOpen), cHigh = num(s.cHigh), cLow = num(s.cLow), cClose = num(s.cClose);
-  const prevClose = num(s.prevClose), prevHigh = num(s.prevHigh);
-  const emaFast = num(s.ema20) ?? num(s.ma21);
-  const bidVol = num(s.bidVolume), offerVol = num(s.offerVolume);
-  const hasOB = bidVol != null && offerVol != null && offerVol > 0;
-  const bidAsk = hasOB ? bidVol / offerVol : null;
-
-  const hasGapData = cOpen != null && cOpen > 0 && prevClose != null && prevClose > 0;
-  const gapSize = hasGapData ? cOpen - prevClose : null;
-  const gapPct = hasGapData ? (gapSize / prevClose) * 100 : null;
-
-  // Bagian gap yang sudah terisi hari ini: 0 = low tidak pernah turun ke bawah open,
-  // 1 = low sudah menyentuh/menembus prev close (gap terisi penuh).
-  let fillRatio = null;
-  if(hasGapData && gapSize > 0 && cLow != null){
-    fillRatio = clamp01((cOpen - Math.max(cLow, prevClose)) / gapSize);
-  }
-  const proximity = (cClose!=null && cHigh!=null && cLow!=null && cHigh > cLow) ? (cClose - cLow) / (cHigh - cLow) : null;
-
-  const gapOk = gapPct != null ? (gapPct >= p.minGapPct && gapPct <= p.maxGapPct) : null;
-  const holdOk = fillRatio != null ? fillRatio <= p.maxGapFill : (hasGapData ? false : null);
-  const strongOk = (cClose!=null && cOpen!=null && proximity!=null) ? (cClose > cOpen && proximity >= p.minCloseProx) : null;
-  const breakOk = (cClose!=null && prevHigh!=null) ? cClose > prevHigh : null;
-  const trendOk = (cClose!=null && emaFast!=null) ? cClose > emaFast : null;
-
-  const checks = [
-    { label:`Turnover ≥ Rp ${fmtNum(p.minTurnover)}`, pass: turnover != null && turnover >= p.minTurnover, na: turnover == null },
-    { label:`Gap up ${p.minGapPct}%–${p.maxGapPct}% (open vs close kemarin)`, pass: !!gapOk, na: gapOk == null },
-    { label:`Gap bertahan (terisi ≤ ${(p.maxGapFill*100).toFixed(0)}%)`, pass: !!holdOk, na: holdOk == null },
-    { label:`Close > Open & di top ${((1-p.minCloseProx)*100).toFixed(0)}% range hari ini`, pass: !!strongOk, na: strongOk == null },
-    { label:"Close menembus High kemarin", pass: !!breakOk, na: breakOk == null },
-    { label:`Volume Ratio ≥ ${p.minVolRatio}x (vs 20-ADV)`, pass: volRatio != null && volRatio >= p.minVolRatio, na: volRatio == null },
-    { label:"Trend: Close > EMA20", pass: !!trendOk, na: trendOk == null },
-    { label:`Orderbook: Bid/Offer ≥ ${p.minBidAskRatio}x`, pass: hasOB ? bidAsk >= p.minBidAskRatio : false, na: !hasOB }
-  ];
-  const passedCount = checks.filter(c => c.pass).length;
-  const naCount = checks.filter(c => c.na).length;
-  // Sama seperti BSJP: kriteria tanpa data (na) tidak menggugurkan, tapi semua yang PUNYA data harus lolos.
-  const lolos = hasGapData && checks.every(c => c.pass || c.na);
-
-  // --- Skor komposit 0-100 ---
-  let gapScore = 0;
-  if(gapPct != null && gapPct > 0){
-    const ideal = Math.min(4, p.maxGapPct);
-    if(gapPct < p.minGapPct) gapScore = 10 * (gapPct / p.minGapPct);
-    else if(gapPct <= ideal) gapScore = 20;
-    else if(gapPct <= p.maxGapPct) gapScore = 20 * (1 - 0.6 * (gapPct - ideal) / Math.max(0.0001, p.maxGapPct - ideal));
-    else gapScore = 0;
-  }
-  const holdScore = fillRatio != null ? 15 * (1 - fillRatio) : 0;
-  const volScore = volRatio != null ? 20 * clamp01((volRatio - 1) / 2.5) : 10;
-  const strengthScore = proximity != null ? 15 * clamp01(proximity) : 7.5;
-  const breakScore = breakOk == null ? 5 : (breakOk ? 10 : 0);
-  const liqScore = turnover != null ? 10 * clamp01(turnover / 20e9) : 5;
-  const obScore = hasOB ? 10 * clamp01(bidAsk - 1) : 5;
-  const score = Math.max(0, Math.min(100, Math.round(gapScore + holdScore + volScore + strengthScore + breakScore + liqScore + obScore)));
-
-  let signal, signalTone;
-  if(!hasGapData){ signal = "NO DATA"; signalTone = "muted"; }
-  else if(gapPct <= 0){ signal = "NO GAP"; signalTone = "muted"; }
-  else if(gapPct > p.maxGapPct){ signal = "OVEREXTENDED"; signalTone = "gold"; }
-  else if(!lolos){ signal = "AVOID"; signalTone = "down"; }
-  else if(score >= 80){ signal = "STRONG_GO"; signalTone = "up"; }
-  else if(score >= 65){ signal = "GO"; signalTone = "up"; }
-  else if(score >= 50){ signal = "WATCH"; signalTone = "gold"; }
-  else { signal = "AVOID"; signalTone = "down"; }
-
-  // --- Trade plan day trade: entry di harga terakhir, keluar di hari yang sama ---
-  const entry = cClose;
-  const tp1 = entry != null ? entry * (1 + p.tp1Pct / 100) : null;
-  const tp2 = entry != null ? entry * (1 + p.tp2Pct / 100) : null;
-  const sl = entry != null ? entry * (1 - p.slPct / 100) : null;
-  const rr = (entry != null && sl != null && tp1 != null && (entry - sl) > 0) ? (tp1 - entry) / (entry - sl) : null;
-  const feePctNum = Math.max(0, Number(p.feePct) || 0);
-  const feeCost = entry != null ? entry * feePctNum / 100 : null;
-  const netRr = (entry != null && sl != null && tp1 != null && feeCost != null && ((entry - sl) + feeCost) > 0)
-    ? ((tp1 - entry) - feeCost) / ((entry - sl) + feeCost) : null;
-  let lots = null, lotCost = null, riskRp = null;
-  if(entry != null && sl != null && entry > 0 && Number(p.modal) > 0 && Number(p.riskPct) > 0){
-    riskRp = Number(p.modal) * Number(p.riskPct) / 100;
-    const perShareRisk = (entry - sl) + feeCost;
-    if(perShareRisk > 0){
-      const byRisk = Math.floor(riskRp / perShareRisk / 100);
-      const byCapital = Math.floor(Number(p.modal) / (entry * 100));
-      lots = Math.max(0, Math.min(byRisk, byCapital));
-      lotCost = lots * 100 * entry;
-    }
-  }
-
-  const flags = [];
-  if(gapPct != null && gapPct > 0 && volRatio != null && volRatio < 1) flags.push("Gap tanpa dukungan volume (Volume Ratio < 1x) — rawan fade");
-  if(gapPct != null && gapPct > 0 && cClose != null && cOpen != null && cClose < cOpen) flags.push("Gap sudah memudar: harga sekarang di bawah open");
-  if(fillRatio != null && fillRatio >= 1) flags.push("Gap sudah terisi penuh (low menyentuh close kemarin) — tesis Gap & Go batal");
-
-  return {
-    checks, passedCount, naCount, totalChecks: checks.length, lolos,
-    score, breakdown: { gapScore, holdScore, volScore, strengthScore, breakScore, liqScore, obScore },
-    signal, signalTone, flags,
-    gapPct, fillRatio, breakOk,
-    tradePlan: { entry, tp1, tp2, sl, rr, netRr, lots, lotCost, riskRp, gapFillLevel: prevClose, dayLow: cLow },
-    metrics: { volRatio, proximity, bidAsk: hasOB ? bidAsk : null, turnover }
-  };
-}
-
-function ggPresets(){
-  return [
-    { key:"strict", label:"Strict Gap & Go", desc:"Gap up yang lolos SEMUA 8 kriteria (kriteria tanpa data dihitung netral).",
-      filter: s => s.gg.lolos && s.gg.gapPct > 0 },
-    { key:"breakhigh", label:"Gap + Break High Kemarin", desc:"Gap up dan harga sudah di atas High kemarin.",
-      filter: s => s.gg.gapPct != null && s.gg.gapPct > 0 && s.gg.breakOk === true },
-    { key:"hot", label:"Volume Panas (≥2x)", desc:"Gap up dengan Volume Ratio ≥ 2x rata-rata 20 hari.",
-      filter: s => s.gg.gapPct != null && s.gg.gapPct > 0 && s.gg.metrics.volRatio != null && s.gg.metrics.volRatio >= 2 },
-    { key:"gapall", label:"Semua Gap Up", desc:"Semua saham yang buka di atas close kemarin, tanpa filter lain.",
-      filter: s => s.gg.gapPct != null && s.gg.gapPct > 0 },
-    { key:"all", label:"All Screened", desc:"Semua saham dalam universe screener.", filter: () => true }
-  ];
-}
-
-function ggPill(sig, tone){
-  const bg = tone==="up" ? "rgba(16,185,129,0.15)" : tone==="down" ? "rgba(239,68,68,0.15)" : tone==="gold" ? "rgba(234,179,8,0.15)" : "color-mix(in srgb, currentColor 8%, transparent)";
-  const fg = tone==="up" ? "var(--up)" : tone==="down" ? "var(--down)" : tone==="gold" ? "var(--gold)" : "var(--muted)";
-  return `<span style="display:inline-block;padding:3px 9px;border-radius:999px;font-size:10.5px;font-weight:700;letter-spacing:.03em;background:${bg};color:${fg};">${sig}</span>`;
-}
-
-function ggTradePlanCard(s){
-  const g = s.gg, tp = g.tradePlan, bd = g.breakdown, m = g.metrics;
-  const pctFrom = v => (tp.entry != null && v != null && tp.entry > 0) ? ((v - tp.entry) / tp.entry) * 100 : null;
-  const fp = v => v != null ? `${v>=0?'+':''}${v.toFixed(2)}%` : "-";
-  const box = (icon, label, val, sub, tone) => `
-    <div style="flex:1 1 140px;background:color-mix(in srgb, currentColor 4%, transparent);border:1px solid var(--border);border-left:3px solid ${tone?`var(--${tone})`:'var(--muted)'};border-radius:8px;padding:10px 12px;">
-      <div style="font-size:10.5px;color:var(--muted);font-weight:700;margin-bottom:4px;white-space:nowrap;">${icon} ${label}</div>
-      <div class="mono" style="font-size:16px;font-weight:800;color:${tone?`var(--${tone})`:'var(--text)'};">${val!=null ? "Rp "+fmtNum(Math.round(val)) : "-"}</div>
-      <div style="font-size:10.5px;color:var(--muted);margin-top:2px;">${sub}</div>
-    </div>`;
-  const bar = (label, pts, max, color) => `
-    <div style="flex:1 1 150px;">
-      <div style="font-size:10.5px;color:var(--muted);display:flex;justify-content:space-between;"><span>${label}</span><span class="mono">${pts.toFixed(1)}/${max}</span></div>
-      ${bsjpScoreBar(pts, max, color)}
-    </div>`;
-  const checklist = g.checks.map(c => {
-    const icon = c.na ? "➖" : (c.pass ? "✅" : "❌");
-    return `<div style="font-size:12px;padding:2px 0;${c.na?'color:var(--muted);':''}">${icon} ${escapeHtml(c.label)}${c.na?' <span style="font-size:10.5px;">(tanpa data, netral)</span>':''}</div>`;
-  }).join("");
-  const flags = g.flags.length ? `<div style="margin-top:8px;font-size:12px;color:var(--gold);">${g.flags.map(f => `⚠️ ${escapeHtml(f)}`).join("<br>")}</div>` : "";
-  const sizing = tp.lots != null
-    ? `<div style="font-size:12px;margin-top:8px;">📐 Ukuran posisi: <b class="mono">${fmtNum(tp.lots)} lot</b> (± Rp ${fmtNum(Math.round(tp.lotCost))}), risiko maks Rp ${fmtNum(Math.round(tp.riskRp))} termasuk fee.</div>`
-    : `<div style="font-size:12px;margin-top:8px;color:var(--muted);">📐 Isi Modal di ⚙️ Params untuk menghitung ukuran posisi.</div>`;
-  return `
-    <div style="padding:10px 4px;">
-      <div style="display:flex;gap:10px;flex-wrap:wrap;">
-        ${box("🎯","Entry (harga terakhir)", tp.entry, `Gap ${g.gapPct!=null?fp(g.gapPct):'-'} · Skor ${g.score}`, "teal")}
-        ${box("✅","TP1", tp.tp1, fp(pctFrom(tp.tp1)), "up")}
-        ${box("🏁","TP2", tp.tp2, fp(pctFrom(tp.tp2)), "up")}
-        ${box("🛑","Stop Loss", tp.sl, fp(pctFrom(tp.sl)), "down")}
-      </div>
-      <div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:10px;">
-        ${box("🧱","Batas Gap Terisi (close kemarin)", tp.gapFillLevel, "Kalau harga kembali ke sini, tesis Gap & Go batal — keluar", "gold")}
-        ${box("📉","Low Hari Ini", tp.dayLow, "Acuan stop struktural alternatif", null)}
-      </div>
-      <div style="font-size:12px;margin-top:10px;">
-        R:R ke TP1: <b class="mono">${tp.rr!=null?tp.rr.toFixed(2):'-'}</b>
-        · setelah fee: <b class="mono">${tp.netRr!=null?tp.netRr.toFixed(2):'-'}</b>
-        · Vol Ratio: <b class="mono">${m.volRatio!=null?m.volRatio.toFixed(2)+'x':'-'}</b>
-        · Posisi close di range: <b class="mono">${m.proximity!=null?(m.proximity*100).toFixed(0)+'%':'-'}</b>
-        · Gap terisi: <b class="mono">${g.fillRatio!=null?(g.fillRatio*100).toFixed(0)+'%':'-'}</b>
-      </div>
-      ${sizing}
-      ${flags}
-      <div style="display:flex;gap:14px;flex-wrap:wrap;margin-top:12px;">
-        ${bar("Kualitas gap", bd.gapScore, 20, "var(--teal)")}
-        ${bar("Gap bertahan", bd.holdScore, 15, "var(--up)")}
-        ${bar("Volume", bd.volScore, 20, "var(--gold)")}
-        ${bar("Kekuatan close", bd.strengthScore, 15, "var(--up)")}
-        ${bar("Break High kemarin", bd.breakScore, 10, "var(--teal)")}
-        ${bar("Likuiditas", bd.liqScore, 10, "var(--gold)")}
-        ${bar("Orderbook", bd.obScore, 10, "var(--teal)")}
-      </div>
-      <div style="margin-top:12px;">${checklist}</div>
-      <div style="margin-top:10px;font-size:11px;color:var(--muted);">Day trade: tidak dibawa menginap. Keluar saat TP/SL kena, gap terisi, atau paling lambat sebelum penutupan (±15:50). Angka TP/SL adalah titik awal, bukan hasil backtest.</div>
-    </div>`;
-}
-
-function renderGapGo(){
-  const g = ggS();
-  const p = g.params;
-  const list = enriched();
-  list.forEach(s => { s.gg = ggCompute(s, p); });
-  const phase = (typeof computeBsjpMarketPhase === "function") ? computeBsjpMarketPhase() : { label:"-", tone:"muted", closingInMin:null, clock:"-" };
-  const presets = ggPresets();
-  const active = presets.find(x => x.key === g.preset) || presets[0];
-
-  const q = g.search.trim().toLowerCase();
-  let rows = list.filter(s => !q || s.ticker.toLowerCase().includes(q)).filter(active.filter);
-  rows.sort((a, b) => {
-    if(g.sort === "gap") return (b.gg.gapPct ?? -999) - (a.gg.gapPct ?? -999);
-    if(g.sort === "changePct") return (b.changePct || 0) - (a.changePct || 0);
-    if(g.sort === "volRatio") return (b.volRatio || 0) - (a.volRatio || 0);
-    if(g.sort === "turnover") return (b.turnover || 0) - (a.turnover || 0);
-    return b.gg.score - a.gg.score;
-  });
-  rows = rows.slice(0, 200);
-
-  const gapUps = list.filter(s => s.gg.gapPct != null && s.gg.gapPct > 0);
-  const strictN = list.filter(s => s.gg.lolos && s.gg.gapPct > 0).length;
-  const strongN = list.filter(s => s.gg.signal === "STRONG_GO").length;
-  const avgGap = gapUps.length ? gapUps.reduce((a, s) => a + s.gg.gapPct, 0) / gapUps.length : null;
-
-  const statCard = (label, val, tone) => `<div class="summary-card" style="min-width:150px;"><div class="summary-lbl">${label}</div><div class="summary-val" style="${tone?`color:${tone};`:""}font-size:16px;">${val}</div></div>`;
-
-  const headerBar = `
-    <div class="panel" style="flex-wrap:wrap;gap:10px;align-items:center;">
-      <span class="pill pill-up" style="display:inline-flex;align-items:center;gap:6px;">🚀 Gap Up &amp; Go (${fmtNum(list.length)} saham)</span>
-      <span class="pill" style="background:rgba(6,182,212,0.12);color:var(--teal);border:1px solid rgba(6,182,212,0.3);">${phase.label}${phase.closingInMin!=null?` · tutup ${phase.closingInMin} mnt lagi`:""}</span>
-      <span class="pill" style="background:color-mix(in srgb, currentColor 5%, transparent);color:var(--muted);border:1px solid var(--border);">🕐 ${phase.clock} WIB</span>
-      <div style="margin-left:auto;display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
-        <label style="display:flex;align-items:center;gap:6px;font-size:11.5px;color:var(--muted);cursor:pointer;" title="Mode Simulator: ubah parameter tanpa menimpa Pengaturan tersimpan">
-          <input type="checkbox" id="ggSimulatorChk" ${g.simulator?"checked":""}> Simulator${g.simulator?" (aktif)":""}
-        </label>
-        <button class="btn btn-outline" id="ggParamsToggleBtn">⚙️ Params</button>
-        <button class="btn btn-outline" id="ggRefreshBtn" title="Refresh data">🔄</button>
-      </div>
-    </div>`;
-
-  const statsBar = `
-    <div class="summary-grid" style="margin-bottom:0;">
-      ${statCard("Saham Gap Up", fmtNum(gapUps.length), "var(--teal)")}
-      ${statCard("Rata-rata Gap", avgGap!=null ? `+${avgGap.toFixed(2)}%` : "-", "var(--up)")}
-      ${statCard("Lolos Strict", fmtNum(strictN), "var(--gold)")}
-      ${statCard("STRONG_GO", fmtNum(strongN), "var(--up)")}
-      ${statCard("Tampil (preset ini)", fmtNum(rows.length))}
-    </div>`;
-
-  const presetsBar = `
-    <div class="panel bsjp-presets-bar">
-      <span style="font-size:10.5px;color:var(--muted);text-transform:uppercase;font-weight:700;white-space:nowrap;">Radar Presets:</span>
-      <div class="bsjp-preset-list">
-        ${presets.map(pr => {
-          const cnt = list.filter(pr.filter).length;
-          return `<button class="btn ${g.preset===pr.key?'btn-primary':'btn-outline'}" data-gg-preset="${pr.key}" title="${escapeHtml(pr.desc)}">${pr.label} <span class="count-badge" style="margin-left:4px;">${cnt}</span></button>`;
-        }).join("")}
-      </div>
-    </div>`;
-
-  const infoPanel = `
-    <details class="panel" id="ggInfoDetails" style="flex-direction:column;align-items:stretch;" ${g.infoOpen?"open":""}>
-      <summary style="cursor:pointer;font-weight:700;font-size:13px;display:flex;justify-content:space-between;">
-        <span>🚀 Apa itu Gap Up &amp; Go?</span><span style="color:var(--muted);font-size:11px;">Buka / tutup</span>
-      </summary>
-      <div style="font-size:12.5px;line-height:1.6;margin-top:10px;">
-        Saham yang <b>buka di atas close kemarin</b> (gap up), gap-nya <b>tidak terisi</b>, lalu harga lanjut naik dengan volume ramai. Dipakai <b>pagi hari (±09:00–10:00 WIB)</b> dan ditutup di hari yang sama.
-        <ul style="margin:8px 0 0 18px;padding:0;">
-          <li><b>Kriteria (8):</b> turnover, gap 1–8%, gap bertahan, close &gt; open &amp; kuat di range, close &gt; High kemarin, volume ratio, di atas EMA20, bid/offer. Kriteria tanpa data dihitung netral.</li>
-          <li><b>Skor 0–100:</b> kualitas gap 20, gap bertahan 15, volume 20, kekuatan close 15, break High kemarin 10, likuiditas 10, orderbook 10.</li>
-          <li><b>Sinyal:</b> STRONG_GO ≥ 80, GO ≥ 65, WATCH ≥ 50, AVOID kalau ada kriteria gagal. OVEREXTENDED kalau gap di atas batas maksimum.</li>
-        </ul>
-        <div style="margin-top:8px;"><b>Backtest:</b> (1) centang kandidat saat entry (pagi) lalu <b>💾 Simpan ke Backtest</b> untuk uji maju; (2) di tab <b>🏆 Backtest Screener</b> ada preset <b>🚀 Gap Up &amp; Go (beli open besok)</b> yang menguji sinyal ini di data historis dengan entry open hari berikutnya (bukan day trade pagi).</div>
-        <div style="margin-top:8px;color:var(--gold);">Catatan: memakai snapshot harian (open, high, low, close), bukan candle 5/15 menit, jadi bukan Opening Range Breakout murni. Jalankan update harga live dulu; kalau data masih EOD kemarin, hasilnya = kondisi kemarin.</div>
-      </div>
-    </details>`;
-
-  const paramDefs = [
-    ["minTurnover","Turnover min (Rp)",1e8], ["minGapPct","Gap min (%)",0.1], ["maxGapPct","Gap maks (%)",0.1],
-    ["maxGapFill","Gap terisi maks (0–1)",0.05], ["minCloseProx","Posisi close min (0–1)",0.05], ["minVolRatio","Volume Ratio min",0.1],
-    ["minBidAskRatio","Bid/Offer min",0.05], ["tp1Pct","TP1 (%)",0.1], ["tp2Pct","TP2 (%)",0.1], ["slPct","Stop Loss (%)",0.1],
-    ["feePct","Fee bolak-balik (%)",0.05], ["modal","Modal (Rp)",1e6], ["riskPct","Risiko per trade (%)",0.1]
-  ];
-  const paramsPanel = g.paramsOpen ? `
-    <div class="panel" style="flex-direction:column;align-items:stretch;">
-      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
-        <div style="font-weight:700;font-size:13px;">⚙️ Parameter Gap Up &amp; Go${g.simulator?" — Mode Simulator (tidak disimpan)":""}</div>
-        <button class="btn btn-outline" id="ggResetParamsBtn">Reset default</button>
-      </div>
-      <div style="display:flex;gap:10px;flex-wrap:wrap;">
-        ${paramDefs.map(([k, label, step]) => `<div class="field" style="min-width:150px;"><label style="font-size:10.5px;">${label}</label><input type="number" step="${step}" data-gg-param="${k}" value="${p[k]}"></div>`).join("")}
-      </div>
-    </div>` : "";
-
-  const toolbar = `
-    <div class="panel" style="gap:8px;flex-wrap:wrap;align-items:center;">
-      <input id="ggSearchInput" type="text" placeholder="Cari kode saham" value="${escapeHtml(g.search)}" style="background:color-mix(in srgb, currentColor 6%, transparent);border:1px solid var(--border);color:var(--text);font-size:12px;border-radius:8px;padding:7px 10px;">
-      <select id="ggSortSelect" style="background:color-mix(in srgb, currentColor 6%, transparent);border:1px solid var(--border);color:var(--text);font-size:12px;border-radius:8px;padding:7px 10px;">
-        <option value="score" ${g.sort==="score"?"selected":""}>Urutkan: Skor</option>
-        <option value="gap" ${g.sort==="gap"?"selected":""}>Urutkan: Gap %</option>
-        <option value="changePct" ${g.sort==="changePct"?"selected":""}>Urutkan: Perubahan %</option>
-        <option value="volRatio" ${g.sort==="volRatio"?"selected":""}>Urutkan: Volume Ratio</option>
-        <option value="turnover" ${g.sort==="turnover"?"selected":""}>Urutkan: Turnover</option>
-      </select>
-    </div>`;
-
-  const pc = v => v != null ? `${v>=0?'+':''}${v.toFixed(2)}%` : "-";
-  const tableRows = rows.map(s => `
-    <tr>
-      ${backtestRowCheckbox("gapgo", { ticker: s.ticker, price: Math.round(s.cClose||0) })}
-      <td class="ticker-cell"><button class="ticker-link" data-detail="${s.ticker}" title="Lihat detail ${s.ticker}">${s.ticker}</button></td>
-      <td>${fmtNum(s.cClose)}</td>
-      <td style="color:${(s.gg.gapPct||0)>=0?'var(--up)':'var(--down)'};">${pc(s.gg.gapPct)}</td>
-      <td>${s.gg.fillRatio!=null ? (s.gg.fillRatio*100).toFixed(0)+'%' : '-'}</td>
-      <td style="color:${(s.changePct||0)>=0?'var(--up)':'var(--down)'};">${s.changePct!=null ? pc(s.changePct) : '-'}</td>
-      <td>${s.volRatio!=null ? s.volRatio.toFixed(2)+'x' : '-'}</td>
-      <td>${s.turnover!=null ? fmtCap(s.turnover) : '-'}</td>
-      <td>${s.gg.passedCount}/${s.gg.totalChecks}</td>
-      <td class="mono" style="font-weight:700;">${s.gg.score}</td>
-      <td>${ggPill(s.gg.signal, s.gg.signalTone)}${s.gg.flags.length ? ` <span title="${escapeHtml(s.gg.flags.join(' | '))}" style="cursor:help;">⚠️</span>` : ""}</td>
-      <td><button class="btn btn-outline" data-gg-expand="${s.ticker}" style="padding:4px 10px;font-size:11px;">${g.expanded===s.ticker?"Tutup":"Trade Plan"}</button></td>
-    </tr>
-    ${g.expanded===s.ticker ? `<tr><td colspan="12" style="background:color-mix(in srgb, currentColor 4%, transparent);">${ggTradePlanCard(s)}</td></tr>` : ""}
-  `).join("");
-
-  const resultsPanel = `
-    <div class="panel" style="flex-direction:column;align-items:stretch;">
-      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
-        <div class="filter-section-title" style="margin:0;">🚀 Radar Gap Up &amp; Go · ${escapeHtml(active.label)} <span class="count-badge">${rows.length} saham</span><span class="line"></span></div>
-      </div>
-      ${!rows.length ? `<div class="empty-box">Tidak ada saham yang cocok preset "${escapeHtml(active.label)}". Pastikan harga live sudah di-update (data open &amp; prev close terisi), atau coba preset lain / ubah parameter di Params.</div>` : `
-      ${renderBacktestSaveBar("gapgo", rows.map(s => ({
-        ticker: s.ticker, price: Math.round(s.cClose||0),
-        kriteria: `Gap Up & Go · ${active.label}`,
-        keterangan: `Gap: ${s.gg.gapPct!=null?s.gg.gapPct.toFixed(2)+'%':'-'}; Kriteria: ${s.gg.passedCount}/${s.gg.totalChecks}; Skor: ${s.gg.score}; Sinyal: ${s.gg.signal}; Vol Ratio: ${s.volRatio!=null?s.volRatio.toFixed(2)+'x':'-'}`
-      })))}
-      <div class="table-wrap">
-        <table class="mono">
-          <thead><tr><th></th><th>Kode</th><th>Harga</th><th>Gap%</th><th>Gap Terisi</th><th>1D%</th><th>Vol Ratio</th><th>Turnover</th><th>Kriteria</th><th>Skor</th><th>Sinyal</th><th></th></tr></thead>
-          <tbody>${tableRows}</tbody>
-        </table>
-      </div>`}
-    </div>`;
-
-  return headerBar + statsBar + presetsBar + infoPanel + paramsPanel + toolbar + resultsPanel;
-}
-
-function ggBind(){
-  const g = ggS();
-  bindSearchInputPreservingCursor("ggSearchInput", v => { g.search = v; });
-  const sortSel = document.getElementById("ggSortSelect");
-  if(sortSel) sortSel.onchange = e => { g.sort = e.target.value; render(); };
-  document.querySelectorAll("[data-gg-preset]").forEach(b => { b.onclick = () => { g.preset = b.dataset.ggPreset; render(); }; });
-  document.querySelectorAll("[data-gg-expand]").forEach(b => { b.onclick = () => { g.expanded = g.expanded === b.dataset.ggExpand ? null : b.dataset.ggExpand; render(); }; });
-  document.querySelectorAll("[data-gg-param]").forEach(inp => {
-    inp.onchange = () => {
-      const v = Number(inp.value);
-      if(!isFinite(v)) return;
-      g.params[inp.dataset.ggParam] = v;
-      ggSaveParams();
-      render();
-    };
-  });
-  const pt = document.getElementById("ggParamsToggleBtn");
-  if(pt) pt.onclick = () => { g.paramsOpen = !g.paramsOpen; render(); };
-  const rb = document.getElementById("ggResetParamsBtn");
-  if(rb) rb.onclick = () => { g.params = ggDefaultParams(); ggSaveParams(); render(); };
-  const sim = document.getElementById("ggSimulatorChk");
-  if(sim) sim.onchange = e => {
-    g.simulator = e.target.checked;
-    if(!g.simulator){
-      // keluar dari simulator: kembalikan parameter yang tersimpan
-      g.params = ggDefaultParams();
-      try{ const raw = localStorage.getItem("ihsg_gapgo_params_v1"); if(raw) g.params = { ...g.params, ...JSON.parse(raw) }; }catch(err){}
-    }
-    render();
-  };
-  const info = document.getElementById("ggInfoDetails");
-  if(info) info.ontoggle = () => { g.infoOpen = info.open; };
-  const refresh = document.getElementById("ggRefreshBtn");
-  if(refresh) refresh.onclick = () => { if(typeof loadLive === "function") loadLive(); else render(); };
-}
-
-// ---------- pasang tombol ke sidebar (tanpa perlu edit index.html) ----------
-(function ggInstallNav(){
-  try{
-    if(document.querySelector('#tabs .tab-btn[data-tab="gapgo"]')) return;
-    const ref = document.querySelector('#tabs .tab-btn[data-tab="bsjp"]') || document.querySelector('#tabs .tab-btn[data-tab="screener"]');
-    if(!ref) return;
-    const wrap = ref.closest("li") || ref, clone = wrap.cloneNode(true);
-    const btn = clone.matches(".tab-btn") ? clone : clone.querySelector(".tab-btn");
-    btn.dataset.tab = "gapgo"; btn.classList.remove("active"); btn.removeAttribute("id");
-    const lab = btn.querySelector(".tab-label, .label, span:last-child");
-    if(lab && lab !== btn) lab.textContent = "🚀 Gap Up & Go"; else btn.textContent = "🚀 Gap Up & Go";
-    if(btn.tagName === "A") btn.setAttribute("href", "#/gapgo");
-    wrap.after(clone);
-    bindInternalLink(btn, () => selectMainTab("gapgo"));
-  }catch(e){ console.warn("[GapGo] gagal memasang menu:", e); }
-})();
-
-
-// ==========================================================================
-// 🚀 Gap Up & Go untuk 🏆 Backtest Screener (SBT) — varian yang BISA diuji historis
-//
-// Sinyal dihitung dari candle hari i (gap up bertahan, close kuat, break High
-// kemarin, volume ramai, di atas EMA21), entry = OPEN hari berikutnya (aturan
-// standar SBT, tanpa look-ahead). Ini BUKAN day trade pagi: data historis hanya
-// candle harian, jadi entry pagi di hari gap tidak bisa disimulasikan jujur.
-// Kriteria orderbook tidak ada di histori (dilewati). EMA20 di tab diganti EMA21
-// (seri yang tersedia di SBT). Threshold mengikuti ⚙️ Params tab Gap Up & Go.
-// ==========================================================================
-if(typeof SBT_STRATS !== "undefined"){
-  SBT_STRATS.push({
-    key: "gapgo_t1", label: "🚀 Gap Up & Go (beli open besok)",
-    f: (X, i) => {
-      const P = ggS().params;
-      const o = X.o[i], h = X.h[i], l = X.l[i], c = X.c[i], pc = X.c[i-1], ph = X.h[i-1];
-      if(!(o > 0 && pc > 0 && c > 0 && h > l)) return false;
-      const gapPct = (o - pc) / pc * 100;
-      if(!(gapPct >= P.minGapPct && gapPct <= P.maxGapPct)) return false;
-      const fill = clamp01((o - Math.max(l, pc)) / (o - pc));
-      if(fill > P.maxGapFill) return false;                    // gap bertahan
-      if(!(c > o)) return false;                               // close di atas open
-      if((c - l) / (h - l) < P.minCloseProx) return false;     // close kuat di range
-      if(!(c > ph)) return false;                              // menembus High kemarin
-      const vr = X.volMA20[i] > 0 ? X.v[i] / X.volMA20[i] : null;
-      if(!(vr != null && vr >= P.minVolRatio)) return false;   // volume ramai
-      if(X.ema21[i] != null && !(c > X.ema21[i])) return false; // di atas EMA21
-      const tv = X.val[i] > 0 ? X.val[i] : c * X.v[i];
-      return tv >= P.minTurnover;
-    }
-  });
-}
