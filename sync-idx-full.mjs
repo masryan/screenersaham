@@ -7,6 +7,8 @@
 //   - sync-flow.mjs          (Node, sumber IDX, tabel `flows`)
 //
 // PEMBAGIAN SUMBER DATA (hasil keputusan bareng user):
+//   [REVISI] Di tabel `flows`, IDX HANYA mengisi listed_shares & tradeble_shares.
+//   OHLCV/foreign/bid-offer diisi Stockbit (update-flows-prices.mjs).
 //   IDX   -> harga OHLCV harian, volume, value, foreign buy/sell,
 //            listed shares, DAN semua indikator teknikal turunannya
 //            (RSI/MACD/MA/EMA/Bollinger/ATR/Stochastic/support-resistance/
@@ -95,6 +97,15 @@
 //                                                 Mengabaikan --days/--offset kalau dipasang
 //                                                 bersamaan. Rentang dibatasi maks MAX_DAYS
 //                                                 (320) hari kalender.
+//   node sync-idx-full.mjs --skip-fetch --skip-fundamentals \
+//                           --asof=2026-06-30     -> hitung teknikal "per tanggal" itu: bar di
+//                                                 `flows` yang tanggalnya > 2026-06-30 diabaikan,
+//                                                 jadi harga/RSI/MA/MACD/dst = kondisi pada hari
+//                                                 bursa terakhir <= tanggal tsb. PERHATIAN:
+//                                                 `stocks` & `stock_indicators_ext` cuma 1 baris
+//                                                 per ticker (snapshot), jadi hasilnya MENIMPA
+//                                                 snapshot terbaru. Jalankan lagi tanpa --asof
+//                                                 untuk mengembalikan ke kondisi terbaru.
 //   node sync-idx-full.mjs --skip-fetch \
 //                           --skip-technical      -> paling cepat: JANGAN tarik IDX, JANGAN
 //                                                 hitung indikator teknikal (stock_indicators_ext
@@ -112,6 +123,12 @@
 //                                                 Catatan: harga dari Yahoo untuk saham .JK
 //                                                 biasanya delay ~15-20 menit, bukan real-time
 //                                                 tick-by-tick.
+//
+//   node sync-idx-full.mjs --live-tech --loop=60 --tickers-file=daftar.txt
+//                                                 -> teknikal LIVE: hitung ulang indikator tiap N detik
+//                                                 memakai harga live dari tabel `stocks` sebagai bar hari ini.
+//                                                 Jalankan BERSAMAAN dengan update-live-price.mjs.
+//                                                 Tanpa --loop = sekali hitung lalu keluar.
 //
 // BACKFILL BERTAHAP (biar tidak kena rate-limit/Cloudflare & tidak re-fetch
 // hari yang sama tiap batch) -- naikkan --offset tiap kali, JANGAN --days:
@@ -225,6 +242,8 @@ const IDX_FIELDS = {
   nonRegVolume: "NonRegularVolume",
   nonRegValue: "NonRegularValue",
   listedShares: "ListedShares",
+  // IDX menulis kolom ini dengan typo ("TradebleShares"); alias lain ikut dicoba.
+  tradeableShares: ["TradebleShares", "TradeableShares", "TradableShares"],
   // GetStockSummary pernah mengubah nama kolom order-book pada beberapa
   // versi endpoint. Daftar alias dipakai oleh pickIdx() di bawah, sehingga
   // satu nama yang berubah tidak membuat seluruh snapshot ORCA menjadi NULL.
@@ -299,6 +318,16 @@ const skipTechnical = argv.includes("--skip-technical");
 // fundamental. Dibuat supaya bisa dijadwalkan sering (mis. tiap beberapa
 // menit) tanpa bergantung pada penarikan IDX harian.
 const livePrice = argv.includes("--live-price");
+// --live-tech: teknikal LIVE. Baca `flows` sekali, lalu tiap putaran bar hari ini
+// dibentuk dari harga live di tabel `stocks` (yang diisi update-live-price.mjs),
+// indikator dihitung ulang di memori dan ditulis ke `stocks` + `stock_indicators_ext`.
+// Dipakai bersama --loop=N (detik), --tickers-file=daftar.txt, --force, --dry-run, --cycles=N.
+// Lihat blok penjelasan sebelum bagian "Utama".
+const liveTech = argv.includes("--live-tech");
+const liveTechLoop = Math.max(0, Number(arg("loop", 0)) || 0);
+const liveTechCycles = Number(arg("cycles", 0)) || 0;
+const liveTechForce = argv.includes("--force");
+const tickersFileArg = arg("tickers-file", null);
 const debugFields = argv.includes("--debug-fields");
 const tickerFilter = arg("tickers", null);
 const onlyTickers = tickerFilter ? new Set(tickerFilter.split(",").map((t) => t.trim().toUpperCase())) : null;
@@ -308,6 +337,13 @@ const onlyTickers = tickerFilter ? new Set(tickerFilter.split(",").map((t) => t.
 // contoh di kepala berkas.
 const startArg = arg("start", null);
 const endArg = arg("end", null);
+// --asof=YYYY-MM-DD: hitung teknikal seakan-akan hari itu adalah hari terakhir
+// (bar `flows` setelah tanggal tsb diabaikan). Lihat penjelasan di kepala berkas.
+const asofArg = arg("asof", null);
+if (asofArg && !/^\d{4}-\d{2}-\d{2}$/.test(asofArg)) {
+  console.error(`--asof tidak valid: "${asofArg}" (format YYYY-MM-DD, mis. 2026-06-30)`);
+  process.exit(1);
+}
 const explicitDays = argv.some((a) => a.startsWith("--days="));
 const explicitOffset = argv.some((a) => a.startsWith("--offset="));
 
@@ -352,16 +388,33 @@ const rupiah = (v) =>
 // Supabase lewat REST (tanpa SDK)
 // -------------------------------------------------------------
 async function sb(path, { method = "GET", body, headers = {} } = {}) {
-  const res = await fetch(`${SUPABASE_URL}/rest/v1/${path}`, {
-    method,
-    headers: {
-      apikey: SERVICE_KEY,
-      Authorization: `Bearer ${SERVICE_KEY}`,
-      "Content-Type": "application/json",
-      ...headers,
-    },
-    body: body ? JSON.stringify(body) : undefined,
-  });
+  // Retry untuk jaringan putus / timeout / 5xx / 429 (upsert aman diulang)
+  let res;
+  for (let attempt = 1; ; attempt++) {
+    try {
+      res = await fetch(`${SUPABASE_URL}/rest/v1/${path}`, {
+        method,
+        headers: {
+          apikey: SERVICE_KEY,
+          Authorization: `Bearer ${SERVICE_KEY}`,
+          "Content-Type": "application/json",
+          ...headers,
+        },
+        body: body ? JSON.stringify(body) : undefined,
+        signal: AbortSignal.timeout(30000),
+      });
+      if ((res.status >= 500 || res.status === 429) && attempt < 5) {
+        console.log(`  Supabase ${res.status}, coba lagi ${attempt}/4 dalam ${attempt * 3} detik`);
+        await new Promise(r => setTimeout(r, attempt * 3000));
+        continue;
+      }
+      break;
+    } catch (e) {
+      if (attempt >= 5) throw e;
+      console.log(`  jaringan putus (${e.cause?.code || e.message}), coba lagi ${attempt}/4 dalam ${attempt * 3} detik`);
+      await new Promise(r => setTimeout(r, attempt * 3000));
+    }
+  }
 
   if (!res.ok) {
     const detail = (await res.text()).slice(0, 300);
@@ -547,6 +600,36 @@ function calcStdDev(arr) {
   return Math.sqrt(arr.reduce((sq, n) => sq + Math.pow(n - m, 2), 0) / arr.length);
 }
 
+// ADX/+DI/-DI Wilder (periode 14). Butuh minimal 2*period+1 bar, kalau kurang -> semua null.
+// High/Low kosong dianggap sama dengan close (konsisten dengan calcATR).
+function calcADX(highs, lows, closes, period) {
+  const n = closes.length;
+  if (n < 2 * period + 1) return { adx: null, pdi: null, mdi: null };
+  const tr = [], pdm = [], mdm = [];
+  for (let i = 1; i < n; i++) {
+    const h = highs[i] != null ? highs[i] : closes[i], l = lows[i] != null ? lows[i] : closes[i];
+    const ph = highs[i - 1] != null ? highs[i - 1] : closes[i - 1], pl = lows[i - 1] != null ? lows[i - 1] : closes[i - 1];
+    const up = h - ph, down = pl - l;
+    pdm.push(up > down && up > 0 ? up : 0);
+    mdm.push(down > up && down > 0 ? down : 0);
+    tr.push(Math.max(h - l, Math.abs(h - closes[i - 1]), Math.abs(l - closes[i - 1])));
+  }
+  let sTR = 0, sP = 0, sM = 0;
+  for (let i = 0; i < period; i++) { sTR += tr[i]; sP += pdm[i]; sM += mdm[i]; }
+  const dxs = [];
+  let pdi = 0, mdi = 0;
+  for (let i = period; i <= tr.length; i++) {
+    if (i > period) { sTR = sTR - sTR / period + tr[i - 1]; sP = sP - sP / period + pdm[i - 1]; sM = sM - sM / period + mdm[i - 1]; }
+    pdi = sTR > 0 ? 100 * sP / sTR : 0; mdi = sTR > 0 ? 100 * sM / sTR : 0;
+    const sum = pdi + mdi;
+    dxs.push(sum > 0 ? 100 * Math.abs(pdi - mdi) / sum : 0);
+  }
+  if (dxs.length < period) return { adx: null, pdi: null, mdi: null };
+  let adx = dxs.slice(0, period).reduce((a, b) => a + b, 0) / period;
+  for (let i = period; i < dxs.length; i++) adx = (adx * (period - 1) + dxs[i]) / period;
+  return { adx, pdi, mdi };
+}
+
 function calcATR(highs, lows, closes, period) {
   if (closes.length < period + 1) return null;
   const trs = [];
@@ -641,6 +724,9 @@ function computeExtendedIndicators(bars) {
     macd: round2(macdFull.macd), signal: round2(macdFull.signal), macdHist: round2(macdFull.hist),
     bbUpper, bbLower,
     atr14: round2(calcATR(highs, lows, closes, 14)),
+    adx14: (() => { const x = calcADX(highs, lows, closes, 14); return x.adx == null ? null : round1(x.adx); })(),
+    pdi14: (() => { const x = calcADX(highs, lows, closes, 14); return x.pdi == null ? null : round1(x.pdi); })(),
+    mdi14: (() => { const x = calcADX(highs, lows, closes, 14); return x.mdi == null ? null : round1(x.mdi); })(),
     adr14: round2(average(ranges)),
     // REVISI: dulu ini typical price 1 hari ((H+L+C)/3), bukan VWAP --
     // label kolom "vwap" jadi menyesatkan di screener/rule builder.
@@ -878,7 +964,8 @@ function buildStockRowFromBars(ticker, bars, listedShares) {
   // PERTAMA tahun berjalan (bukan close hari terakhir tahun lalu), jadi
   // definisinya match dengan perhitungan YTD standar screener publik.
   let ytdPct = null;
-  const yearNow = todayWib().getUTCFullYear();
+  // Tahun acuan = tahun bar TERAKHIR (sama dengan tahun berjalan di mode biasa; benar juga untuk --asof tahun lampau)
+  const yearNow = Number(String(bars[n - 1].date).slice(0, 4)) || todayWib().getUTCFullYear();
   const firstBarThisYear = bars.find((b) => {
     const y = Number(String(b.date).slice(0, 4));
     return Number.isFinite(y) && y === yearNow;
@@ -970,7 +1057,10 @@ function buildStockRowFromBars(ticker, bars, listedShares) {
     keyakinanNaik = "Waspada (Trend Bearish + Candle Bearish)";
   }
 
-  const turnover = Math.round(cClose * cVol);
+  // Turnover dalam RUPIAH: pakai nilai transaksi (value) bar terakhir kalau ada;
+  // kalau kosong, harga x volume(LOT) x 100 lembar/lot.
+  const lastValue = Number(bars[n - 1].value);
+  const turnover = lastValue > 0 ? Math.round(lastValue) : Math.round(cClose * cVol * 100);
   const marketCap = listedShares != null && cClose != null ? Math.round(cClose * listedShares) : null;
 
   return {
@@ -1051,12 +1141,13 @@ async function fetchYahooFundamentals(ticker, priceHint) {
     psr: null, peg: null, roe: null, roa: null, npm: null, opm: null,
     revenue_growth: null, earnings_growth: null, dividend_yield: null,
     dividend_rate: null, payout_ratio: null, beta: null, der: null, current_ratio: null,
+    ex_dividend_date: null, dividend_pay_date: null, next_earnings_date: null,
   };
   try {
     const auth = await getYahooCrumb();
     const symbol = `${ticker}.JK`;
     let url = `https://query2.finance.yahoo.com/v10/finance/quoteSummary/${symbol}` +
-      "?modules=defaultKeyStatistics,summaryDetail,financialData";
+      "?modules=defaultKeyStatistics,summaryDetail,financialData,calendarEvents";
     if (auth.crumb) url += `&crumb=${encodeURIComponent(auth.crumb)}`;
 
     const res = await fetch(url, {
@@ -1084,6 +1175,17 @@ async function fetchYahooFundamentals(ticker, priceHint) {
     const keyStats = result.defaultKeyStatistics || {};
     const summary = result.summaryDetail || {};
     const fin = result.financialData || {};
+    const cal = result.calendarEvents || {};
+    // Yahoo mengirim tanggal sebagai epoch detik ({raw, fmt}). Simpan sebagai
+    // YYYY-MM-DD (WIB) atau null kalau tidak ada. Catatan: ex-dividend dari
+    // Yahoo bisa berupa tanggal TERAKHIR (sudah lewat), bukan selalu yang akan datang.
+    const dateOr = (field) => {
+      const raw = field && typeof field === "object" ? field.raw : field;
+      if (typeof raw !== "number" || !isFinite(raw) || raw <= 0) return null;
+      return new Date(raw * 1000 + 7 * 3600 * 1000).toISOString().slice(0, 10);
+    };
+    const earningsList = Array.isArray(cal.earnings?.earningsDate) ? cal.earnings.earningsDate : [];
+    const earningsDates = earningsList.map(dateOr).filter(Boolean).sort();
 
     const per = pick(summary.trailingPE) ?? pick(keyStats.forwardPE);
     const eps = pick(keyStats.trailingEps);
@@ -1144,6 +1246,9 @@ async function fetchYahooFundamentals(ticker, priceHint) {
       // fundamental menjadi salah total.
       der: pick(fin.debtToEquity) != null ? round2(pick(fin.debtToEquity) / 100) : null,
       current_ratio: pick(fin.currentRatio) != null ? round2(pick(fin.currentRatio)) : null,
+      ex_dividend_date: dateOr(cal.exDividendDate) ?? dateOr(summary.exDividendDate),
+      dividend_pay_date: dateOr(cal.dividendDate),
+      next_earnings_date: earningsDates[0] ?? null,
     };
   } catch (err) {
     if (!yahooDiagLogged) {
@@ -1215,6 +1320,177 @@ function valuasiDari(per, pbv) {
   return "Wajar (Fair)";
 }
 
+function buildExtRow(ticker, ext, prevExt) {
+  return {
+          ticker,
+          price_ma5: ext.priceMa5, price_ma10: ext.priceMa10, price_ma20: ext.priceMa20,
+          prev_price_ma5: prevExt.priceMa5 ?? null, prev_price_ma10: prevExt.priceMa10 ?? null,
+          prev_price_ma20: prevExt.priceMa20 ?? null, prev_price_ma50: prevExt.priceMa50 ?? null,
+          prev_price_ma100: prevExt.priceMa100 ?? null, prev_price_ma200: prevExt.priceMa200 ?? null,
+          volume_ma5: ext.volumeMa5, volume_ma10: ext.volumeMa10, volume_ma50: ext.volumeMa50,
+          volume_ma100: ext.volumeMa100, volume_ma200: ext.volumeMa200,
+          prev_volume_ma5: prevExt.volumeMa5 ?? null, prev_volume_ma10: prevExt.volumeMa10 ?? null,
+          prev_volume_ma20: prevExt.volumeMa20 ?? null, prev_volume_ma50: prevExt.volumeMa50 ?? null,
+          prev_volume_ma100: prevExt.volumeMa100 ?? null,
+          value_ma5: ext.valueMa5, value_ma10: ext.valueMa10, value_ma20: ext.valueMa20,
+          value_ma50: ext.valueMa50, value_ma100: ext.valueMa100, value_ma200: ext.valueMa200,
+          frequency_ma20: ext.frequencyMa20, frequency_ma50: ext.frequencyMa50, freq_spike: ext.freqSpike,
+          rsi14: ext.rsi14, prev_rsi14: prevExt.rsi14 ?? null,
+          prev_macd: prevExt.macd ?? null, prev_signal: prevExt.signal ?? null, prev_macd_hist: prevExt.macdHist ?? null,
+          bb_upper: ext.bbUpper, bb_lower: ext.bbLower,
+          adr14: ext.adr14, prev_atr14: prevExt.atr14 ?? null, prev_adr14: prevExt.adr14 ?? null,
+          vwap: ext.vwap,
+          adx14: ext.adx14 ?? null, plus_di14: ext.pdi14 ?? null, minus_di14: ext.mdi14 ?? null,
+          ema5: ext.ema5, ema9: ext.ema9, ema10: ext.ema10, ema20: ext.ema20, ema50: ext.ema50, ema100: ext.ema100, ema200: ext.ema200,
+          ema21: ext.ema21, prev_ema9: prevExt.ema9 ?? null, prev_ema21: prevExt.ema21 ?? null,
+          prev_ema200: prevExt.ema200 ?? null,
+          fib_p: ext.fibP, fib_r1: ext.fibR1, fib_r2: ext.fibR2, fib_r3: ext.fibR3,
+          fib_s1: ext.fibS1, fib_s2: ext.fibS2, fib_s3: ext.fibS3,
+          updated_at: new Date().toISOString(),
+  };
+}
+
+// -------------------------------------------------------------
+// MODE --live-tech: teknikal LIVE (intraday)
+// -------------------------------------------------------------
+// Cara kerja:
+//   1. Riwayat bar harian dibaca dari `flows` SEKALI di awal (cache di memori).
+//   2. Tiap putaran: baca price/volume/updated_at dari `stocks` (harus ada
+//      update-live-price.mjs yang jalan bersamaan), bentuk bar HARI INI:
+//        close = harga live, open/high/low = yang tercatat sejak skrip ini mulai
+//        (digabung dengan bar hari ini di `flows` kalau sudah ada), volume = volume live,
+//        value ~ volume x harga, frequency = tidak diketahui (dianggap 0).
+//   3. Hitung ulang SEMUA indikator dengan fungsi yang sama dengan sync harian,
+//      lalu upsert ke `stocks` dan `stock_indicators_ext`.
+// Catatan: updated_at di `stocks` sengaja TIDAK ditulis oleh mode ini, supaya
+// penanda "harga segar" tetap berasal dari update-live-price.mjs saja.
+// Jalankan sync harian (menu 1/0) sesudah bursa tutup untuk menimpa hasil
+// perkiraan dengan bar resmi (OHLC, value, frekuensi sebenarnya).
+const LT_OPEN_MIN = 8 * 60 + 55;
+const LT_CLOSE_MIN = 16 * 60 + 15;
+const LT_FRESH_MS = 15 * 60 * 1000;
+const wibParts = () => {
+  const w = new Date(Date.now() + 7 * 3600_000);
+  return { min: w.getUTCHours() * 60 + w.getUTCMinutes(), dow: w.getUTCDay(), hms: w.toISOString().slice(11, 19) };
+};
+
+async function runLiveTech(followed) {
+  let list = [...followed];
+  if (tickersFileArg) {
+    let raw = "";
+    try { raw = readFileSync(tickersFileArg, "utf8"); }
+    catch { console.log(`  ${tickersFileArg} tidak terbaca, memakai semua ticker di tabel stocks`); }
+    if (raw) {
+      const wl = new Set(raw.split(/[\s,;]+/).map((t) => t.trim().toUpperCase()).filter(Boolean));
+      list = list.filter((t) => wl.has(t));
+    }
+  }
+  if (list.length === 0) throw new Error("Tidak ada ticker untuk dihitung.");
+
+  const today = ymd(todayWib());
+  console.log(`Teknikal LIVE untuk ${list.length} ticker${liveTechLoop ? `, ulang tiap ${liveTechLoop}s sampai 16:15 WIB` : ""}${dryRun ? " (dry-run)" : ""}`);
+  console.log("Membaca riwayat bar dari flows (sekali di awal)...");
+
+  const cache = new Map(); // ticker -> { hist, flowsToday, listedShares }
+  let idx = 0, loadFail = 0;
+  const worker = async () => {
+    while (idx < list.length) {
+      const t = list[idx++];
+      try {
+        const bars = await sb(
+          `flows?ticker=eq.${t}&select=date,open_price,high,low,close,volume,value,frequency,listed_shares` +
+          `&order=date.asc&limit=${MAX_DAYS}`,
+        );
+        const clean = (bars || []).filter((b) => b.close != null).map((b) => ({
+          date: b.date, open: b.open_price, high: b.high, low: b.low, close: b.close,
+          volume: b.volume, value: b.value, frequency: b.frequency, listedShares: b.listed_shares,
+        }));
+        const hist = clean.filter((b) => b.date < today);
+        const flowsToday = clean.find((b) => b.date === today) || null;
+        const listedShares = [...clean].reverse().find((b) => b.listedShares != null)?.listedShares ?? null;
+        if (hist.length < MIN_BARS_FOR_CALC - 1) { loadFail++; continue; }
+        cache.set(t, { hist, flowsToday, listedShares });
+      } catch (err) {
+        loadFail++;
+        console.log(`  SKIP ${t.padEnd(6)} gagal baca flows: ${err.message}`);
+      }
+    }
+  };
+  await Promise.all(Array.from({ length: 5 }, worker));
+  console.log(`Riwayat siap untuk ${cache.size} ticker${loadFail ? ` (${loadFail} dilewati: data kurang/gagal baca)` : ""}.`);
+  if (cache.size === 0) throw new Error("Tidak ada riwayat flows yang bisa dipakai.");
+
+  const sess = new Map();      // ticker -> { open, high, low } sejak skrip mulai
+  const lastSig = new Map();   // ticker -> "price|volume" terakhir yang dihitung
+  let cycles = 0, fails = 0;
+
+  const cycle = async () => {
+    const rows = await sb("stocks?select=ticker,price,volume,updated_at&limit=5000");
+    const live = new Map((rows || []).map((r) => [r.ticker, r]));
+    const stocksPayload = [], extPayload = [];
+    let skippedSame = 0, noFresh = 0, errs = 0;
+    let sample = "";
+
+    for (const t of cache.keys()) {
+      const r = live.get(t);
+      const price = r ? Number(r.price) : NaN;
+      const fresh = r && r.updated_at && (Date.now() - Date.parse(r.updated_at) <= LT_FRESH_MS);
+      if (!r || !Number.isFinite(price) || price <= 0 || (!fresh && !liveTechForce)) { noFresh++; continue; }
+      const vol = Number(r.volume) || 0;
+      const sig = `${price}|${vol}`;
+      if (lastSig.get(t) === sig) { skippedSame++; continue; }
+
+      const c = cache.get(t);
+      let s = sess.get(t);
+      if (!s) {
+        s = { open: c.flowsToday?.open ?? price, high: price, low: price };
+        sess.set(t, s);
+      }
+      s.high = Math.max(s.high, price, c.flowsToday?.high ?? price);
+      s.low = Math.min(s.low, price, c.flowsToday?.low ?? price);
+      const todayBar = {
+        date: today, open: s.open, high: s.high, low: s.low, close: price,
+        volume: vol, value: Math.round(price * vol), frequency: null, listedShares: c.listedShares,
+      };
+      try {
+        const bars = [...c.hist, todayBar];
+        const technical = buildStockRowFromBars(t, bars, c.listedShares);
+        const ext = computeExtendedIndicators(bars);
+        const prevExt = computeExtendedIndicators(bars.slice(0, -1));
+        stocksPayload.push({ ...technical, lq45: LQ45_TICKERS.has(String(t).toUpperCase()) });
+        extPayload.push(buildExtRow(t, ext, prevExt));
+        lastSig.set(t, sig);
+        if (!sample || t === "BBCA") sample = `${t} harga=${technical.price} rsi7=${technical.rsi7} macd_hist=${technical.macd_hist} ${technical.cek_macd}`;
+      } catch (err) {
+        errs++;
+        console.log(`  SKIP ${t.padEnd(6)} ${err.message}`);
+      }
+    }
+
+    if (!dryRun) {
+      for (const part of chunkArr(stocksPayload, 25)) await upsert("stocks", part, "ticker");
+      for (const part of chunkArr(extPayload, 25)) await upsert("stock_indicators_ext", part, "ticker");
+    }
+    console.log(`[${wibParts().hms}] teknikal live: ${stocksPayload.length} dihitung, ${skippedSame} harga belum berubah, ${noFresh} tanpa harga segar${errs ? `, ${errs} gagal` : ""}${sample ? ` | ${sample}` : ""}`);
+    return stocksPayload.length + skippedSame > 0;
+  };
+
+  if (!liveTechLoop) { const ok = await cycle(); if (!ok) process.exitCode = 1; return; }
+
+  while (true) {
+    const { min, dow } = wibParts();
+    if (!liveTechForce && (dow === 0 || dow === 6)) { console.log("Akhir pekan, bursa libur. Selesai."); break; }
+    if (!liveTechForce && min >= LT_CLOSE_MIN) { console.log("Bursa sudah tutup (16:15 WIB), selesai."); break; }
+    if (!liveTechForce && min < LT_OPEN_MIN) { await sleep(15000); continue; }
+    const t0 = Date.now();
+    try { const ok = await cycle(); fails = ok ? 0 : fails + 1; }
+    catch (e) { fails++; console.error(`[${wibParts().hms}] ERROR: ${e.message}`); }
+    if (fails >= 10) { console.error("10 putaran berturut-turut tanpa hasil, berhenti."); process.exit(1); }
+    if (liveTechCycles && ++cycles >= liveTechCycles) break;
+    await sleep(Math.max(1000, liveTechLoop * 1000 - (Date.now() - t0)));
+  }
+}
+
 // -------------------------------------------------------------
 // Utama
 // -------------------------------------------------------------
@@ -1236,7 +1512,9 @@ try {
     : (startArg || endArg
         ? ` — periode ${startArg ?? "(awal data)"} s/d ${endArg ?? "hari ini"}`
         : ` — ${days} hari perdagangan` + (offsetDays > 0 ? ` (mundur ${offsetDays} hari kalender dari hari ini)` : ""));
-  console.log(livePrice
+  console.log(liveTech
+    ? "Mode teknikal LIVE (--live-tech)..."
+    : livePrice
     ? "Update harga live dari Yahoo (batch, tidak menyentuh IDX/flows/teknikal/fundamental)..."
     : `Sinkronisasi IDX penuh (harga+teknikal+flow) ${skipFundamentals ? "" : "+ fundamental Yahoo "}${periodLabel}` +
       (dryRun ? " (dry-run, tanpa menulis)" : ""));
@@ -1261,6 +1539,8 @@ try {
   if (followed.size === 0) throw new Error("Tabel stocks kosong — seed ticker dulu (mis. 02_seed_tickers.sql).");
   if (onlyTickers) followed = new Set([...followed].filter((t) => onlyTickers.has(t)));
   console.log(`${followed.size} emiten diikuti`);
+
+  if (liveTech) { await runLiveTech(followed); process.exit(process.exitCode || 0); }
 
   // Mode --live-price: batch-fetch harga dari Yahoo lalu langsung upsert,
   // TANPA menyentuh IDX/flows/teknikal/fundamental sama sekali, lalu keluar.
@@ -1370,48 +1650,37 @@ try {
         }
       }
 
-      const payload = rows
+      // PEMBAGIAN SUMBER `flows` (keputusan user): harga/volume/value/frekuensi/foreign/
+      // bid-offer = STOCKBIT (open_price IDX sering 0). IDX HANYA mengisi
+      // listed_shares dan tradeble_shares. Kolom lain sengaja TIDAK dikirim, jadi
+      // upsert merge-duplicates tidak menyentuh data Stockbit, dan `src` tidak diubah.
+      // Hanya baris yang sudah ada di `flows` yang diisi: baris baru berisi share saja
+      // (close NULL) akan jadi baris yatim.
+      const sharesAll = rows
         .filter((r) => followed.has(pickIdx(r, IDX_FIELDS.code)))
         .map((r) => ({
           ticker: pickIdx(r, IDX_FIELDS.code),
           date: dateStr,
-          src: "idx", // wajib eksplisit: upsert merge-duplicates cuma menimpa
-                      // kolom yang dikirim -- tanpa ini, baris yang paginya
-                      // sempat diisi Stockbit (src='stockbit') tetap berlabel
-                      // 'stockbit' walau datanya sudah ditimpa resmi IDX sore ini
-          open_price: num(pickIdx(r, IDX_FIELDS.open)),
-          high: num(pickIdx(r, IDX_FIELDS.high)),
-          low: num(pickIdx(r, IDX_FIELDS.low)),
-          close: num(pickIdx(r, IDX_FIELDS.close)),
-          volume: num(pickIdx(r, IDX_FIELDS.volume)),
-          value: num(pickIdx(r, IDX_FIELDS.value)),
-          frequency: num(pickIdx(r, IDX_FIELDS.frequency)),
-          foreign_buy: num(pickIdx(r, IDX_FIELDS.foreignBuy)),
-          foreign_sell: num(pickIdx(r, IDX_FIELDS.foreignSell)),
-          nonreg_volume: num(pickIdx(r, IDX_FIELDS.nonRegVolume)),
-          nonreg_value: num(pickIdx(r, IDX_FIELDS.nonRegValue)),
           listed_shares: num(pickIdx(r, IDX_FIELDS.listedShares)),
-          // Snapshot antrian bid/offer HARI ITU JUGA disimpan ke `flows`
-          // (kolom ditambahkan lewat migration sql/08_flows_bid_offer_history.sql)
-          // supaya Kraken Flow (ORCA) punya histori bid/offer per hari,
-          // bukan cuma snapshot hari terakhir di `stocks`. Ini aman
-          // ditulis untuk SETIAP hari yang ditarik (termasuk mode
-          // historis --start/--end/--offset) karena masing-masing baris
-          // sudah punya tanggalnya sendiri -- beda dengan snapshot
-          // `latestQuotes` di bawah yang cuma boleh diambil dari hari
-          // PALING BARU untuk ditempel ke `stocks` (lihat catatan di situ).
-          offer: num(pickIdx(r, IDX_FIELDS.offer)),
-          offer_volume: num(pickIdx(r, IDX_FIELDS.offerVolume)),
-          bid: num(pickIdx(r, IDX_FIELDS.bid)),
-          bid_volume: num(pickIdx(r, IDX_FIELDS.bidVolume)),
-        }));
+          tradeble_shares: num(pickIdx(r, IDX_FIELDS.tradeableShares)),
+        }))
+        .filter((r) => r.listed_shares != null || r.tradeble_shares != null);
+
+      const existing = new Set();
+      for (let from = 0; ; from += 1000) {
+        const ex = await sb(`flows?date=eq.${dateStr}&select=ticker&order=ticker.asc&limit=1000&offset=${from}`);
+        for (const e of ex || []) existing.add(e.ticker);
+        if (!ex || ex.length < 1000) break;
+      }
+      const payload = sharesAll.filter((r) => existing.has(r.ticker));
+      const skippedNoRow = sharesAll.length - payload.length;
 
       if (!dryRun) {
         for (const part of chunkArr(payload, 200)) await upsert("flows", part, "ticker,date");
       }
 
-      const net = payload.reduce((a, r) => a + ((r.foreign_buy ?? 0) - (r.foreign_sell ?? 0)) * (r.close ?? 0), 0);
-      console.log(`  ${dateStr}  ${String(payload.length).padStart(3)} emiten   net asing ${rupiah(net).padStart(9)}`);
+      console.log(`  ${dateStr}  ${String(payload.length).padStart(3)} emiten   listed/tradeable shares` +
+        (skippedNoRow ? `  (${skippedNoRow} dilewati: belum ada baris Stockbit)` : ""));
 
       tradingDays.push(dateStr);
       totalRows += payload.length;
@@ -1442,20 +1711,30 @@ try {
   //    -- bagian teknikal (baca `flows` + hitung indikator + stock_indicators_ext)
   //    dilewati kalau --skip-technical, supaya jauh lebih cepat kalau tujuannya
   //    cuma refresh fundamental.
+  if (asofArg && !skipTechnical) {
+    console.log(`\n>> MODE --asof=${asofArg}: teknikal dihitung per tanggal itu (bar sesudahnya diabaikan).`);
+    console.log("   stocks & stock_indicators_ext akan ditimpa dengan kondisi tanggal tsb; jalankan lagi tanpa --asof untuk kembali ke data terbaru.");
+  }
   console.log(skipTechnical
     ? "\nMengambil fundamental Yahoo & menulis ke tabel stocks (--skip-technical, indikator teknikal dilewati)..."
     : "\nMenghitung indikator teknikal & menulis ke tabel stocks...");
   let okCount = 0, failCount = 0;
   const stocksPayload = [];
   const extPayload = [];
+  let seq = 0;
+  const totalTickers = followed.size;
+  const tag = () => `[${String(seq).padStart(String(totalTickers).length)}/${totalTickers} ${String(Math.floor(seq / (totalTickers || 1) * 100)).padStart(3)}%]`;
 
   for (const ticker of followed) {
+    seq++;
     try {
       let technical = {};
+      let lastBarDate = null;
 
       if (!skipTechnical) {
         const bars = await sb(
           `flows?ticker=eq.${ticker}&select=date,open_price,high,low,close,volume,value,frequency,listed_shares` +
+          (asofArg ? `&date=lte.${asofArg}` : "") +
           `&order=date.asc&limit=${MAX_DAYS}`,
         );
         const cleanBars = (bars || [])
@@ -1464,6 +1743,8 @@ try {
             date: b.date, open: b.open_price, high: b.high, low: b.low, close: b.close,
             volume: b.volume, value: b.value, frequency: b.frequency, listedShares: b.listed_shares,
           }));
+
+        lastBarDate = cleanBars.at(-1)?.date ?? null;
 
         // REVISI: listed_shares fallback ke nilai terakhir yang TERSEDIA
         // (dulu cuma bar paling akhir -- kalau bar terbaru null, market
@@ -1495,6 +1776,7 @@ try {
           bb_upper: ext.bbUpper, bb_lower: ext.bbLower,
           adr14: ext.adr14, prev_atr14: prevExt.atr14 ?? null, prev_adr14: prevExt.adr14 ?? null,
           vwap: ext.vwap,
+          adx14: ext.adx14 ?? null, plus_di14: ext.pdi14 ?? null, minus_di14: ext.mdi14 ?? null,
           ema5: ext.ema5, ema9: ext.ema9, ema10: ext.ema10, ema20: ext.ema20, ema50: ext.ema50, ema100: ext.ema100, ema200: ext.ema200,
           ema21: ext.ema21, prev_ema9: prevExt.ema9 ?? null, prev_ema21: prevExt.ema21 ?? null,
           prev_ema200: prevExt.ema200 ?? null,
@@ -1509,6 +1791,7 @@ try {
         psr: null, peg: null, roe: null, roa: null, npm: null, opm: null,
         revenue_growth: null, earnings_growth: null, dividend_yield: null,
         dividend_rate: null, payout_ratio: null, beta: null, der: null, current_ratio: null,
+        ex_dividend_date: null, dividend_pay_date: null, next_earnings_date: null,
       };
       if (!skipFundamentals) {
         fundamentals = await fetchYahooFundamentals(ticker, technical.price);
@@ -1525,7 +1808,7 @@ try {
       // ada quote baru, key offer/bid/offer_volume/bid_volume sama sekali
       // tidak ikut dikirim, dan PostgREST tidak menyentuh nilai lama di
       // `stocks` (upsert cuma meng-update kolom yang ada di payload).
-      const quote = latestQuotes.get(ticker);
+      const quote = asofArg ? undefined : latestQuotes.get(ticker);   // snapshot bid/offer hanya untuk data terbaru
 
       const row = skipTechnical
         ? {
@@ -1547,11 +1830,11 @@ try {
       stocksPayload.push(row);
       okCount++;
       console.log(skipTechnical
-        ? `  OK  ${ticker.padEnd(6)} per=${row.per}  pbv=${row.pbv}  roe=${row.roe}`
-        : `  OK  ${ticker.padEnd(6)} price=${row.price}  ytd=${row.ytd_pct ?? "-"}  lq45=${row.lq45 ? "Y" : "N"}`);
+        ? `  ${tag()} OK  ${ticker.padEnd(6)} per=${row.per}  pbv=${row.pbv}  roe=${row.roe}`
+        : `  ${tag()} OK  ${ticker.padEnd(6)} price=${row.price}  ytd=${row.ytd_pct ?? "-"}  lq45=${row.lq45 ? "Y" : "N"}` + (asofArg ? `  bar=${lastBarDate}` : ""));
     } catch (err) {
       failCount++;
-      console.log(`  SKIP ${ticker.padEnd(6)} ${err.message}`);
+      console.log(`  ${tag()} SKIP ${ticker.padEnd(6)} ${err.message}`);
     }
   }
 
