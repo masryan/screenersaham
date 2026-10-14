@@ -16890,6 +16890,7 @@ function renderScreener(){
           ${hasActiveFilters() ? `<button class="btn btn-outline" id="resetFiltersBtn" style="color:#f87171;border-color:rgba(239,68,68,0.3);">Reset Filter</button>` : ""}
           <button class="btn btn-outline" id="checkSyariahBtn" style="${isSyariahFilterOn() ? 'color:#fff;background:#0d9488;border-color:#0d9488;' : 'color:#0d9488;border-color:rgba(20,184,166,0.45);'}" title="${isSyariahFilterOn() ? 'Filter Syariah sedang AKTIF: tabel hanya menampilkan saham syariah. Klik untuk mematikan.' : 'Nyalakan filter Syariah = Ya pada screener (tabel hanya menampilkan saham syariah, bisa dikombinasikan dengan filter lain). Klik lagi untuk mematikan.'}">☪️ ${isSyariahFilterOn() ? 'Filter Syariah: ON ✕' : 'Filter Saham Syariah'}</button>
           <button class="btn btn-outline" id="saveWatchlistBtn" ${state.selectedForBacktest.size===0?'disabled':''} style="color:#059669;border-color:rgba(16,185,129,0.45);" title="Simpan saham yang dicentang ke tab Watchlist (harga close saat ini dicatat sebagai harga entry)">⭐ Simpan ke Watchlist${state.selectedForBacktest.size>0 ? ` (${state.selectedForBacktest.size})` : ""}</button>
+          <button class="btn btn-outline" id="compareSelBtn" ${state.selectedForBacktest.size<2?'disabled':''} style="color:#2563eb;border-color:rgba(59,130,246,0.45);" title="Bandingkan saham yang dicentang (2-5 saham) di Trader Tools > Banding">🆚 Bandingkan${state.selectedForBacktest.size>=2 ? ` (${Math.min(5,state.selectedForBacktest.size)})` : ""}</button>
           <button class="btn btn-gold-outline" id="saveBacktestBtn">Simpan Pilihan ke Backtest</button>
         </div>
       </div>
@@ -27913,6 +27914,11 @@ function attachContentEvents(){
 
   const saveWl = document.getElementById("saveWatchlistBtn");
   if(saveWl) saveWl.onclick = saveToWatchlist;
+  const cmpSelBtn = document.getElementById("compareSelBtn");
+  if(cmpSelBtn) cmpSelBtn.onclick = () => {
+    if(typeof window.exCompare !== "function") return alert("Fitur Bandingkan butuh extras-plus.js versi terbaru (belum dimuat atau masih versi lama). Ganti file di server lalu muat ulang dengan Ctrl+F5.");
+    window.exCompare(getFiltered().filter(x => state.selectedForBacktest.has(x.ticker)).map(x => x.ticker));
+  };
   
   document.querySelectorAll("[data-del-bt]").forEach(btn => {
     btn.onclick = () => deleteBacktestSession(parseInt(btn.dataset.delBt));

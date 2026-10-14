@@ -1,0 +1,50 @@
+/* extras.css — Trader Tools (jurnal, posisi, kalender, alert, paper, risiko, ekuitas, bagikan, Ctrl+K) */
+#exPage{display:none;padding:4px 2px 40px}
+#exPage.on{display:block}
+.ex-tabs{display:flex;flex-wrap:wrap;gap:6px;margin:0 0 14px}
+.ex-tabs button{border:1px solid var(--border,rgba(127,127,127,.3));background:transparent;color:var(--text);border-radius:8px;padding:7px 12px;font:600 12.5px Sora,sans-serif;cursor:pointer}
+.ex-tabs button.on{background:var(--accent,#3b82f6);border-color:var(--accent,#3b82f6);color:#fff}
+.ex-card{border:1px solid var(--border,rgba(127,127,127,.25));background:var(--card,rgba(127,127,127,.06));border-radius:12px;padding:14px;margin-bottom:14px}
+.ex-card h3{margin:0 0 10px;font-size:14px}
+.ex-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:10px}
+.ex-grid label{display:flex;flex-direction:column;gap:4px;font-size:11.5px;color:var(--muted)}
+.ex-grid input,.ex-grid select,.ex-grid textarea,.ex-in{background:var(--bg,transparent);color:var(--text);border:1px solid var(--border,rgba(127,127,127,.35));border-radius:8px;padding:7px 9px;font:13px 'JetBrains Mono',monospace;width:100%;box-sizing:border-box}
+.ex-wide{grid-column:1/-1}
+.ex-btn{border:1px solid var(--border,rgba(127,127,127,.35));background:transparent;color:var(--text);border-radius:8px;padding:7px 12px;font:600 12px Sora,sans-serif;cursor:pointer;margin:8px 6px 0 0}
+.ex-btn.pri{background:var(--accent,#3b82f6);border-color:var(--accent,#3b82f6);color:#fff}
+.ex-btn.sm{padding:3px 8px;margin:0;font-size:11px}
+.ex-tbl{width:100%;border-collapse:collapse;font-size:12.5px}
+.ex-tbl th,.ex-tbl td{padding:6px 8px;border-bottom:1px solid var(--border,rgba(127,127,127,.2));text-align:left;vertical-align:top}
+.ex-tbl th{color:var(--muted);font-weight:600;font-size:11.5px}
+.ex-wrap{overflow-x:auto}
+.ex-up{color:var(--up,#10b981)}.ex-dn{color:var(--down,#ef4444)}.ex-mut{color:var(--muted);font-size:12px}
+.ex-bar{height:8px;border-radius:4px;background:var(--accent,#3b82f6);min-width:2px}
+.ex-warn{color:#f59e0b;font-weight:600}
+.ex-heat td{text-align:center;font:600 11px 'JetBrains Mono',monospace;min-width:44px}
+#exFab{position:fixed;right:14px;bottom:14px;z-index:900;width:44px;height:44px;border-radius:50%;border:none;background:var(--accent,#3b82f6);color:#fff;font-size:20px;cursor:pointer;box-shadow:0 4px 14px rgba(0,0,0,.3)}
+#exPal{position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:2000;display:none;align-items:flex-start;justify-content:center;padding-top:12vh}
+#exPal.on{display:flex}
+#exPal .box{width:min(560px,92vw);background:var(--card,#fff);color:var(--text);border:1px solid var(--border,#ccc);border-radius:12px;overflow:hidden}
+#exPal input{width:100%;box-sizing:border-box;border:none;border-bottom:1px solid var(--border,#ccc);padding:14px;font:15px Sora,sans-serif;background:transparent;color:var(--text);outline:none}
+#exPal .it{padding:9px 14px;font-size:13px;cursor:pointer;display:flex;justify-content:space-between}
+#exPal .it.sel{background:var(--accent,#3b82f6);color:#fff}
+#exPal .it small{opacity:.7}
+.ex-svg{width:100%;height:auto;max-height:260px}
+
+/* ===== extras-plus: Daftar, Peta Panas, Resep, RS, Banding, Dividen, Data ===== */
+.ex-link{cursor:pointer;color:var(--accent,#3b82f6);font-weight:700}
+.ex-link:hover{text-decoration:underline}
+.ex-chips{display:flex;flex-wrap:wrap;gap:6px;margin:0 0 10px}
+.ex-chip{border:1px solid var(--border,rgba(127,127,127,.35));background:transparent;color:var(--text);border-radius:999px;padding:5px 11px;font:600 12px Sora,sans-serif;cursor:pointer}
+.ex-chip.on{background:var(--accent,#3b82f6);border-color:var(--accent,#3b82f6);color:#fff}
+.ex-tbl th.srt{cursor:pointer;user-select:none;white-space:nowrap}
+.ex-tbl th.srt:hover{color:var(--text)}
+.ex-heatmap{position:relative;width:100%;aspect-ratio:1000/600;background:var(--bg,#0f1420);border:1px solid var(--border,rgba(127,127,127,.3));border-radius:10px;overflow:hidden;margin-top:12px}
+.ex-hm-g{position:absolute;box-sizing:border-box;border:1px solid rgba(0,0,0,.55);pointer-events:none}
+.ex-hm-gl{position:absolute;top:1px;left:4px;right:2px;font:700 10px Sora,sans-serif;color:#e2e8f0;text-shadow:0 1px 2px rgba(0,0,0,.7);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;z-index:2}
+.ex-hm-c{position:absolute;box-sizing:border-box;border:1px solid rgba(0,0,0,.4);color:#fff;display:flex;flex-direction:column;align-items:center;justify-content:center;overflow:hidden;cursor:pointer;line-height:1.15;font-family:'JetBrains Mono',monospace;text-shadow:0 1px 2px rgba(0,0,0,.45)}
+.ex-hm-c:hover{outline:2px solid #fff;outline-offset:-2px;z-index:3}
+.ex-hm-c span{font-weight:500;opacity:.92}
+.ex-leg{display:inline-flex;margin-left:10px;vertical-align:middle;border-radius:6px;overflow:hidden}
+.ex-leg span{color:#fff;font:600 10.5px 'JetBrains Mono',monospace;padding:4px 8px}
+@media (max-width:640px){.ex-heatmap{aspect-ratio:auto;height:460px}.ex-tabs button{padding:6px 9px;font-size:12px}}
