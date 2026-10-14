@@ -157,6 +157,35 @@ X.addTab("status","🩺 Status",vStatus,()=>{ probeAll(false); });
 const MIN_OPTS=[1,5,10,20];
 let LB=LS("lb",{by:"kriteria",min:5,sort:"skor",dir:-1}), lbOpen=new Set();
 const saveLB=()=>SV("lb",LB);
+const lbCost=()=>{ const c=parseFloat(LS("pbt_cost",0.5)); return isFinite(c)&&c>=0?c:0; }; // dipakai bersama tab Uji Resep
+let BM={at:0,map:null,busy:false,err:null,tk:0,from:null};
+const rpl=()=>{ if(X.current()==="lb") X.repaint(); };
+const liqOf=s=>{ const a=N(s.turnover); return a!=null?a:N(s.valueTraded); };
+async function loadBench(){
+  if(BM.busy) return;
+  const S=ST(); if(!S.backtests||!S.backtests.length){ toast("Belum ada sesi Backtest","down"); return; }
+  const dates=new Set(); S.backtests.forEach(b=>(b.items||[]).forEach(it=>{ const d=String(it.entryDate||b.date||"").slice(0,10); if(d) dates.add(d); }));
+  if(!dates.size){ toast("Sesi Backtest tidak punya tanggal entry","down"); return; }
+  const now={}; (S.stocks||[]).forEach(s=>{ const px=N(s.cClose); if(s.ticker&&!s.suspended&&px>0&&(liqOf(s)||0)>=1e9) now[s.ticker]=px; });
+  if(Object.keys(now).length<50){ toast("Data saham belum dimuat","down"); return; }
+  BM.busy=true; BM.err=null; rpl();
+  try{
+    const since=[...dates].sort()[0], H={};
+    for(let pg=0;pg<150;pg++){
+      const qs=new URLSearchParams({select:"ticker,date,close",date:`gte.${since}`,order:"date.asc,ticker.asc",limit:"1000",offset:String(pg*1000)});
+      const rows=await q("flows?"+qs);
+      rows.forEach(r=>{ if(r.close==null||!now[r.ticker]) return; const h=H[r.ticker]||(H[r.ticker]={d:[],c:[]}); h.d.push(String(r.date).slice(0,10)); h.c.push(+r.close); });
+      if(rows.length<1000) break;
+    }
+    const map={}, tks=Object.keys(H); let tot=0;
+    dates.forEach(d=>{ const r=[]; tks.forEach(t=>{ const h=H[t], i=h.d.findIndex(x=>x>=d); if(i<0||h.c[i]<=0) return; r.push((now[t]/h.c[i]-1)*100); });
+      if(r.length>=30){ map[d]=mean(r); tot+=r.length; } });
+    const nd=Object.keys(map).length;
+    if(!nd) throw new Error("Riwayat harga di tabel flows tidak cukup untuk tanggal entry Anda.");
+    BM={at:Date.now(),map,busy:false,err:null,tk:Math.round(tot/nd),from:since};
+  }catch(e){ BM.busy=false; BM.err=e.message; }
+  rpl();
+}
 function wilsonLow(w,n){ if(!n) return null; const z=1.645,p=w/n,d=1+z*z/n; return ((p+z*z/(2*n))-z*Math.sqrt(p*(1-p)/n+z*z/(4*n*n)))/d*100; }
 function ageDays(o){ const d=String(o.entryDate||"").slice(0,10); if(!d) return null; const t=Date.parse(d+"T00:00:00Z"); return isNaN(t)?null:Math.max(1,Math.round((Date.now()-t)/864e5)); }
 function lbCompute(){
@@ -165,7 +194,7 @@ function lbCompute(){
   if(!S.backtests||!S.backtests.length) return {err:"Belum ada sesi Backtest yang disimpan. Simpan hasil screener ke tab 🔬 Backtest dulu (mis. BSJP, Gap Up & Go, Resep)."};
   const tpPct=N(S.backtestTargetTpPct)>0?+S.backtestTargetTpPct:5, mode=S.backtestTpMode==="auto"?"auto":"percent";
   let base; try{ base=computeScreenerRekap(tpPct,mode); }catch(e){ return {err:"Gagal menghitung rekap: "+e.message}; }
-  const all=[]; base.forEach(r=>r.occurrences.forEach(o=>all.push(o)));
+  const all=[]; const cost=lbCost(); base.forEach(r=>r.occurrences.forEach(o=>all.push(Object.assign({},o,{pl:o.pl==null?null:o.pl-cost,periodMaxPL:o.periodMaxPL==null?null:o.periodMaxPL-cost}))));
   const allPl=all.filter(o=>o.pl!=null).map(o=>o.pl);
   if(!allPl.length) return {err:"Belum ada sinyal dengan P/L terhitung (harga live/riwayat belum termuat)."};
   const groups=new Map();
@@ -178,20 +207,24 @@ function lbCompute(){
     const gw=wins.reduce((a,b)=>a+b,0), gl=-loss.reduce((a,b)=>a+b,0);
     const mx=occ.filter(o=>o.periodMaxPL!=null).map(o=>o.periodMaxPL), avgBest=mx.length?mean(mx):null;
     const tr=occ.filter(o=>o.target&&o.target.hasHistory), tpHit=tr.length?tr.filter(o=>o.target.achieved).length/tr.length*100:null;
+    const exs=BM.map?w.map(o=>{ const b=BM.map[String(o.entryDate||o.sessionDate||"").slice(0,10)]; return b==null?null:o.pl-b; }).filter(v=>v!=null):[];
     const ages=w.map(ageDays).filter(v=>v!=null), age=ages.length?mean(ages):null;
     const days=new Set(w.map(o=>String(o.entryDate||o.sessionDate||"").slice(0,10)).filter(Boolean)).size;
     return {label,occ:w,n,days,tickers:new Set(w.map(o=>o.ticker)).size,win:wins.length/n*100,wlow:wilsonLow(wins.length,n),avg,med:median(pls),se,
       skor:se==null?avg-Math.abs(avg)*0.5-5:avg-se, // sampel tunggal: penalti besar
-      pf:gl>0?gw/gl:(gw>0?Infinity:null),avgBest,giveback:avgBest!=null?avgBest-avg:null,tpHit,age,perDay:age?avg/age:null,vsBase:avg-baseAvg};
+      pf:gl>0?gw/gl:(gw>0?Infinity:null),avgBest,giveback:avgBest!=null?avgBest-avg:null,tpHit,age,perDay:age?avg/age:null,vsBase:avg-baseAvg,ex:exs.length?mean(exs):null,exN:exs.length,beat:exs.length?exs.filter(v=>v>0).length/exs.length*100:null};
   }).filter(Boolean);
-  return {rows,baseAvg,nAll:allPl.length,tpPct,mode};
+  return {rows,baseAvg,nAll:allPl.length,tpPct,mode,cost};
 }
 const rel=r=>r.n<5?["⚠ sangat kecil","var(--down,#ef4444)"]:r.n<10?["⚠ kecil","#f59e0b"]:r.n<20?["cukup","var(--muted,#888)"]:["memadai","var(--up,#10b981)"];
 const pf=v=>v==null?"-":v===Infinity?"∞":v.toFixed(2);
 function vLB(){
   const d=lbCompute();
-  const ctl=`<div class="ex-chips"><span class="ex-mut" style="align-self:center">Kelompokkan:</span>${[["kriteria","Per Kriteria/Preset"],["sumber","Per Sumber"]].map(([id,l])=>`<button class="ex-chip${LB.by===id?" on":""}" data-act="lbBy" data-id="${id}">${l}</button>`).join("")}
-  <span class="ex-mut" style="align-self:center;margin-left:10px">Min. sinyal agar masuk peringkat:</span>${MIN_OPTS.map(m=>`<button class="ex-chip${LB.min===m?" on":""}" data-act="lbMin" data-id="${m}">${m}</button>`).join("")}</div>`;
+  const ctl=`<div class="ex-chips" style="align-items:center"><span class="ex-mut">Kelompokkan:</span>${[["kriteria","Per Kriteria/Preset"],["sumber","Per Sumber"]].map(([id,l])=>`<button class="ex-chip${LB.by===id?" on":""}" data-act="lbBy" data-id="${id}">${l}</button>`).join("")}
+  <span class="ex-mut" style="margin-left:10px">Min. sinyal agar masuk peringkat:</span>${MIN_OPTS.map(m=>`<button class="ex-chip${LB.min===m?" on":""}" data-act="lbMin" data-id="${m}">${m}</button>`).join("")}</div>
+  <div style="display:flex;flex-wrap:wrap;gap:10px;align-items:center;margin:0 0 10px"><label class="ex-mut">Biaya + slippage bolak-balik (%): <input id="ex-lb-cost" type="number" step="0.05" min="0" value="${lbCost()}" style="width:70px"> <span>(dibagi dengan tab Uji Resep)</span></label>
+  <button class="ex-btn" style="margin:0" data-act="lbHist">📥 Muat riwayat harga Backtest</button><button class="ex-btn pri" style="margin:0" data-act="lbBench" ${BM.busy?"disabled":""}>📈 ${BM.map?"Hitung ulang":"Hitung"} benchmark pasar</button>
+  <span class="ex-mut">${BM.busy?"mengambil riwayat harga semua saham…":BM.err?`<span class="ex-dn">${E(BM.err)}</span>`:BM.map?`benchmark: rata-rata ±${BM.tk} saham likuid (≥ Rp1 M), dihitung ${E(ago(BM.at))}`:"benchmark belum dihitung"}</span></div>`;
   if(d.err) return `<div class="ex-card"><h3>🏅 Peringkat Uji Maju</h3>${ctl}<p class="ex-mut">${E(d.err)}</p></div>`;
   const key=LB.sort, dir=LB.dir;
   const ok=d.rows.filter(r=>r.n>=LB.min), low=d.rows.filter(r=>r.n<LB.min);
@@ -204,7 +237,7 @@ function vLB(){
   const lab=t=>typeof compactScreenerLabel==="function"&&LB.by==="kriteria"?compactScreenerLabel(t):t;
   const tr=(r,ranked)=>{
     const [rl,rc]=rel(r), open=lbOpen.has(r.label), sorted=r.occ.slice().sort((a,b)=>b.pl-a.pl);
-    const det=open?`<tr><td colspan="13" style="padding:8px 12px;background:rgba(127,127,127,.06)"><div class="ex-mut" style="margin-bottom:6px;white-space:normal;word-break:break-word">${E(r.label)}</div>
+    const det=open?`<tr><td colspan="15" style="padding:8px 12px;background:rgba(127,127,127,.06)"><div class="ex-mut" style="margin-bottom:6px;white-space:normal;word-break:break-word">${E(r.label)}</div>
       <div class="ex-mut">Terbaik: ${sorted.slice(0,3).map(o=>`${E(o.ticker)} <span class="${cls(o.pl)}">${pc(o.pl)}</span> (${fmtD(String(o.entryDate||"").slice(0,10))})`).join(" · ")}</div>
       <div class="ex-mut">Terburuk: ${sorted.slice(-3).reverse().map(o=>`${E(o.ticker)} <span class="${cls(o.pl)}">${pc(o.pl)}</span> (${fmtD(String(o.entryDate||"").slice(0,10))})`).join(" · ")}</div></td></tr>`:"";
     return `<tr${ranked?"":' style="opacity:.55"'}><td>${ranked?medal(rank.get(r.label)):"–"}</td>
@@ -214,29 +247,33 @@ function vLB(){
       <td>${r.win.toFixed(0)}%<div class="ex-mut">batas bawah ${r.wlow==null?"-":r.wlow.toFixed(0)+"%"}</div></td>
       <td class="${cls(r.avg)}"><b>${pc(r.avg)}</b></td><td class="${cls(r.med)}">${pc(r.med)}</td>
       <td class="${cls(r.skor)}"><b>${pc(r.skor)}</b></td><td>${pf(r.pf)}</td>
-      <td class="${cls(r.vsBase)}">${pc(r.vsBase)}</td>
+      <td class="${cls(r.vsBase)}">${pc(r.vsBase)}</td><td class="${r.ex==null?"":cls(r.ex)}">${r.ex==null?"-":pc(r.ex)}${r.ex!=null&&r.exN<r.n?`<div class="ex-mut">${r.exN}/${r.n} sinyal</div>`:""}</td><td>${r.beat==null?"-":r.beat.toFixed(0)+"%"}</td>
       <td>${r.tpHit==null?"-":r.tpHit.toFixed(0)+"%"}</td>
       <td title="Rata-rata P/L tertinggi yang sempat tercapai dikurangi P/L sekarang">${r.giveback==null?"-":pc(r.giveback)}</td>
       <td>${r.age==null?"-":r.age.toFixed(0)+" hr"}</td></tr>${det}`;
   };
-  const head=`<tr><th>#</th>${th("label","Kriteria / Sumber")}${th("n","Sinyal","Jumlah sinyal dengan P/L terhitung")}<th>Keandalan</th>${th("win","Win rate","Batas bawah = Wilson 90%, estimasi pesimis win rate")}${th("avg","Rata² P/L")}${th("med","Median")}${th("skor","Skor konservatif","Rata² P/L dikurangi galat baku (sd/√n). Dasar peringkat 🥇🥈🥉")}${th("pf","Profit factor","Total untung ÷ total rugi")}${th("vsBase","vs semua sinyal","Selisih rata² P/L terhadap rata-rata seluruh sinyal tersimpan")}${th("tpHit","TP tercapai")}${th("giveback","Keuntungan terlepas","Rata² puncak P/L − P/L sekarang")}${th("age","Umur rata²")}</tr>`;
+  const head=`<tr><th>#</th>${th("label","Kriteria / Sumber")}${th("n","Sinyal","Jumlah sinyal dengan P/L terhitung")}<th>Keandalan</th>${th("win","Win rate","Batas bawah = Wilson 90%, estimasi pesimis win rate")}${th("avg","Rata² P/L")}${th("med","Median")}${th("skor","Skor konservatif","Rata² P/L dikurangi galat baku (sd/√n). Dasar peringkat 🥇🥈🥉")}${th("pf","Profit factor","Total untung ÷ total rugi")}${th("vsBase","vs semua sinyal","Selisih rata² P/L terhadap rata-rata seluruh sinyal tersimpan")}${th("ex","vs pasar","Rata² (P/L − return rata-rata saham likuid sejak tanggal entry yang sama). Perlu “Hitung benchmark pasar”")}${th("beat","Menang vs pasar","Porsi sinyal yang mengalahkan benchmark")}${th("tpHit","TP tercapai")}${th("giveback","Keuntungan terlepas","Rata² puncak P/L − P/L sekarang")}${th("age","Umur rata²")}</tr>`;
   const warnN=ok.length&&ok.every(r=>r.n<10);
   return `<div class="ex-card"><h3>🏅 Peringkat Uji Maju — sumber/kriteria screener</h3>
-  <p class="ex-mut">Dihitung dari ${d.nAll} sinyal di sesi Backtest (P/L closing = harga entry → harga sekarang, setelah memuat riwayat). Rata-rata seluruh sinyal: <b class="${cls(d.baseAvg)}">${pc(d.baseAvg)}</b>. Peringkat memakai <b>skor konservatif</b> (rata² − galat baku), bukan rata² mentah, supaya satu sinyal untung besar tidak langsung jadi juara.</p>
+  <p class="ex-mut">Dihitung dari ${d.nAll} sinyal di sesi Backtest (P/L closing = harga entry → harga sekarang, setelah memuat riwayat). Semua P/L sudah dikurangi biaya ${d.cost}% per transaksi. Rata-rata seluruh sinyal: <b class="${cls(d.baseAvg)}">${pc(d.baseAvg)}</b>. Peringkat memakai <b>skor konservatif</b> (rata² − galat baku), bukan rata² mentah, supaya satu sinyal untung besar tidak langsung jadi juara.</p>
   ${ctl}${warnN?`<p class="ex-warn">⚠ Semua yang masuk peringkat punya &lt; 10 sinyal. Anggap urutan ini hipotesis, bukan bukti.</p>`:""}
-  <div class="ex-wrap"><table class="ex-tbl">${head}${ok.map(r=>tr(r,true)).join("")||`<tr><td colspan="13" class="ex-mut">Belum ada yang punya ≥ ${LB.min} sinyal. Turunkan batas minimum di atas.</td></tr>`}${low.length?`<tr><td colspan="13" class="ex-mut" style="padding-top:14px">Belum cukup sampel (&lt; ${LB.min} sinyal) — tidak diberi peringkat:</td></tr>${low.map(r=>tr(r,false)).join("")}`:""}</table></div>
+  <div class="ex-wrap"><table class="ex-tbl">${head}${ok.map(r=>tr(r,true)).join("")||`<tr><td colspan="15" class="ex-mut">Belum ada yang punya ≥ ${LB.min} sinyal. Turunkan batas minimum di atas.</td></tr>`}${low.length?`<tr><td colspan="15" class="ex-mut" style="padding-top:14px">Belum cukup sampel (&lt; ${LB.min} sinyal) — tidak diberi peringkat:</td></tr>${low.map(r=>tr(r,false)).join("")}`:""}</table></div>
   <button class="ex-btn" data-act="lbCsv">⬇ CSV</button>
-  <p class="ex-mut" style="margin-top:10px"><b>Cara membaca & batasan:</b> (1) Sinyal dari sesi yang berdekatan sering saham yang sama dan bergerak bersamaan, jadi tidak sepenuhnya independen — lihat “hari entry”. (2) Saham yang sudah tak ada di screener tanpa riwayat harga dikeluarkan (P/L kosong), jadi hasil cenderung sedikit optimis. (3) P/L belum dikurangi fee/slippage dan belum dibandingkan dengan indeks. (4) Target TP mengikuti pengaturan di tab Backtest (${d.mode==="auto"?"Auto TP1":d.tpPct+"%"}).</p></div>`;
+  <p class="ex-mut" style="margin-top:10px"><b>Cara membaca & batasan:</b> (1) Sinyal dari sesi yang berdekatan sering saham yang sama dan bergerak bersamaan, jadi tidak sepenuhnya independen — lihat “hari entry”. (2) Saham yang sudah tak ada di screener tanpa riwayat harga dikeluarkan (P/L kosong), jadi hasil cenderung sedikit optimis. (3) “vs pasar” membandingkan dengan rata-rata return saham likuid (≥ Rp1 M) sejak tanggal entry yang sama (bukan IHSG); saham yang sudah delisting/tak likuid tidak ikut. (4) Target TP mengikuti pengaturan di tab Backtest (${d.mode==="auto"?"Auto TP1":d.tpPct+"%"}).</p></div>`;
 }
 X.act("lbBy",el=>{ LB.by=el.dataset.id; lbOpen.clear(); saveLB(); X.repaint(); });
 X.act("lbMin",el=>{ LB.min=+el.dataset.id; saveLB(); X.repaint(); });
 X.act("lbSort",el=>{ const k=el.dataset.k; if(LB.sort===k) LB.dir=-LB.dir; else { LB.sort=k; LB.dir=k==="label"?1:-1; } saveLB(); X.repaint(); });
 X.act("lbOpen",el=>{ const id=el.dataset.id; lbOpen.has(id)?lbOpen.delete(id):lbOpen.add(id); X.repaint(); });
+X.act("lbBench",()=>loadBench());
+X.act("lbHist",async()=>{ if(typeof loadBacktestPriceHistory!=="function"){ toast("Fungsi riwayat harga Backtest tidak ditemukan","down"); return; }
+  toast("Memuat riwayat harga Backtest…"); try{ await loadBacktestPriceHistory(); }catch(e){ toast("Gagal: "+e.message,"down"); return; } setTimeout(rpl,800); });
+X.onChange(e=>{ if(e.target.id!=="ex-lb-cost") return; const v=parseFloat(e.target.value); SV("pbt_cost",isFinite(v)&&v>=0?v:0); X.repaint(); });
 X.act("lbCsv",()=>{
   const d=lbCompute(); if(d.err){ toast(d.err,"down"); return; }
   const c=v=>{ const s=String(v==null?"":v); return /[",\n;]/.test(s)?`"${s.replace(/"/g,'""')}"`:s; };
-  const out=[["Kelompok","Label","Sinyal","Hari entry","Ticker","Win %","Rata2 P/L %","Median %","Skor konservatif","Profit factor","vs semua sinyal %","TP tercapai %","Keuntungan terlepas %","Umur rata2 (hari)"]];
-  d.rows.slice().sort((a,b)=>b.skor-a.skor).forEach(r=>out.push([LB.by,r.label,r.n,r.days,r.tickers,r.win.toFixed(1),r.avg.toFixed(2),r.med.toFixed(2),r.skor.toFixed(2),r.pf==null?"":r.pf===Infinity?"inf":r.pf.toFixed(2),r.vsBase.toFixed(2),r.tpHit==null?"":r.tpHit.toFixed(0),r.giveback==null?"":r.giveback.toFixed(2),r.age==null?"":r.age.toFixed(0)]));
+  const out=[["Kelompok","Label","Sinyal","Hari entry","Ticker","Win %","Rata2 P/L %","Median %","Skor konservatif","Profit factor","vs semua sinyal %","TP tercapai %","Keuntungan terlepas %","Umur rata2 (hari)","vs pasar %","Menang vs pasar %"]];
+  d.rows.slice().sort((a,b)=>b.skor-a.skor).forEach(r=>out.push([LB.by,r.label,r.n,r.days,r.tickers,r.win.toFixed(1),r.avg.toFixed(2),r.med.toFixed(2),r.skor.toFixed(2),r.pf==null?"":r.pf===Infinity?"inf":r.pf.toFixed(2),r.vsBase.toFixed(2),r.tpHit==null?"":r.tpHit.toFixed(0),r.giveback==null?"":r.giveback.toFixed(2),r.age==null?"":r.age.toFixed(0),r.ex==null?"":r.ex.toFixed(2),r.beat==null?"":r.beat.toFixed(0)]));
   const a=document.createElement("a"); a.href=URL.createObjectURL(new Blob(["\uFEFF"+out.map(r=>r.map(c).join(",")).join("\n")],{type:"text/csv"})); a.download=`peringkat-uji-maju-${X.today()}.csv`; document.body.appendChild(a); a.click(); setTimeout(()=>{URL.revokeObjectURL(a.href);a.remove();},500);
 });
 X.addTab("lb","🏅 Peringkat",vLB);
