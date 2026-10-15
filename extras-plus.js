@@ -29,15 +29,23 @@ X.act("xDetail",el=>{ if(typeof openDetail==="function") openDetail(el.dataset.t
 /* ================= RS RANK (komposit) ================= */
 let _rsKey="",_rs={};
 function rsMap(){
-  const S=SS(); if(!S.length) return {};
-  const key=S.length+":"+(S[0].updatedAt||"")+":"+S[0].cClose+":"+S[S.length-1].cClose;
+  // Kualitas data: universe persentil hanya saham yang diperdagangkan (tidak disuspensi, harga valid).
+  // Saham suspensi / tanpa harga memberi perubahan 0% atau basi yang menggeser peringkat semua saham lain.
+  const S=SS().filter(s=>s.ticker&&!s.suspended&&PX(s)>0); if(!S.length) return {};
+  let chk=0; for(const s of S) chk+=(N(s.cClose)||0)+(N(s.weekChangePct)||0)+(N(s.monthChangePct)||0)+(N(s.ytdPct)||0)+(N(s.week52ChangePct)||0);
+  const key=S.length+":"+(S[0].updatedAt||"")+":"+chk.toFixed(4);
   if(key===_rsKey) return _rs;
   const F=[["weekChangePct",10],["monthChangePct",30],["ytdPct",30],["week52ChangePct",30]], pct={};
-  F.forEach(([f])=>{ const arr=S.map(s=>[s.ticker,N(s[f])]).filter(x=>x[1]!=null).sort((a,b)=>a[1]-b[1]), m={};
-    arr.forEach((x,i)=>{ m[x[0]]=arr.length>1?i/(arr.length-1)*100:50; }); pct[f]=m; });
+  F.forEach(([f])=>{ const arr=S.map(s=>[s.ticker,N(s[f])]).filter(x=>x[1]!=null).sort((a,b)=>a[1]-b[1]), m={}, n=arr.length;
+    // Nilai yang sama (mis. ratusan saham 0,00% minggu ini) HARUS mendapat peringkat yang sama (rata-rata posisi),
+    // bukan urutan acak hasil sort — dulu saham identik bisa terpaut puluhan poin RS.
+    for(let i=0;i<n;){ let j=i; while(j+1<n&&arr[j+1][1]===arr[i][1]) j++; const mid=(i+j)/2;
+      for(let k=i;k<=j;k++) m[arr[k][0]]=n>1?mid/(n-1)*100:50; i=j+1; }
+    pct[f]=m; });
   const out={};
+  // Minimal bobot 60 (dulu 30): RS tidak boleh bertumpu pada satu faktor saja (mis. hanya 1 minggu + 1 bulan).
   S.forEach(s=>{ let w=0,a=0; F.forEach(([f,wt])=>{ const p=pct[f][s.ticker]; if(p!=null){ a+=p*wt; w+=wt; } });
-    if(w>=30) out[s.ticker]=Math.max(1,Math.min(99,Math.round(a/w))); });
+    if(w>=60) out[s.ticker]=Math.max(1,Math.min(99,Math.round(a/w))); });
   _rsKey=key; _rs=out; return out;
 }
 const LIQ_OPTS=[["0","Semua saham"],["1e9","Nilai transaksi ≥ Rp1 M"],["5e9","Nilai transaksi ≥ Rp5 M"],["2e10","Nilai transaksi ≥ Rp20 M"]];
@@ -68,20 +76,20 @@ const PRESETS=[
   checks:[["PER 0–15",s=>rng(s.per,0.01,15)],["PBV ≤ 1,5",s=>rng(s.pbv,0.01,1.5)],["PER × PBV ≤ 22,5",s=>N(s.per)>0&&N(s.pbv)>0&&N(s.per)*N(s.pbv)<=22.5],["DER ≤ 1",s=>le(s.der,1)],["Current ratio ≥ 1,5",s=>ge(s.currentRatio,1.5)],["EPS positif",s=>gt(s.eps,0)]],
   cols:[["PER",s=>fx(s.per,1)],["PBV",s=>fx(s.pbv,2)],["DER",s=>fx(s.der,2)],["Div%",s=>fx(s.divYield,2)]],sortKey:s=>-(N(s.per)||99)},
  {id:"buffett",name:"Kualitas ala Buffett",ref:"Warren Buffett",desc:"Bisnis berprofit tinggi dan tidak terlalu berutang, dengan harga yang masih masuk akal.",
-  checks:[["ROE ≥ 15%",s=>ge(s.roe,15)],["Net margin ≥ 10%",s=>ge(s.npm,10)],["DER ≤ 1",s=>le(s.der,1)],["Laba tumbuh (>0%)",s=>gt(s.earningsGrowth,0)],["PER ≤ 25",s=>rng(s.per,0.01,25)],["PBV ≤ 5",s=>rng(s.pbv,0.01,5)]],
+  checks:[["ROE 15–150%",s=>rng(s.roe,15,150)],["Net margin ≥ 10%",s=>ge(s.npm,10)],["DER ≤ 1",s=>le(s.der,1)],["Laba tumbuh (>0%)",s=>gt(s.earningsGrowth,0)],["PER ≤ 25",s=>rng(s.per,0.01,25)],["PBV ≤ 5",s=>rng(s.pbv,0.01,5)]],
   cols:[["ROE%",s=>fx(s.roe,1)],["NPM%",s=>fx(s.npm,1)],["DER",s=>fx(s.der,2)],["PER",s=>fx(s.per,1)]],sortKey:s=>N(s.roe)||0},
  {id:"lynch",name:"Growth wajar (PEG) ala Lynch",ref:"Peter Lynch",desc:"Pertumbuhan laba bagus tapi harganya belum mahal dibanding pertumbuhannya (PEG ≤ 1).",
   checks:[["PEG 0–1",s=>rng(s.peg,0.01,1)],["Pertumbuhan laba 10–50%",s=>rng(s.earningsGrowth,10,50)],["PER ≤ 25",s=>rng(s.per,0.01,25)],["DER ≤ 1,5",s=>le(s.der,1.5)]],
   cols:[["PEG",s=>fx(s.peg,2)],["Laba tumbuh%",s=>fx(s.earningsGrowth,1)],["PER",s=>fx(s.per,1)],["DER",s=>fx(s.der,2)]],sortKey:s=>-(N(s.peg)||9)},
  {id:"magic",name:"Magic Formula (proksi)",ref:"Joel Greenblatt",desc:"Peringkat gabungan earnings yield (1/PER) dan ROE, tanpa sektor keuangan, 30 teratas. Proksi: Greenblatt asli memakai EBIT/EV dan ROIC yang tidak tersedia di data ini.",
-  prep:(S,ctx)=>{ const U=S.filter(s=>!isFin(s)&&gt(s.per,0)&&gt(s.roe,0)&&!s.suspended&&(liqOf(s)||0)>=1e9);
+  prep:(S,ctx)=>{ const U=S.filter(s=>!isFin(s)&&gt(s.per,0)&&rng(s.roe,0.01,150)&&!s.suspended&&(liqOf(s)||0)>=1e9);
     const r1=[...U].sort((a,b)=>N(a.per)-N(b.per)), r2=[...U].sort((a,b)=>N(b.roe)-N(a.roe)), rk={};
     r1.forEach((s,i)=>{rk[s.ticker]=(rk[s.ticker]||0)+i+1;}); r2.forEach((s,i)=>{rk[s.ticker]=(rk[s.ticker]||0)+i+1;});
     const top=Object.keys(rk).sort((a,b)=>rk[a]-rk[b]).slice(0,30); ctx.magic={}; top.forEach((t,i)=>{ctx.magic[t]=i+1;}); },
   checks:[["Masuk 30 teratas peringkat gabungan",(s,c)=>c.magic&&c.magic[s.ticker]!=null]],
   cols:[["Peringkat",(s,c)=>c.magic[s.ticker]],["Earn. yield%",s=>N(s.per)>0?(100/N(s.per)).toFixed(1):"-"],["ROE%",s=>fx(s.roe,1)],["PER",s=>fx(s.per,1)]],sortKey:(s,c)=>-(c.magic&&c.magic[s.ticker]||999)},
  {id:"dividen",name:"Dividen Kuat",ref:"Strategi dividen klasik",desc:"Yield tinggi yang masih ditopang laba (payout wajar), bukan yield tinggi karena harga jatuh.",
-  checks:[["Div yield ≥ 4%",s=>ge(s.divYield,4)],["Payout 20–90%",s=>rng(s.payoutRatio,20,90)],["ROE ≥ 8%",s=>ge(s.roe,8)],["EPS positif",s=>gt(s.eps,0)]],
+  checks:[["Div yield ≥ 4%",s=>ge(s.divYield,4)],["Payout 20–90%",s=>rng(s.payoutRatio,20,90)],["ROE ≥ 8%",s=>ge(s.roe,8)],["EPS positif",s=>gt(s.eps,0)],["Harga ≥ 70% dari puncak 52M",s=>N(s.high52w)>0&&PX(s)>=N(s.high52w)*0.7]],
   cols:[["Yield%",s=>fx(s.divYield,2)],["Payout%",s=>fx(s.payoutRatio,0)],["ROE%",s=>fx(s.roe,1)],["PER",s=>fx(s.per,1)]],sortKey:s=>N(s.divYield)||0},
  {id:"minervini",name:"Trend Template ala Minervini",ref:"Mark Minervini (diadaptasi)",desc:"Tren naik yang rapi. MA150 diganti MA100 karena itu yang tersedia di data; MA200 dianggap naik jika EMA200 hari ini ≥ kemarin.",
   checks:[["Harga > MA50, MA100, MA200",s=>PX(s)>N(s.ma50)&&PX(s)>N(s.ma100)&&PX(s)>N(s.ma200)&&N(s.ma200)>0],["MA50 > MA100 > MA200",s=>N(s.ma50)>N(s.ma100)&&N(s.ma100)>N(s.ma200)],["EMA200 naik",s=>N(s.ema200)!=null&&N(s.prevEma200)!=null&&N(s.ema200)>=N(s.prevEma200)],["≥ 30% di atas low 52M",s=>N(s.low52w)>0&&PX(s)>=N(s.low52w)*1.3],["≤ 25% di bawah high 52M",s=>N(s.high52w)>0&&PX(s)>=N(s.high52w)*0.75],["RS ≥ 70",(s,c)=>ge(c.rs[s.ticker],70)]],
@@ -96,7 +104,7 @@ const PRESETS=[
 function runPreset(p,minLiq){
   const S=SS(), ctx={rs:rsMap()}; if(p.prep) p.prep(S,ctx);
   const res=[];
-  S.forEach(s=>{ if(!s.ticker||s.suspended) return; if(minLiq>0&&!((liqOf(s)||0)>=minLiq)) return;
+  S.forEach(s=>{ if(!s.ticker||s.suspended||!(PX(s)>0)) return; if(minLiq>0&&!((liqOf(s)||0)>=minLiq)) return;
     let ok=0; const det=p.checks.map(c=>{ let r=false; try{ r=!!c[1](s,ctx); }catch(e){} if(r) ok++; return r; });
     if(ok>=(p.min||p.checks.length)) res.push({s,ok,det,key:p.sortKey?p.sortKey(s,ctx):0}); });
   res.sort((a,b)=>b.ok-a.ok||b.key-a.key); return {res,ctx};
@@ -418,22 +426,29 @@ let hzHtml="", pbtSel=null;
 function takeSnap(manual){
   const S=SS(); if(S.length<50){ if(manual) toast("Data saham belum dimuat","down"); return false; }
   const d=pbt(), t=today(); if(d.days.some(x=>x.d===t)){ if(manual) toast("Snapshot hari ini sudah ada","down"); return false; }
+  // Gerbang kualitas: pada hari libur bursa / data belum diperbarui hampir tak ada saham yang berubah harga.
+  // Snapshot seperti itu menduplikasi harga kemarin dan merusak statistik (hari "tanpa gerak" dihitung sebagai observasi).
+  const L=S.filter(s=>!s.suspended&&PX(s)>0&&(liqOf(s)||0)>=PBT_LIQ), mv=L.filter(s=>N(s.changePct)!=null&&N(s.changePct)!==0).length, frac=L.length?mv/L.length:0;
+  if(L.length<30||frac<0.25){
+    if(!manual) return false; // otomatis: coba lagi pada tick berikutnya sampai data hari ini benar-benar terisi
+    if(!confirm(`Hanya ${Math.round(frac*100)}% saham likuid yang berubah harga hari ini — pasar mungkin libur atau data belum diperbarui. Tetap ambil snapshot?`)) return false;
+  }
   const px={}; S.forEach(s=>{ if(s.ticker&&!s.suspended&&PX(s)>0&&(liqOf(s)||0)>=PBT_LIQ) px[s.ticker]=PX(s); });
   const pk={}; PRESETS.forEach(p=>{ pk[p.id]=runPreset(p,PBT_LIQ).res.map(r=>r.s.ticker).filter(x=>px[x]!=null).slice(0,30); });
-  d.days.push({d:t,px,pk}); d.days=d.days.slice(-120); SV("pbt",d); if(manual) toast("Snapshot semua preset tersimpan"); return true;
+  d.days.push({d:t,at:new Date().toTimeString().slice(0,5),px,pk}); d.days=d.days.slice(-120); SV("pbt",d); if(manual) toast("Snapshot semua preset tersimpan"); return true;
 }
 X.tick(()=>{ if(LS("pbt_auto",false)){ const wd=new Date().getDay(); if(wd>0&&wd<6) takeSnap(false); } });
 function evalPBT(){
-  const days=pbt().days, R={}; PRESETS.forEach(p=>{ R[p.id]={obs:[],days:[]}; });
+  const days=pbt().days, R={}; PRESETS.forEach(p=>{ R[p.id]={obs:[],days:[],lost:0}; });
   days.forEach(day=>{ const all=Object.keys(day.px).map(t=>{ const n=PX(stk(t)); return n>0?(n/day.px[t]-1)*100:null; }).filter(v=>v!=null), bench=all.length?mean(all):null;
-    PRESETS.forEach(p=>{ const r=(day.pk[p.id]||[]).map(t=>{ const n=PX(stk(t)); return n>0?(n/day.px[t]-1)*100:null; }); const ok=r.filter(v=>v!=null).map(v=>v-pbtCost()); if(!ok.length) return;
+    PRESETS.forEach(p=>{ const r=(day.pk[p.id]||[]).map(t=>{ const n=PX(stk(t)); return n>0&&day.px[t]>0?(n/day.px[t]-1)*100:null; }); R[p.id].lost+=r.filter(v=>v==null).length; const ok=r.filter(v=>v!=null).map(v=>v-pbtCost()); if(!ok.length) return;
       R[p.id].obs.push(...ok); R[p.id].days.push({d:day.d,n:ok.length,avg:mean(ok),bench,ex:bench==null?null:mean(ok)-bench,win:ok.filter(v=>v>0).length/ok.length*100}); }); });
   return R;
 }
 function vPBT(){
   const d=pbt(), R=evalPBT(), auto=LS("pbt_auto",false);
   const rows=PRESETS.map(p=>{ const r=R[p.id], ex=r.days.filter(x=>x.ex!=null);
-    return {p,n:r.obs.length,nd:r.days.length,win:r.obs.length?r.obs.filter(v=>v>0).length/r.obs.length*100:null,avg:r.obs.length?mean(r.obs):null,med:r.obs.length?median(r.obs):null,exA:ex.length?mean(ex.map(x=>x.ex)):null,beat:ex.length?ex.filter(x=>x.ex>0).length/ex.length*100:null,worst:ex.length?Math.min(...ex.map(x=>x.ex)):null}; }).sort((a,b)=>(b.exA==null?-1e9:b.exA)-(a.exA==null?-1e9:a.exA));
+    return {p,n:r.obs.length,lost:r.lost||0,nd:r.days.length,win:r.obs.length?r.obs.filter(v=>v>0).length/r.obs.length*100:null,avg:r.obs.length?mean(r.obs):null,med:r.obs.length?median(r.obs):null,exA:ex.length?mean(ex.map(x=>x.ex)):null,beat:ex.length?ex.filter(x=>x.ex>0).length/ex.length*100:null,worst:ex.length?Math.min(...ex.map(x=>x.ex)):null}; }).sort((a,b)=>(b.exA==null?-1e9:b.exA)-(a.exA==null?-1e9:a.exA));
   const selId=pbtSel||(rows[0]&&rows[0].p.id), sp=PRESETS.find(x=>x.id===selId)||PRESETS[0];
   const dd=(R[sp.id]||{days:[]}).days.slice().reverse().map(x=>`<tr><td>${E(x.d)}</td><td>${x.n}</td><td class="${cls(x.avg)}">${pc(x.avg)}</td><td class="${cls(x.bench)}">${x.bench==null?"-":pc(x.bench)}</td><td class="${cls(x.ex)}">${x.ex==null?"-":pc(x.ex)}</td><td>${x.win.toFixed(0)}%</td></tr>`).join("");
   return `<div class="ex-card"><h3>📊 Uji Resep — forward test semua preset</h3>
@@ -444,7 +459,7 @@ function vPBT(){
   <label class="ex-mut" style="display:block;margin-top:10px">Biaya + slippage bolak-balik (% dari nilai posisi): <input id="ex-pbt-cost" type="number" step="0.05" min="0" value="${pbtCost()}" style="width:80px"> <span>(isi sesuai fee broker dan pajak jual Anda)</span></label>
   <label class="ex-mut" style="display:block;margin-top:10px"><input type="checkbox" data-act="pbtAuto" ${auto?"checked":""}> Snapshot otomatis tiap hari bursa (hanya berjalan saat aplikasi terbuka; harga yang tersimpan = harga yang sedang dimuat saat itu)</label></div>
   <div class="ex-card"><h3>Ringkasan per preset (diurutkan menurut selisih terhadap benchmark)</h3><div class="ex-wrap"><table class="ex-tbl"><tr><th>Preset</th><th>Hari</th><th>Observasi</th><th>Win rate</th><th>Rata² return</th><th>Median</th><th>Selisih vs benchmark</th><th>Hari menang</th><th>Selisih terburuk</th></tr>
-  ${rows.map(r=>`<tr${r.nd<20?' style="opacity:.6"':""}><td><span class="ex-link" data-act="pbtSel" data-id="${r.p.id}">${E(r.p.name)}</span>${r.nd<20?' <span class="ex-warn" title="Kurang dari 20 hari snapshot">⚠</span>':""}</td><td>${r.nd}</td><td>${r.n}</td><td>${r.win==null?"-":r.win.toFixed(0)+"%"}</td><td class="${cls(r.avg)}">${r.avg==null?"-":pc(r.avg)}</td><td class="${cls(r.med)}">${r.med==null?"-":pc(r.med)}</td><td class="${cls(r.exA)}">${r.exA==null?"-":pc(r.exA)}</td><td>${r.beat==null?"-":r.beat.toFixed(0)+"%"}</td><td class="${cls(r.worst)}">${r.worst==null?"-":pc(r.worst)}</td></tr>`).join("")}</table></div>
+  ${rows.map(r=>`<tr${r.nd<20?' style="opacity:.6"':""}><td><span class="ex-link" data-act="pbtSel" data-id="${r.p.id}">${E(r.p.name)}</span>${r.nd<20?' <span class="ex-warn" title="Kurang dari 20 hari snapshot">⚠</span>':""}</td><td>${r.nd}</td><td>${r.n}${r.lost?` <span class="ex-warn" title="Saham pilihan yang kini tak punya harga (dihapus dari data/delisting). Tidak ikut dihitung — win rate bisa sedikit terlalu optimis.">+${r.lost} hilang</span>`:""}</td><td>${r.win==null?"-":r.win.toFixed(0)+"%"}</td><td class="${cls(r.avg)}">${r.avg==null?"-":pc(r.avg)}</td><td class="${cls(r.med)}">${r.med==null?"-":pc(r.med)}</td><td class="${cls(r.exA)}">${r.exA==null?"-":pc(r.exA)}</td><td>${r.beat==null?"-":r.beat.toFixed(0)+"%"}</td><td class="${cls(r.worst)}">${r.worst==null?"-":pc(r.worst)}</td></tr>`).join("")}</table></div>
   <p class="ex-mut">Satu snapshot yang sama dinilai berulang tiap hari, jadi angka ini “return sejak snapshot sampai sekarang” dan makin lama makin besar. Bandingkan antar preset, bukan sebagai angka absolut.</p></div>
   <div class="ex-card"><h3>Rincian: ${E(sp.name)} <span class="ex-mut">(klik nama preset di tabel untuk ganti)</span></h3><div class="ex-wrap"><table class="ex-tbl"><tr><th>Tanggal snapshot</th><th>Saham</th><th>Rata² sejak itu</th><th>Benchmark</th><th>Selisih</th><th>Win</th></tr>${dd||`<tr><td colspan="6" class="ex-mut">Belum ada data. Ambil snapshot dulu.</td></tr>`}</table></div></div>
   <div class="ex-card"><h3>Horizon tetap (5/10/20 hari bursa setelah snapshot)</h3>${hzHtml||`<p class="ex-mut">Klik “Hitung horizon” untuk memakai riwayat harga penutupan dari tabel flows. Berguna karena membandingkan semua snapshot pada jangka waktu yang sama.</p>`}</div>`;
