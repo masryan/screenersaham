@@ -20,11 +20,9 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Sora:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
 
-<!-- TAMBAHKAN BARIS INI UNTUK EXPORT EXCEL -->
+<!-- Export Excel (SheetJS) -->
 <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 
-<script src="extras-plus.js"></script>
-<script src="extras-status.js"></script>
 <link rel="stylesheet" href="styles.css">
 <link rel="stylesheet" href="quant-hub.css">
 <link rel="stylesheet" href="mobile-responsive-fix.css">
@@ -134,262 +132,12 @@
         </button>
         <div class="tab-group-items">
           <a class="tab-btn" href="#/wsdebug" data-tab="wsdebug" title="WS Debug" aria-label="WS Debug"><span class="tab-icon" aria-hidden="true">🧪</span><span class="tab-label">WS Debug</span></a>
-          <a class="tab-btn" href="#/about" data-tab="about" title="Info" aria-label="Info"><span class="tab-icon" aria-hidden="true">ℹ️</span><span class="tab-label">Info</span></a>
         </div>
       </div>
     </div>
   </aside>
 
   <div class="content" id="content"></div>
-</div>
-
-<!-- Modal Form Pengaturan -->
-<div class="modal-overlay" id="settingsModalOverlay">
-  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="settingsModalTitle" tabindex="-1" style="max-height:85vh;overflow-y:auto;">
-    <div class="modal-top">
-      <h3 id="settingsModalTitle">⚙️ Pengaturan Koneksi</h3>
-      <button class="close-btn" onclick="closeSettings()" aria-label="Tutup pengaturan">✕</button>
-    </div>
-    <div class="field">
-      <label>Supabase REST URL</label>
-      <input id="setSupaUrl" type="text" placeholder="https://xyz.supabase.co">
-    </div>
-    <div class="field">
-      <label>Supabase Anon Key</label>
-      <input id="setSupaKey" type="password" placeholder="eyJhbG...">
-    </div>
-    <div class="field">
-      <label>Kolom Frequency Analyzer (opsional)</label>
-      <input id="setFreqAnalyzerCol" type="text" placeholder="freq_ma20">
-    </div>
-    <div style="margin-bottom:16px; font-size: 11.5px; color: var(--teal); background: rgba(6,182,212,0.1); padding: 10px; border-radius: 8px; border: 1px solid rgba(6,182,212,0.2);">
-      ℹ️ Kredensial disimpan lokal di browser Anda (Local Storage). <b>Pakai anon key saja</b> —
-      jangan pernah masukkan service_role key di sini: halaman ini publik dan bisa dibaca siapa saja
-      lewat "View Source", sedangkan service_role bisa menulis/menghapus seluruh database.
-    </div>
-
-    <div style="border-top:1px solid var(--border); padding-top:14px; margin-bottom:8px;">
-      <h3 style="font-size:14px; margin:0 0 4px;">💰 Fee Default Portofolio</h3>
-      <div style="font-size:11.5px; color:var(--muted); margin-bottom:10px; line-height:1.5;">
-        Dipakai sebagai nilai awal field Fee di form Tambah Transaksi Portofolio (baru & impor Excel/CSV),
-        dan sebagai estimasi fee jual untuk menghitung <b>P/L Mengambang</b> supaya angkanya net-fee —
-        sejajar dengan P/L Realisasi transaksi yang sudah closed. Sesuaikan dengan tarif fee broker Anda.
-      </div>
-    </div>
-    <div class="field">
-      <label>Fee Beli Default (%)</label>
-      <input id="setFeeBeliDefault" type="number" step="0.01" placeholder="0.15">
-    </div>
-    <div class="field">
-      <label>Fee Jual Default (%)</label>
-      <input id="setFeeJualDefault" type="number" step="0.01" placeholder="0.25">
-    </div>
-
-    <div style="border-top:1px solid var(--border); padding-top:14px; margin-bottom:8px;">
-      <h3 style="font-size:14px; margin:0 0 4px;">🔴 Live Data Stockbit (opsional)</h3>
-      <div style="font-size:11.5px; color:var(--muted); margin-bottom:10px; line-height:1.5;">
-        Pakai token dari extension Chrome Stockbit milikmu sendiri untuk menarik harga/orderbook <b>live</b>
-        untuk saham yang lolos filter Screener saat ini. Ini API tidak resmi (bukan API publik Stockbit) —
-        endpoint bisa berubah kapan saja, dan token disimpan HANYA di Local Storage browser ini (tidak
-        dikirim ke server manapun selain langsung ke Stockbit/proxy yang kamu tentukan sendiri).
-      </div>
-    </div>
-    <div class="field">
-      <label>Stockbit Token</label>
-      <input id="setStockbitToken" type="password" placeholder="Bearer token dari extension">
-    </div>
-    <div id="stockbitTokenStatus" style="font-size:11px;color:var(--muted);margin:-8px 0 4px;">Belum ada token.</div>
-    <div id="stockbitLastSuccessStatus" style="font-size:11px;color:var(--muted);margin:-4px 0 12px;">Belum pernah berhasil menarik data live dari Stockbit.</div>
-    <div class="field">
-      <label>Endpoint Quote (harga Open/High/Low/Last/Bid/Offer per ticker — WAJIB pakai {ticker}, jangan diganti kode saham tertentu)</label>
-      <input id="setStockbitQuoteEndpoint" type="text" placeholder="https://exodus.stockbit.com/stream/v3/symbol/{ticker}">
-    </div>
-    <div style="margin:-8px 0 14px; font-size: 11.5px; color: var(--gold); background: color-mix(in srgb, var(--gold) 14%, transparent); padding: 10px; border-radius: 8px; border: 1px solid color-mix(in srgb, var(--gold) 38%, transparent);">
-      ⚠️ Endpoint default TERBUKTI SALAH (itu API "Stream"/linimasa komentar, bukan API harga) — Open/High/Low/Last
-      tidak akan pernah muncul benar selama field ini masih kosong/default. Pakai kotak uji di bawah untuk mencari
-      & memverifikasi endpoint yang benar lewat DevTools browser (Network tab) di stockbit.com, sebelum disimpan.
-      <br><br>
-      Beda dari field <b>"Endpoint Orderbook Depth 10-Level"</b> di bawah ini — field itu khusus tangga bid/offer
-      dan sudah terbukti berfungsi. Kalau mau mencoba endpoint yang sama untuk field ini juga, tempel URL yang
-      SAMA PERSIS tapi tetap dengan placeholder <code>{ticker}</code> (bukan kode saham tertentu seperti
-      <code>BIPI</code> — kalau di-hardcode begitu, aplikasi cuma akan menarik data BIPI untuk semua saham).
-      Perlu diuji dulu: endpoint orderbook belum tentu membawa field Open/High/Low/Last, mungkin cuma bid/offer saja.
-      <div style="display:flex;gap:8px;align-items:center;margin-top:10px;flex-wrap:wrap;">
-        <input id="testStockbitTicker" type="text" placeholder="Ticker uji, mis. BBCA" maxlength="6" style="text-transform:uppercase;max-width:140px;">
-        <button type="button" class="btn btn-outline" onclick="testStockbitQuoteEndpoint()" style="font-size:11.5px;padding:6px 10px;">🧪 Uji Endpoint Ini</button>
-      </div>
-      <div id="testStockbitQuoteResult" style="margin-top:8px;"></div>
-    </div>
-    <div class="field">
-      <label>Endpoint Orderbook Depth 10-Level (pakai {ticker} sebagai placeholder)</label>
-      <input id="setStockbitOrderbookEndpoint" type="text" placeholder="https://exodus.stockbit.com/company-price-feed/v2/orderbook/companies/{ticker}">
-      <div style="font-size:11px;color:var(--muted);margin-top:4px;">✅ Sudah terverifikasi berfungsi. Beda dari "Endpoint Quote/Orderbook" di atas — yang ini khusus tangga bid/offer 10 level di panel Detail Emiten, dan nilainya ikut tersimpan ke Supabase supaya tidak hilang saat dibuka di browser lain.</div>
-    </div>
-    <div class="field">
-      <label>Endpoint Broker Summary (sudah terisi default — timpa hanya kalau Stockbit ganti skemanya)</label>
-      <input id="setStockbitBrokerEndpoint" type="text" placeholder="https://exodus.stockbit.com/marketdetectors/{ticker}?from={from}&to={to}&transaction_type=TRANSACTION_TYPE_NET&market_board=MARKET_BOARD_REGULER&investor_type=INVESTOR_TYPE_ALL&limit={limit}">
-      <div style="font-size:11px;color:var(--muted);margin-top:4px;">⚠️ Kalau diisi manual, pastikan bagian akhir tetap <code>&limit={limit}</code> (placeholder, bukan angka mati) — kalau ditimpa jadi angka tetap seperti <code>&limit=200</code>, data hari-hari yang lebih lama bisa kepotong dan cuma 1 hari terakhir yang kesimpan.</div>
-      <div style="margin-top:10px; font-size: 11.5px; color: var(--gold); background: color-mix(in srgb, var(--gold) 14%, transparent); padding: 10px; border-radius: 8px; border: 1px solid color-mix(in srgb, var(--gold) 38%, transparent);">
-        ⚠️ Endpoint default memaksa <code>data_type=BROKER_DISTRIBUTION_DATA_TYPE_VALUE</code> — ini kemungkinan
-        alasan kolom <b>Lot</b> selalu kosong (server cuma diminta kirim data Nilai, bukan Volume/Lot). Coba
-        ganti jadi <code>BROKER_DISTRIBUTION_DATA_TYPE_VOLUME</code> di kotak endpoint di atas lalu tes lagi
-        di bawah — kalau JSON mentahnya berubah isi jadi angka lot, berarti itu solusinya (tinggal gabung dua
-        request VALUE+VOLUME). Tes ini baca langsung dari kotak endpoint di atas (belum perlu disimpan dulu).
-        <div style="display:flex;gap:8px;align-items:center;margin-top:10px;flex-wrap:wrap;">
-          <input id="testStockbitBrokerTicker" type="text" placeholder="Ticker uji, mis. BBCA" maxlength="6" style="text-transform:uppercase;max-width:140px;">
-          <input id="testStockbitBrokerFrom" type="date" title="Dari tanggal" style="background:color-mix(in srgb, currentColor 6%, transparent);border:1px solid var(--border);color:var(--text);font-size:11.5px;border-radius:6px;padding:6px;">
-          <span style="color:var(--muted);font-size:11px;">&ndash;</span>
-          <input id="testStockbitBrokerTo" type="date" title="Sampai tanggal" style="background:color-mix(in srgb, currentColor 6%, transparent);border:1px solid var(--border);color:var(--text);font-size:11.5px;border-radius:6px;padding:6px;">
-          <button type="button" class="btn btn-outline" onclick="testStockbitBrokerEndpoint()" style="font-size:11.5px;padding:6px 10px;">🧪 Uji Endpoint Ini</button>
-        </div>
-        <div style="font-size:10.5px;color:var(--muted);margin-top:4px;">Kosongkan "Dari" untuk pakai hari ini; kosongkan "Sampai" untuk sama dengan "Dari" (1 hari saja). Tiap hari bursa dalam periode ditembak sebagai request terpisah (jeda ~300ms), jadi periode yang panjang akan lebih lama. Pilih hari bursa (bukan Sabtu/Minggu/libur) supaya ada data.</div>
-        <div id="testStockbitBrokerResult" style="margin-top:8px;"></div>
-      </div>
-    </div>
-    <div class="field">
-      <label>Endpoint Historical Data (sudah terisi default — timpa hanya kalau Stockbit ganti skemanya)</label>
-      <input id="setStockbitHistoricalEndpoint" type="text" placeholder="https://exodus.stockbit.com/company-price-feed/historical/summary/{ticker}?period={period}&start_date={start_date}&end_date={end_date}&limit={limit}&page={page}">
-      <div style="font-size:11px;color:var(--muted);margin-top:4px;">✅ Endpoint sudah dicek manual lewat DevTools (mode Daily). Mode Weekly/Monthly baru tebakan pola nama parameter — kalau ternyata salah/data janggal, kabari supaya bisa dikoreksi.</div>
-      <div style="display:flex;gap:8px;align-items:center;margin-top:8px;flex-wrap:wrap;">
-        <input id="testStockbitHistTicker" type="text" placeholder="Ticker uji" maxlength="6" style="text-transform:uppercase;max-width:120px;">
-        <select id="testStockbitHistPeriod" style="background:color-mix(in srgb, currentColor 6%, transparent);border:1px solid var(--border);color:var(--text);font-size:11.5px;border-radius:6px;padding:6px;">
-          <option value="daily">Daily</option>
-          <option value="weekly">Weekly</option>
-          <option value="monthly">Monthly</option>
-        </select>
-        <button type="button" class="btn btn-outline" onclick="testStockbitHistoricalEndpoint()" style="font-size:11.5px;padding:6px 10px;">🧪 Uji Mode Ini</button>
-      </div>
-      <div id="testStockbitHistResult" style="margin-top:8px;"></div>
-    </div>
-    <div class="field">
-      <label>Proxy URL (opsional — isi kalau permintaan langsung gagal karena CORS)</label>
-      <input id="setStockbitProxyUrl" type="text" placeholder="https://xxxx.supabase.co/functions/v1/stockbit-proxy">
-    </div>
-    <div style="margin-bottom:12px; font-size: 11.5px; color: var(--gold); background: color-mix(in srgb, var(--gold) 14%, transparent); padding: 10px; border-radius: 8px; border: 1px solid color-mix(in srgb, var(--gold) 38%, transparent);">
-      ⚠️ Endpoint di atas belum terverifikasi 100% (hasil pengamatan komunitas, bukan dokumentasi resmi
-      Stockbit) dan browser <b>kemungkinan besar akan memblokirnya karena CORS</b> kalau dipanggil langsung
-      dari halaman ini. Kalau muncul error CORS, isi "Proxy URL" dengan Supabase Edge Function kecil yang
-      meneruskan request + header Authorization dari sisi server (lihat file <code>stockbit-proxy</code>
-      yang disediakan terpisah). Pakai token akunmu sendiri secara bertanggung jawab dan hormati rate limit.
-    </div>
-    <div style="margin-bottom:12px; font-size: 11.5px; color: var(--teal); background: rgba(6,182,212,0.1); padding: 10px; border-radius: 8px; border: 1px solid rgba(6,182,212,0.2);">
-      🔄 Field Token di atas bisa terisi <b>otomatis</b> lewat extension Chrome <code>stockbit-token-extension</code>
-      (jalankan dulu <code>sql/05_stockbit_token_sync.sql</code> di Supabase). Kalau sudah terpasang & kamu
-      pernah buka stockbit.com dalam kondisi login, token akan tersinkron sendiri setiap kali modal ini dibuka.
-    </div>
-
-    <div style="border-top:1px solid var(--border); padding-top:14px; margin-bottom:8px;">
-      <h3 style="font-size:14px; margin:0 0 4px;">🤖 Analisis AI (Gemini)</h3>
-      <div style="font-size:11.5px; color:var(--muted); margin-bottom:10px; line-height:1.5;">
-        Menghasilkan ringkasan analisis berbahasa natural per emiten (tab "🤖 AI (Gemini)" di Detail Emiten),
-        memakai data yang SUDAH ada di screener (harga, fundamental, teknikal, Bandarmologi) sebagai konteks.
-        Dipanggil <b>langsung dari browser ke Google</b> pakai API key milik Anda sendiri — bukan lewat
-        server/Supabase manapun. Ambil API key gratis di
-        <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener" style="color:var(--teal);">aistudio.google.com/apikey</a>.
-      </div>
-    </div>
-    <div class="field">
-      <label>Gemini API Key</label>
-      <input id="setGeminiApiKey" type="password" placeholder="AIzaSy...">
-    </div>
-    <div class="field">
-      <label>Model (opsional — default alias resmi Google, otomatis ke Flash stabil terbaru)</label>
-      <input id="setGeminiModel" type="text" placeholder="gemini-flash-latest">
-    </div>
-    <div style="margin-bottom:16px; font-size: 11.5px; color: var(--gold); background: color-mix(in srgb, var(--gold) 14%, transparent); padding: 10px; border-radius: 8px; border: 1px solid color-mix(in srgb, var(--gold) 38%, transparent);">
-      ⚠️ API key disimpan HANYA di Local Storage browser ini (sama seperti Token Stockbit di atas) — jangan
-      pakai perangkat/browser publik. Hasil analisis AI bersifat ringkasan otomatis dari data yang tersedia,
-      <b>BUKAN rekomendasi/nasihat investasi</b> — selalu lakukan riset mandiri sebelum mengambil keputusan.
-    </div>
-
-    <div style="border-top:1px solid var(--border); padding-top:14px; margin-bottom:8px;">
-      <h3 style="font-size:14px; margin:0 0 4px;">💰 Fundamental Screener (IDX Edge PRO / arjum.com)</h3>
-      <div style="font-size:11.5px; color:var(--muted); margin-bottom:10px; line-height:1.5;">
-        Sumber data untuk tab "💰 Fundamental Screener" (Laporan Keuangan, Seasonality, Transaksi Insider) —
-        API pihak ketiga <b>IDX Edge PRO</b> di <code>stock.arjum.com</code>, BUKAN produk Anthropic/Supabase.
-        Daftar gratis di <a href="https://stock.arjum.com" target="_blank" rel="noopener" style="color:var(--teal);">stock.arjum.com</a>
-        (kuota 1000 request/hari). Dipanggil langsung dari browser pakai API key milik Anda sendiri.
-      </div>
-    </div>
-    <div class="field">
-      <label>Arjum API Key</label>
-      <input id="setArjumApiKey" type="password" placeholder="sk_live_...">
-    </div>
-    <div class="field">
-      <label>Proxy URL (opsional — isi kalau permintaan langsung gagal karena CORS)</label>
-      <input id="setArjumProxyUrl" type="text" placeholder="https://xxxx.supabase.co/functions/v1/arjum-proxy">
-    </div>
-    <div style="margin-bottom:16px; font-size: 11.5px; color: var(--gold); background: color-mix(in srgb, var(--gold) 14%, transparent); padding: 10px; border-radius: 8px; border: 1px solid color-mix(in srgb, var(--gold) 38%, transparent);">
-      ⚠️ API key disimpan HANYA di Local Storage browser ini. Skema response API ini baru diverifikasi dari
-      contoh terbatas (belum dokumentasi lengkap resmi) — kalau ada field yang tidak muncul rapi, itu karena
-      belum semua bentuk response tercakup, bukan bug tampilan.
-    </div>
-
-    <div style="border-top:1px solid var(--border); padding-top:14px; margin-bottom:8px;">
-      <h3 style="font-size:14px; margin:0 0 4px;">🔔 Notifikasi Telegram (Rules Kustom)</h3>
-      <div style="font-size:11.5px; color:var(--muted); margin-bottom:10px; line-height:1.5;">
-        Kirim notifikasi Telegram otomatis kalau ada saham baru yang lolos preset Rules Kustom pilihanmu —
-        jalan di server (Cron), jadi tetap terkirim walau aplikasi ini tidak sedang dibuka.
-        Butuh setup 1x: jalankan <code>sql/06_telegram_notifikasi.sql</code> di Supabase, deploy
-        <code>functions/telegram-notifier</code>, lalu isi field di bawah ini.
-      </div>
-    </div>
-    <details style="margin-bottom:12px;">
-      <summary style="cursor:pointer; font-size:12px; color:var(--teal);">📖 Cara bikin Bot Telegram & dapat Chat ID (belum punya?)</summary>
-      <ol style="font-size:11.5px; color:var(--muted); line-height:1.7; padding-left:18px; margin:8px 0 0;">
-        <li>Buka Telegram, cari <b>@BotFather</b>, kirim perintah <code>/newbot</code>, ikuti instruksinya (kasih nama & username bot).</li>
-        <li>BotFather akan membalas dengan <b>token</b> (contoh: <code>123456789:AAExxxxxxxxxxxxxxxxxxxxxxxxxxxxxx</code>) — salin ke field "Bot Token" di bawah.</li>
-        <li>Cari & mulai chat dengan bot barumu (klik link dari BotFather atau cari usernamenya), kirim pesan apa saja (mis. "hi") supaya bot "kenal" kamu.</li>
-        <li>Untuk dapat <b>Chat ID</b>: cari <b>@userinfobot</b> di Telegram, kirim <code>/start</code>, dia akan membalas dengan ID akunmu (angka, contoh: <code>987654321</code>) — salin ke field "Chat ID".</li>
-        <li>Kalau mau notifikasi masuk ke grup, tambahkan bot ke grup itu, lalu pakai Chat ID grup (biasanya diawali tanda minus, mis. <code>-1001234567890</code> — bisa dicek lewat @RawDataBot atau membuka <code>https://api.telegram.org/bot&lt;token&gt;/getUpdates</code> setelah mengirim pesan ke grup).</li>
-      </ol>
-    </details>
-    <div class="field">
-      <label>Bot Token</label>
-      <input id="setTelegramBotToken" type="password" placeholder="123456789:AAExxxxxxxxxxxxxxxxxxxxxxxxxxxxxx">
-    </div>
-    <div class="field">
-      <label>Chat ID</label>
-      <input id="setTelegramChatId" type="text" placeholder="987654321">
-    </div>
-    <div class="field">
-      <label>URL Edge Function (untuk tombol "Uji Kirim" di bawah)</label>
-      <input id="setTelegramFunctionUrl" type="text" placeholder="https://xxxx.supabase.co/functions/v1/telegram-notifier">
-    </div>
-    <label style="display:grid;grid-template-columns:16px 1fr;align-items:center;gap:8px;font-size:12.5px;padding:6px 0;cursor:pointer;">
-      <input type="checkbox" id="setTelegramEnabled" class="custom-checkbox" style="margin:0;justify-self:start;">
-      <span style="text-align:left;">Aktifkan notifikasi otomatis (Cron server akan mengecek & mengirim)</span>
-    </label>
-    <label style="display:grid;grid-template-columns:16px 1fr;align-items:center;gap:8px;font-size:12.5px;padding:6px 0 10px;cursor:pointer;">
-      <input type="checkbox" id="setTelegramOnlyMarketHours" class="custom-checkbox" style="margin:0;justify-self:start;">
-      <span style="text-align:left;">Hanya kirim di jam bursa (≈09:00–17:00 WIB, Senin–Jumat)</span>
-    </label>
-    <div class="field">
-      <label>Preset yang dipantau (Rules Kustom tersimpan)</label>
-      <div id="telegramPresetChecklist" style="background:color-mix(in srgb, currentColor 3%, transparent);border:1px solid var(--border);border-radius:8px;padding:8px 12px;max-height:160px;overflow-y:auto;">
-        <div style="font-size:12px;color:var(--muted);">Memuat preset...</div>
-      </div>
-    </div>
-    <div style="display:flex;align-items:center;gap:10px;margin:4px 0 6px;">
-      <button type="button" class="btn btn-outline" onclick="testTelegramNotification()">📤 Uji Kirim Notifikasi</button>
-      <span id="telegramTestStatus" style="font-size:11.5px;color:var(--muted);"></span>
-    </div>
-    <div id="telegramLastRunStatus" style="font-size:11px;color:var(--muted);margin-bottom:14px;"></div>
-
-    <div style="border-top:1px solid var(--border); padding-top:14px; margin-bottom:8px;">
-      <h3 style="font-size:14px; margin:0 0 4px;">🧭 Tampilan</h3>
-    </div>
-    <label style="display:grid;grid-template-columns:16px 1fr;align-items:center;gap:8px;font-size:12.5px;padding:6px 0 4px;cursor:pointer;">
-      <input type="checkbox" id="setAdvancedMode" class="custom-checkbox" style="margin:0;justify-self:start;" onchange="setAdvancedMode(this.checked)">
-      <span style="text-align:left;">Mode Lanjutan — tampilkan tab developer/eksperimental (🧪 WS Debug) di menu</span>
-    </label>
-    <div style="font-size:11px;color:var(--muted);margin:0 0 14px;">Berlaku langsung, tidak perlu "Simpan & Reload".</div>
-
-    <div class="modal-actions">
-      <button class="btn btn-primary" onclick="saveSettings()">Simpan & Reload</button>
-      <button class="btn btn-outline" onclick="closeSettings()">Batal</button>
-    </div>
-  </div>
 </div>
 
 <!-- Modal Form Portofolio -->
@@ -473,5 +221,39 @@
 <script src="quant-hub.js"></script>
 <script src="extras.js"></script>
 <script src="extras-plus.js"></script>
+<script src="extras-status.js"></script>
+<script src="extras-gap.js"></script>
+<script>
+/* Fallback ringan: hanya didefinisikan bila belum ada di app.js/extras*.js,
+   supaya tombol "Panduan Cepat" dan toggle "Mode Lanjutan" tidak error. */
+(function(){
+  var LSG=function(k){ try{ return localStorage.getItem(k); }catch(e){ return null; } };
+  var LSS=function(k,v){ try{ localStorage.setItem(k,v); }catch(e){} };
+  if(typeof window.openOnboarding!=="function"){
+    window.openOnboarding=function(){ var o=document.getElementById("onboardingModalOverlay"); if(o) o.classList.add("open"); };
+  }
+  if(typeof window.closeOnboarding!=="function"){
+    window.closeOnboarding=function(){ var o=document.getElementById("onboardingModalOverlay"); if(o) o.classList.remove("open"); LSS("ihsg_onboarded","1"); };
+  }
+  if(typeof window.maybeShowOnboarding!=="function"){
+    window.maybeShowOnboarding=function(){ if(!LSG("ihsg_onboarded")&&!LSG("ihsg_supa_url")) window.openOnboarding(); };
+    setTimeout(window.maybeShowOnboarding,600);
+  }
+  var overlay=document.getElementById("onboardingModalOverlay");
+  if(overlay) overlay.addEventListener("click",function(e){ if(e.target===overlay) window.closeOnboarding(); });
+  document.addEventListener("keydown",function(e){ if(e.key==="Escape"&&overlay&&overlay.classList.contains("open")) window.closeOnboarding(); });
+  var applyAdv=function(){
+    var on=LSG("ihsg_advanced")==="1";
+    document.querySelectorAll('#tabs .tab-btn[data-tab="wsdebug"]').forEach(function(b){ b.style.display=on?"":"none"; });
+    var cb=document.getElementById("setAdvancedMode"); if(cb) cb.checked=on;
+  };
+  if(typeof window.setAdvancedMode!=="function"){
+    window.setAdvancedMode=function(on){ LSS("ihsg_advanced",on?"1":"0"); applyAdv(); };
+    applyAdv();
+    var c=document.getElementById("content");
+    if(c) new MutationObserver(function(){ var cb=document.getElementById("setAdvancedMode"); if(cb&&cb.checked!==(LSG("ihsg_advanced")==="1")) cb.checked=LSG("ihsg_advanced")==="1"; }).observe(c,{childList:true,subtree:true});
+  }
+})();
+</script>
 </body>
 </html>

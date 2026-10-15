@@ -66,7 +66,7 @@ async function probeAll(force){
     try{ const rows=await q(d[1]); const v=d[2](rows); const extra=d[0].startsWith("Token")&&rows[0]?rows[0].expires_at:null; out.push({name:d[0],kind:d[3],val:v,src:d[4],extra,ok:true}); }
     catch(e){ out.push({name:d[0],kind:d[3],val:null,src:d[4],ok:false,err:e.message}); }
   }));
-  PROBE.rows=defs.map(d=>out.find(o=>o.name===d[0])); PROBE.at=Date.now(); PROBE.busy=false; X.repaint();
+  PROBE.rows=defs.map(d=>out.find(o=>o.name===d[0])); PROBE.at=Date.now(); PROBE.busy=false; rpt();
 }
 
 /* ================= RINGKASAN SCREENER (stocks_screener.updated_at) ================= */
@@ -259,7 +259,7 @@ function vLB(){
   ${ctl}${warnN?`<p class="ex-warn">⚠ Semua yang masuk peringkat punya &lt; 10 sinyal. Anggap urutan ini hipotesis, bukan bukti.</p>`:""}
   <div class="ex-wrap"><table class="ex-tbl">${head}${ok.map(r=>tr(r,true)).join("")||`<tr><td colspan="15" class="ex-mut">Belum ada yang punya ≥ ${LB.min} sinyal. Turunkan batas minimum di atas.</td></tr>`}${low.length?`<tr><td colspan="15" class="ex-mut" style="padding-top:14px">Belum cukup sampel (&lt; ${LB.min} sinyal) — tidak diberi peringkat:</td></tr>${low.map(r=>tr(r,false)).join("")}`:""}</table></div>
   <button class="ex-btn" data-act="lbCsv">⬇ CSV</button>
-  <p class="ex-mut" style="margin-top:10px"><b>Cara membaca & batasan:</b> (1) Sinyal dari sesi yang berdekatan sering saham yang sama dan bergerak bersamaan, jadi tidak sepenuhnya independen — lihat “hari entry”. (2) Saham yang sudah tak ada di screener tanpa riwayat harga dikeluarkan (P/L kosong), jadi hasil cenderung sedikit optimis. (3) “vs pasar” membandingkan dengan rata-rata return saham likuid (≥ Rp1 M) sejak tanggal entry yang sama (bukan IHSG); saham yang sudah delisting/tak likuid tidak ikut. (4) Target TP mengikuti pengaturan di tab Backtest (${d.mode==="auto"?"Auto TP1":d.tpPct+"%"}).</p></div>`;
+  <p class="ex-mut" style="margin-top:10px"><b>Cara membaca & batasan:</b> (1) Sinyal dari sesi yang berdekatan sering saham yang sama dan bergerak bersamaan, jadi tidak sepenuhnya independen — lihat “hari entry”. (2) Saham yang sudah tak ada di screener tanpa riwayat harga dikeluarkan (P/L kosong), jadi hasil cenderung sedikit optimis. (3) “vs pasar” membandingkan dengan rata-rata return saham likuid (≥ Rp1 M) sejak tanggal entry yang sama (bukan IHSG); saham yang sudah delisting/tak likuid tidak ikut. (4) Target TP mengikuti pengaturan di tab Backtest (${d.mode==="auto"?"Auto TP1":d.tpPct+"%"}).</p></div>${window.ExtrasGap?window.ExtrasGap.summaryHtml():""}`;
 }
 X.act("lbBy",el=>{ LB.by=el.dataset.id; lbOpen.clear(); saveLB(); X.repaint(); });
 X.act("lbMin",el=>{ LB.min=+el.dataset.id; saveLB(); X.repaint(); });

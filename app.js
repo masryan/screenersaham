@@ -165,8 +165,13 @@ function fmtCompactID(n){
   return `${sign}${val.toFixed(decimals).replace(".", ",")}${suffix}`;
 }
 
+// PERFORMA: dipanggil ribuan kali per render (tiap sel tabel). Peta entitas dibuat sekali,
+// dan string tanpa karakter khusus (mayoritas) langsung dikembalikan tanpa replace().
+var _ESC_MAP = { "&":"&amp;", "<":"&lt;", ">":"&gt;", '"':"&quot;", "'":"&#39;" };
+var _ESC_TEST = /[&<>"']/;
 function escapeHtml(str){
-  return String(str ?? "").replace(/[&<>"']/g, c => ({ "&":"&amp;", "<":"&lt;", ">":"&gt;", '"':"&quot;", "'":"&#39;" }[c]));
+  const t = String(str ?? "");
+  return _ESC_TEST.test(t) ? t.replace(/[&<>"']/g, c => _ESC_MAP[c]) : t;
 }
 
 // ==========================================
@@ -2546,6 +2551,20 @@ function renderSettingsTab(){
               <div style="font-size:11px;color:var(--muted);margin-top:4px;">✅ Sudah terverifikasi berfungsi. Beda dari "Endpoint Quote/Orderbook" di atas — yang ini khusus tangga bid/offer 10 level di panel Detail Emiten, dan nilainya ikut tersimpan ke Supabase supaya tidak hilang saat dibuka di browser lain.</div>
             </div>
             <div class="field">
+              <label>Endpoint Broker Summary (sudah terisi default — timpa hanya kalau Stockbit ganti skemanya)</label>
+              <input id="setStockbitBrokerEndpoint" type="text" placeholder="https://exodus.stockbit.com/marketdetectors/{ticker}?from={from}&to={to}&transaction_type=TRANSACTION_TYPE_NET&market_board=MARKET_BOARD_REGULER&investor_type=INVESTOR_TYPE_ALL&limit={limit}">
+              <div style="font-size:11px;color:var(--muted);margin-top:4px;">Pastikan bagian akhir tetap <code>&amp;limit={limit}</code> (placeholder, bukan angka mati). Kalau kolom Lot kosong, coba ganti <code>BROKER_DISTRIBUTION_DATA_TYPE_VALUE</code> jadi <code>..._VOLUME</code> lalu uji di bawah (tidak perlu disimpan dulu).</div>
+              <div style="display:flex;gap:8px;align-items:center;margin-top:10px;flex-wrap:wrap;">
+                <input id="testStockbitBrokerTicker" type="text" placeholder="Ticker uji, mis. BBCA" maxlength="6" style="text-transform:uppercase;max-width:140px;">
+                <input id="testStockbitBrokerFrom" type="date" title="Dari tanggal" style="background:color-mix(in srgb, currentColor 6%, transparent);border:1px solid var(--border);color:var(--text);font-size:11.5px;border-radius:6px;padding:6px;">
+                <span style="color:var(--muted);font-size:11px;">&ndash;</span>
+                <input id="testStockbitBrokerTo" type="date" title="Sampai tanggal" style="background:color-mix(in srgb, currentColor 6%, transparent);border:1px solid var(--border);color:var(--text);font-size:11.5px;border-radius:6px;padding:6px;">
+                <button type="button" class="btn btn-outline" onclick="testStockbitBrokerEndpoint()" style="font-size:11.5px;padding:6px 10px;">🧪 Uji Endpoint Ini</button>
+              </div>
+              <div style="font-size:10.5px;color:var(--muted);margin-top:4px;">Kosongkan "Dari" untuk hari ini; kosongkan "Sampai" untuk 1 hari saja. Tiap hari bursa ditembak sebagai request terpisah (jeda ~300ms). Pilih hari bursa supaya ada data.</div>
+              <div id="testStockbitBrokerResult" style="margin-top:8px;"></div>
+            </div>
+            <div class="field">
               <label>Endpoint Broker Activity (per broker — dipakai mode "Lacak Broker" di Broker Stalker; sudah terisi default)</label>
               <input id="setStockbitBrokerActivityEndpoint" type="text" placeholder="https://exodus.stockbit.com/order-trade/broker/activity?broker_code={broker_code}&limit={limit}&page=1&transaction_type=TRANSACTION_TYPE_NET&market_board=MARKET_TYPE_REGULER&investor_type=INVESTOR_TYPE_ALL&from={date}&to={date}">
               <div style="font-size:11px;color:var(--muted);margin-top:4px;">Placeholder wajib ada: <code>{broker_code}</code>, <code>{date}</code> (dipakai 2x, untuk from= dan to=), dan sebaiknya <code>{limit}</code>. Endpoint ini per BROKER dan mengembalikan SEMUA saham yang ditransaksikan broker itu, bukan cuma top-5.</div>
@@ -4509,7 +4528,10 @@ let state = {
   rekapHistTargetFilter: ""
 };
 
-function fmtNum(n){ if(n===null||n===undefined) return "-"; return new Intl.NumberFormat("id-ID").format(n); }
+var _NF_DIG = {};
+function _nfDigits(d){ const k = String(d); return _NF_DIG[k] || (_NF_DIG[k] = new Intl.NumberFormat("id-ID", { maximumFractionDigits: d })); }
+var _NF_ID = null; // dibuat sekali; membangun Intl.NumberFormat itu mahal dan fmtNum dipakai per sel tabel
+function fmtNum(n){ if(n===null||n===undefined) return "-"; return (_NF_ID || (_NF_ID = new Intl.NumberFormat("id-ID"))).format(n); }
 function fmtDateID(iso){ // "2026-08-24" atau timestamp -> "24/08/2026"
   if(!iso) return "-";
   const raw = String(iso).slice(0, 10);
@@ -4703,6 +4725,7 @@ function loadSettings(){
   try{ state.freqAnalyzerCol = localStorage.getItem(LS_FREQ_ANALYZER_COL) || "freq_ma20"; }catch(e){ state.freqAnalyzerCol = "freq_ma20"; }
   state.bsjpParams = loadBsjpParams();
   state.baggerParams = loadBaggerParams();
+  invalidateEnriched();
   try{
     state.stockbitToken = sanitizeStockbitToken(localStorage.getItem(LS_STOCKBIT_TOKEN) || "");
     state.stockbitQuoteEndpoint = localStorage.getItem(LS_STOCKBIT_QUOTE_EP) || STOCKBIT_DEFAULT_QUOTE_EP;
@@ -5589,6 +5612,7 @@ async function loadLive(opts){
     // Free float (%) per saham dari tabel stock_free_float (impor daftar BEI).
     // Opsional: kalau tabel belum dibuat/kosong, hasilnya {} dan filter Serap FF
     // tetap nonaktif — tidak menggagalkan loadLive().
+    const _ffTask = (async () => {
     if (!_ffMapCache || !(opts && opts.auto)) {
       try {
         const ffRes = await fetch(`${SUPABASE_URL}/stock_free_float?select=ticker,free_float_pct&limit=5000`, { headers: getSupaHeaders(), cache: "no-store" });
@@ -5601,8 +5625,9 @@ async function loadLive(opts){
         _ffMapCache = m;
       } catch (e) { _ffMapCache = _ffMapCache || {}; }
     }
-    const ffMap = _ffMapCache || {};
+    })();
     // ADX/+DI/-DI: dipakai r.adx14 dari view kalau ada; kalau tidak, tarik langsung dari stock_indicators_ext (opsional, aman gagal).
+    const _adxTask = (async () => {
     if (!_adxMapCache || !(opts && opts.auto)) {
       try {
         const axRes = await fetch(`${SUPABASE_URL}/stock_indicators_ext?select=ticker,adx14,plus_di14,minus_di14&limit=5000`, { headers: getSupaHeaders(), cache: "no-store" });
@@ -5612,6 +5637,10 @@ async function loadLive(opts){
         _adxMapCache = am;
       } catch (e) { _adxMapCache = _adxMapCache || {}; }
     }
+    })();
+    // free_float & ADX saling independen -> ditarik paralel (dulu berurutan, ±1 round-trip ekstra tiap loadLive)
+    await Promise.all([_ffTask, _adxTask]);
+    const ffMap = _ffMapCache || {};
     const adxMap = _adxMapCache || {};
 
     state.stocks = stocksRes.map(r => {
@@ -5828,7 +5857,7 @@ async function loadLive(opts){
     if (skipStatic) {
        // dipertahankan
     } else if (Array.isArray(presetsRes)) {
-       state.customPresets = presetsRes;
+       state.customPresets = presetsRes; invalidateEnriched();
     } else {
        console.warn("Gagal memuat custom_presets:", presetsRes);
        warnings.push("Preset screener gagal dimuat" + (presetsRes && presetsRes.message ? ` (${presetsRes.message})` : ""));
@@ -12434,10 +12463,40 @@ function enrichOne(s, rekapDefs){
     merged.rekapTotal = rekap.total;
     return merged;
 }
+// PERFORMA: enriched() mengerjakan enrichOne() x ~900 saham (tiap saham menjalankan
+// puluhan tes preset via computeStockRekap), sedangkan ada ~59 pemanggil — satu render
+// tab bisa memanggilnya berkali-kali. Hasilnya sekarang di-cache SEMENTARA: berlaku
+// selama masih di task/event yang sama (dibuang via microtask) dan SELALU dibuang di
+// awal render() serta lewat invalidateEnriched(). Hasil yang dikembalikan adalah salinan
+// array (slice) supaya .sort()/.splice() pemanggil tidak merusak cache.
+// Matikan sewaktu-waktu lewat konsol: window.__ENRICH_CACHE = false
+var _enrCache = null, _enrGen = 0, _enrKeepNext = false, _enrOwnNext = false; // var (bukan let): aman dipanggil dari init sebelum baris ini dievaluasi
+const ENRICH_KEEP_TTL_MS = 30000;
+function invalidateEnriched(){ _enrGen = (_enrGen | 0) + 1; _enrCache = null; }
+// Dipakai HANYA oleh aksi yang tidak mengubah data enrichment (ganti halaman, ukuran
+// halaman, urutan kolom, pencarian): render ulang tanpa menghitung ulang enriched().
+// Aman karena rantai enrichOne/rekapScreenerDefs/tgvfRankPass tidak membaca
+// state.sort / page / limit / search. Cache tetap dibuang bila state.stocks diganti
+// array lain, panjangnya berubah, melewati TTL, atau render() biasa dipanggil.
+function renderKeepEnriched(){ _enrKeepNext = true; render(); }
 function enriched(){
+  const src = state.stocks;
+  const useCache = window.__ENRICH_CACHE !== false;
+  if(useCache && _enrCache && _enrCache.src === src && _enrCache.len === src.length && _enrCache.gen === _enrGen
+     && (!_enrCache.owned || Date.now() - _enrCache.at < ENRICH_KEEP_TTL_MS)){
+    return _enrCache.list.slice();
+  }
   const rekapDefs = rekapScreenerDefs();
-  const out = state.stocks.map(s => enrichOne(s, rekapDefs));
+  const out = src.map(s => enrichOne(s, rekapDefs));
   try{ tgvfRankPass(out); }catch(e){ console.warn("[TopGVF]", e); }
+  if(useCache){
+    // owned = dihitung di dalam render() -> boleh bertahan lintas event (sampai render biasa berikutnya/TTL).
+    // Selain itu (mis. dipanggil dari handler lain) tetap dibuang di akhir task seperti sebelumnya.
+    const entry = { src, len: src.length, gen: _enrGen, list: out, owned: _enrOwnNext, at: Date.now() };
+    _enrCache = entry;
+    if(!entry.owned) Promise.resolve().then(() => { if(_enrCache === entry) _enrCache = null; });
+    return out.slice();
+  }
   return out;
 }
 // ==========================================================================
@@ -13238,6 +13297,7 @@ function proLoad(){
       if(Array.isArray(o.quick)) state.proQuick = o.quick.filter(k => SP_QUICK_DEFS.some(d => d.key === k));
       if(o.adv && typeof o.adv === "object") state.proAdv = { ...state.proAdv, ...o.adv };
       if(PRO_PERIODS.some(p => p.k === o.period && !p.disabled)) state.proPeriod = o.period;
+      invalidateEnriched();
     }
   }catch(e){}
   try{ const tr = JSON.parse(localStorage.getItem(LS_PRO_TRACK) || "null"); if(tr && Array.isArray(tr.snaps)){ state.proTrack = tr.snaps; state.proUni = tr.uni || {}; } }catch(e){}
@@ -14095,7 +14155,7 @@ function c7DragonEval(s){
 }
 function c7DragonInfo(sig, kind){
   if(!sig) return "";
-  const f = v => Math.round(v).toLocaleString("id-ID");
+  const f = v => fmtNum(Math.round(v));
   if(kind === "warn") return `${sig.n} candle hijau beruntun, high menyentuh BB atas (${f(sig.bbUp)}) — risiko koreksi, pertimbangkan amankan profit.`;
   const pct = v => ((v - sig.entry) / sig.entry * 100).toFixed(1);
   return `${sig.n} candle merah beruntun, low menembus BB bawah${sig.confirmed ? ", sudah ada candle hijau konfirmasi" : ", entry di candle berikutnya"}. Ref entry ~${f(sig.entry)} · SL ${f(sig.sl)} (−${sig.riskPct.toFixed(1)}%) · TP1 BB tengah ${f(sig.tp1)} (+${pct(sig.tp1)}%) · TP2 BB atas ${f(sig.tp2)} (+${pct(sig.tp2)}%) · RR 1:${sig.rr.toFixed(1)}`;
@@ -14113,7 +14173,7 @@ function c7MiniChartHtml(ticker, w, h){
   const hi = Math.max(...bars.map(b => b.high)), lo = Math.min(...bars.map(b => b.low));
   const span = (hi - lo) || 1, padY = 2, step = w / bars.length, cw = Math.max(3, step * 0.55);
   const y = v => (padY + (hi - v) / span * (h - padY * 2)).toFixed(1);
-  const f = v => Math.round(v).toLocaleString("id-ID");
+  const f = v => fmtNum(Math.round(v));
   const parts = bars.map((b, i) => {
     const up = b.close >= b.open, col = up ? "var(--up)" : "var(--down)", cx = (step * i + step / 2).toFixed(1);
     const top = Math.min(y(b.open), y(b.close)), bh = Math.max(1.2, Math.abs(y(b.open) - y(b.close)));
@@ -14125,7 +14185,7 @@ function c7MiniChartHtml(ticker, w, h){
 function c7HistTableHtml(ticker){
   const bars = c7Last7(ticker);
   if(!bars.length) return `<div style="font-size:11px;color:var(--muted);">${C7.loading ? "⏳ Memuat riwayat candle…" : "Riwayat candle belum tersedia untuk saham ini."}</div>`;
-  const f = v => Math.round(v).toLocaleString("id-ID");
+  const f = v => fmtNum(Math.round(v));
   const all = C7.bars[String(ticker).toUpperCase()];
   const th = "text-align:right;padding:3px 8px;font-weight:600;color:var(--muted);font-size:10.5px;";
   const td = "text-align:right;padding:3px 8px;font-size:11.5px;";
@@ -14324,7 +14384,7 @@ function c7Eval(s){
 }
 function c7Info(sig, kind){
   if(!sig) return "";
-  const f = (v) => Math.round(v).toLocaleString("id-ID");
+  const f = (v) => fmtNum(Math.round(v));
   const base = `Entry ~${f(sig.entry)} · SL ${f(sig.sl)} (−${sig.riskPct.toFixed(1)}%)`;
   return kind === "reb" ? `${sig.streak} merah beruntun lalu hijau. ${base}`
                         : `Tembus high ${f(sig.trigger)}. ${base}`;
@@ -14911,6 +14971,11 @@ function renderWsDebug(){
 }
 
 function render(){
+  // state bisa berubah sejak render terakhir -> hitung ulang SEKALI per render, lalu dibagi ke semua pemanggil.
+  // Kecuali render dipanggil lewat renderKeepEnriched() (aksi yang tak memengaruhi enrichment) dan cache masih sah.
+  if(!(_enrKeepNext && _enrCache && _enrCache.owned && _enrCache.src === state.stocks && Date.now() - _enrCache.at < ENRICH_KEEP_TTL_MS)) invalidateEnriched();
+  _enrKeepNext = false;
+  _enrOwnNext = true; Promise.resolve().then(() => { _enrOwnNext = false; });
   // Guard defensif: kalau index.html yang di-deploy ternyata beda versi
   // dengan app.js (elemen tertentu belum ada di HTML), JANGAN biarkan itu
   // menghentikan seluruh render() secara diam-diam — terutama krusial di
@@ -16040,7 +16105,7 @@ async function refreshCustomPresets(){
   try{
     const res = await fetch(`${SUPABASE_URL}/custom_presets?select=*&order=created_at.desc`, { headers: getSupaHeaders(), cache: "no-store" });
     const data = await res.json();
-    if(Array.isArray(data)) state.customPresets = data;
+    if(Array.isArray(data)){ state.customPresets = data; invalidateEnriched(); }
   }catch(e){}
 }
 
@@ -27562,7 +27627,7 @@ function attachContentEvents(){
     }, 0);
   }
 
-  bindSearchInputPreservingCursor("searchInput", (val) => { state.search = val; state.page = 1; });
+  bindSearchInputPreservingCursor("searchInput", (val) => { state.search = val; state.page = 1; _enrKeepNext = true; });
 
   // --- Kontrol chart interaktif (rentang waktu + toggle indikator) ---
   document.querySelectorAll("[data-chart-range]").forEach(btn=>{
@@ -27839,7 +27904,7 @@ function attachContentEvents(){
     const v = e.target.value;
     state.limit = v === "all" ? "all" : parseInt(v, 10);
     state.page = 1;
-    render();
+    renderKeepEnriched();
   };
 
   const resetFiltersBtn = document.getElementById("resetFiltersBtn");
@@ -28313,8 +28378,8 @@ function attachContentEvents(){
   
   const btnPrev = document.getElementById("prevPage");
   const btnNext = document.getElementById("nextPage");
-  if (btnPrev) btnPrev.onclick = () => { if(state.page > 1) { state.page--; render(); } };
-  if (btnNext) btnNext.onclick = () => { state.page++; render(); };
+  if (btnPrev) btnPrev.onclick = () => { if(state.page > 1) { state.page--; renderKeepEnriched(); } };
+  if (btnNext) btnNext.onclick = () => { state.page++; renderKeepEnriched(); };
 
   document.querySelectorAll(".sortable:not([data-table-sort])").forEach(th => {
     th.onclick = () => {
@@ -28326,7 +28391,7 @@ function attachContentEvents(){
         state.sort.asc = true;
       }
       state.page = 1;
-      render();
+      renderKeepEnriched();
     };
   });
 
@@ -34176,7 +34241,7 @@ function mscRows(){
 
 function renderMsci(){
   const sty = "background:color-mix(in srgb, currentColor 6%, transparent);border:1px solid var(--border);color:var(--text);font-size:12.5px;border-radius:8px;padding:8px 10px;";
-  const nf = (v, d) => v == null ? "-" : Number(v).toLocaleString("id-ID", { maximumFractionDigits: d });
+  const nf = (v, d) => v == null ? "-" : _nfDigits(d).format(Number(v));
   const inp = (label, key, ph, w) => `<div class="field" style="min-width:${w || 120}px;"><label>${label}</label><input type="text" inputmode="decimal" style="${sty}" value="${escapeHtml(String(MSC[key] ?? ""))}" placeholder="${ph || ""}" onchange="mscSet('${key}', this.value)"></div>`;
   const rows = mscRows(), shown = rows.slice(0, MSC.limit);
   const arrow = k => MSC.sort === k ? (MSC.dir === "desc" ? " ▼" : " ▲") : "";
