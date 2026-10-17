@@ -387,7 +387,7 @@ X.act("ppRun",()=>{ const t=num("ex-pp-t"),y=num("ex-pp-y"),o=$("#ex-pp-out"); i
   o.innerHTML=`Modal yang dibutuhkan ≈ <b>${rp(t*12/(y/100))}</b> agar dividen ${rp(t)}/bulan pada yield ${y}% (sebelum pajak).`; });
 
 /* ================= BACKUP & PULIHKAN ================= */
-const SENS=/(token|key|secret|api|pass|supa|telegram|chat|auth|bearer)/i;
+const SENS=/(token|key|secret|api|pass|supa|telegram|chat|auth|bearer|proxy|endpoint|webhook|url|_ep$)/i;
 let pending=null;
 function collect(inclSecret){ const o={}; for(let i=0;i<localStorage.length;i++){ const k=localStorage.key(i); if(!/^(ex_|ihsg_)/.test(k)) continue; if(!inclSecret&&SENS.test(k)) continue; o[k]=localStorage.getItem(k); } return o; }
 function vData(){
@@ -409,8 +409,25 @@ X.onChange(e=>{ if(e.target.id!=="ex-d-file"||!e.target.files[0]) return; const 
   r.onload=()=>{ try{ const j=JSON.parse(r.result); if(j.app!=="ihsg-screener-extras"||!j.keys||typeof j.keys!=="object") throw new Error("bukan file backup aplikasi ini"); pending=j; const o=$("#ex-d-sum"); if(o) o.innerHTML=pendingHtml(); }
     catch(x){ pending=null; const o=$("#ex-d-sum"); if(o) o.innerHTML=`<span class="ex-dn">File tidak valid: ${E(x.message)}</span>`; } };
   r.readAsText(e.target.files[0]); });
-X.act("bkRestore",()=>{ if(!pending) return; const ks=Object.keys(pending.keys).filter(k=>/^(ex_|ihsg_)/.test(k)); if(!confirm(`Pulihkan ${ks.length} entri? Data bernama sama di browser ini akan ditimpa.`)) return;
-  let n=0; ks.forEach(k=>{ try{ localStorage.setItem(k,String(pending.keys[k])); n++; }catch(e){} }); pending=null; toast(`${n} entri dipulihkan. Muat ulang halaman agar semua berlaku.`); X.repaint(); });
+X.act("bkRestore",()=>{ if(!pending) return;
+  // KEAMANAN: berkas backup tidak dipercaya. Kunci kredensial/koneksi (SENS: supa, token, key, telegram, api…) TIDAK
+  // dipulihkan kecuali berkas menyatakannya DAN Anda menyetujui secara terpisah — kalau tidak, backup buatan orang lain
+  // bisa mengganti URL Supabase/Telegram dan mengalihkan data Anda ke server asing.
+  const all=Object.keys(pending.keys).filter(k=>/^(ex_|ihsg_)/.test(k)&&k.length<=100);
+  const sens=all.filter(k=>SENS.test(k)), ok=[], bad=[];
+  all.filter(k=>!SENS.test(k)).forEach(k=>{ const v=pending.keys[k];
+    if(typeof v!=="string"||v.length>2e6){ bad.push(k); return; }
+    if(/^ex_/.test(k)){ try{ JSON.parse(v); }catch(e){ bad.push(k); return; } } // data Trader Tools wajib JSON valid
+    ok.push(k); });
+  if(!ok.length&&!sens.length){ toast("Tidak ada entri valid untuk dipulihkan","down"); return; }
+  if(!confirm(`Pulihkan ${ok.length} entri data?${bad.length?` (${bad.length} entri rusak/terlalu besar dilewati)`:""}\nData bernama sama di browser ini akan ditimpa.`)) return;
+  let secs=[];
+  if(sens.length){
+    if(pending.includesSecrets===true&&confirm(`File ini juga berisi ${sens.length} entri kredensial/koneksi:\n${sens.join(", ")}\n\nMenimpanya bisa mengalihkan koneksi aplikasi (Supabase, Telegram, Stockbit). Lakukan HANYA jika file ini Anda buat sendiri dan tersimpan aman.\n\nTimpa kredensial juga?`)) secs=sens.filter(k=>typeof pending.keys[k]==="string"&&pending.keys[k].length<=2e6);
+  }
+  let n=0; ok.concat(secs).forEach(k=>{ try{ localStorage.setItem(k,pending.keys[k]); n++; }catch(e){} });
+  const skipped=sens.length-secs.length; pending=null;
+  toast(`${n} entri dipulihkan${skipped?` · ${skipped} kredensial tidak ditimpa`:""}. Muat ulang halaman agar semua berlaku.`); X.repaint(); });
 X.act("bkReset",()=>{ if(!confirm("Hapus SEMUA data Trader Tools (jurnal, daftar, alert, paper trading, preset)? Tidak bisa dibatalkan.")) return;
   const del=[]; for(let i=0;i<localStorage.length;i++){ const k=localStorage.key(i); if(/^ex_/.test(k)) del.push(k); } del.forEach(k=>localStorage.removeItem(k)); toast(`${del.length} entri dihapus`); X.repaint(); });
 

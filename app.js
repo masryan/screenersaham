@@ -441,16 +441,33 @@ function sanitizeStockbitToken(raw){
   return t;
 }
 
+// KEAMANAN: Bearer token Stockbit hanya boleh dikirim ke domain stockbit.com (https). Endpoint & Proxy URL tersimpan di
+// localStorage dan bisa berubah lewat pemulihan backup / salah isi; tanpa pagar ini, endpoint yang diarahkan ke server
+// lain akan menerima token Anda apa adanya. Proxy: wajib https (atau localhost untuk pengembangan).
+function isTrustedStockbitUrl(u){
+  try{ const x = new URL(u); return x.protocol === "https:" && (x.hostname === "stockbit.com" || x.hostname.endsWith(".stockbit.com")); }
+  catch(e){ return false; }
+}
+function isSafeProxyUrl(u){
+  try{ const x = new URL(u); return x.protocol === "https:" || x.hostname === "localhost" || x.hostname === "127.0.0.1"; }
+  catch(e){ return false; }
+}
+
 async function stockbitRawRequest(url, extraHeaders = {}, attempt = 0){
   try{
     let res;
     if(state.stockbitProxyUrl){
+      if(!isSafeProxyUrl(state.stockbitProxyUrl)) return { error: "Proxy URL harus diawali https:// (atau localhost). Token TIDAK dikirim — periksa Proxy URL di ⚙️ Pengaturan." };
       res = await fetch(state.stockbitProxyUrl, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ url, token: state.stockbitToken })
       });
     } else {
+      if(!isTrustedStockbitUrl(url)){
+        let host = "tidak valid"; try{ host = new URL(url).hostname; }catch(e){}
+        return { error: `Endpoint mengarah ke "${host}", bukan domain stockbit.com — token TIDAK dikirim demi keamanan. Perbaiki endpoint di ⚙️ Pengaturan (atau isi Proxy URL bila memang memakai proxy sendiri).` };
+      }
       res = await fetch(url, { headers: { "Authorization": `Bearer ${state.stockbitToken}`, ...extraHeaders } });
     }
     if(res.status === 429 && attempt < STOCKBIT_MAX_RETRIES){
@@ -5213,13 +5230,20 @@ function computeFundTekScore(s){
   // --- Fundamental 60 poin ---
   // Setiap kelompok memakai tier yang saling eksklusif. Bobot maksimum:
   // ROE 15 + NPM 10 + DER 10 + PER 8 + PBV 5 + ROA 4 + Growth 4 + Dividen 4 = 60.
+  // Kualitas data: (1) bank/asuransi/pembiayaan punya DER tinggi secara struktural (simpanan nasabah = utang) → DER dinilai
+  // NETRAL (5 dari 10), bukan 0; (2) DER NEGATIF = ekuitas negatif, dulu lolos "DER ≤ 1" dan dapat nilai penuh → sekarang tidak;
+  // (3) ROE > 150% biasanya artefak ekuitas nyaris nol, bukan kualitas → tidak diberi poin ROE tertinggi.
+  const isFin = /keuangan|financ|bank|asuransi|insurance|pembiayaan/i.test(String(s.sektor||"") + " " + String(s.industry||""));
+  const derItems = isFin
+    ? [ { label:"DER (sektor keuangan: dinilai netral)", pass:true, points:5 } ]
+    : [ { label:"DER ≤ 1", pass: der != null && der >= 0 && der <= 1, points:10 },
+        { label:"DER 1–2", pass: der != null && der > 1 && der <= 2, points:5 } ];
   const fundItems = [
-    { label:"ROE ≥ 15%", pass: roe != null && roe >= 15, points:15 },
+    { label:"ROE ≥ 15%", pass: roe != null && roe >= 15 && roe <= 150, points:15 },
     { label:"ROE 8–15%", pass: roe != null && roe >= 8 && roe < 15, points:8 },
     { label:"NPM ≥ 10%", pass: npm != null && npm >= 10, points:10 },
     { label:"NPM 5–10%", pass: npm != null && npm >= 5 && npm < 10, points:5 },
-    { label:"DER ≤ 1", pass: der != null && der <= 1, points:10 },
-    { label:"DER 1–2", pass: der != null && der > 1 && der <= 2, points:5 },
+    ...derItems,
     { label:"PER ≤ 15 & > 0", pass: per != null && per > 0 && per <= 15, points:8 },
     { label:"PER 15–25", pass: per != null && per > 15 && per <= 25, points:4 },
     { label:"PBV ≤ 1.5 & > 0", pass: pbv != null && pbv > 0 && pbv <= 1.5, points:5 },
@@ -11451,7 +11475,7 @@ function exportBacktestToExcel(id) {
   
   // 1. Siapkan data dengan kolom "Tanggal Entry"
   const data = session.items.map(item => {
-    const liveData = state.stocks.find(s => s.ticker === item.ticker);
+    const liveData = stockByTicker(item.ticker);
     const currentPrice = liveData ? liveData.cClose : item.entryPrice;
     const period = backtestPeriodMetrics(item, currentPrice);
     const pl = period.endPL ?? (item.entryPrice ? ((currentPrice - item.entryPrice) / item.entryPrice) * 100 : null);
@@ -11507,7 +11531,7 @@ function exportAllBacktestToExcel() {
   // Looping untuk menggabungkan seluruh item dari semua sesi
   state.backtests.forEach(session => {
     session.items.forEach(item => {
-      const liveData = state.stocks.find(s => s.ticker === item.ticker);
+      const liveData = stockByTicker(item.ticker);
       const currentPrice = liveData ? liveData.cClose : item.entryPrice;
       const period = backtestPeriodMetrics(item, currentPrice);
       const pl = period.endPL ?? (item.entryPrice ? ((currentPrice - item.entryPrice) / item.entryPrice) * 100 : null);
@@ -11637,6 +11661,8 @@ function exportBacktestScreenerRekapToExcel(){
     "Menang": r.winCount,
     "Kalah": r.lossCount,
     "Win Rate (%)": r.winRate != null ? parseFloat(r.winRate.toFixed(1)) : "-",
+    "Win Rate Bersih Batas Bawah (%)": r.winLow != null ? parseFloat(r.winLow.toFixed(1)) : "-",
+    "Kemunculan Tanpa Harga": r.missingCount ?? 0,
     "Rata-rata P/L Closing (%)": r.avgPL != null ? parseFloat(r.avgPL.toFixed(2)) : "-",
     "Total P/L Closing (%)": r.totalPL != null ? parseFloat(r.totalPL.toFixed(2)) : "-",
     "P/L Tertinggi (%)": r.bestPL != null ? parseFloat(r.bestPL.toFixed(2)) : "-",
@@ -11657,6 +11683,8 @@ function exportBacktestScreenerRekapToExcel(){
     {wch: 8},  // Menang
     {wch: 8},  // Kalah
     {wch: 12}, // Win Rate (%)
+  {wch: 22}, // Win Rate Bersih Batas Bawah (%)
+  {wch: 16}, // Kemunculan Tanpa Harga
     {wch: 20}, // Rata-rata P/L Closing (%)
     {wch: 18}, // Total P/L Closing (%)
     {wch: 16}, // P/L Tertinggi (%)
@@ -11698,6 +11726,7 @@ async function submitPortoForm(){
   const v = readPortoForm();
   if(!v.ticker) return alert("Nama emiten wajib diisi.");
   if(!v.tglBeli || !v.hargaBeli || !v.lotBeli) return alert("Tanggal beli, harga beli, dan jumlah lot wajib diisi.");
+  { const err = validatePortoTx(v); if(err) return alert(err); }
   
   const btn = document.getElementById("pfSubmitBtn");
   if (btn) { btn.disabled = true; btn.textContent = "Menyimpan..."; }
@@ -12217,6 +12246,21 @@ async function handleFlowsImportFile(fileInput){
   }
   state.flowsImporting = false;
   render();
+}
+
+// Validasi konsistensi transaksi. Tanpa ini, jual SEBAGIAN (lot jual < lot beli) dihitung terhadap SELURUH modal →
+// tampil rugi besar palsu dan sisa lot hilang dari posisi Open; lot jual > lot beli menggelembungkan P/L.
+// Mengembalikan teks error, atau "" bila valid.
+function validatePortoTx(v){
+  const sellFilled = !!(v.tglJual || v.hargaJual > 0 || v.lotJual > 0);
+  if(!(v.hargaBeli > 0) || !(v.lotBeli > 0)) return "Harga beli dan lot beli harus lebih dari 0.";
+  if(!sellFilled) return "";
+  if(!(v.tglJual && v.hargaJual > 0 && v.lotJual > 0)) return "Data jual belum lengkap: isi tanggal jual, harga jual, DAN lot jual — atau kosongkan ketiganya agar posisi tetap Open.";
+  if(v.lotJual > v.lotBeli) return "Lot jual (" + v.lotJual + ") tidak boleh lebih besar dari lot beli (" + v.lotBeli + ").";
+  if(v.lotJual < v.lotBeli) return "Lot jual (" + v.lotJual + ") lebih kecil dari lot beli (" + v.lotBeli + ").\n\nJual sebagian belum didukung dalam satu baris — P/L akan dihitung terhadap seluruh modal dan salah.\nCara benar: ubah lot beli baris ini menjadi " + v.lotJual + " lot (yang terjual), lalu catat sisa " + (v.lotBeli - v.lotJual) + " lot sebagai transaksi beli baru (status Open).";
+  const d1 = new Date(v.tglBeli), d2 = new Date(v.tglJual);
+  if(!isNaN(d1) && !isNaN(d2) && d2 < d1) return "Tanggal jual tidak boleh sebelum tanggal beli.";
+  return "";
 }
 
 function hitungPorto(v){
@@ -14759,6 +14803,7 @@ function computeRekapPresetStats(){
   const targetPct = Number(state.rekapTargetPct) || 0;
   const priceByTicker = {};
   state.stocks.forEach(s => { priceByTicker[s.ticker] = s.cClose; });
+  const todayStr = todayLocalISO();
   const byDef = {};
   state.rekapHistory.forEach(h => {
     const now = priceByTicker[h.stock_code];
@@ -14767,18 +14812,35 @@ function computeRekapPresetStats(){
     const storedHighest = Number(h.highest_price) || entry;
     const highestPrice = now != null ? Math.max(storedHighest, now, entry) : storedHighest;
     const highestPct = (highestPrice && entry) ? ((highestPrice - entry) / entry * 100) : null;
-    if(!byDef[h.def_id]) byDef[h.def_id] = { id:h.def_id, label:h.def_label, source:h.source, total:0, wins:0, achieved:0, sumChg:0, nChg:0 };
+    if(!byDef[h.def_id]) byDef[h.def_id] = { id:h.def_id, label:h.def_label, source:h.source, total:0, pending:0, matured:0, wins:0, winsNet:0, achieved:0, sumChg:0, nChg:0, _days:new Set() };
     const b = byDef[h.def_id];
     b.total++;
-    if(chgPct != null){ b.nChg++; b.sumChg += chgPct; if(chgPct > 0) b.wins++; }
+    // Sinyal yang baru difinalisasi HARI INI belum melewati satu hari bursa pun: perubahannya 0% dan kalau ikut dihitung
+    // ia masuk penyebut sebagai "bukan menang" → win rate semua preset tertekan. Dinilai mulai hari bursa berikutnya.
+    if(String(h.muncul_date || "").slice(0,10) >= todayStr){ b.pending++; return; }
+    b._days.add(String(h.muncul_date || "").slice(0,10));
+    b.matured++;
+    if(chgPct != null){
+      b.nChg++; b.sumChg += chgPct; if(chgPct > 0) b.wins++;
+      const net = backtestNetPl(chgPct); if(net != null && net > 0) b.winsNet++; // menang setelah fee beli+jual
+    }
     if(targetPct > 0 && highestPct != null && highestPct >= targetPct) b.achieved++;
   });
-  return Object.values(byDef).map(b => ({
-    ...b,
-    winRate: b.nChg ? (b.wins / b.nChg * 100) : null,
-    avgChg: b.nChg ? (b.sumChg / b.nChg) : null,
-    achievedRate: (targetPct > 0 && b.total) ? (b.achieved / b.total * 100) : null,
-  }));
+  const key = (v) => (v == null || !Number.isFinite(v)) ? -1e9 : v;
+  return Object.values(byDef).map(b => {
+    const { _days, ...rest } = b;
+    return {
+      ...rest,
+      winRate: b.nChg ? (b.wins / b.nChg * 100) : null,
+      // win rate jujur: bersih fee + batas bawah Wilson (sadar ukuran sampel)
+      winLow: wilsonLowPct(b.winsNet, b.nChg),
+      reliable: b.nChg >= 30,
+      missing: b.matured - b.nChg,      // sinyal yang kini tak punya harga (ticker hilang) — tak ikut win rate
+      nDays: _days.size,
+      avgChg: b.nChg ? (b.sumChg / b.nChg) : null,
+      achievedRate: (targetPct > 0 && b.matured) ? (b.achieved / b.matured * 100) : null,
+    };
+  }).sort((a,b) => (key(b.winLow) - key(a.winLow)) || (key(b.avgChg) - key(a.avgChg)));
 }
 
 // "✓ Finalisasi Sinyal (EOD)": sama pola dengan finalizeSmartPickSignals()
@@ -14795,7 +14857,19 @@ async function finalizeRekapSignals(){
   state.rekapFinalizing = true; state.rekapMsg = ""; render();
   try{
     const today = todayLocalISO();
-    const list = enriched();
+    const all = enriched();
+    // Hanya saham yang BISA dibeli: tidak disuspensi dan punya harga valid (suspensi = harga basi, tak bisa dieksekusi).
+    const list = all.filter(s => !s.suspended && Number(s.cClose) > 0);
+    // Gerbang kualitas: hari libur bursa / data belum diperbarui → hampir tak ada saham likuid yang berubah harga.
+    // Mengunci sinyal pada kondisi itu menduplikasi harga kemarin sebagai "sinyal hari ini".
+    const liq = list.filter(s => { const tv = Number(s.turnover); return !Number.isFinite(tv) || tv >= 1e9; });
+    const moved = liq.filter(s => Number(s.changePct) !== 0 && Number.isFinite(Number(s.changePct))).length;
+    const frac = liq.length ? moved / liq.length : 0;
+    if(liq.length >= 30 && frac < 0.25 &&
+       !confirm(`Hanya ${Math.round(frac*100)}% saham likuid yang berubah harga hari ini — pasar mungkin libur atau data belum diperbarui.\n\nTetap kunci sinyal untuk ${fmtDateID(today)}?`)){
+      state.rekapMsg = "Finalisasi dibatalkan: data hari ini tampak libur / belum diperbarui.";
+      state.rekapMsgError = true; state.rekapFinalizing = false; render(); return;
+    }
     const defs = rekapScreenerDefs();
     const rows = [];
     defs.forEach(def => {
@@ -17200,7 +17274,7 @@ function diffDaysISO(fromIso, toIso){
 function resolveAutoTpTarget(item){
   const entry = Number(item.entryPrice);
   if (!(entry > 0)) return null;
-  const liveData = state.stocks.find(s => s.ticker === item.ticker);
+  const liveData = stockByTicker(item.ticker);
   if (!liveData) return null;
   const plan = computeTradePlan(liveData, entry);
   return (plan && Number.isFinite(plan.tp1) && plan.tp1 > entry) ? plan.tp1 : null;
@@ -17237,7 +17311,7 @@ function computeTickerRekap(tpPct, mode){
 
   for (const session of state.backtests) {
     for (const item of session.items) {
-      const liveData = state.stocks.find(s => s.ticker === item.ticker);
+      const liveData = stockByTicker(item.ticker);
       const currentPrice = liveData ? liveData.cClose : item.entryPrice;
       const period = backtestPeriodMetrics(item, currentPrice);
       const pl = (!liveData && !period.hasHistory) ? null : (period.endPL ?? (item.entryPrice ? ((currentPrice - item.entryPrice) / item.entryPrice) * 100 : null));
@@ -17323,13 +17397,41 @@ function computeTickerRekap(tpPct, mode){
 // yang jarang lolos), total P/L akan bias ke yang paling sering muncul,
 // bukan yang paling "jitu".
 // ==========================================
+// PERFORMA: pencarian saham per ticker via Map (O(1)) — dulu state.stocks.find() di dalam loop item backtest
+// (item × ±900 saham, dipanggil ulang tiap render tab Backtest/Rekap dan ekspor). Cache terikat pada identitas array
+// state.stocks, jadi otomatis kedaluwarsa saat loadLive() mengganti datanya. Hasil sama dengan find() (kecocokan pertama).
+var _sbtSrc = null, _sbtMap = null;
+function stockByTicker(t){
+  if(_sbtSrc !== state.stocks || !_sbtMap){
+    _sbtSrc = state.stocks; _sbtMap = new Map();
+    for(const s of state.stocks){ if(!_sbtMap.has(s.ticker)) _sbtMap.set(s.ticker, s); }
+  }
+  return _sbtMap.get(t);
+}
+
+// P/L bersih biaya transaksi (fee beli + fee jual default di Pengaturan). P/L backtest mentah itu BRUTO: menang kecil
+// (mis. +0,3%) sebenarnya rugi setelah fee ±0,4%, jadi win rate bruto terlalu optimis untuk screener bertarget kecil.
+function backtestNetPl(pl){
+  if(pl == null || !Number.isFinite(pl)) return null;
+  const fb = Math.max(0, Number(state.feeBeliDefaultPct ?? FEE_BELI_DEFAULT_PCT) || 0);
+  const fs = Math.max(0, Number(state.feeJualDefaultPct ?? FEE_JUAL_DEFAULT_PCT) || 0);
+  return ((1 + pl/100) * (1 - fs/100) / (1 + fb/100) - 1) * 100;
+}
+// Batas bawah interval Wilson (one-sided 95% ≈ "90%") untuk proporsi menang: win rate yang jujur terhadap ukuran sampel.
+// 2/2 menang (100%) ≈ 40% batas bawah; 68/100 menang ≈ 60%. Dipakai untuk peringkat, bukan win rate mentah.
+function wilsonLowPct(wins, n){
+  if(!n) return null;
+  const z = 1.645, p = wins / n, d = 1 + z*z/n;
+  return ((p + z*z/(2*n)) - z * Math.sqrt(p*(1-p)/n + z*z/(4*n*n))) / d * 100;
+}
+
 function computeScreenerRekap(tpPct, mode){
   const byScreener = new Map();
   const isAuto = mode === "auto";
 
   for (const session of state.backtests) {
     for (const item of session.items) {
-      const liveData = state.stocks.find(s => s.ticker === item.ticker);
+      const liveData = stockByTicker(item.ticker);
       const currentPrice = liveData ? liveData.cClose : item.entryPrice;
       const period = backtestPeriodMetrics(item, currentPrice);
       const pl = (!liveData && !period.hasHistory) ? null : (period.endPL ?? (item.entryPrice ? ((currentPrice - item.entryPrice) / item.entryPrice) * 100 : null));
@@ -17346,7 +17448,7 @@ function computeScreenerRekap(tpPct, mode){
         sessionId: session.id, sessionDate: session.date,
         ticker: item.ticker, entryDate: item.entryDate, entryPrice: item.entryPrice,
         currentPrice, sumber: item.sumber || "Screener", kriteria: item.kriteria || "-",
-        pl, periodMaxPL: period.maxPL, target,
+        pl, plNet: backtestNetPl(pl), periodMaxPL: period.maxPL, target,
       };
 
       if (!byScreener.has(label)) byScreener.set(label, []);
@@ -17363,6 +17465,12 @@ function computeScreenerRekap(tpPct, mode){
     const totalPL = withPl.reduce((a,o) => a + o.pl, 0);
     const avgPL = withPl.length ? totalPL / withPl.length : null;
     const winRate = withPl.length ? (winCount / withPl.length * 100) : null;
+    // Kualitas data: win rate BERSIH fee + batas bawah Wilson (sadar ukuran sampel) + jumlah kemunculan tanpa P/L
+    // (ticker sudah hilang dari data / delisting → dulu terbuang diam-diam sehingga win rate terlihat lebih bagus).
+    const winNetCount = withPl.filter(o => o.plNet != null && o.plNet > 0).length;
+    const winLow = wilsonLowPct(winNetCount, withPl.length);
+    const missingCount = occurrences.length - withPl.length;
+    const entryDays = new Set(occurrences.map(o => o.entryDate).filter(Boolean)).size;
 
     const withMaxPl = occurrences.filter(o => o.periodMaxPL != null);
     const bestPL = withMaxPl.length ? Math.max(...withMaxPl.map(o => o.periodMaxPL)) : null;
@@ -17381,6 +17489,7 @@ function computeScreenerRekap(tpPct, mode){
       occurrenceCount: occurrences.length,
       tickerCount,
       winCount, lossCount, winRate,
+      winNetCount, winLow, missingCount, entryDays, reliable: withPl.length >= 30,
       totalPL, avgPL,
       bestPL, avgBestPL,
       achievedCount: achievedList.length,
@@ -17392,7 +17501,10 @@ function computeScreenerRekap(tpPct, mode){
 
   // Urutan default: rata-rata P/L closing tertinggi dulu (lihat catatan di
   // kepala fungsi soal kenapa rata-rata, bukan total).
-  rows.sort((a,b) => (b.avgPL ?? -Infinity) - (a.avgPL ?? -Infinity));
+  // Urutan default: batas bawah win rate BERSIH fee (sadar sampel) dulu, lalu rata-rata P/L. Screener dengan 1–2 kemunculan
+  // yang kebetulan +40% tidak lagi menduduki peringkat atas.
+  const key = (v) => (v == null || !Number.isFinite(v)) ? -1e9 : v;
+  rows.sort((a,b) => (key(b.winLow) - key(a.winLow)) || (key(b.avgPL) - key(a.avgPL)));
   return rows;
 }
 
@@ -17595,6 +17707,7 @@ function renderBacktestScreenerRekap(){
     win: r => r.winCount,
     loss: r => r.lossCount,
     winRate: r => r.winRate,
+    winLow: r => r.winLow,
     avgPl: r => r.avgPL,
     bestPl: r => r.bestPL,
     tp: r => r.trackedCount ? r.achievedCount / r.trackedCount : -1,
@@ -17621,10 +17734,12 @@ function renderBacktestScreenerRekap(){
         <td style="vertical-align:middle;">
           ${labelBadge}
           <button type="button" class="link-btn" data-screener-rekap-expand="${escapeHtml(r.label)}">${isOpen ? "Tutup" : `Detail (${r.occurrenceCount}x, ${r.tickerCount} ticker)`}</button>
+          ${r.missingCount ? `<div style="font-size:10.5px;color:var(--muted);margin-top:3px;" title="Kemunculan yang kini tak punya harga (ticker hilang dari data/delisting) tidak ikut dihitung — win rate bisa sedikit terlalu optimis.">+${r.missingCount} tanpa harga</div>` : ""}
         </td>
         <td class="mono" style="color:var(--up); font-weight:700;">${r.winCount}</td>
         <td class="mono" style="color:var(--down); font-weight:700;">${r.lossCount}</td>
         <td class="mono" style="font-weight:700;">${r.winRate != null ? r.winRate.toFixed(0)+"%" : "-"}</td>
+        <td class="mono" style="font-weight:700;" title="Batas bawah Wilson 90% dari win rate BERSIH fee (n=${r.winNetCount}/${r.occurrenceCount - r.missingCount} menang, dari ${r.entryDays} tanggal entry berbeda). Makin besar sampel, makin dekat ke win rate sebenarnya.">${r.winLow != null ? r.winLow.toFixed(0)+"%" : "-"}${r.reliable ? "" : ' <span title="Kurang dari 30 kemunculan ber-P/L: angka belum stabil, bisa kebetulan." style="color:var(--gold);cursor:help;">⚠</span>'}</td>
         <td class="mono" style="color:var(--${avgTone}); font-weight:700; font-size:14px;" title="Rata-rata (bukan total) P/L closing dari semua kemunculan yang punya P/L">${plText(r.avgPL)}</td>
         <td class="mono" style="color:var(--${bestTone}); font-weight:700; font-size:14px;" title="P/L tertinggi yang PERNAH dicapai dari kemunculan manapun di bawah screener ini">${plText(r.bestPL)}</td>
         <td style="font-size:12.5px;">${tpSummary}</td>
@@ -17642,6 +17757,7 @@ function renderBacktestScreenerRekap(){
               ${tableSortTh("backtestScreenerRekap", "Menang", "win")}
               ${tableSortTh("backtestScreenerRekap", "Kalah", "loss")}
               ${tableSortTh("backtestScreenerRekap", "Win Rate", "winRate")}
+              ${tableSortTh("backtestScreenerRekap", "Win Rate Bersih (Batas Bawah)", "winLow")}
               ${tableSortTh("backtestScreenerRekap", "Rata-rata P/L (Closing)", "avgPl")}
               ${tableSortTh("backtestScreenerRekap", "P/L Tertinggi", "bestPl")}
               ${tableSortTh("backtestScreenerRekap", `Target TP (${tpLabel})`, "tp")}
@@ -17681,7 +17797,7 @@ function occurrenceDetailRows(occurrences, mode){
       <td style="font-size:11.5px;">${tpText}</td>
     </tr>`;
   }).join("");
-  const colCount = showTargetCol ? 8 : 7;
+  const colCount = showTargetCol ? 9 : 8;
   return `<tr><td colspan="${colCount}" style="padding:0;">
     <table class="mono" style="width:100%;">
       <thead><tr style="opacity:0.7;">
@@ -17754,7 +17870,7 @@ function renderBacktest(){
     let winCount = 0, lossCount = 0, winCountMax = 0, lossCountMax = 0, totalPL = 0, maxPL = -Infinity, minPL = Infinity, validItems = 0;
 
     const rowData = session.items.map(item => {
-      const liveData = state.stocks.find(s => s.ticker === item.ticker);
+      const liveData = stockByTicker(item.ticker);
       const currentPrice = liveData ? liveData.cClose : item.entryPrice;
       const period = backtestPeriodMetrics(item, currentPrice);
       // Tanpa harga live (ticker tidak ada di screener) DAN tanpa data historical,
@@ -19005,7 +19121,7 @@ function exportBsScanToExcel(){
       "#": i + 1, "Kode": r.stock, "Nama Emiten": r.name || "",
       "Market Cap (Rp)": r.marketCap, "Akumulasi (Rp)": r.totalNet,
       "% Market Cap": r.pctMC != null ? +r.pctMC.toFixed(3) : "",
-      "Free Float (%)": (state.stocks.find(s => s.ticker === r.stock) || {}).freeFloatPct ?? "",
+      "Free Float (%)": (stockByTicker(r.stock) || {}).freeFloatPct ?? "",
       "Serap FF (%)": r.serapFF != null ? +r.serapFF.toFixed(2) : "",
       "Jumlah Broker": r.brokerCount, "Status": r.statuses.join(", "),
       "Broker yang Akumulasi": bList(r.list, false), "Periode": periode,
@@ -20996,18 +21112,28 @@ function renderPortfolioStrategyStats() {
     closed.forEach(p => {
         let strat = "Manual / Umum";
         if (p.catatan && p.catatan.includes("Dari Backtest")) strat = "Hasil Screener/Backtest";
-        if (!strategyStats[strat]) strategyStats[strat] = { wins: 0, total: 0 };
-        strategyStats[strat].total++;
-        if (p.status === "Win") strategyStats[strat].wins++;
+        if (!strategyStats[strat]) strategyStats[strat] = { wins: 0, total: 0, sumPct: 0, gp: 0, gl: 0 };
+        const st = strategyStats[strat], pl = +p.nilaiPL || 0, pct = +p.persenPL;
+        st.total++;
+        if (p.status === "Win") st.wins++;
+        if (Number.isFinite(pct)) st.sumPct += pct;
+        if (pl > 0) st.gp += pl; else if (pl < 0) st.gl += -pl;
     });
     const rows = Object.keys(strategyStats).map(key => {
         const s = strategyStats[key];
         const rate = (s.wins / s.total) * 100;
-        const tone = rate >= 50 ? "up" : "down";
+        // Win rate saja menyesatkan (menang kecil sering + kalah besar jarang = rugi). Tampilkan juga rata-rata P/L per trade
+        // dan Profit Factor (total untung ÷ total rugi); nada hijau/merah mengikuti EXPECTANCY, bukan win rate.
+        const avgPct = s.sumPct / s.total;
+        const pf = s.gl > 0 ? s.gp / s.gl : (s.gp > 0 ? Infinity : null);
+        const tone = avgPct > 0 ? "up" : "down";
+        const small = s.total < 20 ? ' <span title="Kurang dari 20 trade tertutup: angka ini belum stabil, bisa kebetulan." style="color:var(--muted)">⚠ sampel kecil</span>' : "";
+        const pfTxt = pf == null ? "-" : (pf === Infinity ? "∞" : pf.toFixed(2));
         return `
-        <div style="display:flex; justify-content:space-between; font-size:12px; border-bottom:1px dashed var(--border); padding:8px 0;">
-            <span style="color:var(--text);">${escapeHtml(key)}</span>
-            <span style="color:var(--${tone}); font-weight:bold;">${rate.toFixed(0)}% <span style="font-size:10px;color:var(--muted)">(${s.wins}/${s.total})</span></span>
+        <div style="display:flex; justify-content:space-between; gap:8px; flex-wrap:wrap; font-size:12px; border-bottom:1px dashed var(--border); padding:8px 0;">
+            <span style="color:var(--text);">${escapeHtml(key)}${small}</span>
+            <span style="color:var(--${tone}); font-weight:bold;">${rate.toFixed(0)}% <span style="font-size:10px;color:var(--muted)">(${s.wins}/${s.total})</span>
+              <span style="font-size:10px;color:var(--muted);font-weight:500;"> · rata² ${avgPct>=0?"+":""}${avgPct.toFixed(2)}% · PF ${pfTxt}</span></span>
         </div>`;
     }).join("");
     return `
@@ -23641,7 +23767,7 @@ function renderRekapWinRatePanel(defs){
     : stats;
   const statsSorted = tableSortRows("rekapPresetStats", statsFiltered, {
     label: r=>r.label, source: r=>r.source, total: r=>r.total,
-    winrate: r=>r.winRate, avg: r=>r.avgChg, target: r=>r.achievedRate,
+    winrate: r=>r.winRate, winlow: r=>r.winLow, avg: r=>r.avgChg, target: r=>r.achievedRate,
   });
   const todayStr = todayLocalISO();
   const alreadyToday = state.rekapHistory.some(h => h.muncul_date === todayStr);
@@ -23651,8 +23777,9 @@ function renderRekapWinRatePanel(defs){
     <tr data-rekap-stat-def="${escapeHtml(b.id)}" style="cursor:pointer;${state.rekapHistFilterDefId===b.id?' background:color-mix(in srgb, var(--gold) 14%, transparent);':''}" title="Klik untuk lihat riwayat per saham">
       <td style="white-space:normal;max-width:260px;">${escapeHtml(b.label)}</td>
       <td><span class="pill pill-muted" style="font-size:10px;">${escapeHtml(b.source)}</span></td>
-      <td class="mono">${b.total}</td>
-      <td class="mono" style="font-weight:700;color:${b.winRate==null?'var(--muted)':(b.winRate>=50?'var(--up)':'var(--down)')};">${b.winRate!=null?b.winRate.toFixed(0)+"%":"-"}</td>
+      <td class="mono" title="${b.pending ? b.pending+' sinyal hari ini belum dinilai (belum melewati hari bursa). ' : ''}${b.missing ? b.missing+' sinyal kini tanpa harga, tak ikut win rate.' : ''}">${b.total}${b.pending ? ` <span style="font-size:10px;color:var(--muted)">(+${b.pending} baru)</span>` : ""}</td>
+      <td class="mono" style="font-weight:700;color:${b.winRate==null || !b.reliable ? 'var(--muted)' : (b.winRate>=50?'var(--up)':'var(--down)')};" title="Win rate BRUTO (sebelum fee), dari ${b.nChg} sinyal yang sudah dinilai.${b.reliable ? '' : ' Kurang dari 30 sinyal — warna netral karena angka belum stabil.'}">${b.winRate!=null?b.winRate.toFixed(0)+"%":"-"}</td>
+      <td class="mono" style="font-weight:700;" title="Batas bawah Wilson 90% dari win rate BERSIH fee (${b.winsNet}/${b.nChg} menang setelah fee, dari ${b.nDays} tanggal sinyal berbeda).">${b.winLow!=null ? b.winLow.toFixed(0)+"%" : "-"}${b.reliable ? "" : ' <span title="Kurang dari 30 sinyal ternilai: belum stabil, bisa kebetulan." style="color:var(--gold);cursor:help;">⚠</span>'}</td>
       <td class="mono" style="font-weight:700;color:${b.avgChg==null?'var(--muted)':(b.avgChg>=0?'var(--up)':'var(--down)')};">${b.avgChg!=null?(b.avgChg>=0?"+":"")+b.avgChg.toFixed(1)+"%":"-"}</td>
       <td class="mono" style="font-weight:700;color:${b.achievedRate==null?'var(--muted)':'var(--gold)'};">${b.achievedRate!=null?b.achievedRate.toFixed(0)+"%":"-"}</td>
       <td style="white-space:normal;max-width:340px;font-size:11px;color:var(--muted);" title="${escapeHtml(formulaMap[b.id] || "")}">${formulaMap[b.id] ? escapeHtml(formulaMap[b.id].length > 120 ? formulaMap[b.id].slice(0,120) + "…" : formulaMap[b.id]) : "-"}</td>
@@ -23722,8 +23849,8 @@ function renderRekapWinRatePanel(defs){
           </div>
           <div class="table-wrap" style="margin-top:8px;">
             <table class="mono">
-              <thead><tr>${tableSortTh("rekapPresetStats","Preset/Screener","label")}${tableSortTh("rekapPresetStats","Sumber","source")}${tableSortTh("rekapPresetStats","Total Sinyal","total")}${tableSortTh("rekapPresetStats","Win Rate","winrate")}${tableSortTh("rekapPresetStats","Rata-rata Δ%","avg")}${tableSortTh("rekapPresetStats",`Capai Target ${targetPct}%`,"target")}<th>Formula / Kriteria</th></tr></thead>
-              <tbody>${statsRows || `<tr><td colspan="7"><div class="empty-box">Tidak ada preset yang cocok dengan filter nama/formula.</div></td></tr>`}</tbody>
+              <thead><tr>${tableSortTh("rekapPresetStats","Preset/Screener","label")}${tableSortTh("rekapPresetStats","Sumber","source")}${tableSortTh("rekapPresetStats","Total Sinyal","total")}${tableSortTh("rekapPresetStats","Win Rate","winrate")}${tableSortTh("rekapPresetStats","Win Bersih (Batas Bawah)","winlow")}${tableSortTh("rekapPresetStats","Rata-rata Δ%","avg")}${tableSortTh("rekapPresetStats",`Capai Target ${targetPct}%`,"target")}<th>Formula / Kriteria</th></tr></thead>
+              <tbody>${statsRows || `<tr><td colspan="8"><div class="empty-box">Tidak ada preset yang cocok dengan filter nama/formula.</div></td></tr>`}</tbody>
             </table>
           </div>
           <div style="font-size:11px;color:var(--muted);margin-top:6px;">Klik salah satu baris preset di atas untuk lihat riwayat per saham di bawah. "Win Rate" = persentase sinyal yang harga sekarang masih di atas harga entry. "Capai Target" = persentase sinyal yang harga TERTINGGI-nya sejak muncul sudah menyentuh target di atas.</div>
