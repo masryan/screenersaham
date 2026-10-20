@@ -461,7 +461,7 @@ function stockbitBridgePing(){
 function stockbitBridgeFetch(url, headers){
   return new Promise((resolve) => {
     const id = "sbf_" + Date.now() + "_" + Math.random().toString(36).slice(2);
-    const t = setTimeout(() => { window.removeEventListener("message", h); resolve({ ok:false, status:0, error:"timeout menunggu extension" }); }, 20000);
+    const t = setTimeout(() => { window.removeEventListener("message", h); resolve({ ok:false, status:0, error:"timeout menunggu extension — buka chrome://extensions, reload extension, lalu refresh halaman app dengan Ctrl+F5" }); }, 20000);
     function h(e){
       if(e.source !== window || e.data?.type !== "STOCKBIT_FETCH_RESPONSE" || e.data.id !== id) return;
       clearTimeout(t); window.removeEventListener("message", h); resolve(e.data);
