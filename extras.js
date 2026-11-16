@@ -342,7 +342,7 @@ window.ExtrasAPI={
   addTab(id,label,view,after){ if(!TABS.some(t=>t[0]===id)) TABS.push([id,label]); EXT.views[id]=view; if(after) EXT.after[id]=after; },
   act(name,fn){ A[name]=fn; },
   onInput(f){ EXT.onInput.push(f); }, onChange(f){ EXT.onChange.push(f); }, tick(f){ EXT.ticks.push(f); },
-  repaint(){ paint(); }, current(){ return cur; }, go(id){ cur=id; SV("tab",cur); openPage(); }, isLive:live
+  repaint(){ paint(); }, tabs(){ return TABS.map(t=>[t[0],t[1]]); }, current(){ return cur; }, go(id){ cur=id; SV("tab",cur); openPage(); }, isLive:live
 };
 /* ================= START ================= */
 function start(){ mount(); setInterval(()=>{ try{checkAlerts();checkPaper();checkCal();}catch(e){console.warn("extras:",e)} EXT.ticks.forEach(f=>{try{f()}catch(e){console.warn("extras tick:",e)}}); if(live()&&(cur==="alert"||cur==="paper")) paint(); },30000); setTimeout(()=>{try{checkAlerts();checkPaper();checkCal();}catch(e){} EXT.ticks.forEach(f=>{try{f()}catch(e){}});},8000); }

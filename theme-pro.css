@@ -1,0 +1,325 @@
+/* ==========================================================================
+   theme-pro.css — Tema "Papan Bursa" untuk IHSG Screener Pro
+   Muat PALING AKHIR (setelah extras.css). Hanya mengubah warna, tipografi,
+   radius, bayangan, dan state interaksi — tidak menyentuh layout/logika.
+   Semua warna lewat token, jadi markup inline-style di app.js ikut berubah.
+   ========================================================================== */
+
+/* ---------- 1. Token ---------- */
+html:root{
+  --ink:#141B3A; --ink-2:#1D2652; --ink-line:rgba(255,255,255,.09);
+  --bg:#F1F3FA; --panel:#FFFFFF; --card:#FFFFFF;
+  --border:#E0E4F0; --text:#0F1633; --muted:#5B6586;
+  --up:#0C9A68; --down:#D62B4D;
+  --gold:#A66E00; --goldDim:rgba(166,110,0,.45);
+  --teal:#0B7F91; --accent:#4C5BFF; --accent-2:#7C4DFF;
+  --a1:#4C5BFF; --a2:#6D3DF5; --glow:76,91,255;
+  --btn-grad:linear-gradient(135deg,var(--a1) 0%,var(--a2) 100%);
+  --teal-grad:var(--btn-grad);
+  --r-sm:8px; --r-md:12px; --r-lg:18px;
+  --sh-1:0 1px 2px rgba(15,22,51,.05),0 6px 18px rgba(15,22,51,.05);
+  --sh-2:0 18px 48px rgba(15,22,51,.20);
+  --ring:0 0 0 3px color-mix(in srgb,var(--accent) 32%,transparent);
+  color-scheme:light;
+}
+html:root[data-theme="dark"]{
+  --ink:#0A0F26; --ink-2:#121A3F;
+  --bg:#0B1127; --panel:#131B38; --card:#131B38;
+  --border:#252F5A; --text:#E8ECFA; --muted:#98A2C6;
+  --up:#34D399; --down:#FF6B88;
+  --gold:#FBBF24; --goldDim:rgba(251,191,36,.45);
+  --teal:#22D3EE; --accent:#8A96FF; --accent-2:#A78BFA;
+  --sh-1:0 1px 2px rgba(0,0,0,.35),0 8px 22px rgba(0,0,0,.28);
+  --sh-2:0 22px 56px rgba(0,0,0,.6);
+  color-scheme:dark;
+}
+
+/* ---------- 2. Dasar & tipografi ---------- */
+html body{
+  font-family:'Plus Jakarta Sans',system-ui,-apple-system,'Segoe UI',Roboto,sans-serif;
+  background:var(--bg); color:var(--text);
+  -webkit-font-smoothing:antialiased; text-rendering:optimizeLegibility;
+}
+body button,body input,body select,body textarea{font-family:inherit}
+body .mono,body code,body kbd{font-family:'JetBrains Mono',ui-monospace,SFMono-Regular,Menlo,monospace;font-variant-numeric:tabular-nums}
+body code{background:color-mix(in srgb,var(--accent) 11%,transparent);border-radius:6px;padding:1px 6px;font-size:.92em}
+body h1,body h2,body h3{letter-spacing:-.015em}
+body ::selection{background:color-mix(in srgb,var(--accent) 32%,transparent)}
+body *{scrollbar-width:thin;scrollbar-color:color-mix(in srgb,var(--muted) 45%,transparent) transparent}
+body :focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+body .sidebar :focus-visible,body .header :focus-visible{outline-color:#fff}
+
+/* ---------- 3. Header: bar tinta dengan garis aksen ---------- */
+html body .header{
+  background:linear-gradient(180deg,var(--ink-2),var(--ink)); color:#fff;
+  border-bottom:2px solid transparent;
+  border-image:linear-gradient(90deg,var(--a1),var(--a2) 50%,#F5B301) 1;
+  box-shadow:0 10px 30px rgba(10,15,38,.28);
+}
+body .header h1{color:#fff;font-weight:800;letter-spacing:-.02em}
+body .header .subtitle{color:rgba(255,255,255,.62);font-weight:500}
+body .header .btn-outline,body .header .hamburger-btn{
+  background:rgba(255,255,255,.07);border:1px solid rgba(255,255,255,.18);color:#fff;
+}
+body .header .btn-outline:hover,body .header .hamburger-btn:hover{
+  background:rgba(255,255,255,.16);border-color:rgba(255,255,255,.34);color:#fff;
+}
+body .header .pill-up{background:rgba(52,211,153,.16);color:#5EEAB4;border-color:rgba(52,211,153,.4)}
+body .header .logo{
+  width:38px;height:38px;border-radius:11px;flex-shrink:0;
+  display:inline-flex;align-items:center;justify-content:center;
+  background:var(--btn-grad);
+  box-shadow:0 6px 18px rgba(var(--glow),.55),inset 0 1px 0 rgba(255,255,255,.35);
+}
+/* Satu-satunya gerak otomatis: titik "live" berdenyut pada pill mode data */
+body #modePill::before{
+  content:"";display:inline-block;width:7px;height:7px;border-radius:50%;
+  background:currentColor;margin-right:7px;vertical-align:1px;
+  animation:livePulse 2s ease-out infinite;
+}
+@keyframes livePulse{
+  0%{box-shadow:0 0 0 0 currentColor}
+  70%,100%{box-shadow:0 0 0 7px transparent}
+}
+
+/* ---------- 4. Sidebar ---------- */
+html body .sidebar{
+  background:linear-gradient(180deg,var(--ink-2),var(--ink));
+  border-right:1px solid var(--ink-line);
+}
+body .sidebar-toggle{background:rgba(255,255,255,.08);color:#fff;border:1px solid rgba(255,255,255,.16)}
+body .sidebar-toggle:hover{background:rgba(255,255,255,.18)}
+body .tab-group-header{
+  background:transparent;border:0;color:#8F9ACB;font-weight:700;font-size:11.5px;
+  text-transform:none;letter-spacing:.01em;
+}
+body .tab-group-header:hover{color:#fff}
+body .tab-btn{
+  color:#C9D0EE;font-weight:600;border:1px solid transparent;border-radius:10px;
+  transition:background-color .15s,color .15s,box-shadow .15s;
+}
+body .tab-btn:hover{background:rgba(255,255,255,.08);color:#fff}
+body .tab-btn.active{
+  background:var(--btn-grad);color:#fff;border-color:rgba(255,255,255,.14);
+  box-shadow:0 8px 20px rgba(var(--glow),.45),inset 0 1px 0 rgba(255,255,255,.28);
+}
+body .sidebar *{scrollbar-color:rgba(255,255,255,.25) transparent}
+
+/* ---------- 5. Tombol & pill ---------- */
+body .btn{
+  border-radius:10px;font-weight:600;
+  transition:background-color .15s,border-color .15s,color .15s,box-shadow .15s,transform .1s;
+}
+body .btn:active{transform:translateY(1px)}
+body .btn-outline{background:var(--panel);border:1px solid var(--border);color:var(--text)}
+body .btn-outline:hover{
+  border-color:var(--accent);color:var(--accent);
+  background:color-mix(in srgb,var(--accent) 8%,var(--panel));
+}
+body .btn-primary{
+  background:var(--btn-grad);color:#fff;border:1px solid transparent;
+  box-shadow:0 6px 18px rgba(var(--glow),.35);
+}
+body .btn-primary:hover{filter:brightness(1.08);color:#fff}
+body .pill{border-radius:999px;font-weight:700;font-size:11px;border:1px solid transparent}
+body .pill-up{background:color-mix(in srgb,var(--up) 14%,transparent);color:var(--up);border-color:color-mix(in srgb,var(--up) 32%,transparent)}
+body .pill-down{background:color-mix(in srgb,var(--down) 14%,transparent);color:var(--down);border-color:color-mix(in srgb,var(--down) 32%,transparent)}
+body .pill-gold{background:color-mix(in srgb,var(--gold) 15%,transparent);color:var(--gold);border-color:color-mix(in srgb,var(--gold) 34%,transparent)}
+body .pill-teal{background:color-mix(in srgb,var(--teal) 14%,transparent);color:var(--teal);border-color:color-mix(in srgb,var(--teal) 32%,transparent)}
+body .pill-muted{background:color-mix(in srgb,var(--muted) 14%,transparent);color:var(--muted);border-color:color-mix(in srgb,var(--muted) 28%,transparent)}
+
+/* ---------- 6. Kartu & panel ---------- */
+body .panel,body .summary-card,body .dash-card,body .settings-card,body .bs2-card,body .porto-stat{
+  background:var(--panel);border:1px solid var(--border);
+  border-radius:var(--r-md);box-shadow:var(--sh-1);
+}
+body .dash-card:hover{border-color:color-mix(in srgb,var(--accent) 55%,var(--border))}
+body .summary-lbl,body .lbl,body .qh-lbl{
+  color:var(--muted);font-weight:600;font-size:11.5px;text-transform:none;letter-spacing:0;
+}
+body .summary-val,body .qh-val{font-weight:800;letter-spacing:-.025em;font-variant-numeric:tabular-nums}
+body .panel-heading{font-weight:800;letter-spacing:-.015em;color:var(--text)}
+body .panel-heading-note,body .detail-subtitle,body .gl-note,body .ps-note{color:var(--muted)}
+body .filter-section-title{color:var(--muted);font-weight:700;text-transform:none;letter-spacing:0}
+body .empty-box{
+  border:1px dashed color-mix(in srgb,var(--muted) 45%,transparent);border-radius:var(--r-md);
+  background:color-mix(in srgb,var(--accent) 3%,transparent);color:var(--muted);
+}
+
+/* ---------- 7. Tabel ---------- */
+body .table-wrap{border:1px solid var(--border);border-radius:var(--r-md);background:var(--panel)}
+body .data-table{font-variant-numeric:tabular-nums}
+body .data-table th{
+  background:color-mix(in srgb,var(--accent) 6%,var(--panel));color:var(--muted);
+  font-weight:700;font-size:11.5px;text-transform:none;letter-spacing:0;
+  border-bottom:1px solid var(--border);
+}
+body .data-table td{border-bottom:1px solid color-mix(in srgb,var(--border) 70%,transparent)}
+body .data-table tbody tr:hover td{background:color-mix(in srgb,var(--accent) 7%,transparent)}
+body .ticker-link{color:var(--accent);font-weight:800;text-decoration:none}
+body .ticker-link:hover{text-decoration:underline;text-underline-offset:3px}
+body .link-btn{color:var(--accent);font-weight:600}
+
+/* ---------- 8. Form ---------- */
+body .field label{font-size:11.5px;font-weight:600;color:var(--muted);text-transform:none;letter-spacing:0}
+body input:not([type=checkbox]):not([type=radio]):not([type=range]):not([type=color]),
+body select,body textarea{
+  background:var(--panel);color:var(--text);border:1px solid var(--border);border-radius:10px;
+  transition:border-color .15s,box-shadow .15s;
+}
+body input:not([type=checkbox]):not([type=radio]):not([type=range]):not([type=color]):focus,
+body select:focus,body textarea:focus{border-color:var(--accent);box-shadow:var(--ring);outline:none}
+body input::placeholder,body textarea::placeholder{color:color-mix(in srgb,var(--muted) 70%,transparent)}
+body input[type=checkbox],body input[type=radio],body input[type=range]{accent-color:var(--accent)}
+
+/* ---------- 9. Modal ---------- */
+html body .modal-overlay{background:rgba(8,12,32,.62);-webkit-backdrop-filter:blur(6px);backdrop-filter:blur(6px)}
+html body .modal{background:var(--panel);color:var(--text);border:1px solid var(--border);border-radius:var(--r-lg);box-shadow:var(--sh-2)}
+body .close-btn{border-radius:8px;color:var(--muted)}
+body .close-btn:hover{background:color-mix(in srgb,var(--down) 14%,transparent);color:var(--down)}
+
+/* ---------- 10. Quant Hub (palet bawaannya terang-saja → ikut tema) ---------- */
+html body #qhPage{
+  --qh-bg1:var(--bg); --qh-bg2:var(--bg);
+  --qh-card1:var(--panel); --qh-card2:color-mix(in srgb,var(--accent) 5%,var(--panel));
+  --qh-border:var(--border); --qh-text:var(--text); --qh-soft:var(--muted);
+  --qh-accent:var(--accent); --qh-up:var(--up); --qh-down:var(--down); --qh-gold:var(--gold);
+  background:transparent;
+}
+html body #qhPage .qh-page-title{letter-spacing:-.015em;font-weight:800}
+html body #qhPage .qh-subtab{border-radius:10px}
+html body #qhPage .qh-subtab.active{background:var(--btn-grad);border-color:transparent;box-shadow:0 6px 16px rgba(var(--glow),.35)}
+html body #qhPage .qh-input{background:var(--panel);border-radius:10px}
+html body #qhPage .qh-input::placeholder{color:color-mix(in srgb,var(--muted) 70%,transparent)}
+html body #qhPage .qh-metric,html body #qhPage .qh-us-card,html body #qhPage .qh-ihsg-panel,
+html body #qhPage .qh-tape-box,html body #qhPage .panel{box-shadow:var(--sh-1);border-radius:var(--r-md)}
+html body #qhPage .qh-lbl{text-transform:none;letter-spacing:0}
+html body #qhPage .qh-minibtn.danger,html body #qhPage .qh-minibtn.danger *{border-color:color-mix(in srgb,var(--down) 40%,transparent)}
+
+/* ---------- 11. Trader Tools (extras.css) ---------- */
+body .ex-tabs button,body .ex-btn,body .ex-chip,body #exPal input{font-family:inherit}
+body .ex-tabs button{border-radius:10px}
+body .ex-tabs button.on,body .ex-btn.pri,body .ex-chip.on{background:var(--btn-grad);border-color:transparent;color:#fff}
+body .ex-card{background:var(--panel);border-radius:var(--r-md);box-shadow:var(--sh-1)}
+body #exFab{background:var(--btn-grad);box-shadow:0 10px 26px rgba(var(--glow),.5)}
+body #exPal .box{border-radius:var(--r-lg);box-shadow:var(--sh-2)}
+body #exPal .it.sel{background:var(--btn-grad)}
+
+/* ---------- 12. Responsif & aksesibilitas ---------- */
+@media (max-width:900px){
+  body .header .subtitle{display:none}
+}
+@media (prefers-reduced-motion:reduce){
+  body #modePill::before{animation:none}
+  body .btn,body .tab-btn,body input,body select,body textarea{transition:none}
+}
+
+/* ---------- 13. Pilihan tema (palet) — atribut data-palette di <html> ---------- */
+html:root[data-palette="zamrud"]{--a1:#0E9F6E;--a2:#0B7A8A;--glow:14,159,110;--accent:#0B7F5C;--accent-2:#0B7A8A;--ink:#0F2A26;--ink-2:#17403A;}
+html:root[data-palette="zamrud"][data-theme="dark"]{--accent:#4ADE9E;--ink:#07181A;--ink-2:#0D2A2B;}
+html:root[data-palette="samudra"]{--a1:#0284C7;--a2:#2563EB;--glow:2,132,199;--accent:#0369A1;--accent-2:#2563EB;--ink:#0B2540;--ink-2:#123A63;}
+html:root[data-palette="samudra"][data-theme="dark"]{--accent:#5CC8FF;--ink:#061423;--ink-2:#0C2540;}
+html:root[data-palette="senja"]{--a1:#EA580C;--a2:#DB2777;--glow:234,88,12;--accent:#C2410C;--accent-2:#DB2777;--ink:#2B1420;--ink-2:#431E2E;}
+html:root[data-palette="senja"][data-theme="dark"]{--accent:#FDA46A;--ink:#1A0B12;--ink-2:#2B1220;}
+html:root[data-palette="ametis"]{--a1:#9333EA;--a2:#C026D3;--glow:147,51,234;--accent:#7E22CE;--accent-2:#C026D3;--ink:#2A1450;--ink-2:#40217A;}
+html:root[data-palette="ametis"][data-theme="dark"]{--accent:#D8A8FF;--ink:#150B2B;--ink-2:#251345;}
+html:root[data-palette="grafit"]{--a1:#475569;--a2:#334155;--glow:71,85,105;--accent:#334155;--accent-2:#334155;--ink:#1A1D24;--ink-2:#262B36;--bg:#F3F4F6;--border:#E2E4E9;--muted:#5F6673;}
+html:root[data-palette="grafit"][data-theme="dark"]{--accent:#CBD5E1;--ink:#0D0F14;--ink-2:#171B23;--bg:#0E1116;--panel:#171B22;--card:#171B22;--border:#2A303B;--muted:#9AA3B2;}
+
+/* Pemilih tema */
+body .tp-wrap{position:relative;display:inline-flex}
+body .tp-pop{
+  position:fixed;top:68px;right:16px;z-index:3000;width:min(300px,calc(100vw - 32px));
+  background:var(--panel);color:var(--text);border:1px solid var(--border);
+  border-radius:var(--r-lg);box-shadow:var(--sh-2);padding:12px;display:none;
+}
+body .tp-pop.on{display:block}
+body .tp-ttl{font-weight:800;font-size:13px;margin:2px 4px 10px}
+body .tp-opt{
+  display:flex;align-items:center;gap:12px;width:100%;text-align:left;cursor:pointer;
+  background:transparent;color:var(--text);border:1px solid transparent;border-radius:12px;padding:8px 10px;
+}
+body .tp-opt:hover{background:color-mix(in srgb,var(--accent) 8%,transparent)}
+body .tp-opt[aria-checked="true"]{border-color:var(--accent);background:color-mix(in srgb,var(--accent) 10%,transparent)}
+body .tp-sw{width:34px;height:34px;border-radius:10px;flex-shrink:0;box-shadow:inset 0 1px 0 rgba(255,255,255,.3)}
+body .tp-nm{font-weight:700;font-size:13px;line-height:1.2}
+body .tp-ds{font-size:11.5px;color:var(--muted)}
+body .tp-chk{margin-left:auto;color:var(--accent);font-weight:800;visibility:hidden}
+body .tp-opt[aria-checked="true"] .tp-chk{visibility:visible}
+
+/* ---------- 14. Blok menu sidebar: warna cerah per grup ---------- */
+html body aside.sidebar .tab-group{--tb1:#5B6CFF;--tb2:#4338CA;--tbt:#fff}
+html body aside.sidebar .tab-group[data-group="screening"]{--tb1:#0D9488;--tb2:#0F766E;--tbt:#fff}
+html body aside.sidebar .tab-group[data-group="tracking"]{--tb1:#FBBF24;--tb2:#F59E0B;--tbt:#2A1B00}
+html body aside.sidebar .tab-group[data-group="bandarmologi"]{--tb1:#F43F5E;--tb2:#BE123C;--tbt:#fff}
+html body aside.sidebar .tab-group[data-group="lain"]{--tb1:#8B5CF6;--tb2:#6D28D9;--tbt:#fff}
+
+html body aside.sidebar .tab-group .tab-btn,
+html body aside.sidebar .tab-group .tab-btn:visited{
+  background:linear-gradient(135deg,var(--tb1),var(--tb2)) !important;
+  color:var(--tbt) !important;
+  border:1px solid rgba(255,255,255,.28) !important;
+  box-shadow:0 3px 10px rgba(0,0,0,.28),inset 0 1px 0 rgba(255,255,255,.3) !important;
+  text-decoration:none !important;
+  font-weight:700;
+}
+html body aside.sidebar .tab-group .tab-btn *{
+  color:inherit !important;text-decoration:none !important;
+}
+html body aside.sidebar .tab-group .tab-label{text-shadow:0 1px 1px rgba(0,0,0,.22)}
+html body aside.sidebar .tab-group[data-group="tracking"] .tab-label{text-shadow:none}
+html body aside.sidebar .tab-group .tab-btn:hover{
+  filter:brightness(1.1) saturate(1.05);
+  background:linear-gradient(135deg,var(--tb1),var(--tb2)) !important;
+  color:var(--tbt) !important;
+}
+/* Menu yang sedang dibuka: blok putih berbingkai warna grupnya */
+html body aside.sidebar .tab-group .tab-btn.active{
+  background:#fff !important;color:#141B3A !important;filter:none;
+  border-color:#fff !important;
+  box-shadow:0 0 0 3px var(--tb1),0 10px 24px rgba(0,0,0,.4) !important;
+}
+html body aside.sidebar .tab-group .tab-btn.active .tab-label{text-shadow:none}
+
+/* ---------- 15. Kartu ringkasan: gradasi warna-warni yang lembut ---------- */
+/* Tiap kartu punya dua warna (--ca utama, --cb pendamping). Warna kartu netral
+   berganti-ganti; kartu bertone (naik/turun/emas) memakai warna semantiknya. */
+html body .summary-card{--ca:#6366F1;--cb:#8B5CF6}
+html body .summary-card:not(.tone-up):not(.tone-down):not(.tone-gold):nth-child(3n+2){--ca:#0EA5E9;--cb:#6366F1}
+html body .summary-card:not(.tone-up):not(.tone-down):not(.tone-gold):nth-child(3n){--ca:#A855F7;--cb:#EC4899}
+html body .summary-card.tone-up{--ca:#10B981;--cb:#06B6D4}
+html body .summary-card.tone-down{--ca:#F43F5E;--cb:#F97316}
+html body .summary-card.tone-gold{--ca:#F59E0B;--cb:#EAB308}
+
+html body .summary-card{
+  position:relative;
+  background:
+    radial-gradient(120% 100% at 100% 0%,rgba(255,255,255,.75),transparent 58%),
+    linear-gradient(135deg,color-mix(in srgb,var(--ca) 11%,#fff) 0%,color-mix(in srgb,var(--ca) 22%,#fff) 55%,color-mix(in srgb,var(--cb) 20%,#fff) 100%) !important;
+  border:1px solid color-mix(in srgb,var(--ca) 38%,transparent) !important;
+  box-shadow:inset 0 3px 0 var(--ca),0 12px 26px -14px color-mix(in srgb,var(--ca) 70%,transparent) !important;
+  border-radius:14px;
+  transition:transform .18s ease,box-shadow .18s ease;
+}
+html body .summary-card .summary-lbl{color:color-mix(in srgb,var(--ca) 38%,#334155) !important;font-weight:600}
+html body .summary-card .summary-val{color:color-mix(in srgb,var(--ca) 62%,#000)}
+html body .summary-card.dash-card:hover{
+  transform:translateY(-3px);
+  box-shadow:inset 0 3px 0 var(--ca),0 18px 32px -14px color-mix(in srgb,var(--ca) 85%,transparent) !important;
+}
+html body .summary-card[disabled]{opacity:.6;transform:none}
+
+html[data-theme="dark"] body .summary-card{
+  background:
+    radial-gradient(120% 100% at 100% 0%,color-mix(in srgb,var(--cb) 24%,transparent),transparent 60%),
+    linear-gradient(135deg,color-mix(in srgb,var(--ca) 30%,#101733) 0%,color-mix(in srgb,var(--ca) 16%,#0E1530) 58%,color-mix(in srgb,var(--cb) 22%,#0E1530) 100%) !important;
+  border-color:color-mix(in srgb,var(--ca) 50%,transparent) !important;
+  box-shadow:inset 0 3px 0 var(--ca),0 14px 30px -16px color-mix(in srgb,var(--ca) 75%,#000) !important;
+}
+html[data-theme="dark"] body .summary-card .summary-lbl{color:color-mix(in srgb,var(--ca) 45%,#C7D0F0) !important}
+html[data-theme="dark"] body .summary-card .summary-val{color:color-mix(in srgb,var(--ca) 55%,#fff)}
+
+@media (prefers-reduced-motion:reduce){
+  html body .summary-card{transition:none}
+  html body .summary-card.dash-card:hover{transform:none}
+}

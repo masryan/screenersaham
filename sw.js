@@ -1,4 +1,4 @@
-const CACHE_NAME = "ihsg-screener-shell-v5"; // <-- NAIKKAN angka ini setiap kali deploy
+const CACHE_NAME = "ihsg-screener-shell-v14"; // <-- NAIKKAN angka ini setiap kali deploy
                                               //     perubahan ke index.html/styles.css/app.js,
                                               //     supaya cache lama otomatis dibuang (lihat
                                               //     "activate" di bawah) dan versi baru dipakai.

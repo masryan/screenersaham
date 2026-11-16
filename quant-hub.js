@@ -619,14 +619,15 @@ QH.qhRenderSafe = function(){
   }
 };
 
+QH.SUBTABS = [
+  ["dashboard","◧ Dashboard"],["bandar","🔥 Bandarmology"],
+  ["broker","◉ Broker Stalker"],["bpjs","🌅 BPJS"],["bsjp","🌆 BSJP"],["fav","◈ Favorit P&L"],
+  ["info","📖 Info"]
+];
 QH.render = function(){
   const page = document.getElementById("qhPage");
   const stocks = qhStocks();
-  const tabs = [
-    ["dashboard","◧ Dashboard"],["bandar","🔥 Bandarmology"],
-    ["broker","◉ Broker Stalker"],["bpjs","🌅 BPJS"],["bsjp","🌆 BSJP"],["fav","◈ Favorit P&L"],
-    ["info","📖 Info"]
-  ];
+  const tabs = QH.SUBTABS;
   let html = `
   <div class="qh-topbar">
     <div class="qh-page-title">QUANT HUB <span class="qh-badge">● ${stocks.length? stocks.length+" emiten":"memuat…"}</span></div>
@@ -1362,6 +1363,12 @@ setInterval(()=>{
   const sig=st.length+"|"+(st[0]&&st[0].updatedAt||"")+"|"+(st[0]&&st[0].cClose||"");
   if(sig!==QH.lastStocksSig){ QH.lastStocksSig=sig; QH.qhRenderSafe(); }
 }, 5000);
+
+/* API untuk menu-search.js (cari sub-tab Quant Hub dari sidebar) */
+window.QuantHubAPI = {
+  tabs(){ return QH.SUBTABS.map(t=>[t[0],t[1]]); },
+  go(id){ QH.openPage(); if(id) window.qhSetTab(id); }
+};
 
 /* API global untuk inline onclick */
 window.qhSetTab=(t)=>{ QH.subtab=t; if(typeof localStorage!=="undefined") localStorage.setItem("qh_subtab",t); QH.qhRenderSafe(); };
