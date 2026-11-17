@@ -27,11 +27,11 @@ if(!X){ console.warn("[running-trade] ExtrasAPI tidak ditemukan — muat extras.
 const {E,LS,SV}=X;
 const DEF_URL="https://exodus.stockbit.com/order-trade/running-trade?sort=DESC&limit=80&order_by=RUNNING_TRADE_ORDER_BY_TIME";
 const CFG=Object.assign({ws:true,rest:false,url:DEF_URL,pollSec:3,tickers:"",hakaWin:5,accWin:15,
-  hakaMinJt:300,hakaRatio:65,bigJt:50,accMinJt:200,accRatio:55,brkMinJt:100,minTrades:10,minLot:0,bigLot:0,hakaLot:0,accLot:0,brkLot:0,pxMin:0,pxMax:0,tkFilter:"",onlyOwn:false,onlyBull:false,tg:false,tick:true,auto:true,perPoll:5,adapt:true,refAdvM:20,bn:false,snd:false},LS("rt_cfg",{}));
+  hakaMinJt:300,hakaRatio:65,bigJt:50,accMinJt:200,accRatio:55,brkMinJt:100,minTrades:10,mkt:true,minLot:0,bigLot:0,hakaLot:0,accLot:0,brkLot:0,pxMin:0,pxMax:0,tkFilter:"",onlyOwn:false,onlyBull:false,tg:false,tick:true,auto:true,perPoll:5,adapt:true,refAdvM:20,bn:false,snd:false},LS("rt_cfg",{}));
 // URL lama tersimpan di localStorage memakai order_by salah (RUN_TRADE_...): perbaiki otomatis. trade_number dibuang karena itu kursor tetap (data basi).
 CFG.url=String(CFG.url||DEF_URL).replace("RUN_TRADE_ORDER_BY_TIME","RUNNING_TRADE_ORDER_BY_TIME").replace(/([?&])trade_number=\d*&?/,"$1").replace(/[?&]$/,"");
 const RT={on:false,lastTs:{},first:[],diagOpen:false,trades:[],seen:new Set(),raw:new Map(),last:{},lastSide:{},flag:{},samples:[],busy:false,poll:null,rot:0,dirty:0,saved:0,
-  st:{restored:0,symOk:0,symBad:0,watch:0,frames:0,parsed:0,unparsed:0,trades:0,est:0,brk:0,rest:0,restErr:null,restAt:0,startAt:0}};
+  st:{restored:0,symOk:0,symBad:0,watch:0,frames:0,parsed:0,unparsed:0,trades:0,est:0,brk:0,rest:0,restErr:null,restAt:0,startAt:0,lastIn:0,newest:0}};
 
 /* ---------- util ---------- */
 const clamp=(v,a,b)=>Math.max(a,Math.min(b,v));
@@ -73,7 +73,7 @@ function ingest(o,src,ts0){
   RT.last[tk]=px; RT.lastTs[tk]=Math.max(RT.lastTs[tk]||0,ts); if(side) RT.lastSide[tk]=side;
   if(!side) return false;
   RT.trades.push({tk,px,lot,side,est,k:key||null,buyer,seller,ts,oid:oid!=null?String(oid):null,bF,sF});
-  RT.dirty++; RT.st.trades++; if(buyer||seller) RT.st.brk++; if(est) RT.st.est++;
+  RT.dirty++; RT.st.trades++; RT.st.lastIn=Date.now(); if(ts>RT.st.newest) RT.st.newest=ts; if(buyer||seller) RT.st.brk++; if(est) RT.st.est++;
   if(RT.trades.length>30000) RT.trades.splice(0,5000);
   return true;
 }
@@ -142,11 +142,11 @@ async function pollOnce(){
     if(typeof state!=="undefined"&&!state.stockbitToken){ RT.st.restErr="Token Stockbit belum ada — isi/sinkronkan di Pengaturan."; return; }
     const list=watchList(), n=Math.max(1,Math.min(10,CFG.perPoll|0||5)); RT.st.watch=list.length;
     let tks=[]; if(list.length){ for(let i=0;i<Math.min(n,list.length);i++) tks.push(list[(RT.rot+i)%list.length]); RT.rot=(RT.rot+n)%list.length; }
-    const urls=tks.length?tks.map(t=>CFG.url+"&symbols[]="+encodeURIComponent(t)):[CFG.url];
+    const urls=tks.map(t=>CFG.url+"&symbols[]="+encodeURIComponent(t)); if(!urls.length||CFG.mkt) urls.unshift(CFG.url);   // feed seluruh pasar duluan, lalu ticker bergiliran
     for(const u of urls){
       const want=(u.match(/symbols\[\]=([A-Za-z0-9]+)/)||[])[1];
       let cursor=null, all=[], dt=null;
-      for(let pg=0;pg<4;pg++){                         // trade_number = kursor: ambil halaman lebih lama kalau 1 halaman penuh transaksi baru
+      for(let pg=0,maxPg=(u===CFG.url?8:4);pg<maxPg;pg++){                         // trade_number = kursor: ambil halaman lebih lama kalau 1 halaman penuh transaksi baru
         const r=await stockbitRawRequest(cursor?u+"&trade_number="+cursor:u);
         if(r.error){ RT.st.restErr=r.error; break; }
         RT.st.restErr=null; RT.st.restAt=Date.now();
@@ -325,6 +325,7 @@ function view(){
     ${ck("rt-rest",CFG.rest)}Sumber REST polling</label>
     <label>Interval REST (detik)${inp("rt-poll",CFG.pollSec)}</label>
     ${ck("rt-auto",CFG.auto)}Ticker REST otomatis: Watchlist/Posisi + Smart Pick</label>
+    ${ck("rt-mkt",CFG.mkt)}Sertakan feed seluruh pasar tiap tarikan (disarankan)</label>
     <label>Ticker REST manual (opsional, ditambahkan di depan)${inp("rt-tickers",CFG.tickers,"type=\"text\" placeholder=\"BBCA, GOTO\"")}</label>
     <label>Ticker per tarikan (1–10, bergiliran)${inp("rt-pp",CFG.perPoll)}</label>
     ${ck("rt-adapt",CFG.adapt)}Batas menyesuaikan likuiditas saham</label>
@@ -384,16 +385,18 @@ function dyn(){
     :"Belum ada broker yang memenuhi syarat (net beli ≥ batas dan porsi beli ≥ 25% dari total beli saham itu).";
   const bigL=CFG.bigLot, rowT=x=>`<tr><td>${new Date(x.ts).toLocaleTimeString("id-ID")}</td><td><b>${E(x.tk)}</b></td><td>${fpx(x.px)}</td><td>${bigL>0&&x.lot>=bigL?`<b>${fpx(x.lot)}</b>`:fpx(x.lot)}</td>
     <td class="${x.side==="B"?"ex-up":"ex-dn"}">${x.side==="B"?"HAKA":"HAKI"}${x.est?" ~":""}</td><td>${fv(x.px*x.lot*100)}</td></tr>`;
-  const tapeL=[]; for(let i=RT.trades.length-1;i>=0&&tapeL.length<25;i--){ if(useTr(RT.trades[i])) tapeL.push(RT.trades[i]); }
+  const tapeL=[]; for(let i=RT.trades.length-1;i>=0;i--){ const x=RT.trades[i]; if(!useTr(x)) continue; if(tapeL.length<25||x.ts>tapeL[tapeL.length-1].ts){ tapeL.push(x); tapeL.sort((a,b)=>b.ts-a.ts); if(tapeL.length>25) tapeL.pop(); } }   // 25 terbaru menurut waktu transaksi
   const tape=tapeL.map(rowT);
   const from=Date.now()-CFG.accWin*60000, bigT=[]; for(let i=RT.trades.length-1;i>=0;i--){ const x=RT.trades[i]; if(x.ts>=from&&useTr(x)) bigT.push(x); }
   const lotRows=bigT.sort((a,b)=>b.lot-a.lot).slice(0,15).map(rowT);
+  const idle=RT.on&&s.trades&&s.open!==false&&Date.now()-(s.lastIn||s.startAt)>90000&&Date.now()-s.startAt>90000;
+  const warn2=idle?`<div class="ex-warn" style="margin-top:8px">Tidak ada transaksi BARU selama ${Math.round((Date.now()-(s.lastIn||s.startAt))/1000)} detik padahal sedang merekam. Cek: (1) "Sertakan feed seluruh pasar" aktif, (2) token Stockbit dan Proxy URL masih valid (lihat pesan REST di atas), (3) sumber WebSocket hanya berguna kalau frame \"terbaca\" &gt; 0.</div>`:"";
   const warn=RT.on&&Date.now()-s.startAt>45000&&!s.trades
     ?`<div class="ex-warn" style="margin-top:8px">Belum ada transaksi terbaca setelah 45 detik. Lihat bagian Diagnostik di bawah.</div>`:"";
   el.innerHTML=`<div class="ex-card"><div class="ex-mut">
     ${RT.on?"🟢 Merekam":"⚪ Berhenti"}${s.open===false?` · 🔒 Pasar tutup (data terakhir ${E(s.dataDate||"-")})`:""} · WS: ${s.frames} frame (${s.parsed} terbaca, ${s.unparsed} tidak terbaca) · REST: ${s.rest} baris${CFG.rest?` (${s.watch?s.watch+" ticker bergiliran":"seluruh pasar"})`:""}${s.restAt?" · terakhir "+new Date(s.restAt).toLocaleTimeString("id-ID"):""}
-    · ${s.trades} transaksi di memori${s.restored?` (${s.restored} dipulihkan)`:""}${s.est?` (${s.est} sisi ditebak ~)`:""} · Total HAKA <span class="ex-up">${fv(tot[0])}</span> / HAKI <span class="ex-dn">${fv(tot[1])}</span>${fOn?` · 🔎 filter aktif: ${fc} dari ${RT.trades.length} transaksi lolos`:""}</div>
-    ${s.symBad>s.symOk?`<div class="ex-warn" style="margin-top:6px">Filter symbols[] tampaknya diabaikan Stockbit (respons berisi saham lain), jadi pemantauan per ticker tidak efektif. Kosongkan Ticker otomatis/manual untuk memakai seluruh pasar, atau kirim contoh respons ke chat.</div>`:""}${s.restErr?`<div class="ex-warn" style="margin-top:6px">REST: ${E(s.restErr)}</div>`:""}${warn}</div>
+    · ${s.trades} transaksi di memori${s.restored?` (${s.restored} dipulihkan)`:""}${s.est?` (${s.est} sisi ditebak ~)`:""} · Total HAKA <span class="ex-up">${fv(tot[0])}</span> / HAKI <span class="ex-dn">${fv(tot[1])}</span>${s.lastIn?` · transaksi baru terakhir ${Math.max(0,Math.round((Date.now()-s.lastIn)/1000))} dtk lalu (waktu bursa ${new Date(s.newest).toLocaleTimeString("id-ID")})`:""}${fOn?` · 🔎 filter aktif: ${fc} dari ${RT.trades.length} transaksi lolos`:""}</div>
+    ${s.symBad>s.symOk?`<div class="ex-warn" style="margin-top:6px">Filter symbols[] tampaknya diabaikan Stockbit (respons berisi saham lain), jadi pemantauan per ticker tidak efektif. Kosongkan Ticker otomatis/manual untuk memakai seluruh pasar, atau kirim contoh respons ke chat.</div>`:""}${s.restErr?`<div class="ex-warn" style="margin-top:6px">REST: ${E(s.restErr)}</div>`:""}${warn}${warn2}</div>
   <div class="ex-card"><h3>🔥 Sedang di-HAKA (${CFG.hakaWin} menit terakhir)</h3>${tbl(["Ticker","Harga","HAKA","HAKI","Lot HAKA / HAKI","Rasio HAKA","HAKA besar","Lot terbesar","HAKA 60 dtk","Rasio"],hRows,"Belum ada saham yang memenuhi syarat HAKA.")}</div>
   <div class="ex-card"><h3>🧲 Terakumulasi (${CFG.accWin} menit terakhir)</h3>${tbl(["Ticker","Harga","Net beli","Net lot","Rasio beli","Beli besar","Lot terbesar","Rentang harga","Broker pembeli dominan","Skor"],aRows,"Belum ada saham yang memenuhi syarat akumulasi.")}</div>
   <div class="ex-card"><h3>🐋 Bandar akumulasi — broker net beli (${CFG.accWin} menit terakhir)</h3>${tbl(["Ticker","Broker","Net beli","Net lot","Beli","Jual","Porsi beli","Porsi"],bRows,bEmpty)}<div class="ex-mut" style="margin-top:6px">🐋 = broker menguasai ≥ 40% pembelian saham itu dan net belinya ≥ 2× batas. 🌍 = broker asing. Order beli yang dipecah menjadi banyak transaksi dihitung sebagai satu "beli besar".</div></div>
@@ -482,7 +485,7 @@ function readCfg(){
   const n=(id,d)=>{ const v=parseFloat(g(id).value); return isNaN(v)?d:v; };
   Object.assign(CFG,{ws:g("rt-ws").checked,rest:g("rt-rest").checked,tick:g("rt-tick").checked,tg:g("rt-tg").checked,bn:g("rt-bn").checked,snd:g("rt-snd").checked,
     pollSec:n("rt-poll",3),auto:g("rt-auto").checked,adapt:g("rt-adapt").checked,perPoll:n("rt-pp",5),refAdvM:n("rt-ref",20),tickers:g("rt-tickers").value.trim(),hakaWin:n("rt-hw",5),accWin:n("rt-aw",15),hakaMinJt:n("rt-hmin",300),
-    hakaRatio:n("rt-hr",65),bigJt:n("rt-big",50),accMinJt:n("rt-amin",200),accRatio:n("rt-ar",55),brkMinJt:n("rt-bmin",100),minTrades:n("rt-mt",10),minLot:Math.max(0,n("rt-minlot",0)),bigLot:Math.max(0,n("rt-biglot",0)),hakaLot:Math.max(0,n("rt-hlot",0)),accLot:Math.max(0,n("rt-alot",0)),brkLot:Math.max(0,n("rt-blot",0)),pxMin:Math.max(0,n("rt-pxmin",0)),pxMax:Math.max(0,n("rt-pxmax",0)),tkFilter:g("rt-tkf").value.trim(),onlyOwn:g("rt-own").checked,onlyBull:g("rt-bull").checked,url:g("rt-url").value.trim()||DEF_URL});
+    hakaRatio:n("rt-hr",65),bigJt:n("rt-big",50),accMinJt:n("rt-amin",200),accRatio:n("rt-ar",55),brkMinJt:n("rt-bmin",100),minTrades:n("rt-mt",10),mkt:g("rt-mkt").checked,minLot:Math.max(0,n("rt-minlot",0)),bigLot:Math.max(0,n("rt-biglot",0)),hakaLot:Math.max(0,n("rt-hlot",0)),accLot:Math.max(0,n("rt-alot",0)),brkLot:Math.max(0,n("rt-blot",0)),pxMin:Math.max(0,n("rt-pxmin",0)),pxMax:Math.max(0,n("rt-pxmax",0)),tkFilter:g("rt-tkf").value.trim(),onlyOwn:g("rt-own").checked,onlyBull:g("rt-bull").checked,url:g("rt-url").value.trim()||DEF_URL});
   if(CFG.bn) askPerm(); if(CFG.snd) audio();      // dipanggil dari klik/ubah pengaturan = gestur pengguna, syarat izin & audio
   SV("rt_cfg",CFG); applyPoll(); dyn();
 }
@@ -497,7 +500,7 @@ X.act("rtTest",()=>{ askPerm(); audio(); fire("🔔 Tes alert Running Trade — 
 X.act("rtReset",()=>{
   RT.trades=[]; RT.seen.clear(); RT.raw.clear(); RT.last={}; RT.lastSide={}; RT.flag={}; RT.samples=[];
   SV("rt_trd",{at:Date.now(),rows:[]}); RT.dirty=RT.saved=0;
-  Object.assign(RT.st,{restored:0,frames:0,parsed:0,unparsed:0,trades:0,est:0,brk:0,rest:0,restErr:null,startAt:Date.now()}); dyn();
+  Object.assign(RT.st,{restored:0,frames:0,parsed:0,unparsed:0,trades:0,est:0,brk:0,rest:0,restErr:null,lastIn:0,newest:0,startAt:Date.now()}); dyn();
 });
 const copy=(t,msg)=>{ try{ navigator.clipboard.writeText(t).then(()=>X.toast(msg,"up")); }catch(e){ X.toast("Gagal menyalin","down"); } };
 X.act("rtClearSig",()=>{ SV("rt_sig",[]); dyn(); });
