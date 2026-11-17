@@ -14,7 +14,12 @@
 //  Kalau sisi tidak ada di data, dipakai tick-rule (harga naik = beli, turun = jual) dan ditandai estimasi.
 //  Di-HAKA    : nilai HAKA dalam jendela >= batas, rasio HAKA >= batas, dan >= 2 HAKA besar.
 //  Bandar     : broker dengan net beli (beli − jual) >= batas dan porsi >= 25% pembelian saham itu (butuh kode broker di data).
-//  Akumulasi  : net beli >= batas, rasio beli >= batas, >= 3 beli besar, harga tidak jatuh.
+//  Akumulasi  : net beli >= batas, rasio beli >= batas, >= 3 beli besar, harga tidak jatuh.//
+// FILTER (berlaku ke semua tabel, alert, dan riwayat sinyal; diterapkan saat agregasi sehingga berlaku surut untuk data yang sudah masuk):
+//  Min lot per transaksi : transaksi dengan lot lebih kecil diabaikan (0 = nonaktif). 1 lot = 100 lembar.
+//  Lot besar ≥           : transaksi/order dianggap "besar" bila nilainya >= batas Rp ATAU lotnya >= batas ini.
+//  Min lot HAKA/akumulasi/broker : batas total lot (bukan nilai Rp) pada tiap daftar. Batas lot TIDAK ikut disesuaikan likuiditas.
+//  Harga min/maks, Filter ticker (BBCA, BBRI, -GOTO = kecualikan).
 (function(){
 "use strict";
 const X=window.ExtrasAPI;
@@ -22,7 +27,7 @@ if(!X){ console.warn("[running-trade] ExtrasAPI tidak ditemukan — muat extras.
 const {E,LS,SV}=X;
 const DEF_URL="https://exodus.stockbit.com/order-trade/running-trade?sort=DESC&limit=80&order_by=RUNNING_TRADE_ORDER_BY_TIME";
 const CFG=Object.assign({ws:true,rest:false,url:DEF_URL,pollSec:3,tickers:"",hakaWin:5,accWin:15,
-  hakaMinJt:300,hakaRatio:65,bigJt:50,accMinJt:200,accRatio:55,brkMinJt:100,minTrades:10,onlyOwn:false,onlyBull:false,tg:false,tick:true,auto:true,perPoll:5,adapt:true,refAdvM:20,bn:false,snd:false},LS("rt_cfg",{}));
+  hakaMinJt:300,hakaRatio:65,bigJt:50,accMinJt:200,accRatio:55,brkMinJt:100,minTrades:10,minLot:0,bigLot:0,hakaLot:0,accLot:0,brkLot:0,pxMin:0,pxMax:0,tkFilter:"",onlyOwn:false,onlyBull:false,tg:false,tick:true,auto:true,perPoll:5,adapt:true,refAdvM:20,bn:false,snd:false},LS("rt_cfg",{}));
 // URL lama tersimpan di localStorage memakai order_by salah (RUN_TRADE_...): perbaiki otomatis. trade_number dibuang karena itu kursor tetap (data basi).
 CFG.url=String(CFG.url||DEF_URL).replace("RUN_TRADE_ORDER_BY_TIME","RUNNING_TRADE_ORDER_BY_TIME").replace(/([?&])trade_number=\d*&?/,"$1").replace(/[?&]$/,"");
 const RT={on:false,lastTs:{},first:[],diagOpen:false,trades:[],seen:new Set(),raw:new Map(),last:{},lastSide:{},flag:{},samples:[],busy:false,poll:null,rot:0,dirty:0,saved:0,
@@ -34,6 +39,7 @@ const pick=(o,ks)=>{ for(const k of ks){ if(o[k]!=null&&o[k]!=="") return o[k]; 
 const toNum=v=>v==null?NaN:+String(v).replace(/,/g,"");
 const fv=n=>{ const a=Math.abs(n),s=n<0?"-":""; return s+(a>=1e9?(a/1e9).toFixed(2)+" M":a>=1e6?(a/1e6).toFixed(0)+" jt":Math.round(a/1e3)+" rb"); };
 const fpx=n=>new Intl.NumberFormat("id-ID").format(n);
+const fl=n=>{ const a=Math.abs(n),s=n<0?"-":""; return s+(a>=1e6?(a/1e6).toFixed(2)+" jt":a>=1e4?(a/1e3).toFixed(1)+" rb":fpx(a)); };   // jumlah lot
 const pctS=n=>(n>=0?"+":"")+n.toFixed(2)+"%";
 const sample=s=>{ RT.samples.push(String(s).slice(0,320)); if(RT.samples.length>5) RT.samples.shift(); };
 
@@ -170,22 +176,42 @@ function applyPoll(){
   if(RT.on&&CFG.rest){ pollOnce(); RT.poll=setInterval(pollOnce,Math.max(2,CFG.pollSec)*1000); }
 }
 
+/* ---------- filter lot / harga / ticker ---------- */
+let TKF={s:null,inc:null,exc:null};
+function tkFilter(){
+  if(TKF.s===CFG.tkFilter) return TKF;
+  const inc=new Set(), exc=new Set();
+  String(CFG.tkFilter||"").toUpperCase().split(/[\s,;]+/).filter(Boolean).forEach(t=>{ const ex=/^[-!]/.test(t), c=t.replace(/^[-!]/,""); if(!/^[A-Z]{2,6}$/.test(c)) return; (ex?exc:inc).add(c); });
+  TKF={s:CFG.tkFilter,inc:inc.size?inc:null,exc:exc.size?exc:null}; return TKF;
+}
+function filtersOn(){ const f=tkFilter(); return CFG.minLot>0||CFG.pxMin>0||CFG.pxMax>0||!!f.inc||!!f.exc; }
+function useTr(x){        // transaksi ini ikut dihitung?
+  if(CFG.minLot>0&&x.lot<CFG.minLot) return false;
+  if(CFG.pxMin>0&&x.px<CFG.pxMin) return false;
+  if(CFG.pxMax>0&&x.px>CFG.pxMax) return false;
+  const f=tkFilter(); if(f.inc&&!f.inc.has(x.tk)) return false; if(f.exc&&f.exc.has(x.tk)) return false;
+  return true;
+}
+
 /* ---------- agregasi per ticker dalam jendela waktu ---------- */
 function agg(winMs){
   const now=Date.now(), from=now-winMs, m=new Map(), t=RT.trades;
   for(let i=t.length-1;i>=0;i--){
-    const x=t[i]; if(x.ts<from) continue;
+    const x=t[i]; if(x.ts<from||!useTr(x)) continue;
     let a=m.get(x.tk);
-    if(!a){ a={tk:x.tk,bv:0,sv:0,nb:0,ns:0,big:0,hi:x.px,lo:x.px,first:x.px,last:x.px,b60:0,one:[],ord:new Map(),brk:new Map()}; m.set(x.tk,a); }
+    if(!a){ a={tk:x.tk,bv:0,sv:0,bl:0,sl:0,maxL:0,nb:0,ns:0,big:0,hi:x.px,lo:x.px,first:x.px,last:x.px,b60:0,one:[],ord:new Map(),brk:new Map()}; m.set(x.tk,a); }
     const v=x.px*x.lot*100;
-    a.first=x.px; if(x.px>a.hi) a.hi=x.px; if(x.px<a.lo) a.lo=x.px;
+    a.first=x.px; if(x.px>a.hi) a.hi=x.px; if(x.px<a.lo) a.lo=x.px; if(x.lot>a.maxL) a.maxL=x.lot;
     if(x.side==="B"){
-      a.bv+=v; a.nb++; if(x.oid) a.ord.set(x.oid,(a.ord.get(x.oid)||0)+v); else a.one.push(v); if(x.ts>=now-60000) a.b60+=v;
+      a.bv+=v; a.bl+=x.lot; a.nb++;
+      if(x.oid){ const o=a.ord.get(x.oid)||{v:0,l:0}; o.v+=v; o.l+=x.lot; a.ord.set(x.oid,o); } else a.one.push({v,l:x.lot});
+      if(x.ts>=now-60000) a.b60+=v;
       if(x.buyer) a.brk.set(x.buyer,(a.brk.get(x.buyer)||0)+v);
-    } else { a.sv+=v; a.ns++; }
+    } else { a.sv+=v; a.sl+=x.lot; a.ns++; }
   }
   m.forEach(a=>{
-    const big=thr(a.tk,CFG.bigJt); a.big=0; a.one.forEach(v=>{ if(v>=big) a.big++; }); a.ord.forEach(v=>{ if(v>=big) a.big++; });   // order beli yang dipecah jadi banyak transaksi dihitung sekali
+    const big=thr(a.tk,CFG.bigJt), bl=CFG.bigLot, isBig=o=>o.v>=big||(bl>0&&o.l>=bl);
+    a.big=0; a.one.forEach(o=>{ if(isBig(o)) a.big++; }); a.ord.forEach(o=>{ if(isBig(o)) a.big++; });   // order beli yang dipecah jadi banyak transaksi dihitung sekali
     const tot=a.bv+a.sv; a.ratio=tot?a.bv/tot:0; a.net=a.bv-a.sv;
     a.chg=a.first?(a.last-a.first)/a.first*100:0; a.rng=a.first?(a.hi-a.lo)/a.first:0;
     let top=null,tv=0; a.brk.forEach((v,k)=>{ if(v>tv){ tv=v; top=k; } });
@@ -241,13 +267,13 @@ function badges(tk){
 }
 function hakaList(){
   const m=agg(CFG.hakaWin*60000), out=[], own=X.ownTickers();
-  m.forEach(a=>{ if(a.bv>=thr(a.tk,CFG.hakaMinJt)&&a.ratio*100>=CFG.hakaRatio&&a.big>=2&&okTk(a.tk,a.nb+a.ns,own)) out.push(a); });
+  m.forEach(a=>{ if(a.bv>=thr(a.tk,CFG.hakaMinJt)&&a.ratio*100>=CFG.hakaRatio&&a.big>=2&&a.bl>=CFG.hakaLot&&okTk(a.tk,a.nb+a.ns,own)) out.push(a); });
   return out.sort((a,b)=>b.bv-a.bv);
 }
 function accList(){
   const m=agg(CFG.accWin*60000), out=[], own=X.ownTickers();
   m.forEach(a=>{
-    if(!(a.net>=thr(a.tk,CFG.accMinJt)&&a.ratio*100>=CFG.accRatio&&a.big>=3&&a.chg>-1.5&&okTk(a.tk,a.nb+a.ns,own))) return;
+    if(!(a.net>=thr(a.tk,CFG.accMinJt)&&a.ratio*100>=CFG.accRatio&&a.big>=3&&a.chg>-1.5&&(a.bl-a.sl)>=CFG.accLot&&okTk(a.tk,a.nb+a.ns,own))) return;
     a.score=Math.round(
       clamp((a.ratio-.5)/.3,0,1)*35 + clamp(a.net/(thr(a.tk,CFG.accMinJt)*4),0,1)*25 + clamp(a.big/10,0,1)*15 +
       (a.chg>=0?10:a.chg>-.5?5:0) + (a.rng<=.015?5:0) + (a.topShare>=.4?10:a.topShare>=.25?6:0));
@@ -260,15 +286,15 @@ function accList(){
 function brokerList(){
   const from=Date.now()-CFG.accWin*60000, m=new Map(), tot={}, cnt={}, own=X.ownTickers();
   for(let i=RT.trades.length-1;i>=0;i--){
-    const x=RT.trades[i]; if(x.ts<from) continue;
+    const x=RT.trades[i]; if(x.ts<from||!useTr(x)) continue;
     const v=x.px*x.lot*100; cnt[x.tk]=(cnt[x.tk]||0)+1;
-    if(x.buyer){ tot[x.tk]=(tot[x.tk]||0)+v; const k=x.tk+"|"+x.buyer; const a=m.get(k)||{tk:x.tk,br:x.buyer,buy:0,sell:0,n:0,f:false}; a.buy+=v; a.n++; if(x.bF) a.f=true; m.set(k,a); }
-    if(x.seller){ const k=x.tk+"|"+x.seller; const a=m.get(k)||{tk:x.tk,br:x.seller,buy:0,sell:0,n:0,f:false}; a.sell+=v; if(x.sF) a.f=true; m.set(k,a); }
+    if(x.buyer){ tot[x.tk]=(tot[x.tk]||0)+v; const k=x.tk+"|"+x.buyer; const a=m.get(k)||{tk:x.tk,br:x.buyer,buy:0,sell:0,bl:0,sl:0,n:0,f:false}; a.buy+=v; a.bl+=x.lot; a.n++; if(x.bF) a.f=true; m.set(k,a); }
+    if(x.seller){ const k=x.tk+"|"+x.seller; const a=m.get(k)||{tk:x.tk,br:x.seller,buy:0,sell:0,bl:0,sl:0,n:0,f:false}; a.sell+=v; a.sl+=x.lot; if(x.sF) a.f=true; m.set(k,a); }
   }
   const out=[];
   m.forEach(a=>{
-    a.net=a.buy-a.sell; a.share=tot[a.tk]?a.buy/tot[a.tk]:0;
-    if(a.net>=thr(a.tk,CFG.brkMinJt)&&a.share>=.25&&okTk(a.tk,cnt[a.tk]||0,own)) out.push(a);
+    a.net=a.buy-a.sell; a.netL=a.bl-a.sl; a.share=tot[a.tk]?a.buy/tot[a.tk]:0;
+    if(a.net>=thr(a.tk,CFG.brkMinJt)&&a.netL>=CFG.brkLot&&a.share>=.25&&okTk(a.tk,cnt[a.tk]||0,own)) out.push(a);
   });
   return out.sort((a,b)=>b.net-a.net).slice(0,20);
 }
@@ -277,13 +303,13 @@ function brokerList(){
 function foreignList(){
   const from=Date.now()-CFG.accWin*60000, m=new Map(), own=X.ownTickers();
   for(let i=RT.trades.length-1;i>=0;i--){
-    const x=RT.trades[i]; if(x.ts<from) continue;
-    const v=x.px*x.lot*100; let a=m.get(x.tk); if(!a){ a={tk:x.tk,fb:0,fs:0,tot:0,n:0}; m.set(x.tk,a); }
-    a.tot+=v; a.n++; if(x.bF) a.fb+=v; if(x.sF) a.fs+=v;
+    const x=RT.trades[i]; if(x.ts<from||!useTr(x)) continue;
+    const v=x.px*x.lot*100; let a=m.get(x.tk); if(!a){ a={tk:x.tk,fb:0,fs:0,fbl:0,fsl:0,tot:0,n:0}; m.set(x.tk,a); }
+    a.tot+=v; a.n++; if(x.bF){ a.fb+=v; a.fbl+=x.lot; } if(x.sF){ a.fs+=v; a.fsl+=x.lot; }
   }
   const out=[];
-  m.forEach(a=>{ a.net=a.fb-a.fs; a.share=a.tot?(a.fb+a.fs)/(2*a.tot):0;
-    if(Math.abs(a.net)>=thr(a.tk,CFG.brkMinJt)&&okTk(a.tk,a.n,own)) out.push(a); });
+  m.forEach(a=>{ a.net=a.fb-a.fs; a.netL=a.fbl-a.fsl; a.share=a.tot?(a.fb+a.fs)/(2*a.tot):0;
+    if(Math.abs(a.net)>=thr(a.tk,CFG.brkMinJt)&&Math.abs(a.netL)>=CFG.brkLot&&okTk(a.tk,a.n,own)) out.push(a); });
   return out.sort((a,b)=>Math.abs(b.net)-Math.abs(a.net)).slice(0,12);
 }
 
@@ -293,7 +319,7 @@ function view(){
   const sel=(id,arr,v)=>`<select id="${id}">${arr.map(n=>`<option value="${n}"${+v===n?" selected":""}>${n} menit</option>`).join("")}</select>`;
   const inp=(id,v,t)=>`<input id="${id}" ${t||"type=\"number\""} value="${E(v)}">`;
   return `<div class="ex-card"><h3>⚡ Running Trade — deteksi HAKA &amp; akumulasi</h3>
-  <div class="ex-mut" style="margin-bottom:10px;line-height:1.55">HAKA = pembeli agresif menyambar offer; nilai dihitung dari harga × lot × 100. ⭐ = Watchlist/posisi, ✨ = lolos Smart Pick (arahkan kursor untuk nama sinyalnya), 📈 = trend Bullish di Screener, ✅ = keyakinan tinggi. Batas nilai (HAKA, akumulasi, bandar, transaksi besar) dikalikan ×N sesuai likuiditas saham (acuan di pengaturan; saham sepi 0.3×, sangat likuid sampai 5×). Deteksi memakai transaksi yang tertangkap sejak tombol Mulai ditekan, jadi butuh beberapa menit untuk terisi.</div>
+  <div class="ex-mut" style="margin-bottom:10px;line-height:1.55">HAKA = pembeli agresif menyambar offer; nilai dihitung dari harga × lot × 100. ⭐ = Watchlist/posisi, ✨ = lolos Smart Pick (arahkan kursor untuk nama sinyalnya), 📈 = trend Bullish di Screener, ✅ = keyakinan tinggi. Batas nilai (HAKA, akumulasi, bandar, transaksi besar) dikalikan ×N sesuai likuiditas saham (acuan di pengaturan; saham sepi 0.3×, sangat likuid sampai 5×). Deteksi memakai transaksi yang tertangkap sejak tombol Mulai ditekan, jadi butuh beberapa menit untuk terisi. Filter lot/harga/ticker berlaku ke semua tabel dan alert; 1 lot = 100 lembar, dan batas lot tidak ikut disesuaikan likuiditas seperti batas nilai.</div>
   <div class="ex-grid">
     ${ck("rt-ws",CFG.ws)}Sumber WebSocket (ekstensi)</label>
     ${ck("rt-rest",CFG.rest)}Sumber REST polling</label>
@@ -311,6 +337,14 @@ function view(){
     <label>Min net beli akumulasi (jt Rp)${inp("rt-amin",CFG.accMinJt)}</label>
     <label>Min rasio beli akumulasi (%)${inp("rt-ar",CFG.accRatio)}</label>
     <label>Min net broker/bandar (jt Rp)${inp("rt-bmin",CFG.brkMinJt)}</label>
+    <label>Min lot per transaksi (0 = nonaktif)${inp("rt-minlot",CFG.minLot)}</label>
+    <label>Lot besar ≥ (selain batas Rp; 0 = nonaktif)${inp("rt-biglot",CFG.bigLot)}</label>
+    <label>Min total lot HAKA (jendela HAKA)${inp("rt-hlot",CFG.hakaLot)}</label>
+    <label>Min net lot beli akumulasi${inp("rt-alot",CFG.accLot)}</label>
+    <label>Min net lot broker/bandar &amp; asing${inp("rt-blot",CFG.brkLot)}</label>
+    <label>Harga min (Rp; 0 = nonaktif)${inp("rt-pxmin",CFG.pxMin)}</label>
+    <label>Harga maks (Rp; 0 = nonaktif)${inp("rt-pxmax",CFG.pxMax)}</label>
+    <label>Filter ticker (awali - untuk kecualikan)${inp("rt-tkf",CFG.tkFilter,"type=\"text\" placeholder=\"BBCA, BBRI, -GOTO\"")}</label>
     ${ck("rt-tick",CFG.tick)}Tebak sisi dengan tick-rule bila kosong</label>
     ${ck("rt-tg",CFG.tg)}Kirim alert ke Telegram</label>
     ${ck("rt-bn",CFG.bn)}Notifikasi browser saat tab tidak aktif</label>
@@ -322,7 +356,8 @@ function view(){
   </div>
   <button class="ex-btn ${RT.on?"":"pri"}" data-act="rtToggle">${RT.on?"⏸ Berhenti":"▶ Mulai"}</button>
   <button class="ex-btn" data-act="rtReset">🗑 Kosongkan data</button>
-  <button class="ex-btn" data-act="rtTest">🔔 Tes alert</button></div>
+  <button class="ex-btn" data-act="rtTest">🔔 Tes alert</button>
+  <button class="ex-btn" data-act="rtResetFilter">↺ Reset filter lot/harga/ticker</button></div>
   <div id="rtDyn"></div>`;
 }
 function tbl(head,rows,empty){
@@ -334,31 +369,38 @@ function dyn(){
   const dOld=el.querySelector("details"); if(dOld) RT.diagOpen=dOld.open;
   const s=RT.st, H=hakaList(), A=accList(), B=brokerList(), F=foreignList();
   const tot=RT.trades.reduce((t,x)=>{ const v=x.px*x.lot*100; return x.side==="B"?[t[0]+v,t[1]]:[t[0],t[1]+v]; },[0,0]);
+  const fOn=filtersOn(); let fc=0; if(fOn){ for(let i=0;i<RT.trades.length;i++) if(useTr(RT.trades[i])) fc++; }
   const chg=a=>`<span class="${a.chg>=0?"ex-up":"ex-dn"}">${pctS(a.chg)}</span>`;
-  const hRows=H.map(a=>`<tr><td><b>${E(a.tk)}</b>${badges(a.tk)}</td><td>${fpx(a.last)} ${chg(a)}</td><td class="ex-up">${fv(a.bv)}</td><td class="ex-dn">${fv(a.sv)}</td>
-    <td>${Math.round(a.ratio*100)}%</td><td>${a.big}</td><td class="ex-up">${fv(a.b60)}</td><td><div class="ex-bar" style="width:${Math.round(a.ratio*100)}%"></div></td></tr>`);
-  const aRows=A.map(a=>`<tr><td><b>${E(a.tk)}</b>${badges(a.tk)}</td><td>${fpx(a.last)} ${chg(a)}</td><td class="ex-up">${fv(a.net)}</td><td>${Math.round(a.ratio*100)}%</td><td>${a.big}</td>
+  const nl=n=>`<span class="${n>=0?"ex-up":"ex-dn"}">${fl(n)}</span>`;
+  const hRows=H.map(a=>`<tr><td><b>${E(a.tk)}</b>${badges(a.tk)}</td><td>${fpx(a.last)} ${chg(a)}</td><td class="ex-up">${fv(a.bv)}</td><td class="ex-dn">${fv(a.sv)}</td><td>${fl(a.bl)} / ${fl(a.sl)}</td>
+    <td>${Math.round(a.ratio*100)}%</td><td>${a.big}</td><td>${fpx(a.maxL)}</td><td class="ex-up">${fv(a.b60)}</td><td><div class="ex-bar" style="width:${Math.round(a.ratio*100)}%"></div></td></tr>`);
+  const aRows=A.map(a=>`<tr><td><b>${E(a.tk)}</b>${badges(a.tk)}</td><td>${fpx(a.last)} ${chg(a)}</td><td class="ex-up">${fv(a.net)}</td><td>${nl(a.bl-a.sl)}</td><td>${Math.round(a.ratio*100)}%</td><td>${a.big}</td><td>${fpx(a.maxL)}</td>
     <td>${(a.rng*100).toFixed(1)}%</td><td>${a.topBrk?E(a.topBrk)+" ("+Math.round(a.topShare*100)+"%)":"-"}</td><td><b>${a.score}</b><div class="ex-bar" style="width:${a.score}%"></div></td></tr>`);
-  const bRows=B.map(a=>`<tr><td><b>${E(a.tk)}</b>${badges(a.tk)}</td><td><b>${E(a.br)}</b>${a.f?" 🌍":""}${whale(a)?" 🐋":""}</td><td class="ex-up">${fv(a.net)}</td>
+  const bRows=B.map(a=>`<tr><td><b>${E(a.tk)}</b>${badges(a.tk)}</td><td><b>${E(a.br)}</b>${a.f?" 🌍":""}${whale(a)?" 🐋":""}</td><td class="ex-up">${fv(a.net)}</td><td>${nl(a.netL)}</td>
     <td>${fv(a.buy)}</td><td>${fv(a.sell)}</td><td>${Math.round(a.share*100)}%</td><td><div class="ex-bar" style="width:${Math.round(a.share*100)}%"></div></td></tr>`);
-  const fRows=F.map(a=>`<tr><td><b>${E(a.tk)}</b>${badges(a.tk)}</td><td class="${a.net>=0?"ex-up":"ex-dn"}">${fv(a.net)}</td><td class="ex-up">${fv(a.fb)}</td><td class="ex-dn">${fv(a.fs)}</td><td>${Math.round(a.share*100)}%</td></tr>`);
+  const fRows=F.map(a=>`<tr><td><b>${E(a.tk)}</b>${badges(a.tk)}</td><td class="${a.net>=0?"ex-up":"ex-dn"}">${fv(a.net)}</td><td>${nl(a.netL)}</td><td class="ex-up">${fv(a.fb)}</td><td class="ex-dn">${fv(a.fs)}</td><td>${Math.round(a.share*100)}%</td></tr>`);
   const fEmpty=s.trades&&!s.brk?"Sumber data ini tidak membawa kode broker, jadi aliran asing tidak bisa dihitung.":"Belum ada saham dengan net asing di atas batas.";
   const bEmpty=s.trades&&!s.brk?"Sumber data ini tidak membawa kode broker pembeli/penjual, jadi bandar tidak bisa dilacak dari running trade. Cek Diagnostik, atau pakai menu Bandarmologi untuk data broker harian."
     :"Belum ada broker yang memenuhi syarat (net beli ≥ batas dan porsi beli ≥ 25% dari total beli saham itu).";
-  const tape=RT.trades.slice(-25).reverse().map(x=>`<tr><td>${new Date(x.ts).toLocaleTimeString("id-ID")}</td><td><b>${E(x.tk)}</b></td><td>${fpx(x.px)}</td><td>${fpx(x.lot)}</td>
-    <td class="${x.side==="B"?"ex-up":"ex-dn"}">${x.side==="B"?"HAKA":"HAKI"}${x.est?" ~":""}</td><td>${fv(x.px*x.lot*100)}</td></tr>`);
+  const bigL=CFG.bigLot, rowT=x=>`<tr><td>${new Date(x.ts).toLocaleTimeString("id-ID")}</td><td><b>${E(x.tk)}</b></td><td>${fpx(x.px)}</td><td>${bigL>0&&x.lot>=bigL?`<b>${fpx(x.lot)}</b>`:fpx(x.lot)}</td>
+    <td class="${x.side==="B"?"ex-up":"ex-dn"}">${x.side==="B"?"HAKA":"HAKI"}${x.est?" ~":""}</td><td>${fv(x.px*x.lot*100)}</td></tr>`;
+  const tapeL=[]; for(let i=RT.trades.length-1;i>=0&&tapeL.length<25;i--){ if(useTr(RT.trades[i])) tapeL.push(RT.trades[i]); }
+  const tape=tapeL.map(rowT);
+  const from=Date.now()-CFG.accWin*60000, bigT=[]; for(let i=RT.trades.length-1;i>=0;i--){ const x=RT.trades[i]; if(x.ts>=from&&useTr(x)) bigT.push(x); }
+  const lotRows=bigT.sort((a,b)=>b.lot-a.lot).slice(0,15).map(rowT);
   const warn=RT.on&&Date.now()-s.startAt>45000&&!s.trades
     ?`<div class="ex-warn" style="margin-top:8px">Belum ada transaksi terbaca setelah 45 detik. Lihat bagian Diagnostik di bawah.</div>`:"";
   el.innerHTML=`<div class="ex-card"><div class="ex-mut">
     ${RT.on?"🟢 Merekam":"⚪ Berhenti"}${s.open===false?` · 🔒 Pasar tutup (data terakhir ${E(s.dataDate||"-")})`:""} · WS: ${s.frames} frame (${s.parsed} terbaca, ${s.unparsed} tidak terbaca) · REST: ${s.rest} baris${CFG.rest?` (${s.watch?s.watch+" ticker bergiliran":"seluruh pasar"})`:""}${s.restAt?" · terakhir "+new Date(s.restAt).toLocaleTimeString("id-ID"):""}
-    · ${s.trades} transaksi di memori${s.restored?` (${s.restored} dipulihkan)`:""}${s.est?` (${s.est} sisi ditebak ~)`:""} · Total HAKA <span class="ex-up">${fv(tot[0])}</span> / HAKI <span class="ex-dn">${fv(tot[1])}</span></div>
+    · ${s.trades} transaksi di memori${s.restored?` (${s.restored} dipulihkan)`:""}${s.est?` (${s.est} sisi ditebak ~)`:""} · Total HAKA <span class="ex-up">${fv(tot[0])}</span> / HAKI <span class="ex-dn">${fv(tot[1])}</span>${fOn?` · 🔎 filter aktif: ${fc} dari ${RT.trades.length} transaksi lolos`:""}</div>
     ${s.symBad>s.symOk?`<div class="ex-warn" style="margin-top:6px">Filter symbols[] tampaknya diabaikan Stockbit (respons berisi saham lain), jadi pemantauan per ticker tidak efektif. Kosongkan Ticker otomatis/manual untuk memakai seluruh pasar, atau kirim contoh respons ke chat.</div>`:""}${s.restErr?`<div class="ex-warn" style="margin-top:6px">REST: ${E(s.restErr)}</div>`:""}${warn}</div>
-  <div class="ex-card"><h3>🔥 Sedang di-HAKA (${CFG.hakaWin} menit terakhir)</h3>${tbl(["Ticker","Harga","HAKA","HAKI","Rasio HAKA","HAKA besar","HAKA 60 dtk","Rasio"],hRows,"Belum ada saham yang memenuhi syarat HAKA.")}</div>
-  <div class="ex-card"><h3>🧲 Terakumulasi (${CFG.accWin} menit terakhir)</h3>${tbl(["Ticker","Harga","Net beli","Rasio beli","Beli besar","Rentang harga","Broker pembeli dominan","Skor"],aRows,"Belum ada saham yang memenuhi syarat akumulasi.")}</div>
-  <div class="ex-card"><h3>🐋 Bandar akumulasi — broker net beli (${CFG.accWin} menit terakhir)</h3>${tbl(["Ticker","Broker","Net beli","Beli","Jual","Porsi beli","Porsi"],bRows,bEmpty)}<div class="ex-mut" style="margin-top:6px">🐋 = broker menguasai ≥ 40% pembelian saham itu dan net belinya ≥ 2× batas. 🌍 = broker asing. Order beli yang dipecah menjadi banyak transaksi dihitung sebagai satu "beli besar".</div></div>
-  <div class="ex-card"><h3>🌍 Aliran asing — net beli/jual broker asing (${CFG.accWin} menit terakhir)</h3>${tbl(["Ticker","Net asing","Beli asing","Jual asing","Porsi asing"],fRows,fEmpty)}<div class="ex-mut" style="margin-top:6px">Net = beli asing − jual asing (hijau = net beli, merah = net jual). Porsi = rata-rata porsi sisi beli dan jual yang dipegang broker asing. Batas memakai Min net broker/bandar.</div></div>
+  <div class="ex-card"><h3>🔥 Sedang di-HAKA (${CFG.hakaWin} menit terakhir)</h3>${tbl(["Ticker","Harga","HAKA","HAKI","Lot HAKA / HAKI","Rasio HAKA","HAKA besar","Lot terbesar","HAKA 60 dtk","Rasio"],hRows,"Belum ada saham yang memenuhi syarat HAKA.")}</div>
+  <div class="ex-card"><h3>🧲 Terakumulasi (${CFG.accWin} menit terakhir)</h3>${tbl(["Ticker","Harga","Net beli","Net lot","Rasio beli","Beli besar","Lot terbesar","Rentang harga","Broker pembeli dominan","Skor"],aRows,"Belum ada saham yang memenuhi syarat akumulasi.")}</div>
+  <div class="ex-card"><h3>🐋 Bandar akumulasi — broker net beli (${CFG.accWin} menit terakhir)</h3>${tbl(["Ticker","Broker","Net beli","Net lot","Beli","Jual","Porsi beli","Porsi"],bRows,bEmpty)}<div class="ex-mut" style="margin-top:6px">🐋 = broker menguasai ≥ 40% pembelian saham itu dan net belinya ≥ 2× batas. 🌍 = broker asing. Order beli yang dipecah menjadi banyak transaksi dihitung sebagai satu "beli besar".</div></div>
+  <div class="ex-card"><h3>🌍 Aliran asing — net beli/jual broker asing (${CFG.accWin} menit terakhir)</h3>${tbl(["Ticker","Net asing","Net lot asing","Beli asing","Jual asing","Porsi asing"],fRows,fEmpty)}<div class="ex-mut" style="margin-top:6px">Net = beli asing − jual asing (hijau = net beli, merah = net jual). Porsi = rata-rata porsi sisi beli dan jual yang dipegang broker asing. Batas memakai Min net broker/bandar.</div></div>
+  <div class="ex-card"><h3>🧱 Transaksi lot terbesar (${CFG.accWin} menit terakhir)</h3>${tbl(["Waktu","Ticker","Harga","Lot","Sisi","Nilai"],lotRows,"Belum ada transaksi yang lolos filter.")}<div class="ex-mut" style="margin-top:6px">15 transaksi tunggal dengan lot terbesar, setelah filter lot/harga/ticker. Lot tebal = melewati batas "Lot besar".</div></div>
   ${sigHtml()}
-  <div class="ex-card"><h3>Transaksi terbaru</h3>${tbl(["Waktu","Ticker","Harga","Lot","Sisi","Nilai"],tape,"Belum ada transaksi.")}</div>
+  <div class="ex-card"><h3>Transaksi terbaru${fOn?" (lolos filter)":""}</h3>${tbl(["Waktu","Ticker","Harga","Lot","Sisi","Nilai"],tape,fOn?"Belum ada transaksi yang lolos filter.":"Belum ada transaksi.")}</div>
   <div class="ex-card"><details${RT.diagOpen?" open":""}><summary class="ex-mut" style="cursor:pointer">Diagnostik format data</summary>
     <div class="ex-mut" style="margin:8px 0;line-height:1.55">Contoh frame yang tidak terbaca (maks 5 terakhir). Kalau transaksi tetap 0 padahal frame terus masuk, format WebSocket belum cocok dengan parser; salin contoh ini ke chat supaya parser disesuaikan, atau pakai sumber REST.</div>
     <button class="ex-btn" data-act="rtCopyDiag">📋 Salin diagnostik</button>
@@ -419,8 +461,8 @@ function alerts(){
   const now=Date.now(), cool=5*60000;
   hakaList().forEach(a=>{
     if(now-(RT.flag["H"+a.tk]||0)<cool) return; RT.flag["H"+a.tk]=now;
-    rec("H",a.tk,a.last,`${fv(a.bv)}, rasio ${Math.round(a.ratio*100)}%`);
-    fire(`🔥 ${a.tk} di-HAKA ${fv(a.bv)} dalam ${CFG.hakaWin} menit (rasio ${Math.round(a.ratio*100)}%, harga ${fpx(a.last)})`);
+    rec("H",a.tk,a.last,`${fv(a.bv)} / ${fl(a.bl)} lot, rasio ${Math.round(a.ratio*100)}%`);
+    fire(`🔥 ${a.tk} di-HAKA ${fv(a.bv)} (${fl(a.bl)} lot) dalam ${CFG.hakaWin} menit (rasio ${Math.round(a.ratio*100)}%, harga ${fpx(a.last)})`);
   });
   brokerList().filter(whale).forEach(a=>{
     if(now-(RT.flag["B"+a.tk+a.br]||0)<cool*3) return; RT.flag["B"+a.tk+a.br]=now;
@@ -429,8 +471,8 @@ function alerts(){
   });
   accList().filter(a=>a.score>=70).forEach(a=>{
     if(now-(RT.flag["A"+a.tk]||0)<cool*3) return; RT.flag["A"+a.tk]=now;
-    rec("A",a.tk,a.last,`net ${fv(a.net)}, skor ${a.score}${a.topBrk?", "+a.topBrk:""}`);
-    fire(`🧲 ${a.tk} terakumulasi: net beli ${fv(a.net)} dalam ${CFG.accWin} menit (skor ${a.score}${a.topBrk?", broker "+a.topBrk:""})`);
+    rec("A",a.tk,a.last,`net ${fv(a.net)} (${fl(a.bl-a.sl)} lot), skor ${a.score}${a.topBrk?", "+a.topBrk:""}`);
+    fire(`🧲 ${a.tk} terakumulasi: net beli ${fv(a.net)} (${fl(a.bl-a.sl)} lot) dalam ${CFG.accWin} menit (skor ${a.score}${a.topBrk?", broker "+a.topBrk:""})`);
   });
 }
 
@@ -440,7 +482,7 @@ function readCfg(){
   const n=(id,d)=>{ const v=parseFloat(g(id).value); return isNaN(v)?d:v; };
   Object.assign(CFG,{ws:g("rt-ws").checked,rest:g("rt-rest").checked,tick:g("rt-tick").checked,tg:g("rt-tg").checked,bn:g("rt-bn").checked,snd:g("rt-snd").checked,
     pollSec:n("rt-poll",3),auto:g("rt-auto").checked,adapt:g("rt-adapt").checked,perPoll:n("rt-pp",5),refAdvM:n("rt-ref",20),tickers:g("rt-tickers").value.trim(),hakaWin:n("rt-hw",5),accWin:n("rt-aw",15),hakaMinJt:n("rt-hmin",300),
-    hakaRatio:n("rt-hr",65),bigJt:n("rt-big",50),accMinJt:n("rt-amin",200),accRatio:n("rt-ar",55),brkMinJt:n("rt-bmin",100),minTrades:n("rt-mt",10),onlyOwn:g("rt-own").checked,onlyBull:g("rt-bull").checked,url:g("rt-url").value.trim()||DEF_URL});
+    hakaRatio:n("rt-hr",65),bigJt:n("rt-big",50),accMinJt:n("rt-amin",200),accRatio:n("rt-ar",55),brkMinJt:n("rt-bmin",100),minTrades:n("rt-mt",10),minLot:Math.max(0,n("rt-minlot",0)),bigLot:Math.max(0,n("rt-biglot",0)),hakaLot:Math.max(0,n("rt-hlot",0)),accLot:Math.max(0,n("rt-alot",0)),brkLot:Math.max(0,n("rt-blot",0)),pxMin:Math.max(0,n("rt-pxmin",0)),pxMax:Math.max(0,n("rt-pxmax",0)),tkFilter:g("rt-tkf").value.trim(),onlyOwn:g("rt-own").checked,onlyBull:g("rt-bull").checked,url:g("rt-url").value.trim()||DEF_URL});
   if(CFG.bn) askPerm(); if(CFG.snd) audio();      // dipanggil dari klik/ubah pengaturan = gestur pengguna, syarat izin & audio
   SV("rt_cfg",CFG); applyPoll(); dyn();
 }
@@ -450,6 +492,7 @@ X.act("rtToggle",()=>{
   if(RT.on){ RT.st.startAt=Date.now(); RT.st.restErr=null; }
   applyPoll(); X.repaint();
 });
+X.act("rtResetFilter",()=>{ Object.assign(CFG,{minLot:0,bigLot:0,hakaLot:0,accLot:0,brkLot:0,pxMin:0,pxMax:0,tkFilter:""}); SV("rt_cfg",CFG); X.repaint(); });
 X.act("rtTest",()=>{ askPerm(); audio(); fire("🔔 Tes alert Running Trade — notifikasi dan bunyi berfungsi"); });
 X.act("rtReset",()=>{
   RT.trades=[]; RT.seen.clear(); RT.raw.clear(); RT.last={}; RT.lastSide={}; RT.flag={}; RT.samples=[];
