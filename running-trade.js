@@ -494,14 +494,31 @@ function applyPreset(v,nama){
   s.textContent=".rt-l1>td{background:rgba(250,204,21,.16)}.rt-l2>td{background:rgba(251,146,60,.28);font-weight:600}.rt-l3>td{background:rgba(239,68,68,.36);font-weight:700}"
    +".rt-th{cursor:pointer;user-select:none;white-space:nowrap}.rt-th:hover{text-decoration:underline}.rt-tk{cursor:pointer}.rt-tk:hover{text-decoration:underline}"
    +".rt-tools{display:flex;gap:12px;flex-wrap:wrap;align-items:center;margin-top:10px}.rt-tools label{display:inline-flex;flex-direction:row;align-items:center;gap:6px}"
+   +"#rtDyn .ex-wrap{overflow:auto;max-height:70vh}#rtDyn .ex-wrap thead th{position:sticky;top:0;z-index:2}#rtDyn .ex-wrap thead th:first-child{left:0;z-index:3}"
+   +"#rtDyn .ex-wrap tbody td:first-child{position:sticky;left:0;z-index:1;background-color:var(--rt-bg,Canvas)}"
+   +"#rtDyn .rt-l1>td:first-child{background-image:linear-gradient(rgba(250,204,21,.16),rgba(250,204,21,.16))}#rtDyn .rt-l2>td:first-child{background-image:linear-gradient(rgba(251,146,60,.28),rgba(251,146,60,.28))}#rtDyn .rt-l3>td:first-child{background-image:linear-gradient(rgba(239,68,68,.36),rgba(239,68,68,.36))}"
+   +"#exPage,#exPage>*,#rtDyn,#rtDyn>.ex-card{min-width:0;max-width:100%;box-sizing:border-box}#exPage .ex-grid>*{min-width:0}#rtDyn .ex-wrap{max-width:100%}"
+   +"#exPage .ex-grid input,#exPage .ex-grid select{max-width:100%;box-sizing:border-box}"
+   +"#exPage .ex-grid{display:grid!important;grid-template-columns:repeat(auto-fill,minmax(min(100%,190px),1fr))!important;gap:10px 12px;width:100%;max-width:100%}"
+   +"#exPage .ex-grid .ex-wide{grid-column:1/-1}#exPage .ex-card .ex-mut,#exPage .ex-card h3{overflow-wrap:anywhere;word-break:break-word;white-space:normal}"
+   +"#exPage .ex-grid label{display:flex;flex-direction:column;gap:4px;min-width:0}#exPage .ex-grid label:has(>input[type=checkbox]){flex-direction:row;align-items:flex-start}"
+   +".rt-xs{overflow-x:auto;overflow-y:hidden;height:14px;margin-bottom:2px}"
    +".rt-tools input[type=text]{width:150px}.rt-leg span{display:inline-block;padding:1px 8px;border-radius:6px;margin-right:6px}";
   document.head.appendChild(s);
 })();
+function fitWidth(){
+  try{
+    for(let el=document.getElementById("exPage");el&&el!==document.documentElement;el=el.parentElement){
+      el.style.minWidth="0"; el.style.maxWidth="100%"; if(el===document.body) break;
+    }
+  }catch(e){}
+}
 const ck=(id,v)=>`<label style="flex-direction:row;align-items:center;gap:6px"><input type="checkbox" id="${id}"${v?" checked":""} style="width:auto"> `;
 function view(){
+  setTimeout(fitWidth,0);
   const sel=(id,arr,v)=>`<select id="${id}">${arr.map(n=>`<option value="${n}"${+v===n?" selected":""}>${n} menit</option>`).join("")}</select>`;
   const inp=(id,v,t)=>`<input id="${id}" ${t||"type=\"number\""} value="${E(v)}">`;
-  return `<div class="ex-card"><h3>⚡ Running Trade — deteksi HAKA &amp; akumulasi <span class="ex-mut" style="font-weight:400;font-size:12px">v3.0 · + preset ambang</span></h3>
+  return `<div class="ex-card"><h3>⚡ Running Trade — deteksi HAKA &amp; akumulasi <span class="ex-mut" style="font-weight:400;font-size:12px">v3.3 · + tampilan dipaksa muat layar</span></h3>
   <div class="ex-mut" style="margin-bottom:10px;line-height:1.55">HAKA = pembeli agresif menyambar offer; nilai dihitung dari harga × lot × 100. ⭐ = Watchlist/posisi, ✨ = lolos Smart Pick (arahkan kursor untuk nama sinyalnya), 📈 = trend Bullish di Screener, ✅ = keyakinan tinggi. Batas nilai (HAKA, akumulasi, bandar, transaksi besar) dikalikan ×N sesuai likuiditas saham (acuan di pengaturan; saham sepi 0.3×, sangat likuid sampai 5×). Deteksi memakai transaksi yang tertangkap sejak tombol Mulai ditekan, jadi butuh beberapa menit untuk terisi. Klik judul kolom untuk mengurutkan, klik nama ticker untuk membuka Detail Emiten (analisa lengkap), klik 🔎 untuk panel detail running trade.</div>
   <div class="rt-tools" style="margin:0 0 12px"><b>Preset ambang:</b>
     ${Object.keys(PRESETS).map(k=>`<button class="ex-btn ${sameP(PRESETS[k].v)?"pri":""}" data-act="rtPre_${k}" title="${E(PRESETS[k].d)}">${PRESETS[k].n}</button>`).join("")}
@@ -574,7 +591,7 @@ function stbl(id,cols,rows,empty,o){
   const head=cols.map((h,i)=>{ const on=c&&c.i===i;
     return `<th${h.k?` class="rt-th" data-rt-sort="${id}|${i}"${h.s?"":" data-rt-num=\"1\""} title="Klik untuk urutkan"`:""}>${h.h}${on?(c.d<0?" ▼":" ▲"):""}</th>`; }).join("");
   const body=data.map(r=>`<tr class="${o.cls?o.cls(r):""}">${cols.map(h=>`<td>${h.r(r)}</td>`).join("")}</tr>`).join("");
-  return data.length?`<div class="ex-wrap"><table class="ex-tbl"><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table></div>`:`<div class="ex-mut">${empty}</div>`;
+  return data.length?`<div class="ex-wrap" data-rt-w="${id}"><table class="ex-tbl"><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table></div>`:`<div class="ex-mut">${empty}</div>`;
 }
 function sortClick(th){
   const p=th.getAttribute("data-rt-sort").split("|"), id=p[0], idx=+p[1], first=th.hasAttribute("data-rt-num")?-1:1, c=RT.sort[id];
@@ -637,10 +654,26 @@ function detail(tk){
   <h3 style="margin-top:12px">Broker (net terbesar)</h3>${stbl("rtbk",bc,bk,"Sumber data ini tidak membawa kode broker.")}</div>`;
 }
 
+// warna latar kartu -> variabel CSS untuk kolom Ticker yang menempel (supaya tidak tembus pandang)
+function cardBg(el){
+  try{ if(typeof getComputedStyle!=="function") return; let n=el.querySelector(".ex-card")||el;
+    while(n&&n.nodeType===1){ const c=getComputedStyle(n).backgroundColor; if(c&&c!=="transparent"&&!/rgba?\(0,\s*0,\s*0,\s*0\)/.test(c)){ el.style.setProperty("--rt-bg",c); return; } n=n.parentElement; } }catch(e){}
+}
+// scrollbar horizontal tambahan di atas tabel yang lebih lebar dari layarnya (sinkron dengan scrollbar bawah)
+function syncBars(el){
+  el.querySelectorAll(".ex-wrap").forEach(w=>{
+    if(!(w.scrollWidth>w.clientWidth+2)||!w.parentNode) return;
+    const bar=document.createElement("div"), inn=document.createElement("div");
+    bar.className="rt-xs"; inn.style.width=w.scrollWidth+"px"; inn.style.height="1px"; bar.appendChild(inn); w.parentNode.insertBefore(bar,w);
+    bar.scrollLeft=w.scrollLeft;
+    bar.addEventListener("scroll",()=>{ if(w.scrollLeft!==bar.scrollLeft) w.scrollLeft=bar.scrollLeft; });
+    w.addEventListener("scroll",()=>{ if(bar.scrollLeft!==w.scrollLeft) bar.scrollLeft=w.scrollLeft; });
+  });
+}
 function dyn(){
   const el=document.getElementById("rtDyn"); if(!el) return;
   const dOld=el.querySelector("details"); if(dOld) RT.diagOpen=dOld.open;
-  const sc=Array.from(el.querySelectorAll(".ex-wrap")).map(w=>w.scrollLeft);
+  const sc={}; Array.from(el.querySelectorAll(".ex-wrap")).forEach(w=>{ const k=w.getAttribute("data-rt-w"); if(k) sc[k]={x:w.scrollLeft,y:w.scrollTop}; });
   const now=Date.now(), s=RT.st;
   const fq=a=>!RT.q||RT.q.split(/[\s,]+/).some(z=>z&&a.tk.startsWith(z));
   const H=hakaList().filter(fq), A=accList().filter(fq), B=brokerList().filter(fq), F=foreignList().filter(fq), M=marketList().filter(fq);
@@ -728,7 +761,9 @@ function dyn(){
     <div class="ex-mut" style="margin:8px 0;line-height:1.55">Contoh frame yang tidak terbaca (maks 5 terakhir). Kalau transaksi tetap 0 padahal frame terus masuk, format WebSocket belum cocok dengan parser; salin contoh ini ke chat supaya parser disesuaikan, atau pakai sumber REST. Kalau transaksi WS tetap 0 padahal frame masuk dan "mirip kuotasi ditolak" besar, matikan opsi "Tolak frame mirip kuotasi".</div>
     <button class="ex-btn" data-act="rtCopyDiag">📋 Salin diagnostik</button>
     <pre class="mono" style="white-space:pre-wrap;word-break:break-all;font-size:11px">Nama field baris REST: ${E(RT.restKeys.join(", ")||"(belum ada)")}\n\nContoh baris REST (3 pertama):\n${RT.restRaw.length?RT.restRaw.map(E).join("\n\n"):"(belum ada)"}\n\nFrame WS pertama diterima:\n${RT.first.length?RT.first.map(E).join("\n\n"):"(belum ada)"}\n\nTidak terbaca:\n${RT.samples.length?RT.samples.map(E).join("\n\n"):"(belum ada)"}</pre></details></div>`;
-  el.querySelectorAll(".ex-wrap").forEach((w,i)=>{ if(sc[i]) w.scrollLeft=sc[i]; });
+  cardBg(el);
+  el.querySelectorAll(".ex-wrap").forEach(w=>{ const p=sc[w.getAttribute("data-rt-w")]; if(p){ w.scrollLeft=p.x; w.scrollTop=p.y; } });
+  syncBars(el);
   RT.mkt=M; RT.mktCols=mC;
 }
 /* ---------- riwayat sinyal & hit-rate ---------- */
@@ -893,7 +928,7 @@ setInterval(()=>{
   try{
     alerts(); evalSigs();
     const pg=document.getElementById("exPage");
-    if(pg&&pg.classList.contains("on")&&X.current()==="rt") dyn();
+    if(pg&&pg.classList.contains("on")&&X.current()==="rt"){ fitWidth(); dyn(); }
   }catch(e){ console.warn("running-trade:",e); }
 },1500);
 })();
