@@ -28,7 +28,7 @@ const CFG=Object.assign({ws:true,rest:false,url:DEF_URL,pollSec:3,tickers:"",hak
   hakaMinJt:300,hakaRatio:65,bigJt:50,accMinJt:200,accRatio:55,brkMinJt:100,minTrades:10,onlyOwn:false,onlyBull:false,tg:false,tick:true,auto:true,perPoll:5,adapt:true,refAdvM:20,bn:false,snd:false,feed:true,minLot:0,bigLot:0,hakaMinLot:0,accMinLot:0,brkMinLot:0,pxMin:0,pxMax:0,rejQuote:true,bigAlert:true},LS("rt_cfg",{}));
 // URL lama tersimpan di localStorage memakai order_by salah (RUN_TRADE_...): perbaiki otomatis. trade_number dibuang karena itu kursor tetap (data basi).
 CFG.url=String(CFG.url||DEF_URL).replace("RUN_TRADE_ORDER_BY_TIME","RUNNING_TRADE_ORDER_BY_TIME").replace(/([?&])trade_number=\d*&?/,"$1").replace(/[?&]$/,"");
-const RT={on:false,lastTs:{},first:[],diagOpen:false,trades:[],seen:new Set(),fp:new Map(),bigQ:[],sort:LS("rt_sort",{}),q:"",sel:"",bigOnly:false,gen:0,raw:new Map(),last:{},lastSide:{},flag:{},samples:[],busy:false,poll:null,rot:0,dirty:0,saved:0,
+const RT={on:false,lastTs:{},first:[],diagOpen:false,trades:[],seen:new Set(),fp:new Map(),bigQ:[],sort:LS("rt_sort",{}),q:"",sel:"",bigOnly:false,gen:0,restRaw:[],raw:new Map(),last:{},lastSide:{},flag:{},samples:[],busy:false,poll:null,rot:0,dirty:0,saved:0,
   st:{quote:0,dup:0,nw:0,nr:0,restored:0,symOk:0,symBad:0,watch:0,frames:0,parsed:0,unparsed:0,trades:0,est:0,brk:0,rest:0,restErr:null,restAt:0,startAt:0}};
 
 /* ---------- util ---------- */
@@ -168,6 +168,7 @@ async function fetchOne(u){
     const items=[]; walk(r.raw,0,o=>items.push(o));
     if(!items.length){ if(!pg) sample("[REST tanpa transaksi terbaca] "+JSON.stringify(r.raw)); break; }
     RT.st.rest+=items.length; all=all.concat(items);
+    if(RT.restRaw.length<3){ try{ RT.restRaw.push(JSON.stringify(items[0]).slice(0,700)); }catch(e){} }
     if(want&&!pg){ const hit=items.filter(o=>String(pick(o,TK)||"").toUpperCase()===want.toUpperCase()).length; if(hit*2>=items.length) RT.st.symOk++; else RT.st.symBad++; }
     const fresh=items.filter(o=>{ const id=pick(o,["id","trade_id","trade_number","tn"]); const tk=String(pick(o,TK)||"").toUpperCase().trim(); return id==null||!RT.seen.has(tk+"#"+id); }).length;
     const tn=items.map(o=>toNum(o.trade_number)).filter(n=>n>0);
@@ -370,7 +371,7 @@ function view(){
     ${ck("rt-adapt",CFG.adapt)}Batas menyesuaikan likuiditas saham</label>
     <label>Likuiditas acuan (miliar Rp/hari)${inp("rt-ref",CFG.refAdvM)}</label>
     <label>Jendela HAKA${sel("rt-hw",[1,3,5,15],CFG.hakaWin)}</label>
-    <label>Jendela akumulasi${sel("rt-aw",[5,15,30,60],CFG.accWin)}</label>
+    <label>Jendela akumulasi${sel("rt-aw",[1,2,3,5,15,30,60],CFG.accWin)}</label>
     <label>Min nilai HAKA (jt Rp)${inp("rt-hmin",CFG.hakaMinJt)}</label>
     <label>Min rasio HAKA (%)${inp("rt-hr",CFG.hakaRatio)}</label>
     <label>Transaksi besar ≥ (jt Rp)${inp("rt-big",CFG.bigJt)}</label>
@@ -448,7 +449,7 @@ function detail(tk){
   const head=`<div class="ex-card" id="rtDetail"><h3>🔎 Detail ${tkc(tk)} — ${CFG.accWin} menit terakhir <button class="ex-btn" data-rt-close="1" style="float:right">✕ Tutup</button></h3>`;
   if(!tr.length) return head+`<div class="ex-mut">Belum ada transaksi ${E(tk)} dalam jendela ini (hanya transaksi yang tertangkap sejak Mulai). Cek ejaan ticker atau aktifkan feed seluruh pasar.</div></div>`;
   let bv=0,sv=0,bl=0,sl=0,pl=0,nw=0,nr=0,vw=0,vr=0,nbig=0,mx=0;
-  const lad=new Map(), mins=new Map(), brk=new Map(), nMin=Math.min(30,CFG.accWin);
+  const lad=new Map(), mins=new Map(), brk=new Map(), nMin=Math.max(5,Math.min(30,CFG.accWin));
   tr.forEach(x=>{
     const v=x.px*x.lot*100, B=x.side==="B"; pl+=x.px*x.lot;
     if(B){ bv+=v; bl+=x.lot; } else { sv+=v; sl+=x.lot; }
@@ -543,7 +544,7 @@ function dyn(){
   <div class="ex-card"><details${RT.diagOpen?" open":""}><summary class="ex-mut" style="cursor:pointer">Diagnostik format data</summary>
     <div class="ex-mut" style="margin:8px 0;line-height:1.55">Contoh frame yang tidak terbaca (maks 5 terakhir). Kalau transaksi tetap 0 padahal frame terus masuk, format WebSocket belum cocok dengan parser; salin contoh ini ke chat supaya parser disesuaikan, atau pakai sumber REST. Kalau transaksi WS tetap 0 padahal frame masuk dan "mirip kuotasi ditolak" besar, matikan opsi "Tolak frame mirip kuotasi".</div>
     <button class="ex-btn" data-act="rtCopyDiag">📋 Salin diagnostik</button>
-    <pre class="mono" style="white-space:pre-wrap;word-break:break-all;font-size:11px">Frame pertama diterima:\n${RT.first.length?RT.first.map(E).join("\n\n"):"(belum ada)"}\n\nTidak terbaca:\n${RT.samples.length?RT.samples.map(E).join("\n\n"):"(belum ada)"}</pre></details></div>`;
+    <pre class="mono" style="white-space:pre-wrap;word-break:break-all;font-size:11px">Contoh baris REST (3 pertama):\n${RT.restRaw.length?RT.restRaw.map(E).join("\n\n"):"(belum ada)"}\n\nFrame WS pertama diterima:\n${RT.first.length?RT.first.map(E).join("\n\n"):"(belum ada)"}\n\nTidak terbaca:\n${RT.samples.length?RT.samples.map(E).join("\n\n"):"(belum ada)"}</pre></details></div>`;
   el.querySelectorAll(".ex-wrap").forEach((w,i)=>{ if(sc[i]) w.scrollLeft=sc[i]; });
   RT.mkt=M; RT.mktCols=mC;
 }
@@ -642,14 +643,14 @@ X.act("rtToggle",()=>{
 });
 X.act("rtTest",()=>{ askPerm(); audio(); fire("🔔 Tes alert Running Trade — notifikasi dan bunyi berfungsi"); });
 X.act("rtReset",()=>{
-  RT.trades=[]; RT.seen.clear(); RT.fp.clear(); RT.bigQ=[]; RT.raw.clear(); RT.last={}; RT.lastSide={}; RT.flag={}; RT.samples=[];
+  RT.trades=[]; RT.seen.clear(); RT.fp.clear(); RT.bigQ=[]; RT.raw.clear(); RT.last={}; RT.lastSide={}; RT.flag={}; RT.samples=[]; RT.restRaw=[];
   SV("rt_trd",{at:Date.now(),rows:[]}); RT.dirty=RT.saved=0;
   Object.assign(RT.st,{quote:0,dup:0,nw:0,nr:0,restored:0,frames:0,parsed:0,unparsed:0,trades:0,est:0,brk:0,rest:0,restErr:null,startAt:Date.now()}); dyn();
 });
 const copy=(t,msg)=>{ try{ navigator.clipboard.writeText(t).then(()=>X.toast(msg,"up")); }catch(e){ X.toast("Gagal menyalin","down"); } };
 X.act("rtClearSig",()=>{ SV("rt_sig",[]); dyn(); });
 X.act("rtCopySig",()=>copy(["waktu,jenis,ticker,harga,p15,p30,info"].concat(sigs().map(g=>[new Date(g.ts).toISOString(),g.ty,g.tk,g.px,g.p15,g.p30,'"'+(g.info||"")+'"'].join(","))).join("\n"),"Riwayat sinyal disalin"));
-X.act("rtCopyDiag",()=>copy(JSON.stringify({stats:RT.st,cfg:{ws:CFG.ws,rest:CFG.rest,feed:CFG.feed,rejQuote:CFG.rejQuote,url:CFG.url},first:RT.first,unparsed:RT.samples},null,1),"Diagnostik disalin — tempel ke chat"));
+X.act("rtCopyDiag",()=>copy(JSON.stringify({stats:RT.st,cfg:{ws:CFG.ws,rest:CFG.rest,feed:CFG.feed,rejQuote:CFG.rejQuote,url:CFG.url},first:RT.first,rest:RT.restRaw,unparsed:RT.samples},null,1),"Diagnostik disalin — tempel ke chat"));
 X.act("rtCopyMkt",()=>{       // CSV tabel Semua saham sesuai urutan sort yang sedang aktif
   const M=(RT.mkt||[]).slice(), c=RT.sort.rtm; if(c&&RT.mktCols[c.i]&&RT.mktCols[c.i].k){ const k=RT.mktCols[c.i].k; M.sort((a,b)=>{ const x=k(a),y=k(b); return (typeof x==="string"?x.localeCompare(y):x-y)*c.d; }); }
   copy(["ticker,harga,chg_pct,nilai_total,net_nilai,rasio_beli,lot_beli,lot_jual,net_lot,lot_besar_n,net_lot_besar,lot_terbesar,trx_per_menit,umur_dtk"].concat(M.map(a=>[a.tk,a.last,a.chg.toFixed(2),Math.round(a.vt),Math.round(a.net),(a.ratio*100).toFixed(0),a.bl,a.sl,a.netL,a.big,a.bigNet,a.mx,a.rate.toFixed(1),a.age].join(","))).join("\n"),"Tabel Semua saham disalin");
