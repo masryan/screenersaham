@@ -502,6 +502,9 @@ function applyPreset(v,nama){
    +"#exPage .ex-grid{display:grid!important;grid-template-columns:repeat(auto-fill,minmax(min(100%,190px),1fr))!important;gap:10px 12px;width:100%;max-width:100%}"
    +"#exPage .ex-grid .ex-wide{grid-column:1/-1}#exPage .ex-card .ex-mut,#exPage .ex-card h3{overflow-wrap:anywhere;word-break:break-word;white-space:normal}"
    +"#exPage .ex-grid label{display:flex;flex-direction:column;gap:4px;min-width:0}#exPage .ex-grid label:has(>input[type=checkbox]){flex-direction:row;align-items:flex-start}"
+   +".rt-scn{cursor:pointer;font-size:12px;font-weight:600;padding:1px 10px;border-radius:999px;white-space:nowrap}.rt-scn:hover{text-decoration:underline}"
+   +"#rtScPop{position:fixed;z-index:99999;min-width:220px;max-width:min(340px,92vw);padding:10px 12px;border-radius:10px;border:1px solid rgba(128,128,128,.45);background:var(--rt-bg,Canvas);color:CanvasText;box-shadow:0 8px 28px rgba(0,0,0,.35);font-size:13px;line-height:1.45}"
+   +"#rtScPop .rt-pt{display:flex;justify-content:space-between;align-items:center;gap:10px;margin-bottom:6px}#rtScPop .rt-pi{padding:4px 0;border-top:1px solid rgba(128,128,128,.25)}#rtScPop .rt-ps{font-size:11px;opacity:.65}#rtScPop button{cursor:pointer}"
    +".rt-xs{overflow-x:auto;overflow-y:hidden;height:14px;margin-bottom:2px}"
    +".rt-tools input[type=text]{width:150px}.rt-leg span{display:inline-block;padding:1px 8px;border-radius:6px;margin-right:6px}";
   document.head.appendChild(s);
@@ -518,7 +521,7 @@ function view(){
   setTimeout(fitWidth,0);
   const sel=(id,arr,v)=>`<select id="${id}">${arr.map(n=>`<option value="${n}"${+v===n?" selected":""}>${n} menit</option>`).join("")}</select>`;
   const inp=(id,v,t)=>`<input id="${id}" ${t||"type=\"number\""} value="${E(v)}">`;
-  return `<div class="ex-card"><h3>⚡ Running Trade — deteksi HAKA &amp; akumulasi <span class="ex-mut" style="font-weight:400;font-size:12px">v3.3 · + tampilan dipaksa muat layar</span></h3>
+  return `<div class="ex-card"><h3>⚡ Running Trade — deteksi HAKA &amp; akumulasi <span class="ex-mut" style="font-weight:400;font-size:12px">v3.5 · + Lolos screener = jumlah, klik untuk detail</span></h3>
   <div class="ex-mut" style="margin-bottom:10px;line-height:1.55">HAKA = pembeli agresif menyambar offer; nilai dihitung dari harga × lot × 100. ⭐ = Watchlist/posisi, ✨ = lolos Smart Pick (arahkan kursor untuk nama sinyalnya), 📈 = trend Bullish di Screener, ✅ = keyakinan tinggi. Batas nilai (HAKA, akumulasi, bandar, transaksi besar) dikalikan ×N sesuai likuiditas saham (acuan di pengaturan; saham sepi 0.3×, sangat likuid sampai 5×). Deteksi memakai transaksi yang tertangkap sejak tombol Mulai ditekan, jadi butuh beberapa menit untuk terisi. Klik judul kolom untuk mengurutkan, klik nama ticker untuk membuka Detail Emiten (analisa lengkap), klik 🔎 untuk panel detail running trade.</div>
   <div class="rt-tools" style="margin:0 0 12px"><b>Preset ambang:</b>
     ${Object.keys(PRESETS).map(k=>`<button class="ex-btn ${sameP(PRESETS[k].v)?"pri":""}" data-act="rtPre_${k}" title="${E(PRESETS[k].d)}">${PRESETS[k].n}</button>`).join("")}
@@ -708,7 +711,7 @@ function dyn(){
     {h:"Lot besar (n)",k:a=>a.big,r:a=>a.big||"-"},{h:"Net lot besar",k:a=>a.bigNet,r:a=>a.bigNet?sgn(a.bigNet):"-"},{h:"Lot terbesar",k:a=>a.mx,r:a=>`${fpx(a.mx)} <span class="${a.mxs==="B"?"ex-up":"ex-dn"}">${a.mxs==="B"?"▲":"▼"}</span>`},
     {h:"Trx/mnt",k:a=>a.rate,r:a=>a.rate.toFixed(1)},{h:"Umur (dtk)",k:a=>a.age,r:a=>a.age}];
   const pc1=n=>n.toFixed(1)+"%";
-  const scCell=a=>a.sc.length?`<div style="max-width:300px">${a.sc.map(x=>`<span class="ex-chip" style="font-size:11px;padding:1px 6px;margin:1px;display:inline-block;white-space:nowrap" title="${E(x.t)}">${x.i} ${E(x.t)}</span>`).join("")}</div>`:"-";
+  const scCell=a=>a.sc.length?`<button type="button" class="ex-chip rt-scn" data-rt-sc="${E(a.tk)}" title="Klik untuk melihat sinyal apa saja yang lolos">🎯 ${a.sc.length}</button>`:"-";
   const brkCell=(l,tot)=>l.length?`<div style="font-size:12px;line-height:1.35;min-width:130px">${l.map(x=>`<div title="${E(x[0])}: ${fv(x[1])} (${tot?Math.round(x[1]/tot*100):0}% dari total ${fv(tot)})"><b>${E(x[0])}</b> ${fv(x[1])}</div>`).join("")}</div>`:"-";
   const stack=a=>`<div style="display:flex;height:10px;min-width:110px;border-radius:3px;overflow:hidden" title="Buy ${pc1(a.pb)} / Sell ${pc1(a.ps)}"><span style="width:${a.pb.toFixed(1)}%;background:#22c55e"></span><span style="flex:1;background:#ef4444"></span></div>`;
   const BS=bsRows(M,fq), bsB=BS.reduce((t,a)=>t+a.bv,0), bsS=BS.reduce((t,a)=>t+a.sv,0), bsT=bsB+bsS;
@@ -726,7 +729,7 @@ function dyn(){
   const bsHead=RT.mode==="cum"?`sejak Mulai${RT.cumDay?" · "+E(RT.cumDay):""}`:`${CFG.accWin} menit terakhir`;
   const CF=confList().filter(fq);
   const cfC=[{h:"Ticker",s:1,k:a=>a.tk,r:a=>tkc(a.tk)},{h:"Skor",k:a=>a.score,r:a=>`<b>${a.score}</b>${bar(a.score)}`},{h:"Sinyal",k:a=>a.n,r:a=>a.n+"/8"},
-    {h:"Sinyal yang terpenuhi",s:1,k:a=>a.sg.map(x=>x.k).join(""),r:a=>`<div style="max-width:420px">${a.sg.map(x=>`<span class="ex-chip" style="font-size:11px;padding:1px 6px;margin:1px;display:inline-block;white-space:nowrap">${x.t}</span>`).join("")}</div>`},
+    {h:"Sinyal yang terpenuhi",s:1,k:a=>a.sg.map(x=>x.k).join(""),r:a=>`<div style="display:flex;flex-wrap:wrap;gap:3px;white-space:normal;min-width:180px;max-width:420px">${a.sg.map(x=>`<span class="ex-chip" style="font-size:11px;padding:1px 6px;margin:1px;display:inline-block;white-space:nowrap">${x.t}</span>`).join("")}</div>`},
     {h:"Penalti",s:1,k:a=>a.pen.length,r:a=>a.pen.length?`<span class="ex-dn">${a.pen.join(", ")}</span>`:"-"},
     {h:"Harga",k:a=>a.last,r:a=>fpx(a.last)},{h:"Δ%",k:a=>a.chg,r:chg},{h:"Net nilai",k:a=>a.net,r:a=>`<span class="${a.net>=0?"ex-up":"ex-dn"}">${fv(a.net)}</span>`},{h:"% Buy",k:a=>a.pb,r:a=>pc1(a.pb)}];
   const maxTier=a=>lotTier({tk:a.tk,px:a.last,lot:a.mx});
@@ -903,9 +906,30 @@ function openFull(tk){      // modal Detail Emiten milik app.js; tombol ‹ › 
   }catch(e){ console.warn("running-trade: openDetail gagal",e); pickTk(tk); }
 }
 function pickTk(tk){ RT.sel=tk; const i=document.getElementById("rtsel"); if(i) i.value=tk; dyn(); const d=document.getElementById("rtDetail"); if(d&&d.scrollIntoView) d.scrollIntoView({behavior:"smooth",block:"start"}); }
+const SC_SRC={"Trend Bullish":"Trend harga Bullish di tab Screener","Keyakinan Tinggi":"Skor keyakinan tinggi di tab Screener","Watchlist/Posisi":"Ada di Watchlist atau Posisi Anda"};
+function closeScPop(){ const o=document.getElementById("rtScPop"); if(o) o.remove(); }
+function openScPop(btn){
+  const tk=btn.getAttribute("data-rt-sc"), was=document.getElementById("rtScPop");
+  const same=was&&was.getAttribute("data-tk")===tk; closeScPop(); if(same) return;
+  const l=scStatus(tk);
+  const pop=document.createElement("div"); pop.id="rtScPop"; pop.setAttribute("data-tk",tk);
+  pop.innerHTML=`<div class="rt-pt"><b>${E(tk)} — lolos ${l.length} screener</b><button type="button" class="ex-btn" data-rt-scx="1" title="Tutup">✕</button></div>`
+    +(l.length?l.map(x=>`<div class="rt-pi">${x.i} <b>${E(x.t)}</b><div class="rt-ps">${E(SC_SRC[x.t]||"Smart Pick")}</div></div>`).join(""):`<div class="rt-ps">Sudah tidak lolos screener apa pun.</div>`)
+    +`<div style="margin-top:8px"><button type="button" class="ex-btn" data-rt-scd="${E(tk)}">🔎 Buka Detail Emiten</button></div>`;
+  document.body.appendChild(pop);
+  const r=btn.getBoundingClientRect(), w=pop.offsetWidth, h=pop.offsetHeight;
+  let x=Math.min(Math.max(8,r.left),window.innerWidth-w-8), y=r.bottom+6; if(y+h>window.innerHeight-8) y=Math.max(8,r.top-h-6);
+  pop.style.left=x+"px"; pop.style.top=y+"px";
+}
+document.addEventListener("keydown",e=>{ if(e.key==="Escape") closeScPop(); });
+window.addEventListener("scroll",closeScPop,true);
 document.addEventListener("click",e=>{
   const c=e.target&&e.target.closest?e.target.closest.bind(e.target):null; if(!c) return;
-  let n=c("[data-rt-sort]"); if(n){ sortClick(n); return; }
+  let n=c("[data-rt-sc]"); if(n){ openScPop(n); return; }
+  n=c("[data-rt-scd]"); if(n){ const tk=n.getAttribute("data-rt-scd"); closeScPop(); openFull(tk); return; }
+  if(c("[data-rt-scx]")){ closeScPop(); return; }
+  if(!c("#rtScPop")) closeScPop();
+  n=c("[data-rt-sort]"); if(n){ sortClick(n); return; }
   n=c("[data-rt-full]"); if(n){ openFull(n.getAttribute("data-rt-full")); return; }
   n=c("[data-rt-tk]"); if(n){ pickTk(n.getAttribute("data-rt-tk")); return; }
   n=c("[data-rt-close]"); if(n){ RT.sel=""; const i=document.getElementById("rtsel"); if(i) i.value=""; dyn(); }
