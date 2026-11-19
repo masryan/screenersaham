@@ -27,8 +27,9 @@ const DEF_URL="https://exodus.stockbit.com/order-trade/running-trade?sort=DESC&l
 const CFG=Object.assign({ws:true,rest:false,url:DEF_URL,pollSec:3,tickers:"",hakaWin:5,accWin:15,
   hakaMinJt:300,hakaRatio:65,bigJt:50,accMinJt:200,accRatio:55,brkMinJt:100,minTrades:10,onlyOwn:false,onlyBull:false,tg:false,tick:true,auto:true,perPoll:5,adapt:true,refAdvM:20,bn:false,snd:false,feed:true,minLot:0,bigLot:0,hakaMinLot:0,accMinLot:0,brkMinLot:0,pxMin:0,pxMax:0,rejQuote:true,bigAlert:true,momAlert:true,confMin:3,confAlert:true,hoverPause:true,cost:0.4,digest:false,digestMin:30,digestN:5,digestClose:true},LS("rt_cfg",{}));
 // URL lama tersimpan di localStorage memakai order_by salah (RUN_TRADE_...): perbaiki otomatis. trade_number dibuang karena itu kursor tetap (data basi).
+CFG.entAlert=CFG.entAlert!==false; if(!CFG.entStyle) CFG.entStyle="auto"; CFG.capJt=+CFG.capJt||0; CFG.riskPct=+CFG.riskPct||1;
 CFG.url=String(CFG.url||DEF_URL).replace("RUN_TRADE_ORDER_BY_TIME","RUNNING_TRADE_ORDER_BY_TIME").replace(/([?&])trade_number=\d*&?/,"$1").replace(/[?&]$/,"");
-const RT={on:false,lastTs:{},first:[],diagOpen:false,trades:[],seen:new Set(),fp:new Map(),bigQ:[],sort:LS("rt_sort",{}),q:"",sel:"",bigOnly:false,gen:0,mm:{},gb:LS("rt_gb","ty"),frozen:false,hide:LS("rt_cols",{}),colReg:{},cal:LS("rt_cal",{}),restRaw:[],restKeys:[],dvOnly:false,dvSel:"",momOnly:false,scOnly:false,cum:new Map(),cumDay:"",mode:LS("rt_mode","win"),raw:new Map(),last:{},lastSide:{},flag:{},samples:[],busy:false,poll:null,rot:0,dirty:0,saved:0,
+const RT={on:false,lastTs:{},first:[],diagOpen:false,trades:[],seen:new Set(),fp:new Map(),bigQ:[],sort:LS("rt_sort",{}),q:"",sel:"",bigOnly:false,gen:0,mm:{},gb:LS("rt_gb","ty"),frozen:false,hide:LS("rt_cols",{}),colReg:{},cal:LS("rt_cal",{}),restRaw:[],restKeys:[],dvOnly:false,dvSel:"",enOnly:false,momOnly:false,scOnly:false,cum:new Map(),cumDay:"",mode:LS("rt_mode","win"),raw:new Map(),last:{},lastSide:{},flag:{},samples:[],busy:false,poll:null,rot:0,dirty:0,saved:0,
   st:{quote:0,dup:0,nw:0,nr:0,restored:0,symOk:0,symBad:0,watch:0,frames:0,parsed:0,unparsed:0,trades:0,est:0,brk:0,rest:0,restErr:null,restAt:0,startAt:0}};
 
 /* ---------- util ---------- */
@@ -405,19 +406,69 @@ function rsiCalc(cl,p){
   for(let i=p+1;i<c.length;i++){ const d=c[i]-c[i-1]; g=(g*(p-1)+(d>0?d:0))/p; l=(l*(p-1)+(d<0?-d:0))/p; }
   return l===0?100:100-100/(1+g/l);
 }
+function rsiScan(r){      // cari semua field berisi "rsi" (maks 1 tingkat objek bersarang); angka di nama = periode, tanpa angka = 14
+  const o={}; const eat=(k,v)=>{ if(!/rsi/i.test(k)||v==null||typeof v==="object"||!isFinite(+v)) return; const m=String(k).match(/(\d+)/), pe=m?+m[1]:14; if(o[pe]==null) o[pe]=+v; };
+  Object.keys(r).forEach(k=>{ const v=r[k]; eat(k,v); if(v&&typeof v==="object"&&!Array.isArray(v)&&/rsi|ind|tek|tech/i.test(k)) Object.keys(v).forEach(k2=>eat(k2,v[k2])); });
+  return o;
+}
 function rsiOf(tk){
   const out={7:null,14:null,21:null}; let r=null; try{ r=X.stk(tk); }catch(e){} if(!r) return out;
   [7,14,21].forEach(p=>{
     const keys=["rsi"+p,"rsi_"+p,"RSI"+p,"RSI_"+p,"rsi"+p+"d","rsi"+p+"Value"]; let v=null;
     for(const k of keys){ if(r[k]!=null&&isFinite(+r[k])){ v=+r[k]; break; } }
     if(v==null&&r.rsi&&typeof r.rsi==="object"&&r.rsi[p]!=null&&isFinite(+r.rsi[p])) v=+r.rsi[p];
+    if(v==null){ const hit=rsiScan(r); if(hit[p]!=null) v=hit[p]; }
     if(v==null&&p===14&&r.rsi!=null&&typeof r.rsi!=="object"&&isFinite(+r.rsi)) v=+r.rsi;
     if(v==null){ const cl=r.closes||r.close||r.prices||r.hist||r.history; if(Array.isArray(cl)) v=rsiCalc(cl.map(x=>x&&typeof x==="object"?(x.close!=null?x.close:x.c):x),p); }
     out[p]=v;
   });
   return out;
 }
-function bsRows(M,fq,skipDv){
+// Skor Entry 0–100 + level entry/stop/target + ukuran posisi. Alat bantu menyaring, BUKAN rekomendasi beli.
+// Profil per gaya trading (ikut preset aktif, atau dipilih manual di pengaturan): ambang RSI jenuh beli, batas "sudah lari", skor layak, jarak stop (%), target R:R.
+const ENT_P={
+  scalp:{n:"Scalping",hot14:75,hot7:85,chgMax:3,layak:60,stop:0.8,rr:1.5},
+  intra:{n:"Intraday",hot14:70,hot7:80,chgMax:5,layak:65,stop:1.5,rr:2},
+  swing:{n:"Swing",hot14:70,hot7:80,chgMax:8,layak:65,stop:4,rr:2.5}};
+function entStyle(){ const o=CFG.entStyle; if(o&&ENT_P[o]) return o; if(sameP(PRESETS.scalp.v)) return "scalp"; if(sameP(PRESETS.swing.v)) return "swing"; return "intra"; }
+const tickOf=p=>p<200?1:p<500?2:p<2000?5:p<5000?10:25;      // fraksi harga BEI
+const tkR=(p,m)=>{ const t=tickOf(p); return (m==="u"?Math.ceil(p/t):m==="d"?Math.floor(p/t):Math.round(p/t))*t; };
+const lowMap=()=>memo("lo",()=>{ const from=Date.now()-CFG.accWin*60000, m=new Map(); for(let i=RT.trades.length-1;i>=0;i--){ const x=RT.trades[i]; if(x.ts<from||!(x.px>0)) continue; const v=m.get(x.tk); if(v==null||x.px<v) m.set(x.tk,x.px); } return m; });
+function entryOf(a){
+  const st=entStyle(), P=ENT_P[st]; let sc=0; const why=[], bad=[]; const add=(n,t)=>{ sc+=n; (n>=0?why:bad).push((n>=0?"+":"")+n+" "+t); };
+  if(a.pb>=60) add(20,"%Buy ≥ 60%"); else if(a.pb>=55) add(10,"%Buy ≥ 55%");
+  if(a.netL>0) add(10,"net lot positif");
+  const ac=a.ac;
+  if(ac&&ac.sig==="U") add(15,"momentum mulai diborong"); else if(ac&&ac.sig==="D") add(-25,"momentum mulai dilepas");
+  if(ac&&ac.d!=null&&ac.d>=10) add(5,"%Buy 2m naik ≥ 10 pp");
+  if(ac&&ac.spike>=1.5) add(5,"tape lebih cepat ≥ 1,5×");
+  if(a.sc.length) add(Math.min(a.sc.length,3)*5,"lolos "+a.sc.length+" screener");
+  if(a.dv&&a.dv.c==="H") add(15,"akumulasi tersembunyi (harga belum lari)"); else if(a.dv&&a.dv.c==="D") add(-20,"distribusi"); else if(a.dv&&a.dv.c==="P") add(5,"penyerapan jual");
+  const r7=a.rsi&&a.rsi[7], r14=a.rsi&&a.rsi[14], r21=a.rsi&&a.rsi[21];
+  let hot=false;
+  if(r14!=null){ if(r14>=P.hot14||(r7!=null&&r7>=P.hot7)){ hot=true; add(-15,"RSI jenuh beli"); } else if(r14>=30) add(10,"RSI belum jenuh beli"); }
+  if(r7!=null&&r21!=null&&r7<=40&&r21>=50&&!hot) add(10,"pullback: RSI 7 turun, RSI 21 masih kuat");
+  if(a.chg>=P.chgMax) add(-10,"sudah naik ≥ "+P.chgMax+"% (rawan mengejar)");
+  sc=Math.max(0,Math.min(100,sc));
+  let t,c,k;
+  if(a.net<0&&a.pb<50){ t="🔴 Tekanan jual"; c="ex-dn"; k="R"; }
+  else if(hot){ t="🔥 Terlalu panas"; c="ex-dn"; k="X"; }
+  else if(sc>=P.layak){ t="🟢 Layak dipantau"; c="ex-up"; k="G"; }
+  else if(sc>=P.layak-25){ t="🟡 Tunggu konfirmasi"; c=""; k="Y"; }
+  else { t="⚪ Belum menarik"; c="ex-mut"; k="W"; }
+  // level: entry = min(harga sekarang, rata² HAKA); stop di bawah low jendela (dibatasi 3× jarak stop gaya ini); target = entry + R:R × risiko
+  let lv=null;
+  if(a.net>0&&a.last>0){
+    const avgH=a.bl>0?a.bv/(a.bl*100):null, entry=tkR(avgH?Math.min(a.last,avgH):a.last), lo=lowMap().get(a.tk), sp=P.stop/100;
+    let stop=tkR(Math.max(Math.min(lo||1e12,entry*(1-sp)),entry*(1-3*sp)),"d"); if(stop>=entry) stop=entry-tickOf(entry);
+    const risk=(entry-stop)/entry*100, target=tkR(entry+P.rr*(entry-stop),"d");
+    let lots=null; if(CFG.capJt>0&&entry>stop){ const rr=CFG.capJt*1e6*CFG.riskPct/100, per=(entry-stop)*100; lots=Math.max(0,Math.min(Math.floor(rr/per),Math.floor(CFG.capJt*1e6/(entry*100)))); }
+    lv={entry,stop,target,risk,lots,avgH,lo,wait:!!(avgH&&a.last>avgH*1.01),rr:P.rr};
+  }
+  return {s:sc,t,c,k,why,bad,st,noRsi:r14==null&&r7==null&&r21==null,lv};
+}
+function entryTop(n){ return bsRows(marketList(),()=>true,true,true).filter(a=>a.en.k==="G").sort((p,q)=>q.en.s-p.en.s).slice(0,n); }
+function bsRows(M,fq,skipDv,raw){
   const am=accelMap();          // baris komposisi buy/sell: mode "win" = jendela akumulasi, "cum" = akumulasi sejak Mulai hari ini
   let src=M;
   if(RT.mode==="cum"){ src=[]; const own=X.ownTickers();
@@ -425,7 +476,7 @@ function bsRows(M,fq,skipDv){
   const bw=RT.mode==="cum"?null:brkWin();
   return src.filter(fq).map(a=>{ const tv=a.bv+a.sv, tl=a.bl+a.sl, bm=bw?(bw.get(a.tk)||{}):a;
     return {tk:a.tk,last:a.last,chg:a.chg,bv:a.bv,sv:a.sv,bl:a.bl,sl:a.sl,nb:a.nb,ns:a.ns,tv,net:a.bv-a.sv,netL:a.bl-a.sl,pb:tv?a.bv/tv*100:0,ps:tv?a.sv/tv*100:0,pl:tl?a.bl/tl*100:0,
-      tb:topN(bm.bb,3),ts:topN(bm.bs,3),sc:scStatus(a.tk),rsi:rsiOf(a.tk),ac:am.get(a.tk)||null}; }).map(r=>{ r.dv=divOf(r); return r; }).filter(a=>(!RT.scOnly||a.sc.length)&&(!RT.dvOnly||a.dv)&&(skipDv||!RT.dvSel||(a.dv&&a.dv.c===RT.dvSel))&&(!RT.momOnly||(a.ac&&a.ac.sig)));
+      tb:topN(bm.bb,3),ts:topN(bm.bs,3),sc:scStatus(a.tk),rsi:rsiOf(a.tk),ac:am.get(a.tk)||null}; }).map(r=>{ r.dv=divOf(r); r.en=entryOf(r); return r; }).filter(a=>raw||((!RT.scOnly||a.sc.length)&&(!RT.dvOnly||a.dv)&&(skipDv||!RT.dvSel||(a.dv&&a.dv.c===RT.dvSel))&&(!RT.momOnly||(a.ac&&a.ac.sig))&&(!RT.enOnly||a.en.k==="G")));
 }
 
 /* ---------- bandar: broker dengan net beli terbesar per ticker ---------- */
@@ -639,6 +690,10 @@ function view(){
     ${ck("rt-balert",CFG.bigAlert)}Alert lot JUMBO/MEGA 🐘</label>
     ${ck("rt-malert",CFG.momAlert)}Alert momentum 🚀/🔻 (%Buy melonjak/anjlok)</label>
     <label>Min jumlah sinyal konfluensi (1–8)${inp("rt-cmin",CFG.confMin)}</label>
+    ${ck("rt-ealert",CFG.entAlert)}Catat &amp; alert Skor Entry 🟢 (juga dipakai untuk hit-rate skor)</label>
+    <label>Gaya skor entry <select id="rt-estyle">${[["auto","Otomatis (ikut preset)"],["scalp","Scalping"],["intra","Intraday"],["swing","Swing"]].map(o=>`<option value="${o[0]}"${CFG.entStyle===o[0]?" selected":""}>${o[1]}</option>`).join("")}</select></label>
+    <label>Modal trading (jt Rp, 0 = nonaktif)${inp("rt-cap",CFG.capJt)}</label>
+    <label>Risiko per transaksi (% modal)${inp("rt-risk",CFG.riskPct)}</label>
     ${ck("rt-calert",CFG.confAlert)}Alert konfluensi 🎯 (skor ≥ 75, ≥ 4 sinyal)</label>
     ${ck("rt-hover",CFG.hoverPause)}Jeda tabel otomatis saat kursor di atasnya</label>
     ${ck("rt-dg",CFG.digest)}Digest Telegram berkala (konfluensi, momentum, lot besar)</label>
@@ -657,6 +712,7 @@ function view(){
   <div class="rt-tools">
     <label>🔍 Cari ticker <input id="rtq" type="text" placeholder="BBCA, GO" value="${E(RT.q)}"></label>
     <label>🔎 Detail saham <input id="rtsel" type="text" placeholder="BBRI" value="${E(RT.sel)}"></label>
+    <button class="ex-btn" data-act="rtRsiDiag" title="Salin daftar field RSI dari data Screener (untuk menyambungkan kolom RSI)">🔧 Cek field RSI</button>
     <button id="rtFreezeBtn" class="ex-btn${RT.frozen?" pri":""}" data-act="rtFreeze" title="Tahan tampilan tabel (data tetap direkam)">${RT.frozen?"▶ Lanjutkan tampilan":"⏸ Bekukan tampilan"}</button>
     <button class="ex-btn" data-act="rtColBtn">🧩 Atur kolom</button>
     <button class="ex-btn" data-act="rtDigestNow" title="Kirim ringkasan sekarang ke Telegram (perlu Bot Token & Chat ID di Pengaturan)">📨 Kirim digest sekarang</button>
@@ -664,6 +720,7 @@ function view(){
     <label>📈 Analisa sinyal per <select id="rtgb">${Object.keys(GB).map(k=>`<option value="${k}"${RT.gb===k?" selected":""}>${GB[k]}</option>`).join("")}</select></label>
     <label><input type="checkbox" id="rtmo"${RT.momOnly?" checked":""} style="width:auto"> Buy/Sell: hanya yang ada momentum</label>
     <label><input type="checkbox" id="rtdv"${RT.dvOnly?" checked":""} style="width:auto"> Buy/Sell: hanya yang ada divergensi</label>
+    <label><input type="checkbox" id="rten"${RT.enOnly?" checked":""} style="width:auto"> Buy/Sell: hanya 🟢 Layak dipantau</label>
     <label><input type="checkbox" id="rtsc"${RT.scOnly?" checked":""} style="width:auto"> Buy/Sell: hanya yang lolos screener</label>
     <label><input type="checkbox" id="rtbig"${RT.bigOnly?" checked":""} style="width:auto"> Tape: hanya lot besar</label>
   </div></div>
@@ -819,6 +876,12 @@ function dyn(){
   const BSall=bsRows(M,fq,true), BS=RT.dvSel?BSall.filter(a=>a.dv&&a.dv.c===RT.dvSel):BSall, bsB=BS.reduce((t,a)=>t+a.bv,0), bsS=BS.reduce((t,a)=>t+a.sv,0), bsT=bsB+bsS;
   const bsC=[{h:"Ticker",s:1,k:a=>a.tk,r:a=>tkc(a.tk)},{h:"Lolos screener",k:a=>a.sc.length,r:scCell},{h:"Harga",k:a=>a.last,r:a=>fpx(a.last)},{h:"Δ%",k:a=>a.chg,r:chg},
     {h:"RSI 7",k:a=>a.rsi?a.rsi[7]:null,r:a=>rsiCell(a,7)},{h:"RSI 14",k:a=>a.rsi?a.rsi[14]:null,r:a=>rsiCell(a,14)},{h:"RSI 21",k:a=>a.rsi?a.rsi[21]:null,r:a=>rsiCell(a,21)},
+    {h:"Skor Entry",k:a=>a.en.s,r:a=>`<span class="${a.en.c}" style="white-space:nowrap;cursor:help" title="${E("Skor "+a.en.s+"/100\n"+a.en.why.concat(a.en.bad).join("\n")+(a.en.noRsi?"\n(RSI tidak terbaca, skor tanpa RSI)":"")+"\nAlat bantu, bukan rekomendasi beli. Tentukan level entry & stop loss dari chart.")}"><b>${a.en.s}</b> ${a.en.t}</span>`},
+    {h:"Entry (ref)",k:a=>a.en.lv?a.en.lv.entry:null,r:a=>a.en.lv?`<span title="${E("Entry referensi = lebih rendah antara harga sekarang dan rata² HAKA."+(a.en.lv.wait?" Harga sekarang >1% di atas rata² HAKA: pertimbangkan limit order menunggu pullback, jangan kejar.":""))}"><b>${fpx(a.en.lv.entry)}</b>${a.en.lv.wait?" ⏳":""}</span>`:"-"},
+    {h:"Stop loss",k:a=>a.en.lv?a.en.lv.stop:null,r:a=>a.en.lv?`<span class="ex-dn" title="${E("Di bawah low jendela "+CFG.accWin+" menit"+(a.en.lv.lo?" ("+fpx(a.en.lv.lo)+")":"")+", jarak dibatasi sesuai gaya "+ENT_P[a.en.st].n+". Sesuaikan dengan support di chart.")}">${fpx(a.en.lv.stop)} <span class="ex-mut">(−${a.en.lv.risk.toFixed(1)}%)</span></span>`:"-"},
+    {h:"Target",k:a=>a.en.lv?a.en.lv.target:null,r:a=>a.en.lv?`<span class="ex-up" title="Entry + ${a.en.lv.rr}× risiko (R:R 1:${a.en.lv.rr})">${fpx(a.en.lv.target)} <span class="ex-mut">(R:R 1:${a.en.lv.rr})</span></span>`:"-"},
+    {h:"Lot disarankan",k:a=>a.en.lv&&a.en.lv.lots!=null?a.en.lv.lots:null,r:a=>a.en.lv&&a.en.lv.lots!=null?`<span title="${E("Risiko "+CFG.riskPct+"% dari modal Rp "+CFG.capJt+" jt per transaksi; maks seluruh modal. Rp "+fv(a.en.lv.lots*a.en.lv.entry*100)+" untuk posisi ini.")}">${fpx(a.en.lv.lots)} lot</span>`:`<span class="ex-mut" title="Isi modal di pengaturan (Ukuran posisi)">-</span>`},
+    {h:"Rata² HAKA",k:a=>a.bl?a.bv/(a.bl*100):null,r:a=>a.bl?`<span title="Harga rata-rata pembelian agresif (HAKA) di jendela ini: patokan area akumulasi, bukan level entry pasti">${fpx(Math.round(a.bv/(a.bl*100)))}</span>`:"-"},
     {h:"Buy (HAKA)",k:a=>a.bv,r:a=>`<span class="ex-up">${fv(a.bv)}</span>`},{h:"Sell (HAKI)",k:a=>a.sv,r:a=>`<span class="ex-dn">${fv(a.sv)}</span>`},
     {h:"Net",k:a=>a.net,r:a=>`<span class="${a.net>=0?"ex-up":"ex-dn"}">${fv(a.net)}</span>`},
     {h:"% Buy",k:a=>a.pb,r:a=>`<span class="${a.pb>=50?"ex-up":"ex-dn"}">${pc1(a.pb)}</span>`},{h:"% Sell",k:a=>a.ps,r:a=>pc1(a.ps)},{h:"Komposisi",r:stack},{h:"Δ% Buy (2m vs 5m)",k:a=>a.ac?a.ac.d:null,r:a=>a.ac&&a.ac.d!=null?`<span class="${a.ac.d>=0?"ex-up":"ex-dn"}" title="%Buy 2 menit terakhir ${a.ac.pbR==null?"-":a.ac.pbR.toFixed(0)}% vs 5 menit sebelumnya ${a.ac.pbB==null?"-":a.ac.pbB.toFixed(0)}%">${a.ac.d>=0?"+":"−"}${Math.abs(a.ac.d).toFixed(0)} pp</span>`:"-"},
@@ -859,7 +922,7 @@ function dyn(){
   <div class="ex-card"><h3>🧲 Terakumulasi (${CFG.accWin} menit terakhir)</h3>${stbl("rta",aC,A,"Belum ada saham yang memenuhi syarat akumulasi.")}</div>
   <div class="ex-card"><h3>⚖️ Akumulasi Buy vs Sell per emiten (${bsHead}, ${BS.length} saham)</h3>
     <div class="ex-chips"><span class="ex-chip">Total Buy <span class="ex-up">${fv(bsB)}</span> (${bsT?(bsB/bsT*100).toFixed(1):"0.0"}%)</span><span class="ex-chip">Total Sell <span class="ex-dn">${fv(bsS)}</span> (${bsT?(bsS/bsT*100).toFixed(1):"0.0"}%)</span>${["H","D","P"].map(c=>{ const n=BSall.filter(a=>a.dv&&a.dv.c===c).length, t=c==="H"?"🕵 Akumulasi tersembunyi":c==="D"?"⚠ Distribusi":"🧱 Penyerapan jual", on=RT.dvSel===c; return n||on?`<span class="ex-chip" data-rt-dv="${c}" style="cursor:pointer${on?";outline:2px solid #3b82f6;font-weight:700":""}" title="${on?"Klik lagi untuk tampilkan semua":"Klik untuk filter tabel hanya "+t}">${t}: ${n}${on?" ✕":""}</span>`:""; }).join("")}</div>
-    ${stbl("rtbs",bsC,BS,"Belum ada transaksi.",{max:100})}<div class="ex-mut" style="margin-top:6px">Buy = transaksi HAKA (pembeli agresif), Sell = HAKI (penjual agresif); % dihitung dari nilai (Rp) dan lot. Pilih jendela atau akumulasi sejak Mulai di kotak "Buy/Sell" di atas (mode sejak Mulai tersimpan saat refresh, reset saat hari bursa berganti, dan tidak terkena filter min lot). Hijau pada bar = porsi Buy, merah = porsi Sell. Sisi bertanda ~ di tape adalah tebakan tick-rule. "Momentum" = %Buy 2 menit terakhir vs 5 menit sebelumnya: 🚀 bila naik ≥ 15 poin ke ≥ 60% dengan tape ≥ 1,5× lebih cepat dan net beli berarti, 🔻 kebalikannya; hanya aktif setelah ≥ 7 menit data terkumpul. Tape × = kecepatan transaksi 2 menit terakhir ÷ rata-rata 5 menit sebelumnya. Tren = %Buy per menit 10 menit terakhir. "Divergensi" = indikasi harga vs aliran (🕵 net beli besar tapi harga datar/turun, ⚠ harga naik tapi net jual besar, 🧱 banyak HAKI tapi harga bertahan; hanya heuristik, bukan kepastian). "Lolos screener" = hasil Smart Pick (nama sinyal), Trend Bullish, Keyakinan Tinggi, dan Watchlist/Posisi untuk saham itu; arahkan kursor ke chip untuk nama lengkap. Top 3 broker = 3 broker dengan total nilai beli/jual terbesar di saham itu (kedua sisi transaksi, seperti broker summary; arahkan kursor untuk porsinya); "-" berarti sumber data tidak membawa kode broker.</div></div>
+    ${stbl("rtbs",bsC,BS,"Belum ada transaksi.",{max:100})}<div class="ex-mut" style="margin-top:6px;line-height:1.55">🎯 <b>Skor Entry</b> menggabungkan aliran, screener, divergensi, dan RSI menurut gaya <b>${ENT_P[entStyle()].n}</b> (otomatis ikut preset). <b>Entry/Stop/Target</b> dihitung dari rata² HAKA dan low jendela ${CFG.accWin} menit sebagai perkiraan awal, bukan pengganti support/resistance di chart. <b>Lot disarankan</b> = (modal × risiko%) ÷ jarak stop, hanya muncul bila modal diisi di pengaturan. Sinyal 🟢 tercatat ke hit-rate: ubah "Analisa sinyal per" ke <i>skor entry</i> atau <i>RSI 14 saat sinyal</i> untuk menguji apakah skornya memang berguna. Alat bantu, bukan rekomendasi beli.</div><div class="ex-mut" style="margin-top:6px">Buy = transaksi HAKA (pembeli agresif), Sell = HAKI (penjual agresif); % dihitung dari nilai (Rp) dan lot. Pilih jendela atau akumulasi sejak Mulai di kotak "Buy/Sell" di atas (mode sejak Mulai tersimpan saat refresh, reset saat hari bursa berganti, dan tidak terkena filter min lot). Hijau pada bar = porsi Buy, merah = porsi Sell. Sisi bertanda ~ di tape adalah tebakan tick-rule. "Momentum" = %Buy 2 menit terakhir vs 5 menit sebelumnya: 🚀 bila naik ≥ 15 poin ke ≥ 60% dengan tape ≥ 1,5× lebih cepat dan net beli berarti, 🔻 kebalikannya; hanya aktif setelah ≥ 7 menit data terkumpul. Tape × = kecepatan transaksi 2 menit terakhir ÷ rata-rata 5 menit sebelumnya. Tren = %Buy per menit 10 menit terakhir. "Divergensi" = indikasi harga vs aliran (🕵 net beli besar tapi harga datar/turun, ⚠ harga naik tapi net jual besar, 🧱 banyak HAKI tapi harga bertahan; hanya heuristik, bukan kepastian). "Lolos screener" = hasil Smart Pick (nama sinyal), Trend Bullish, Keyakinan Tinggi, dan Watchlist/Posisi untuk saham itu; arahkan kursor ke chip untuk nama lengkap. Top 3 broker = 3 broker dengan total nilai beli/jual terbesar di saham itu (kedua sisi transaksi, seperti broker summary; arahkan kursor untuk porsinya); "-" berarti sumber data tidak membawa kode broker.</div></div>
   <div class="ex-card"><h3>🐘 Lot besar (${CFG.accWin} menit terakhir) — ${bigs.length} transaksi${cnt3||cnt2?` (${cnt3} mega, ${cnt2} jumbo)`:""}</h3>
     <div class="ex-mut rt-leg" style="margin-bottom:6px"><span class="rt-l1" style="background:rgba(250,204,21,.3)">🐘 BESAR ≥ batas</span><span style="background:rgba(251,146,60,.4)">🐘🐘 JUMBO ≥ 3×</span><span style="background:rgba(239,68,68,.5)">🐘🐘🐘 MEGA ≥ 10×</span> Batas = "Transaksi besar ≥ (jt Rp)" × pengali likuiditas, atau "Lot besar ≥" bila diisi.</div>
     ${stbl("rtb",trCols,bigs,"Belum ada transaksi lot besar di jendela ini.",{max:60,cls:x=>tcls(x.tier)})}</div>
@@ -883,10 +946,11 @@ function dyn(){
   RT.mkt=M; RT.mktCols=mC;
 }
 /* ---------- riwayat sinyal & hit-rate ---------- */
-const TY={H:"🔥 HAKA",A:"🧲 Akumulasi",B:"🐋 Bandar",L:"🐘 Lot besar",M:"🚀 Momentum",C:"🎯 Konfluensi"};
+const TY={H:"🔥 HAKA",A:"🧲 Akumulasi",B:"🐋 Bandar",L:"🐘 Lot besar",M:"🚀 Momentum",C:"🎯 Konfluensi",E:"🟢 Skor Entry"};
 const sigs=()=>{ const l=LS("rt_sig",[]); return Array.isArray(l)?l:[]; };
-function rec(ty,tk,px,info){
-  const L=sigs(); L.push({ty,tk,ts:Date.now(),px:px||RT.last[tk]||0,info,pr:presetName(),p5:null,p15:null,p30:null});
+function rec(ty,tk,px,info,ex){
+  let r14=null; try{ const q=rsiOf(tk)[14]; if(q!=null) r14=Math.round(q); }catch(e){}
+  const L=sigs(); L.push(Object.assign({ty,tk,ts:Date.now(),px:px||RT.last[tk]||0,info,pr:presetName(),r14,p5:null,p15:null,p30:null},ex||{}));
   if(L.length>2000) L.splice(0,L.length-2000); SV("rt_sig",L);
 }
 function evalSigs(){            // harga +15/+30 menit diambil dari transaksi terakhir yang masuk (maks 3 menit lalu)
@@ -904,10 +968,10 @@ function wilson(w,n){ if(!n) return [0,0]; const z=1.96,p=w/n,d=1+z*z/n,c=p+z*z/
 const retAt=(g,k)=>{ const v=g[k]; return (typeof v==="number"&&g.px)?(v-g.px)/g.px*100:null; };
 const median=a=>{ if(!a.length) return null; const t=a.slice().sort((x,y)=>x-y), m=t.length>>1; return t.length%2?t[m]:(t[m-1]+t[m])/2; };
 const avg=a=>a.length?a.reduce((x,y)=>x+y,0)/a.length:null;
-const GB={ty:"jenis sinyal",pr:"preset",typr:"jenis × preset",hr:"jam (WIB)",tk:"saham"};
+const GB={ty:"jenis sinyal",pr:"preset",typr:"jenis × preset",hr:"jam (WIB)",tk:"saham",sk:"skor entry",rs:"RSI 14 saat sinyal",st:"gaya entry"};
 function hitRows(){
   const L=sigs(), m=new Map(), cost=+CFG.cost||0;
-  const key=g=>RT.gb==="pr"?(g.pr||"Kustom"):RT.gb==="typr"?(TY[g.ty]||g.ty)+" · "+(g.pr||"Kustom"):RT.gb==="hr"?String(new Date(g.ts+7*3600000).getUTCHours()).padStart(2,"0")+":00":RT.gb==="tk"?g.tk:(TY[g.ty]||g.ty);
+  const key=g=>RT.gb==="pr"?(g.pr||"Kustom"):RT.gb==="typr"?(TY[g.ty]||g.ty)+" · "+(g.pr||"Kustom"):RT.gb==="hr"?String(new Date(g.ts+7*3600000).getUTCHours()).padStart(2,"0")+":00":RT.gb==="tk"?g.tk:RT.gb==="sk"?(g.ty==="E"?(g.sc>=80?"Skor ≥ 80":g.sc>=70?"Skor 70–79":"Skor < 70"):"(bukan sinyal entry)"):RT.gb==="rs"?(g.r14==null?"RSI tak tercatat":g.r14<30?"RSI < 30":g.r14<50?"RSI 30–49":g.r14<70?"RSI 50–69":"RSI ≥ 70"):RT.gb==="st"?(g.st?ENT_P[g.st].n:"(bukan sinyal entry)"):(TY[g.ty]||g.ty);
   L.forEach(g=>{ const k=key(g); let a=m.get(k); if(!a){ a={k,n:0,r5:[],r15:[],r30:[]}; m.set(k,a); } a.n++;
     [["r5","p5"],["r15","p15"],["r30","p30"]].forEach(([x,p])=>{ const r=retAt(g,p); if(r!==null) a[x].push(r); }); });
   const hit=r=>r.length?r.filter(v=>v>0).length/r.length:null, out=[];
@@ -974,6 +1038,7 @@ function digestText(kind){
   const lines=[`📊 <b>Digest Running Trade</b> · ${hh} WIB (${kind})`,`Jendela ${CFG.accWin} menit · ${M.length} saham · Buy ${fv(tb)} / Sell ${fv(ts)} (${tb+ts?Math.round(tb/(tb+ts)*100):0}% Buy)`,""];
   lines.push(`🎯 <b>Konfluensi teratas</b>`);
   if(CF.length) CF.forEach((r,i)=>lines.push(`${i+1}. <b>${E(r.tk)}</b> skor ${r.score} (${r.n} sinyal) · ${fpx(r.last)} ${pctS(r.chg)} · net ${fv(r.net)} · ${Math.round(r.pb)}% Buy`)); else lines.push("— belum ada saham dengan "+CFG.confMin+"+ sinyal");
+  try{ const et=entryTop(Math.min(n,5)); if(et.length){ lines.push("","🟢 <b>Skor Entry teratas</b>"); et.forEach(a=>lines.push(`• <b>${E(a.tk)}</b> skor ${a.en.s} · ${fpx(a.last)} · entry ≈ ${fpx(a.en.lv.entry)}, SL ${fpx(a.en.lv.stop)}, TP ${fpx(a.en.lv.target)}`)); } }catch(e){}
   if(up.length) lines.push("","🚀 <b>Mulai diborong:</b> "+up.slice(0,5).map(o=>`${E(o.tk)} (+${Math.round(o.a.d)} pp, ${o.a.spike.toFixed(1)}×)`).join(", "));
   if(dn.length) lines.push("🔻 <b>Mulai dilepas:</b> "+dn.slice(0,5).map(o=>E(o.tk)).join(", "));
   if(bg.length){ lines.push("","🐘 <b>Lot besar terbesar</b>"); bg.slice(0,3).forEach(o=>lines.push(`• ${E(o.x.tk)} ${fpx(o.x.lot)} lot @ ${fpx(o.x.px)} (${fv(o.v)}) ${o.x.side==="B"?"HAKA":"HAKI"}${o.x.side==="B"&&o.x.buyer?" · "+E(o.x.buyer):o.x.side==="S"&&o.x.seller?" · "+E(o.x.seller):""}`)); }
@@ -1034,6 +1099,14 @@ function alerts(){
       rec("C",r.tk,r.last,`skor ${r.score}: ${nm}`); fire(`🎯 ${r.tk} konfluensi skor ${r.score} (${r.n} sinyal: ${nm})${r.pen.length?" — "+r.pen.join(", "):""}`);
     });
   }
+  if(CFG.entAlert){
+    bsRows(marketList(),a=>a.bv-a.sv>0&&a.bv/Math.max(1,a.bv+a.sv)>=.55,true,true).filter(a=>a.en.k==="G"&&a.en.lv).forEach(a=>{
+      const k="E"+a.tk; if(now-(RT.flag[k]||0)<15*60000) return; RT.flag[k]=now;
+      const e=a.en, l=e.lv, r=a.rsi||{}, rs=v=>v==null?"-":v.toFixed(0);
+      rec("E",a.tk,a.last,`skor ${e.s} (${ENT_P[e.st].n}), entry ${fpx(l.entry)}, SL ${fpx(l.stop)}, TP ${fpx(l.target)}`,{sc:e.s,st:e.st});
+      fire(`🟢 ${a.tk} Skor Entry ${e.s}/100 (${ENT_P[e.st].n}) · harga ${fpx(a.last)} · RSI 7/14/21: ${rs(r[7])}/${rs(r[14])}/${rs(r[21])} · entry ≈ ${fpx(l.entry)}${l.wait?" (tunggu pullback)":""}, stop ${fpx(l.stop)} (−${l.risk.toFixed(1)}%), target ${fpx(l.target)}${l.lots!=null?", ±"+fpx(l.lots)+" lot":""} — alat bantu, cek chart dulu`);
+    });
+  }
   RT.bigQ.splice(0).forEach(x=>{                       // lot JUMBO/MEGA: cooldown 2 menit per ticker+sisi; hanya sisi HAKA yang dicatat ke hit-rate
     if(CFG.minLot&&x.lot<CFG.minLot) return; if(!pxOk(x.tk)) return;
     const k="L"+x.tk+x.side; if(now-(RT.flag[k]||0)<120000) return; RT.flag[k]=now;
@@ -1048,7 +1121,7 @@ function readCfg(){
   const g=id=>document.getElementById(id); if(!g("rt-url")) return;
   const n=(id,d)=>{ const v=parseFloat(g(id).value); return isNaN(v)?d:v; };
   Object.assign(CFG,{ws:g("rt-ws").checked,rest:g("rt-rest").checked,tick:g("rt-tick").checked,tg:g("rt-tg").checked,bn:g("rt-bn").checked,snd:g("rt-snd").checked,
-    feed:g("rt-feed").checked,rejQuote:g("rt-quote").checked,bigAlert:g("rt-balert").checked,momAlert:g("rt-malert").checked,confAlert:g("rt-calert").checked,hoverPause:g("rt-hover").checked,cost:Math.max(0,n("rt-cost",0.4)),digest:g("rt-dg").checked,digestMin:Math.max(5,n("rt-dgmin",30)),digestN:Math.max(1,Math.min(10,n("rt-dgn",5))),digestClose:g("rt-dgc").checked,confMin:Math.max(1,Math.min(8,n("rt-cmin",3))),
+    feed:g("rt-feed").checked,rejQuote:g("rt-quote").checked,bigAlert:g("rt-balert").checked,momAlert:g("rt-malert").checked,confAlert:g("rt-calert").checked,hoverPause:g("rt-hover").checked,cost:Math.max(0,n("rt-cost",0.4)),digest:g("rt-dg").checked,digestMin:Math.max(5,n("rt-dgmin",30)),digestN:Math.max(1,Math.min(10,n("rt-dgn",5))),digestClose:g("rt-dgc").checked,confMin:Math.max(1,Math.min(8,n("rt-cmin",3))),entAlert:g("rt-ealert").checked,entStyle:g("rt-estyle").value,capJt:Math.max(0,n("rt-cap",0)),riskPct:Math.max(0.1,Math.min(5,n("rt-risk",1))),
     pollSec:n("rt-poll",3),auto:g("rt-auto").checked,adapt:g("rt-adapt").checked,perPoll:n("rt-pp",5),refAdvM:n("rt-ref",20),tickers:g("rt-tickers").value.trim(),hakaWin:n("rt-hw",5),accWin:n("rt-aw",15),hakaMinJt:n("rt-hmin",300),
     hakaRatio:n("rt-hr",65),bigJt:n("rt-big",50),accMinJt:n("rt-amin",200),accRatio:n("rt-ar",55),brkMinJt:n("rt-bmin",100),minTrades:n("rt-mt",10),onlyOwn:g("rt-own").checked,onlyBull:g("rt-bull").checked,url:g("rt-url").value.trim()||DEF_URL,
     minLot:n("rt-minlot",0),bigLot:n("rt-biglot",0),hakaMinLot:n("rt-hlot",0),accMinLot:n("rt-alot",0),brkMinLot:n("rt-blot",0),pxMin:n("rt-pmin",0),pxMax:n("rt-pmax",0)});
@@ -1079,6 +1152,13 @@ Object.keys(PRESETS).forEach(k=>X.act("rtPre_"+k,()=>{ readCfg(); applyPreset(PR
 X.act("rtPreSave",()=>{ readCfg(); const v={}; PRE_KEYS.forEach(k=>{ v[k]=CFG[k]; }); SV("rt_preset_user",v); X.repaint(); dyn(); X.toast("Pengaturan disimpan sebagai Preset saya","up"); });
 X.act("rtPreUser",()=>{ const v=userPre(); if(!v){ X.toast("Belum ada Preset saya — atur dulu, lalu klik ➕ Simpan pengaturan ini","down"); return; } applyPreset(v,"💾 Preset saya"); });
 X.act("rtCal",()=>{ calRun(); });
+X.act("rtRsiDiag",()=>{
+  const tk=RT.sel||((RT.mkt&&RT.mkt[0])?RT.mkt[0].tk:"BBCA"); let r=null; try{ r=X.stk(tk); }catch(e){}
+  if(!r){ X.toast("X.stk("+tk+") tidak mengembalikan data. Buka tab Screener/muat data saham dulu.","down"); return; }
+  const rk=Object.keys(r).filter(k=>/rsi/i.test(k)).map(k=>k+" = "+JSON.stringify(r[k])), keys=Object.keys(r);
+  const nested=[]; keys.forEach(k=>{ const v=r[k]; if(v&&typeof v==="object"&&!Array.isArray(v)) Object.keys(v).filter(k2=>/rsi/i.test(k2)).forEach(k2=>nested.push(k+"."+k2+" = "+JSON.stringify(v[k2]))); });
+  copy("Ticker: "+tk+"\nField RSI: "+(rk.concat(nested).join("; ")||"(tidak ada field bernama rsi)")+"\nSemua field: "+keys.join(", "),"Info field RSI disalin — tempel ke chat");
+});
 X.act("rtDigestNow",()=>{ sendDigest("manual"); });
 X.act("rtFreeze",()=>{
   RT.frozen=!RT.frozen; const b=document.getElementById("rtFreezeBtn");
@@ -1133,6 +1213,7 @@ document.addEventListener("change",e=>{
   else if(t.id==="rtbig"){ RT.bigOnly=t.checked; dyn(); }
   else if(t.id==="rtmo"){ RT.momOnly=t.checked; dyn(); }
   else if(t.id==="rtdv"){ RT.dvOnly=t.checked; dyn(); }
+  else if(t.id==="rten"){ RT.enOnly=t.checked; dyn(); }
   else if(t.id==="rtsc"){ RT.scOnly=t.checked; dyn(); }
   else if(t.id==="rtgb"){ RT.gb=GB[t.value]?t.value:"ty"; SV("rt_gb",RT.gb); dyn(); }
   else if(t.id==="rtmode"){ RT.mode=t.value==="cum"?"cum":"win"; SV("rt_mode",RT.mode); dyn(); }
