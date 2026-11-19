@@ -25,10 +25,10 @@ if(!X){ console.warn("[running-trade] ExtrasAPI tidak ditemukan — muat extras.
 const {E,LS,SV}=X;
 const DEF_URL="https://exodus.stockbit.com/order-trade/running-trade?sort=DESC&limit=80&order_by=RUNNING_TRADE_ORDER_BY_TIME";
 const CFG=Object.assign({ws:true,rest:false,url:DEF_URL,pollSec:3,tickers:"",hakaWin:5,accWin:15,
-  hakaMinJt:300,hakaRatio:65,bigJt:50,accMinJt:200,accRatio:55,brkMinJt:100,minTrades:10,onlyOwn:false,onlyBull:false,tg:false,tick:true,auto:true,perPoll:5,adapt:true,refAdvM:20,bn:false,snd:false,feed:true,minLot:0,bigLot:0,hakaMinLot:0,accMinLot:0,brkMinLot:0,pxMin:0,pxMax:0,rejQuote:true,bigAlert:true,momAlert:true,confMin:3,confAlert:true},LS("rt_cfg",{}));
+  hakaMinJt:300,hakaRatio:65,bigJt:50,accMinJt:200,accRatio:55,brkMinJt:100,minTrades:10,onlyOwn:false,onlyBull:false,tg:false,tick:true,auto:true,perPoll:5,adapt:true,refAdvM:20,bn:false,snd:false,feed:true,minLot:0,bigLot:0,hakaMinLot:0,accMinLot:0,brkMinLot:0,pxMin:0,pxMax:0,rejQuote:true,bigAlert:true,momAlert:true,confMin:3,confAlert:true,hoverPause:true,cost:0.4,digest:false,digestMin:30,digestN:5,digestClose:true},LS("rt_cfg",{}));
 // URL lama tersimpan di localStorage memakai order_by salah (RUN_TRADE_...): perbaiki otomatis. trade_number dibuang karena itu kursor tetap (data basi).
 CFG.url=String(CFG.url||DEF_URL).replace("RUN_TRADE_ORDER_BY_TIME","RUNNING_TRADE_ORDER_BY_TIME").replace(/([?&])trade_number=\d*&?/,"$1").replace(/[?&]$/,"");
-const RT={on:false,lastTs:{},first:[],diagOpen:false,trades:[],seen:new Set(),fp:new Map(),bigQ:[],sort:LS("rt_sort",{}),q:"",sel:"",bigOnly:false,gen:0,mm:{},restRaw:[],restKeys:[],dvOnly:false,momOnly:false,scOnly:false,cum:new Map(),cumDay:"",mode:LS("rt_mode","win"),raw:new Map(),last:{},lastSide:{},flag:{},samples:[],busy:false,poll:null,rot:0,dirty:0,saved:0,
+const RT={on:false,lastTs:{},first:[],diagOpen:false,trades:[],seen:new Set(),fp:new Map(),bigQ:[],sort:LS("rt_sort",{}),q:"",sel:"",bigOnly:false,gen:0,mm:{},gb:LS("rt_gb","ty"),frozen:false,hide:LS("rt_cols",{}),colReg:{},cal:LS("rt_cal",{}),restRaw:[],restKeys:[],dvOnly:false,momOnly:false,scOnly:false,cum:new Map(),cumDay:"",mode:LS("rt_mode","win"),raw:new Map(),last:{},lastSide:{},flag:{},samples:[],busy:false,poll:null,rot:0,dirty:0,saved:0,
   st:{quote:0,dup:0,nw:0,nr:0,restored:0,symOk:0,symBad:0,watch:0,frames:0,parsed:0,unparsed:0,trades:0,est:0,brk:0,rest:0,restErr:null,restAt:0,startAt:0}};
 
 /* ---------- util ---------- */
@@ -441,6 +441,24 @@ function foreignRaw(){
 
 /* ---------- cache hasil daftar berat (dyn, alert, dan konfluensi memakai hasil yang sama dalam 0,7 detik) ---------- */
 const memo=(k,f)=>{ const e=RT.mm[k], n=Date.now(); if(e&&n-e.t<700&&e.d===RT.dirty) return e.v; const v=f(); RT.mm[k]={t:n,d:RT.dirty,v}; return v; };   // batal otomatis bila ada transaksi baru
+// order berulang: lot sama (>= 50) dari broker yang sama berulang >= 6 kali dengan nilai total >= 2x batas lot besar (indikasi iceberg/algo/order dipecah)
+function repeatRaw(){
+  const now=Date.now(), from=now-CFG.accWin*60000, m=new Map(), ml=Math.max(50,CFG.minLot||0), own=X.ownTickers(), out=[];
+  for(const x of RT.trades){
+    if(x.ts<from||x.lot<ml) continue;
+    const br=x.side==="B"?x.buyer:x.seller, k=x.tk+"|"+x.side+"|"+x.lot+"|"+(br||""); let a=m.get(k);
+    if(!a){ a={tk:x.tk,side:x.side,lot:x.lot,br:br||"",n:0,v:0,t:[],lo:x.px,hi:x.px}; m.set(k,a); }
+    a.n++; a.v+=x.px*x.lot*100; a.t.push(x.ts); if(x.px<a.lo) a.lo=x.px; if(x.px>a.hi) a.hi=x.px;
+  }
+  m.forEach(a=>{
+    if(a.n<6||a.v<thr(a.tk,CFG.bigJt)*2||!pxOk(a.tk)||(CFG.onlyOwn&&!own.has(a.tk))) return;
+    const t=a.t.slice().sort((p,q)=>p-q), iv=[]; for(let i=1;i<t.length;i++) iv.push((t[i]-t[i-1])/1000);
+    const mean=avg(iv), sd=Math.sqrt(avg(iv.map(d=>(d-mean)*(d-mean)))), cv=mean>0?sd/mean:9;
+    out.push({tk:a.tk,side:a.side,lot:a.lot,br:a.br,n:a.n,tl:a.n*a.lot,v:a.v,lo:a.lo,hi:a.hi,mean,cv,reg:cv<0.6,span:(t[t.length-1]-t[0])/1000,age:Math.round((now-t[t.length-1])/1000)});
+  });
+  return out.sort((p,q)=>q.v-p.v).slice(0,40);
+}
+const repeatList=()=>memo("r",repeatRaw);
 const hakaList=()=>memo("h",hakaRaw), accList=()=>memo("a",accRaw), marketList=()=>memo("m",marketRaw), brokerList=()=>memo("b",brokerRaw), foreignList=()=>memo("f",foreignRaw), accelMap=()=>memo("x",accelRaw);
 
 /* ---------- skor konfluensi: gabungan sinyal per saham (jendela akumulasi) ---------- */
@@ -487,6 +505,60 @@ function applyPreset(v,nama){
   RT.mm={}; SV("rt_cfg",CFG); applyPoll(); X.repaint(); dyn(); X.toast("Preset "+nama+" diterapkan","up");
 }
 
+/* ---------- kalibrasi dengan Stockbit & pengaturan kolom ---------- */
+function parseRp(t){            // "8,07 M" (miliar), "500 jt", "250 rb", "1.250.000.000", "1,2T"
+  if(t==null) return null; const s0=String(t).toLowerCase().replace(/rp/g,"").replace(/\s+/g,""); const m=s0.match(/^([\d.,]+)(t|m|b|jt|j|rb|k)?$/); if(!m) return null;
+  let num=m[1]; const u=m[2]||"";
+  if(num.indexOf(".")>=0&&num.indexOf(",")>=0){ const dec=num.lastIndexOf(".")>num.lastIndexOf(",")?".":",", th=dec==="."?",":"."; num=num.split(th).join("").replace(dec,"."); }
+  else if(num.indexOf(",")>=0||num.indexOf(".")>=0){ const sep=num.indexOf(",")>=0?",":".", p=num.split(sep);
+    if(p.length>2||(!u&&p.slice(1).every(x=>x.length===3))) num=p.join(""); else num=p[0]+"."+p[1]; }
+  const v=parseFloat(num); if(isNaN(v)) return null;
+  return v*({t:1e12,m:1e9,b:1e9,jt:1e6,j:1e6,rb:1e3,k:1e3}[u]||1);
+}
+const parseLot=t=>{ const d=String(t==null?"":t).replace(/[^\d]/g,""); return d?parseInt(d,10):null; };
+function calRun(){
+  const out=document.getElementById("rtCalRes"); if(!out) return;
+  const say=m=>{ out.innerHTML=`<div class="ex-mut" style="margin-top:8px">${m}</div>`; };
+  const tk=String(RT.cal.tk||"").toUpperCase().replace(/[^A-Z]/g,""), win=RT.cal.win===undefined||RT.cal.win===""?15:+RT.cal.win;
+  const sb=parseRp(RT.cal.b), ss=parseRp(RT.cal.s), slb=parseLot(RT.cal.lb), sls=parseLot(RT.cal.ls);
+  if(!tk) return say("Isi ticker dulu.");
+  if(sb==null&&ss==null) return say("Isi nilai Buy dan/atau Sell dari Stockbit, contoh: 8,07 M, 500 jt, atau 1.250.000.000 (M = miliar).");
+  const now=Date.now(); let bv=0,sv=0,bl=0,sl=0,nt=0,est=0,nw=0,nr=0,t0=Infinity,has=false;
+  for(const x of RT.trades){ if(x.ts<t0) t0=x.ts; if(x.tk!==tk) continue; has=true; if(win>0&&x.ts>=now-win*60000){ const v=x.px*x.lot*100; if(x.side==="B"){ bv+=v; bl+=x.lot; } else { sv+=v; sl+=x.lot; } nt++; if(x.est) est++; if(x.src==="w") nw++; else nr++; } }
+  if(win===0){ const a=RT.cum.get(tk); if(a){ bv=a.bv; sv=a.sv; bl=a.bl; sl=a.sl; nt=a.nb+a.ns; } }
+  const spanMin=t0===Infinity?0:(now-t0)/60000, tot=bv+sv, both=sb!=null&&ss!=null, sbT=(sb||0)+(ss||0);
+  const pbO=tot?bv/tot*100:0, pbS=both&&sbT?sb/sbT*100:null;
+  const cell=(sv0,ov,fmt)=>{ if(sv0==null||!sv0) return "<td>-</td>"; const d=(ov-sv0)/sv0*100, a=Math.abs(d); return `<td><span class="${a<=5?"ex-up":a<=15?"":"ex-dn"}">${d>=0?"+":"−"}${a.toFixed(1)}%</span> <span class="ex-mut">(${ov>=sv0?"+":"−"}${fmt(Math.abs(ov-sv0))})</span></td>`; };
+  const row=(n,x,o,fmt)=>`<tr><td>${n}</td><td>${x==null?"-":fmt(x)}</td><td>${fmt(o)}</td>${cell(x,o,fmt)}</tr>`;
+  const fl=n=>fpx(Math.round(n));
+  let rows=row("Buy (nilai)",sb,bv,fv)+row("Sell (nilai)",ss,sv,fv);
+  if(both) rows+=row("Total nilai",sbT,tot,fv)+`<tr><td>% Buy</td><td>${pbS.toFixed(1)}%</td><td>${pbO.toFixed(1)}%</td><td><span class="${Math.abs(pbO-pbS)<=3?"ex-up":Math.abs(pbO-pbS)<=8?"":"ex-dn"}">${pbO-pbS>=0?"+":"−"}${Math.abs(pbO-pbS).toFixed(1)} poin</span></td></tr>`;
+  if(slb!=null) rows+=row("Lot buy",slb,bl,fl); if(sls!=null) rows+=row("Lot sell",sls,sl,fl);
+  const why=[];
+  if(!has) why.push(`Tidak ada transaksi ${tk} yang terekam sama sekali: cek ejaan ticker, aktifkan <b>Sertakan feed seluruh pasar</b>, atau pastikan sudah menekan ▶ Mulai.`);
+  if(win>0&&spanMin<win*0.95) why.push(`<b>Jendela belum penuh:</b> data terekam baru ${spanMin.toFixed(1)} menit dari ${win} menit, jadi angka aplikasi masih lebih kecil dan akan naik seiring waktu.`);
+  if(win===0) why.push("Mode <b>Sejak Mulai</b>: aplikasi hanya menghitung sejak ▶ Mulai ditekan (plus data yang dipulihkan), sedangkan Stockbit menghitung sejak pembukaan.");
+  const ratio=both&&sbT?tot/sbT:(sb!=null&&sb?bv/sb:(ss?sv/ss:1));
+  if(has&&ratio<0.9) why.push(`<b>Aplikasi menangkap ${Math.round((1-ratio)*100)}% lebih sedikit.</b> Kemungkinan: tarikan REST tidak sempat mengambil semua transaksi (feed seluruh pasar mati, atau saham ini di luar giliran ticker), WebSocket ekstensi terputus, atau jendela belum penuh.${CFG.feed?"":" Saat ini <b>feed seluruh pasar nonaktif</b>."}`);
+  if(has&&ratio>1.1) why.push(`<b>Aplikasi menghitung ${Math.round((ratio-1)*100)}% lebih banyak.</b> Kemungkinan: transaksi ganda dari WS+REST yang lolos dedup (${RT.st.dup} duplikat sudah dibuang), atau Stockbit memakai definisi lain (misalnya tidak menghitung pasar negosiasi).`);
+  if(both&&pbS!=null&&Math.abs(pbO-pbS)>5) why.push(nt&&est/nt>0.05?`<b>${Math.round(est/nt*100)}% transaksi bertanda ~</b> (sisi ditebak tick-rule): pembagian Buy/Sell bisa meleset. Pastikan sumber membawa sisi HAKA/HAKI.`:"Total mendekati tetapi pembagian Buy/Sell berbeda: definisi sisi Stockbit kemungkinan berbeda (misalnya agresor vs broker).");
+  const age=RT.lastTs[tk]?Math.round((now-RT.lastTs[tk])/1000):null;
+  if(RT.on&&has&&age!=null&&age>45&&RT.st.open!==false) why.push(`Transaksi ${tk} terakhir yang tertangkap ${age} detik lalu: data mungkin tertinggal.`);
+  if(CFG.minLot>0) why.push(`Catatan: kalibrasi ini mengabaikan filter lot, sedangkan tabel lain memakai <i>Min lot per transaksi</i> = ${fpx(CFG.minLot)}.`);
+  const okTot=both&&sbT&&Math.abs(ratio-1)<=0.05&&Math.abs(pbO-pbS)<=3;
+  const verdict=okTot?`<div class="ex-up" style="margin:8px 0"><b>✅ Cocok</b> — total dalam ±5% dan % Buy dalam ±3 poin.</div>`:(both?"":`<div class="ex-mut" style="margin:8px 0">Isi Buy <b>dan</b> Sell untuk membandingkan total dan % Buy.</div>`);
+  out.innerHTML=`<div class="ex-mut" style="margin-top:10px">${E(tk)} · ${win===0?"sejak Mulai":win+" menit terakhir"} · ${nt} transaksi di aplikasi${nt&&win>0?` (WS ${nw}, REST ${nr})`:""} · dihitung ${new Date(now).toLocaleTimeString("id-ID")}</div>
+    <div class="ex-wrap"><table class="ex-tbl"><thead><tr><th>Metrik</th><th>Stockbit</th><th>Aplikasi</th><th>Selisih (aplikasi vs Stockbit)</th></tr></thead><tbody>${rows}</tbody></table></div>${verdict}
+    ${why.length?`<div style="margin-top:6px;line-height:1.55"><b>Kemungkinan penyebab selisih</b><br>${why.map(w=>"▸ "+w).join("<br>")}</div>`:(okTot?"":`<div class="ex-mut">Tidak ada penyebab teknis yang terdeteksi; selisih kecil bisa berasal dari beda waktu pengambilan data.</div>`)}`;
+}
+const TBL_NAMES={rtrp:"🔁 Order berulang",rths:"📈 Hit-rate sinyal",rtbs:"⚖️ Buy vs Sell",rtm:"📊 Semua saham",rtb:"🐘 Lot besar",rtcf:"🎯 Konfluensi",rth:"🔥 HAKA",rta:"🧲 Terakumulasi",rtk:"🐋 Bandar",rtf:"🌍 Asing",rtt:"Transaksi terbaru"};
+function colPanel(){
+  const el=document.getElementById("rtColCard"); if(!el) return; const ids=Object.keys(TBL_NAMES).filter(i=>RT.colReg[i]);
+  el.innerHTML=`<h3>🧩 Atur kolom tampil</h3><div class="ex-mut">Centang kolom yang ingin ditampilkan (kolom pertama selalu tampil). Pengaturan tersimpan.</div>`+(ids.length?ids.map(id=>{ const hd=RT.hide[id]||[];
+    return `<div style="margin:10px 0"><b>${TBL_NAMES[id]}</b> <button class="ex-btn" data-rt-colall="${id}">Tampilkan semua</button>${id==="rtbs"?` <button class="ex-btn" data-rt-colcompact="1">Ringkas</button>`:""}
+      <div class="rt-tools" style="margin-top:4px">${RT.colReg[id].map((h,i)=>i===0?"":`<label><input type="checkbox" id="rtcol_${id}_${i}"${hd.indexOf(h)<0?" checked":""} style="width:auto"> ${E(h)}</label>`).join("")}</div></div>`; }).join(""):`<div class="ex-mut">Tabel belum terbentuk — tekan ▶ Mulai dulu.</div>`);
+}
+
 /* ---------- tampilan ---------- */
 (function css(){
   if(document.getElementById("rt-css")) return;
@@ -499,29 +571,15 @@ function applyPreset(v,nama){
    +"#rtDyn .rt-l1>td:first-child{background-image:linear-gradient(rgba(250,204,21,.16),rgba(250,204,21,.16))}#rtDyn .rt-l2>td:first-child{background-image:linear-gradient(rgba(251,146,60,.28),rgba(251,146,60,.28))}#rtDyn .rt-l3>td:first-child{background-image:linear-gradient(rgba(239,68,68,.36),rgba(239,68,68,.36))}"
    +"#exPage,#exPage>*,#rtDyn,#rtDyn>.ex-card{min-width:0;max-width:100%;box-sizing:border-box}#exPage .ex-grid>*{min-width:0}#rtDyn .ex-wrap{max-width:100%}"
    +"#exPage .ex-grid input,#exPage .ex-grid select{max-width:100%;box-sizing:border-box}"
-   +"#exPage .ex-grid{display:grid!important;grid-template-columns:repeat(auto-fill,minmax(min(100%,190px),1fr))!important;gap:10px 12px;width:100%;max-width:100%}"
-   +"#exPage .ex-grid .ex-wide{grid-column:1/-1}#exPage .ex-card .ex-mut,#exPage .ex-card h3{overflow-wrap:anywhere;word-break:break-word;white-space:normal}"
-   +"#exPage .ex-grid label{display:flex;flex-direction:column;gap:4px;min-width:0}#exPage .ex-grid label:has(>input[type=checkbox]){flex-direction:row;align-items:flex-start}"
-   +".rt-scn{cursor:pointer;font-size:12px;font-weight:600;padding:1px 10px;border-radius:999px;white-space:nowrap}.rt-scn:hover{text-decoration:underline}"
-   +"#rtScPop{position:fixed;z-index:99999;min-width:220px;max-width:min(340px,92vw);padding:10px 12px;border-radius:10px;border:1px solid rgba(128,128,128,.45);background:var(--rt-bg,Canvas);color:CanvasText;box-shadow:0 8px 28px rgba(0,0,0,.35);font-size:13px;line-height:1.45}"
-   +"#rtScPop .rt-pt{display:flex;justify-content:space-between;align-items:center;gap:10px;margin-bottom:6px}#rtScPop .rt-pi{padding:4px 0;border-top:1px solid rgba(128,128,128,.25)}#rtScPop .rt-ps{font-size:11px;opacity:.65}#rtScPop button{cursor:pointer}"
    +".rt-xs{overflow-x:auto;overflow-y:hidden;height:14px;margin-bottom:2px}"
    +".rt-tools input[type=text]{width:150px}.rt-leg span{display:inline-block;padding:1px 8px;border-radius:6px;margin-right:6px}";
   document.head.appendChild(s);
 })();
-function fitWidth(){
-  try{
-    for(let el=document.getElementById("exPage");el&&el!==document.documentElement;el=el.parentElement){
-      el.style.minWidth="0"; el.style.maxWidth="100%"; if(el===document.body) break;
-    }
-  }catch(e){}
-}
 const ck=(id,v)=>`<label style="flex-direction:row;align-items:center;gap:6px"><input type="checkbox" id="${id}"${v?" checked":""} style="width:auto"> `;
 function view(){
-  setTimeout(fitWidth,0);
   const sel=(id,arr,v)=>`<select id="${id}">${arr.map(n=>`<option value="${n}"${+v===n?" selected":""}>${n} menit</option>`).join("")}</select>`;
   const inp=(id,v,t)=>`<input id="${id}" ${t||"type=\"number\""} value="${E(v)}">`;
-  return `<div class="ex-card"><h3>⚡ Running Trade — deteksi HAKA &amp; akumulasi <span class="ex-mut" style="font-weight:400;font-size:12px">v3.5 · + Lolos screener = jumlah, klik untuk detail</span></h3>
+  return `<div class="ex-card"><h3>⚡ Running Trade — deteksi HAKA &amp; akumulasi <span class="ex-mut" style="font-weight:400;font-size:12px">v3.5 · + digest Telegram, order berulang</span></h3>
   <div class="ex-mut" style="margin-bottom:10px;line-height:1.55">HAKA = pembeli agresif menyambar offer; nilai dihitung dari harga × lot × 100. ⭐ = Watchlist/posisi, ✨ = lolos Smart Pick (arahkan kursor untuk nama sinyalnya), 📈 = trend Bullish di Screener, ✅ = keyakinan tinggi. Batas nilai (HAKA, akumulasi, bandar, transaksi besar) dikalikan ×N sesuai likuiditas saham (acuan di pengaturan; saham sepi 0.3×, sangat likuid sampai 5×). Deteksi memakai transaksi yang tertangkap sejak tombol Mulai ditekan, jadi butuh beberapa menit untuk terisi. Klik judul kolom untuk mengurutkan, klik nama ticker untuk membuka Detail Emiten (analisa lengkap), klik 🔎 untuk panel detail running trade.</div>
   <div class="rt-tools" style="margin:0 0 12px"><b>Preset ambang:</b>
     ${Object.keys(PRESETS).map(k=>`<button class="ex-btn ${sameP(PRESETS[k].v)?"pri":""}" data-act="rtPre_${k}" title="${E(PRESETS[k].d)}">${PRESETS[k].n}</button>`).join("")}
@@ -562,6 +620,12 @@ function view(){
     ${ck("rt-malert",CFG.momAlert)}Alert momentum 🚀/🔻 (%Buy melonjak/anjlok)</label>
     <label>Min jumlah sinyal konfluensi (1–8)${inp("rt-cmin",CFG.confMin)}</label>
     ${ck("rt-calert",CFG.confAlert)}Alert konfluensi 🎯 (skor ≥ 75, ≥ 4 sinyal)</label>
+    ${ck("rt-hover",CFG.hoverPause)}Jeda tabel otomatis saat kursor di atasnya</label>
+    ${ck("rt-dg",CFG.digest)}Digest Telegram berkala (konfluensi, momentum, lot besar)</label>
+    <label>Interval digest (menit, min 5)${inp("rt-dgmin",CFG.digestMin)}</label>
+    <label>Jumlah saham di digest (1–10)${inp("rt-dgn",CFG.digestN)}</label>
+    ${ck("rt-dgc",CFG.digestClose)}Kirim juga ringkasan penutupan (15:50 WIB)</label>
+    <label>Biaya jual-beli bolak-balik (%) untuk analisa hit-rate${inp("rt-cost",CFG.cost)}</label>
     <label>Min jumlah transaksi (filter tidak likuid)${inp("rt-mt",CFG.minTrades)}</label>
     ${ck("rt-own",CFG.onlyOwn)}Hanya Watchlist/Posisi ⭐</label>
     ${ck("rt-bull",CFG.onlyBull)}Hanya trend Bullish di Screener 📈</label>
@@ -573,12 +637,27 @@ function view(){
   <div class="rt-tools">
     <label>🔍 Cari ticker <input id="rtq" type="text" placeholder="BBCA, GO" value="${E(RT.q)}"></label>
     <label>🔎 Detail saham <input id="rtsel" type="text" placeholder="BBRI" value="${E(RT.sel)}"></label>
+    <button id="rtFreezeBtn" class="ex-btn${RT.frozen?" pri":""}" data-act="rtFreeze" title="Tahan tampilan tabel (data tetap direkam)">${RT.frozen?"▶ Lanjutkan tampilan":"⏸ Bekukan tampilan"}</button>
+    <button class="ex-btn" data-act="rtColBtn">🧩 Atur kolom</button>
+    <button class="ex-btn" data-act="rtDigestNow" title="Kirim ringkasan sekarang ke Telegram (perlu Bot Token & Chat ID di Pengaturan)">📨 Kirim digest sekarang</button>
     <label>⚖️ Buy/Sell <select id="rtmode"><option value="win"${RT.mode==="win"?" selected":""}>Jendela akumulasi</option><option value="cum"${RT.mode==="cum"?" selected":""}>Sejak Mulai (hari ini)</option></select></label>
+    <label>📈 Analisa sinyal per <select id="rtgb">${Object.keys(GB).map(k=>`<option value="${k}"${RT.gb===k?" selected":""}>${GB[k]}</option>`).join("")}</select></label>
     <label><input type="checkbox" id="rtmo"${RT.momOnly?" checked":""} style="width:auto"> Buy/Sell: hanya yang ada momentum</label>
     <label><input type="checkbox" id="rtdv"${RT.dvOnly?" checked":""} style="width:auto"> Buy/Sell: hanya yang ada divergensi</label>
     <label><input type="checkbox" id="rtsc"${RT.scOnly?" checked":""} style="width:auto"> Buy/Sell: hanya yang lolos screener</label>
     <label><input type="checkbox" id="rtbig"${RT.bigOnly?" checked":""} style="width:auto"> Tape: hanya lot besar</label>
   </div></div>
+  <div class="ex-card" id="rtColCard" style="display:none"></div>
+  <details class="ex-card"><summary style="cursor:pointer"><b>🎚 Kalibrasi dengan Stockbit</b> <span class="ex-mut">— bandingkan angka Buy/Sell satu saham dengan Stockbit</span></summary>
+    <div class="ex-mut" style="margin:8px 0;line-height:1.55">Buka Running Trade/ringkasan Stockbit untuk satu saham dan jendela waktu yang sama, isi angkanya di sini (format Stockbit boleh: 8,07 M = miliar, 500 jt, 250 rb), lalu klik Bandingkan. Aplikasi menampilkan selisihnya dan kemungkinan penyebabnya.</div>
+    <div class="rt-tools"><label>Ticker <input id="rtc-tk" type="text" value="${E(RT.cal.tk||"")}" placeholder="SMIL"></label>
+      <label>Jendela <select id="rtc-win">${[1,3,5,15,30,60].map(m=>`<option value="${m}"${+(RT.cal.win===undefined?15:RT.cal.win)===m?" selected":""}>${m} menit</option>`).join("")}<option value="0"${RT.cal.win==="0"||RT.cal.win===0?" selected":""}>Sejak Mulai (hari ini)</option></select></label>
+      <label>Buy Stockbit <input id="rtc-b" type="text" value="${E(RT.cal.b||"")}" placeholder="8,07 M"></label>
+      <label>Sell Stockbit <input id="rtc-s" type="text" value="${E(RT.cal.s||"")}" placeholder="1,88 M"></label>
+      <label>Lot buy (opsional) <input id="rtc-lb" type="text" value="${E(RT.cal.lb||"")}" placeholder="196.196"></label>
+      <label>Lot sell (opsional) <input id="rtc-ls" type="text" value="${E(RT.cal.ls||"")}" placeholder="45.959"></label>
+      <button class="ex-btn pri" data-act="rtCal">🔍 Bandingkan</button></div>
+    <div id="rtCalRes"></div></details>
   <div id="rtDyn"></div>`;
 }
 function tbl(head,rows,empty){
@@ -591,9 +670,11 @@ function stbl(id,cols,rows,empty,o){
   if(c&&cols[c.i]&&cols[c.i].k){ const k=cols[c.i].k;
     data=rows.slice().sort((a,b)=>{ const x=k(a),y=k(b); const r=(typeof x==="string"||typeof y==="string")?String(x==null?"":x).localeCompare(String(y==null?"":y)):((x==null||isNaN(x)?-1e18:x)-(y==null||isNaN(y)?-1e18:y)); return r*c.d; }); }
   if(o.max) data=data.slice(0,o.max);
-  const head=cols.map((h,i)=>{ const on=c&&c.i===i;
+  RT.colReg[id]=cols.map(h=>h.h);
+  const hid=RT.hide[id]||[], vis=cols.map((h,i)=>({h,i})).filter(x=>x.i===0||hid.indexOf(x.h.h)<0);   // kolom pertama selalu tampil
+  const head=vis.map(({h,i})=>{ const on=c&&c.i===i;
     return `<th${h.k?` class="rt-th" data-rt-sort="${id}|${i}"${h.s?"":" data-rt-num=\"1\""} title="Klik untuk urutkan"`:""}>${h.h}${on?(c.d<0?" ▼":" ▲"):""}</th>`; }).join("");
-  const body=data.map(r=>`<tr class="${o.cls?o.cls(r):""}">${cols.map(h=>`<td>${h.r(r)}</td>`).join("")}</tr>`).join("");
+  const body=data.map(r=>`<tr class="${o.cls?o.cls(r):""}">${vis.map(({h})=>`<td>${h.r(r)}</td>`).join("")}</tr>`).join("");
   return data.length?`<div class="ex-wrap" data-rt-w="${id}"><table class="ex-tbl"><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table></div>`:`<div class="ex-mut">${empty}</div>`;
 }
 function sortClick(th){
@@ -711,7 +792,7 @@ function dyn(){
     {h:"Lot besar (n)",k:a=>a.big,r:a=>a.big||"-"},{h:"Net lot besar",k:a=>a.bigNet,r:a=>a.bigNet?sgn(a.bigNet):"-"},{h:"Lot terbesar",k:a=>a.mx,r:a=>`${fpx(a.mx)} <span class="${a.mxs==="B"?"ex-up":"ex-dn"}">${a.mxs==="B"?"▲":"▼"}</span>`},
     {h:"Trx/mnt",k:a=>a.rate,r:a=>a.rate.toFixed(1)},{h:"Umur (dtk)",k:a=>a.age,r:a=>a.age}];
   const pc1=n=>n.toFixed(1)+"%";
-  const scCell=a=>a.sc.length?`<button type="button" class="ex-chip rt-scn" data-rt-sc="${E(a.tk)}" title="Klik untuk melihat sinyal apa saja yang lolos">🎯 ${a.sc.length}</button>`:"-";
+  const scCell=a=>a.sc.length?`<div style="max-width:300px">${a.sc.map(x=>`<span class="ex-chip" style="font-size:11px;padding:1px 6px;margin:1px;display:inline-block;white-space:nowrap" title="${E(x.t)}">${x.i} ${E(x.t)}</span>`).join("")}</div>`:"-";
   const brkCell=(l,tot)=>l.length?`<div style="font-size:12px;line-height:1.35;min-width:130px">${l.map(x=>`<div title="${E(x[0])}: ${fv(x[1])} (${tot?Math.round(x[1]/tot*100):0}% dari total ${fv(tot)})"><b>${E(x[0])}</b> ${fv(x[1])}</div>`).join("")}</div>`:"-";
   const stack=a=>`<div style="display:flex;height:10px;min-width:110px;border-radius:3px;overflow:hidden" title="Buy ${pc1(a.pb)} / Sell ${pc1(a.ps)}"><span style="width:${a.pb.toFixed(1)}%;background:#22c55e"></span><span style="flex:1;background:#ef4444"></span></div>`;
   const BS=bsRows(M,fq), bsB=BS.reduce((t,a)=>t+a.bv,0), bsS=BS.reduce((t,a)=>t+a.sv,0), bsT=bsB+bsS;
@@ -727,9 +808,15 @@ function dyn(){
     {h:"Trx buy",k:a=>a.nb,r:a=>fpx(a.nb)},{h:"Trx sell",k:a=>a.ns,r:a=>fpx(a.ns)},
     {h:"Top 3 broker Buy",k:a=>a.tb.length?a.tb[0][1]:0,r:a=>brkCell(a.tb,a.bv)},{h:"Top 3 broker Sell",k:a=>a.ts.length?a.ts[0][1]:0,r:a=>brkCell(a.ts,a.sv)}];
   const bsHead=RT.mode==="cum"?`sejak Mulai${RT.cumDay?" · "+E(RT.cumDay):""}`:`${CFG.accWin} menit terakhir`;
+  const RP=repeatList().filter(fq);
+  const rpC=[{h:"Ticker",s:1,k:a=>a.tk,r:a=>tkc(a.tk)},{h:"Sisi",s:1,k:a=>a.side,r:a=>`<span class="${a.side==="B"?"ex-up":"ex-dn"}">${a.side==="B"?"HAKA":"HAKI"}</span>`},{h:"Lot / order",k:a=>a.lot,r:a=>fpx(a.lot)},
+    {h:"Berulang (kali)",k:a=>a.n,r:a=>a.n},{h:"Total lot",k:a=>a.tl,r:a=>fpx(a.tl)},{h:"Total nilai",k:a=>a.v,r:a=>fv(a.v)},{h:"Broker",s:1,k:a=>a.br,r:a=>a.br?`<b>${E(a.br)}</b>`:"-"},
+    {h:"Harga",k:a=>a.hi,r:a=>a.lo===a.hi?fpx(a.lo):fpx(a.lo)+"–"+fpx(a.hi)},{h:"Interval rata² (dtk)",k:a=>a.mean,r:a=>a.mean.toFixed(1)},
+    {h:"Pola",s:1,k:a=>a.reg?"1":"0",r:a=>a.reg?`<span title="Jarak antar transaksi sangat teratur (CV ${a.cv.toFixed(2)}): ciri algo/iceberg">🤖 Teratur</span>`:`<span class="ex-mut" title="CV ${a.cv.toFixed(2)}">Acak</span>`},
+    {h:"Terakhir (dtk)",k:a=>a.age,r:a=>a.age}];
   const CF=confList().filter(fq);
   const cfC=[{h:"Ticker",s:1,k:a=>a.tk,r:a=>tkc(a.tk)},{h:"Skor",k:a=>a.score,r:a=>`<b>${a.score}</b>${bar(a.score)}`},{h:"Sinyal",k:a=>a.n,r:a=>a.n+"/8"},
-    {h:"Sinyal yang terpenuhi",s:1,k:a=>a.sg.map(x=>x.k).join(""),r:a=>`<div style="display:flex;flex-wrap:wrap;gap:3px;white-space:normal;min-width:180px;max-width:420px">${a.sg.map(x=>`<span class="ex-chip" style="font-size:11px;padding:1px 6px;margin:1px;display:inline-block;white-space:nowrap">${x.t}</span>`).join("")}</div>`},
+    {h:"Sinyal yang terpenuhi",s:1,k:a=>a.sg.map(x=>x.k).join(""),r:a=>`<div style="max-width:420px">${a.sg.map(x=>`<span class="ex-chip" style="font-size:11px;padding:1px 6px;margin:1px;display:inline-block;white-space:nowrap">${x.t}</span>`).join("")}</div>`},
     {h:"Penalti",s:1,k:a=>a.pen.length,r:a=>a.pen.length?`<span class="ex-dn">${a.pen.join(", ")}</span>`:"-"},
     {h:"Harga",k:a=>a.last,r:a=>fpx(a.last)},{h:"Δ%",k:a=>a.chg,r:chg},{h:"Net nilai",k:a=>a.net,r:a=>`<span class="${a.net>=0?"ex-up":"ex-dn"}">${fv(a.net)}</span>`},{h:"% Buy",k:a=>a.pb,r:a=>pc1(a.pb)}];
   const maxTier=a=>lotTier({tk:a.tk,px:a.last,lot:a.mx});
@@ -739,7 +826,7 @@ function dyn(){
   const bigFrom=now-CFG.accWin*60000, bigs=[]; for(let i=RT.trades.length-1;i>=0&&bigs.length<150;i--){ const x=RT.trades[i]; if(x.ts<bigFrom) continue; if(!fq(x)||!pxOk(x.tk)||(CFG.minLot&&x.lot<CFG.minLot)) continue; const y=withTier(x); if(y.tier) bigs.push(y); }
   const cnt3=bigs.filter(x=>x.tier>=3).length, cnt2=bigs.filter(x=>x.tier===2).length;
   el.innerHTML=`<div class="ex-card"><div class="ex-mut">
-    ${RT.on?"🟢 Merekam":"⚪ Berhenti"}${s.open===false?` · 🔒 Pasar tutup (data terakhir ${E(s.dataDate||"-")})`:""}${lagTxt} · WS: ${s.frames} frame (${s.parsed} terbaca, ${s.unparsed} tidak terbaca${s.quote?", "+s.quote+" mirip kuotasi ditolak":""}) · REST: ${s.rest} baris${CFG.rest?` (${CFG.feed?"seluruh pasar"+(s.watch?" + "+s.watch+" ticker bergiliran":""):s.watch?s.watch+" ticker bergiliran":"seluruh pasar"})`:""}${s.restAt?" · terakhir "+new Date(s.restAt).toLocaleTimeString("id-ID"):""}
+    ${RT.on?"🟢 Merekam":"⚪ Berhenti"}${RT.frozen?" · ⏸ <b>Tampilan dibekukan</b> (data tetap direkam)":""}${s.open===false?` · 🔒 Pasar tutup (data terakhir ${E(s.dataDate||"-")})`:""}${lagTxt} · WS: ${s.frames} frame (${s.parsed} terbaca, ${s.unparsed} tidak terbaca${s.quote?", "+s.quote+" mirip kuotasi ditolak":""}) · REST: ${s.rest} baris${CFG.rest?` (${CFG.feed?"seluruh pasar"+(s.watch?" + "+s.watch+" ticker bergiliran":""):s.watch?s.watch+" ticker bergiliran":"seluruh pasar"})`:""}${s.restAt?" · terakhir "+new Date(s.restAt).toLocaleTimeString("id-ID"):""}
     · ${s.trades} transaksi di memori (${s.trades?Math.round(s.brk/s.trades*100):0}% bertanda broker)${s.restored?` (${s.restored} dipulihkan)`:""}${s.est?` (${s.est} sisi ditebak ~)`:""}${s.dup?` · ${s.dup} duplikat WS/REST dibuang`:""} · Total HAKA <span class="ex-up">${fv(tot[0])}</span> / HAKI <span class="ex-dn">${fv(tot[1])}</span></div>
     ${s.symBad>s.symOk?`<div class="ex-warn" style="margin-top:6px">Filter symbols[] tampaknya diabaikan Stockbit (respons berisi saham lain), jadi pemantauan per ticker tidak efektif. Kosongkan Ticker otomatis/manual untuk memakai seluruh pasar, atau kirim contoh respons ke chat.</div>`:""}${s.restErr?`<div class="ex-warn" style="margin-top:6px">REST: ${E(s.restErr)}</div>`:""}${s.trades>=30&&!s.brk?`<div class="ex-warn" style="margin-top:6px">Belum ada kode broker yang terbaca dari ${s.trades} transaksi, jadi kolom Beli → Jual, Top 3 broker, Bandar, dan Asing kosong. Nama field baris REST: <b>${E(RT.restKeys.join(", ")||"-")}</b>. Kirim isi Diagnostik (📋 Salin diagnostik) ke chat bila field broker ada tetapi namanya belum dikenali.</div>`:""}${lagWarn}${covWarn}${feedWarn}${warn}</div>
   ${RT.sel?detail(RT.sel):""}
@@ -754,10 +841,14 @@ function dyn(){
   <div class="ex-card"><h3>🐘 Lot besar (${CFG.accWin} menit terakhir) — ${bigs.length} transaksi${cnt3||cnt2?` (${cnt3} mega, ${cnt2} jumbo)`:""}</h3>
     <div class="ex-mut rt-leg" style="margin-bottom:6px"><span class="rt-l1" style="background:rgba(250,204,21,.3)">🐘 BESAR ≥ batas</span><span style="background:rgba(251,146,60,.4)">🐘🐘 JUMBO ≥ 3×</span><span style="background:rgba(239,68,68,.5)">🐘🐘🐘 MEGA ≥ 10×</span> Batas = "Transaksi besar ≥ (jt Rp)" × pengali likuiditas, atau "Lot besar ≥" bila diisi.</div>
     ${stbl("rtb",trCols,bigs,"Belum ada transaksi lot besar di jendela ini.",{max:60,cls:x=>tcls(x.tier)})}</div>
+  <div class="ex-card"><h3>🔁 Order berulang — lot sama dari broker sama (${CFG.accWin} menit terakhir, ${RP.length} pola)</h3>
+    ${stbl("rtrp",rpC,RP,"Belum ada pola berulang (min 6 kali, lot ≥ 50, nilai total ≥ 2× batas lot besar).",{max:40})}
+    <div class="ex-mut" style="margin-top:6px;line-height:1.55">Lot yang persis sama dan berulang dari broker yang sama sering menandakan order besar yang dipecah (iceberg) atau algoritma. 🤖 Teratur = jarak antar transaksi hampir seragam (CV &lt; 0,6). Tanpa kode broker, pola dikelompokkan hanya per saham + sisi + lot, sehingga lebih mudah salah. Ini petunjuk, bukan bukti niat pelakunya.</div></div>
   <div class="ex-card"><h3>📊 Semua saham (${CFG.accWin} menit terakhir, ${M.length} saham) <button class="ex-btn" data-act="rtCopyMkt" style="float:right">📋 Salin CSV</button></h3>
     ${stbl("rtm",mC,M,"Belum ada transaksi.",{max:80,cls:a=>tcls(maxTier(a))})}<div class="ex-mut" style="margin-top:6px">Tanpa syarat sinyal, hanya filter pengaturan (min trx, harga, lot). Baris diwarnai bila lot terbesar saham itu tergolong besar. Umur = detik sejak transaksi terakhir; Trx/mnt = kecepatan tape. Bandingkan Net nilai & Net lot dengan Stockbit untuk jendela yang sama.</div></div>
   <div class="ex-card"><h3>🐋 Bandar akumulasi — broker net beli (${CFG.accWin} menit terakhir)</h3>${stbl("rtk",bC,B,bEmpty)}<div class="ex-mut" style="margin-top:6px">🐋 = broker menguasai ≥ 40% pembelian saham itu dan net belinya ≥ 2× batas. 🌍 = broker asing. Order beli yang dipecah menjadi banyak transaksi dihitung sebagai satu "beli besar".</div></div>
   <div class="ex-card"><h3>🌍 Aliran asing — net beli/jual broker asing (${CFG.accWin} menit terakhir)</h3>${stbl("rtf",fC,F,fEmpty)}<div class="ex-mut" style="margin-top:6px">Net = beli asing − jual asing (hijau = net beli, merah = net jual). Porsi = rata-rata porsi sisi beli dan jual yang dipegang broker asing. Batas memakai Min net broker/bandar.</div></div>
+  ${hitHtml()}
   ${sigHtml()}
   <div class="ex-card"><h3>Transaksi terbaru${RT.bigOnly?" (hanya lot besar)":""}</h3>${stbl("rtt",trCols,tape,"Belum ada transaksi.",{cls:x=>tcls(x.tier)})}</div>
   <div class="ex-card"><details${RT.diagOpen?" open":""}><summary class="ex-mut" style="cursor:pointer">Diagnostik format data</summary>
@@ -773,12 +864,12 @@ function dyn(){
 const TY={H:"🔥 HAKA",A:"🧲 Akumulasi",B:"🐋 Bandar",L:"🐘 Lot besar",M:"🚀 Momentum",C:"🎯 Konfluensi"};
 const sigs=()=>{ const l=LS("rt_sig",[]); return Array.isArray(l)?l:[]; };
 function rec(ty,tk,px,info){
-  const L=sigs(); L.push({ty,tk,ts:Date.now(),px:px||RT.last[tk]||0,info,p15:null,p30:null});
-  if(L.length>400) L.splice(0,L.length-400); SV("rt_sig",L);
+  const L=sigs(); L.push({ty,tk,ts:Date.now(),px:px||RT.last[tk]||0,info,pr:presetName(),p5:null,p15:null,p30:null});
+  if(L.length>2000) L.splice(0,L.length-2000); SV("rt_sig",L);
 }
 function evalSigs(){            // harga +15/+30 menit diambil dari transaksi terakhir yang masuk (maks 3 menit lalu)
   const L=sigs(), now=Date.now(); let ch=false;
-  L.forEach(g=>[[15,"p15"],[30,"p30"]].forEach(([m,k])=>{
+  L.forEach(g=>[[5,"p5"],[15,"p15"],[30,"p30"]].forEach(([m,k])=>{
     if(g[k]!==null) return; const age=now-g.ts; if(age<m*60000) return;
     if(RT.lastTs[g.tk]&&now-RT.lastTs[g.tk]<180000){ g[k]=RT.last[g.tk]; ch=true; }
     else if(age>(m+4)*60000){ g[k]=false; ch=true; }
@@ -786,17 +877,50 @@ function evalSigs(){            // harga +15/+30 menit diambil dari transaksi te
   if(ch) SV("rt_sig",L);
 }
 const ret=g=>(typeof g.p30==="number"&&g.px)?(g.p30-g.px)/g.px*100:null;
+/* ---------- analisa hit-rate per sinyal (jenis / preset / jam / saham) ---------- */
+function wilson(w,n){ if(!n) return [0,0]; const z=1.96,p=w/n,d=1+z*z/n,c=p+z*z/(2*n),a=z*Math.sqrt(p*(1-p)/n+z*z/(4*n*n)); return [Math.max(0,(c-a)/d),Math.min(1,(c+a)/d)]; }
+const retAt=(g,k)=>{ const v=g[k]; return (typeof v==="number"&&g.px)?(v-g.px)/g.px*100:null; };
+const median=a=>{ if(!a.length) return null; const t=a.slice().sort((x,y)=>x-y), m=t.length>>1; return t.length%2?t[m]:(t[m-1]+t[m])/2; };
+const avg=a=>a.length?a.reduce((x,y)=>x+y,0)/a.length:null;
+const GB={ty:"jenis sinyal",pr:"preset",typr:"jenis × preset",hr:"jam (WIB)",tk:"saham"};
+function hitRows(){
+  const L=sigs(), m=new Map(), cost=+CFG.cost||0;
+  const key=g=>RT.gb==="pr"?(g.pr||"Kustom"):RT.gb==="typr"?(TY[g.ty]||g.ty)+" · "+(g.pr||"Kustom"):RT.gb==="hr"?String(new Date(g.ts+7*3600000).getUTCHours()).padStart(2,"0")+":00":RT.gb==="tk"?g.tk:(TY[g.ty]||g.ty);
+  L.forEach(g=>{ const k=key(g); let a=m.get(k); if(!a){ a={k,n:0,r5:[],r15:[],r30:[]}; m.set(k,a); } a.n++;
+    [["r5","p5"],["r15","p15"],["r30","p30"]].forEach(([x,p])=>{ const r=retAt(g,p); if(r!==null) a[x].push(r); }); });
+  const hit=r=>r.length?r.filter(v=>v>0).length/r.length:null, out=[];
+  m.forEach(a=>{ const w=a.r30.filter(v=>v>0), l=a.r30.filter(v=>v<=0), ci=wilson(w.length,a.r30.length);
+    out.push({k:a.k,n:a.n,e30:a.r30.length,h5:hit(a.r5),h15:hit(a.r15),h30:hit(a.r30),lo:ci[0],hi:ci[1],a15:avg(a.r15),a30:avg(a.r30),m30:median(a.r30),
+      hc:a.r30.length?a.r30.filter(v=>v>cost).length/a.r30.length:null,aw:avg(w),al:avg(l)}); });
+  out.sort((x,y)=>y.n-x.n); return RT.gb==="tk"?out.slice(0,15):out;
+}
+function hitHtml(){
+  const L=sigs(), rows=hitRows(); RT.hitRows=rows;
+  const all=L.map(g=>retAt(g,"p30")).filter(v=>v!==null), w=all.filter(v=>v>0).length, ci=wilson(w,all.length), cost=+CFG.cost||0;
+  const pc=v=>v==null?"-":`<span class="${v>=.55?"ex-up":v<=.45?"ex-dn":""}">${Math.round(v*100)}%</span>`, rp=v=>v==null?"-":`<span class="${v>=0?"ex-up":"ex-dn"}">${pctS(v)}</span>`;
+  const cols=[{h:GB[RT.gb]?GB[RT.gb][0].toUpperCase()+GB[RT.gb].slice(1):"Grup",s:1,k:r=>r.k,r:r=>E(r.k)},{h:"Sinyal",k:r=>r.n,r:r=>r.n},{h:"Terukur +30m",k:r=>r.e30,r:r=>r.e30},
+    {h:"Hit +5m",k:r=>r.h5,r:r=>pc(r.h5)},{h:"Hit +15m",k:r=>r.h15,r:r=>pc(r.h15)},
+    {h:"Hit +30m (rentang 95%)",k:r=>r.h30,r:r=>r.h30==null?"-":`${pc(r.h30)} <span class="ex-mut">(${Math.round(r.lo*100)}–${Math.round(r.hi*100)}%)</span>`},
+    {h:"Rata² +15m",k:r=>r.a15,r:r=>rp(r.a15)},{h:"Rata² +30m",k:r=>r.a30,r:r=>rp(r.a30)},{h:"Median +30m",k:r=>r.m30,r:r=>rp(r.m30)},
+    {h:"Hit +30m > biaya "+cost+"%",k:r=>r.hc,r:r=>pc(r.hc)},{h:"Rata² menang",k:r=>r.aw,r:r=>rp(r.aw)},{h:"Rata² kalah",k:r=>r.al,r:r=>rp(r.al)},
+    {h:"Catatan",r:r=>r.e30<20?`<span class="ex-mut" style="white-space:nowrap">⚠ sampel kecil (${r.e30} &lt; 20)</span>`:""}];
+  return `<div class="ex-card"><h3>📈 Analisa hit-rate per sinyal <button class="ex-btn" data-act="rtCopyHit" style="float:right">📋 Salin CSV</button></h3>
+    ${L.length?`<div class="ex-chips"><span class="ex-chip">${L.length} sinyal tercatat</span><span class="ex-chip">${all.length} terukur +30 mnt</span>${all.length?`<span class="ex-chip">Hit-rate keseluruhan ${Math.round(w/all.length*100)}% <span class="ex-mut">(${Math.round(ci[0]*100)}–${Math.round(ci[1]*100)}%)</span></span><span class="ex-chip">Rata-rata ${pctS(avg(all))} · median ${pctS(median(all))}</span>`:""}</div>`:""}
+    ${stbl("rths",cols,rows,"Belum ada sinyal tercatat. Sinyal 🔥 🐋 🧲 🐘 🚀 🎯 tercatat otomatis saat alert muncul (dan saat tab ini terbuka); hasil +5/+15/+30 menit terisi seiring waktu.",{max:40})}
+    <div class="ex-mut" style="margin-top:6px;line-height:1.55">Dikelompokkan menurut <b>${GB[RT.gb]||"jenis sinyal"}</b> (ubah di kotak "Analisa sinyal per" di bawah tombol Mulai). Hit = harga +N menit lebih tinggi dari harga sinyal; "&gt; biaya" = lebih tinggi dari biaya jual-beli bolak-balik ${cost}% (ubah di pengaturan). Rentang 95% (Wilson) menunjukkan ketidakpastian: makin sedikit sampel, makin lebar. <b>Hati-hati menafsirkan:</b> tanpa pembanding pasar, hit-rate tinggi bisa hanya berarti seluruh pasar sedang naik; kurang dari ±30 sinyal terukur per kelompok sebaiknya dianggap petunjuk, bukan bukti. Hanya sinyal sisi beli yang dicatat (lot besar HAKI tidak), dan hasil diukur dari transaksi terakhir yang tertangkap, bukan harga yang pasti bisa Anda eksekusi.</div></div>`;
+}
+X.act("rtCopyHit",()=>copy(["grup,sinyal,terukur30,hit5,hit15,hit30,hit30_lo,hit30_hi,avg15,avg30,median30,hit30_di_atas_biaya,avg_menang,avg_kalah"].concat((RT.hitRows||[]).map(r=>[ '"'+r.k+'"',r.n,r.e30,r.h5,r.h15,r.h30,r.lo,r.hi,r.a15,r.a30,r.m30,r.hc,r.aw,r.al].map(v=>typeof v==="number"&&!Number.isInteger(v)?+v.toFixed(4):v).join(","))).join("\n"),"Tabel hit-rate disalin"));
 function sigHtml(){
   const L=sigs(), st={};
   L.forEach(g=>{ const t=st[g.ty]||(st[g.ty]={n:0,e:0,w:0,r:0}); t.n++; const r=ret(g); if(r!==null){ t.e++; t.r+=r; if(r>0) t.w++; } });
   const sum=Object.keys(TY).filter(k=>st[k]).map(k=>{ const t=st[k];
     return `<span class="ex-chip">${TY[k]}: ${t.n} sinyal · ${t.e?`hit-rate ${Math.round(t.w/t.e*100)}% · rata-rata ${pctS(t.r/t.e)} (30 mnt, ${t.e} terukur)`:"belum terukur"}</span>`; }).join(" ");
-  const cell=(g,k)=>{ const v=g[k]; if(v===null) return "<span class='ex-mut'>menunggu</span>"; if(v===false) return "<span class='ex-mut'>tak terukur</span>";
+  const cell=(g,k)=>{ const v=g[k]; if(v===undefined) return "<span class='ex-mut'>-</span>"; if(v===null) return "<span class='ex-mut'>menunggu</span>"; if(v===false) return "<span class='ex-mut'>tak terukur</span>";
     const r=(v-g.px)/g.px*100; return `<span class="${r>=0?"ex-up":"ex-dn"}">${pctS(r)}</span>`; };
-  const rows=L.slice(-40).reverse().map(g=>`<tr><td>${new Date(g.ts).toLocaleString("id-ID",{day:"2-digit",month:"short",hour:"2-digit",minute:"2-digit"})}</td><td>${TY[g.ty]||g.ty}</td><td><b>${E(g.tk)}</b>${badges(g.tk)}</td><td>${fpx(g.px)}</td><td>${cell(g,"p15")}</td><td>${cell(g,"p30")}</td><td class="ex-mut">${E(g.info||"")}</td></tr>`);
+  const rows=L.slice(-40).reverse().map(g=>`<tr><td>${new Date(g.ts).toLocaleString("id-ID",{day:"2-digit",month:"short",hour:"2-digit",minute:"2-digit"})}</td><td>${TY[g.ty]||g.ty}</td><td><b>${E(g.tk)}</b>${badges(g.tk)}</td><td>${fpx(g.px)}</td><td>${cell(g,"p5")}</td><td>${cell(g,"p15")}</td><td>${cell(g,"p30")}</td><td class="ex-mut">${E(g.info||"")}</td></tr>`);
   return `<div class="ex-card"><h3>📜 Riwayat sinyal &amp; hit-rate</h3>
     <div class="ex-chips">${sum||'<span class="ex-mut">Belum ada sinyal tercatat.</span>'}</div>
-    ${tbl(["Waktu","Jenis","Ticker","Harga sinyal","+15 mnt","+30 mnt","Info"],rows,"Sinyal akan tercatat otomatis saat alert muncul.")}
+    ${tbl(["Waktu","Jenis","Ticker","Harga sinyal","+5 mnt","+15 mnt","+30 mnt","Info"],rows,"Sinyal akan tercatat otomatis saat alert muncul.")}
     <div class="ex-mut" style="margin:6px 0">Hasil diukur dari transaksi terakhir yang masuk saat 15/30 menit berlalu. Kalau tab ditutup atau saham itu sepi, hasilnya ditandai "tak terukur". Hit-rate = persentase sinyal dengan harga +30 menit lebih tinggi dari harga sinyal.</div>
     <button class="ex-btn" data-act="rtCopySig">📋 Salin CSV</button><button class="ex-btn" data-act="rtClearSig">🗑 Hapus riwayat</button></div>`;
 }
@@ -814,6 +938,42 @@ function fire(msg){
   X.notify(msg,CFG.tg);
   if(CFG.snd) beep();
   try{ if(CFG.bn&&typeof Notification!=="undefined"&&Notification.permission==="granted"&&document.hidden) new Notification("⚡ Running Trade",{body:msg.replace(/^[^\s]+\s/,"")}); }catch(e){}
+}
+
+/* ---------- digest Telegram ---------- */
+function digestText(kind){
+  const now=Date.now(), n=Math.max(1,Math.min(10,CFG.digestN|0||5)), w=new Date(now+7*3600000), hh=String(w.getUTCHours()).padStart(2,"0")+":"+String(w.getUTCMinutes()).padStart(2,"0");
+  const CF=confList().slice(0,n), am=accelMap(), up=[], dn=[], M=marketList(); let tb=0,ts=0; M.forEach(a=>{ tb+=a.bv; ts+=a.sv; });
+  am.forEach((a,tk)=>{ if(a.sig==="U") up.push({tk,a}); else if(a.sig==="D") dn.push({tk,a}); });
+  up.sort((p,q)=>q.a.net-p.a.net); dn.sort((p,q)=>p.a.net-q.a.net);
+  const from=now-CFG.accWin*60000, bg=[]; for(const x of RT.trades){ if(x.ts<from) continue; const t=lotTier(x); if(t>0) bg.push({x,v:x.px*x.lot*100}); }
+  bg.sort((p,q)=>q.v-p.v);
+  const L=sigs().map(g=>retAt(g,"p30")).filter(v=>v!==null), win=L.filter(v=>v>0).length;
+  const lines=[`📊 <b>Digest Running Trade</b> · ${hh} WIB (${kind})`,`Jendela ${CFG.accWin} menit · ${M.length} saham · Buy ${fv(tb)} / Sell ${fv(ts)} (${tb+ts?Math.round(tb/(tb+ts)*100):0}% Buy)`,""];
+  lines.push(`🎯 <b>Konfluensi teratas</b>`);
+  if(CF.length) CF.forEach((r,i)=>lines.push(`${i+1}. <b>${E(r.tk)}</b> skor ${r.score} (${r.n} sinyal) · ${fpx(r.last)} ${pctS(r.chg)} · net ${fv(r.net)} · ${Math.round(r.pb)}% Buy`)); else lines.push("— belum ada saham dengan "+CFG.confMin+"+ sinyal");
+  if(up.length) lines.push("","🚀 <b>Mulai diborong:</b> "+up.slice(0,5).map(o=>`${E(o.tk)} (+${Math.round(o.a.d)} pp, ${o.a.spike.toFixed(1)}×)`).join(", "));
+  if(dn.length) lines.push("🔻 <b>Mulai dilepas:</b> "+dn.slice(0,5).map(o=>E(o.tk)).join(", "));
+  if(bg.length){ lines.push("","🐘 <b>Lot besar terbesar</b>"); bg.slice(0,3).forEach(o=>lines.push(`• ${E(o.x.tk)} ${fpx(o.x.lot)} lot @ ${fpx(o.x.px)} (${fv(o.v)}) ${o.x.side==="B"?"HAKA":"HAKI"}${o.x.side==="B"&&o.x.buyer?" · "+E(o.x.buyer):o.x.side==="S"&&o.x.seller?" · "+E(o.x.seller):""}`)); }
+  if(L.length) lines.push("",`📈 Hit-rate sinyal +30 mnt: ${Math.round(win/L.length*100)}% (${L.length} terukur) — indikatif, belum dibanding pasar`);
+  lines.push("","<i>Alat penyaring, bukan rekomendasi. Cek chart & Detail Emiten sebelum bertindak.</i>");
+  return lines.join("\n");
+}
+async function sendDigest(kind){
+  const text=digestText(kind);
+  try{
+    if(typeof sendTelegramDirect==="function"){ const r=await sendTelegramDirect(text); if(!r||!r.ok){ X.toast("Digest Telegram gagal: "+((r&&r.error)||"tidak diketahui"),"down"); return false; } X.toast("Digest Telegram terkirim","up"); return true; }
+    X.notify(text.replace(/<[^>]+>/g,""),true); return true;      // cadangan: lewat jalur notifikasi biasa
+  }catch(e){ X.toast("Digest Telegram gagal: "+(e&&e.message||e),"down"); return false; }
+}
+function digestTick(){          // hanya hari bursa, 09:00–15:50 WIB, saat merekam dan pasar tidak dilaporkan tutup; penutupan sekali per hari pada 15:50
+  if(!CFG.digest||!RT.on||RT.st.open===false) return;
+  const w=new Date(Date.now()+7*3600000), dow=w.getUTCDay(), hm=w.getUTCHours()*60+w.getUTCMinutes(), day=w.toISOString().slice(0,10);
+  if(dow===0||dow===6||RT.trades.length<30) return;
+  if(CFG.digestClose&&hm>=950&&hm<960&&RT.dgClose!==day){ RT.dgClose=day; RT.dgAt=Date.now(); sendDigest("penutupan"); return; }
+  if(hm<540||hm>=950) return;
+  const iv=Math.max(5,CFG.digestMin)*60000, ref=RT.dgAt||RT.st.startAt||Date.now();
+  if(Date.now()-ref>=iv){ RT.dgAt=Date.now(); sendDigest("berkala"); }
 }
 
 /* ---------- alert ---------- */
@@ -866,7 +1026,7 @@ function readCfg(){
   const g=id=>document.getElementById(id); if(!g("rt-url")) return;
   const n=(id,d)=>{ const v=parseFloat(g(id).value); return isNaN(v)?d:v; };
   Object.assign(CFG,{ws:g("rt-ws").checked,rest:g("rt-rest").checked,tick:g("rt-tick").checked,tg:g("rt-tg").checked,bn:g("rt-bn").checked,snd:g("rt-snd").checked,
-    feed:g("rt-feed").checked,rejQuote:g("rt-quote").checked,bigAlert:g("rt-balert").checked,momAlert:g("rt-malert").checked,confAlert:g("rt-calert").checked,confMin:Math.max(1,Math.min(8,n("rt-cmin",3))),
+    feed:g("rt-feed").checked,rejQuote:g("rt-quote").checked,bigAlert:g("rt-balert").checked,momAlert:g("rt-malert").checked,confAlert:g("rt-calert").checked,hoverPause:g("rt-hover").checked,cost:Math.max(0,n("rt-cost",0.4)),digest:g("rt-dg").checked,digestMin:Math.max(5,n("rt-dgmin",30)),digestN:Math.max(1,Math.min(10,n("rt-dgn",5))),digestClose:g("rt-dgc").checked,confMin:Math.max(1,Math.min(8,n("rt-cmin",3))),
     pollSec:n("rt-poll",3),auto:g("rt-auto").checked,adapt:g("rt-adapt").checked,perPoll:n("rt-pp",5),refAdvM:n("rt-ref",20),tickers:g("rt-tickers").value.trim(),hakaWin:n("rt-hw",5),accWin:n("rt-aw",15),hakaMinJt:n("rt-hmin",300),
     hakaRatio:n("rt-hr",65),bigJt:n("rt-big",50),accMinJt:n("rt-amin",200),accRatio:n("rt-ar",55),brkMinJt:n("rt-bmin",100),minTrades:n("rt-mt",10),onlyOwn:g("rt-own").checked,onlyBull:g("rt-bull").checked,url:g("rt-url").value.trim()||DEF_URL,
     minLot:n("rt-minlot",0),bigLot:n("rt-biglot",0),hakaMinLot:n("rt-hlot",0),accMinLot:n("rt-alot",0),brkMinLot:n("rt-blot",0),pxMin:n("rt-pmin",0),pxMax:n("rt-pmax",0)});
@@ -887,7 +1047,7 @@ X.act("rtReset",()=>{
 });
 const copy=(t,msg)=>{ try{ navigator.clipboard.writeText(t).then(()=>X.toast(msg,"up")); }catch(e){ X.toast("Gagal menyalin","down"); } };
 X.act("rtClearSig",()=>{ SV("rt_sig",[]); dyn(); });
-X.act("rtCopySig",()=>copy(["waktu,jenis,ticker,harga,p15,p30,info"].concat(sigs().map(g=>[new Date(g.ts).toISOString(),g.ty,g.tk,g.px,g.p15,g.p30,'"'+(g.info||"")+'"'].join(","))).join("\n"),"Riwayat sinyal disalin"));
+X.act("rtCopySig",()=>copy(["waktu,jenis,preset,ticker,harga,p5,p15,p30,info"].concat(sigs().map(g=>[new Date(g.ts).toISOString(),g.ty,'"'+(g.pr||"")+'"',g.tk,g.px,g.p5,g.p15,g.p30,'"'+(g.info||"")+'"'].join(","))).join("\n"),"Riwayat sinyal disalin"));
 X.act("rtCopyDiag",()=>copy(JSON.stringify({stats:RT.st,cfg:{ws:CFG.ws,rest:CFG.rest,feed:CFG.feed,rejQuote:CFG.rejQuote,url:CFG.url},first:RT.first,restKeys:RT.restKeys,rest:RT.restRaw,unparsed:RT.samples},null,1),"Diagnostik disalin — tempel ke chat"));
 X.act("rtCopyMkt",()=>{       // CSV tabel Semua saham sesuai urutan sort yang sedang aktif
   const M=(RT.mkt||[]).slice(), c=RT.sort.rtm; if(c&&RT.mktCols[c.i]&&RT.mktCols[c.i].k){ const k=RT.mktCols[c.i].k; M.sort((a,b)=>{ const x=k(a),y=k(b); return (typeof x==="string"?x.localeCompare(y):x-y)*c.d; }); }
@@ -896,6 +1056,14 @@ X.act("rtCopyMkt",()=>{       // CSV tabel Semua saham sesuai urutan sort yang s
 Object.keys(PRESETS).forEach(k=>X.act("rtPre_"+k,()=>{ readCfg(); applyPreset(PRESETS[k].v,PRESETS[k].n); }));
 X.act("rtPreSave",()=>{ readCfg(); const v={}; PRE_KEYS.forEach(k=>{ v[k]=CFG[k]; }); SV("rt_preset_user",v); X.repaint(); dyn(); X.toast("Pengaturan disimpan sebagai Preset saya","up"); });
 X.act("rtPreUser",()=>{ const v=userPre(); if(!v){ X.toast("Belum ada Preset saya — atur dulu, lalu klik ➕ Simpan pengaturan ini","down"); return; } applyPreset(v,"💾 Preset saya"); });
+X.act("rtCal",()=>{ calRun(); });
+X.act("rtDigestNow",()=>{ sendDigest("manual"); });
+X.act("rtFreeze",()=>{
+  RT.frozen=!RT.frozen; const b=document.getElementById("rtFreezeBtn");
+  if(b){ b.textContent=RT.frozen?"▶ Lanjutkan tampilan":"⏸ Bekukan tampilan"; b.classList.toggle("pri",RT.frozen); }
+  dyn();
+});
+X.act("rtColBtn",()=>{ const el=document.getElementById("rtColCard"); if(!el) return; const open=el.style.display==="none"; el.style.display=open?"":"none"; if(open) colPanel(); });
 // kontrol di luar pengaturan: sort kolom, klik ticker (detail), cari ticker, tape lot besar
 function openFull(tk){      // modal Detail Emiten milik app.js; tombol ‹ › di modal berjalan menurut urutan tabel Semua saham
   if(typeof openDetail!=="function"){ pickTk(tk); return; }
@@ -906,42 +1074,30 @@ function openFull(tk){      // modal Detail Emiten milik app.js; tombol ‹ › 
   }catch(e){ console.warn("running-trade: openDetail gagal",e); pickTk(tk); }
 }
 function pickTk(tk){ RT.sel=tk; const i=document.getElementById("rtsel"); if(i) i.value=tk; dyn(); const d=document.getElementById("rtDetail"); if(d&&d.scrollIntoView) d.scrollIntoView({behavior:"smooth",block:"start"}); }
-const SC_SRC={"Trend Bullish":"Trend harga Bullish di tab Screener","Keyakinan Tinggi":"Skor keyakinan tinggi di tab Screener","Watchlist/Posisi":"Ada di Watchlist atau Posisi Anda"};
-function closeScPop(){ const o=document.getElementById("rtScPop"); if(o) o.remove(); }
-function openScPop(btn){
-  const tk=btn.getAttribute("data-rt-sc"), was=document.getElementById("rtScPop");
-  const same=was&&was.getAttribute("data-tk")===tk; closeScPop(); if(same) return;
-  const l=scStatus(tk);
-  const pop=document.createElement("div"); pop.id="rtScPop"; pop.setAttribute("data-tk",tk);
-  pop.innerHTML=`<div class="rt-pt"><b>${E(tk)} — lolos ${l.length} screener</b><button type="button" class="ex-btn" data-rt-scx="1" title="Tutup">✕</button></div>`
-    +(l.length?l.map(x=>`<div class="rt-pi">${x.i} <b>${E(x.t)}</b><div class="rt-ps">${E(SC_SRC[x.t]||"Smart Pick")}</div></div>`).join(""):`<div class="rt-ps">Sudah tidak lolos screener apa pun.</div>`)
-    +`<div style="margin-top:8px"><button type="button" class="ex-btn" data-rt-scd="${E(tk)}">🔎 Buka Detail Emiten</button></div>`;
-  document.body.appendChild(pop);
-  const r=btn.getBoundingClientRect(), w=pop.offsetWidth, h=pop.offsetHeight;
-  let x=Math.min(Math.max(8,r.left),window.innerWidth-w-8), y=r.bottom+6; if(y+h>window.innerHeight-8) y=Math.max(8,r.top-h-6);
-  pop.style.left=x+"px"; pop.style.top=y+"px";
-}
-document.addEventListener("keydown",e=>{ if(e.key==="Escape") closeScPop(); });
-window.addEventListener("scroll",closeScPop,true);
 document.addEventListener("click",e=>{
   const c=e.target&&e.target.closest?e.target.closest.bind(e.target):null; if(!c) return;
-  let n=c("[data-rt-sc]"); if(n){ openScPop(n); return; }
-  n=c("[data-rt-scd]"); if(n){ const tk=n.getAttribute("data-rt-scd"); closeScPop(); openFull(tk); return; }
-  if(c("[data-rt-scx]")){ closeScPop(); return; }
-  if(!c("#rtScPop")) closeScPop();
-  n=c("[data-rt-sort]"); if(n){ sortClick(n); return; }
+  let n=c("[data-rt-sort]"); if(n){ sortClick(n); return; }
+  n=c("[data-rt-colall]"); if(n){ delete RT.hide[n.getAttribute("data-rt-colall")]; SV("rt_cols",RT.hide); colPanel(); dyn(); return; }
+  n=c("[data-rt-colcompact]"); if(n){ RT.hide.rtbs=["% Sell","Lot buy","Lot sell","Net lot","% Lot buy","Trx buy","Trx sell"]; SV("rt_cols",RT.hide); colPanel(); dyn(); return; }
   n=c("[data-rt-full]"); if(n){ openFull(n.getAttribute("data-rt-full")); return; }
   n=c("[data-rt-tk]"); if(n){ pickTk(n.getAttribute("data-rt-tk")); return; }
   n=c("[data-rt-close]"); if(n){ RT.sel=""; const i=document.getElementById("rtsel"); if(i) i.value=""; dyn(); }
 });
-document.addEventListener("input",e=>{ const t=e.target; if(t&&t.id==="rtq"){ RT.q=t.value.trim().toUpperCase(); dyn(); } });
+document.addEventListener("input",e=>{ const t=e.target; if(!t||!t.id) return;
+  if(t.id==="rtq"){ RT.q=t.value.trim().toUpperCase(); dyn(); }
+  else if(t.id.indexOf("rtc-")===0){ RT.cal[t.id.slice(4)]=t.value; SV("rt_cal",RT.cal); }
+});
 document.addEventListener("change",e=>{
   const t=e.target; if(!t||!t.id) return;
+  const mc=t.id.match(/^rtcol_(\w+)_(\d+)$/);
+  if(mc){ const id=mc[1], h=(RT.colReg[id]||[])[+mc[2]]; if(h!=null){ const a=(RT.hide[id]||[]).filter(x=>x!==h); if(!t.checked) a.push(h); if(a.length) RT.hide[id]=a; else delete RT.hide[id]; SV("rt_cols",RT.hide); dyn(); } return; }
+  if(t.id==="rtc-win"){ RT.cal.win=t.value; SV("rt_cal",RT.cal); return; }
   if(t.id==="rtsel"){ RT.sel=t.value.trim().toUpperCase().replace(/[^A-Z]/g,""); dyn(); }
   else if(t.id==="rtbig"){ RT.bigOnly=t.checked; dyn(); }
   else if(t.id==="rtmo"){ RT.momOnly=t.checked; dyn(); }
   else if(t.id==="rtdv"){ RT.dvOnly=t.checked; dyn(); }
   else if(t.id==="rtsc"){ RT.scOnly=t.checked; dyn(); }
+  else if(t.id==="rtgb"){ RT.gb=GB[t.value]?t.value:"ty"; SV("rt_gb",RT.gb); dyn(); }
   else if(t.id==="rtmode"){ RT.mode=t.value==="cum"?"cum":"win"; SV("rt_mode",RT.mode); dyn(); }
 });
 loadTrades();
@@ -950,9 +1106,10 @@ setInterval(saveTrades,15000);
 X.addTab("rt","⚡ Running Trade",view,dyn);
 setInterval(()=>{
   try{
-    alerts(); evalSigs();
+    alerts(); evalSigs(); digestTick();
     const pg=document.getElementById("exPage");
-    if(pg&&pg.classList.contains("on")&&X.current()==="rt"){ fitWidth(); dyn(); }
+    let hv=false; try{ hv=!!(CFG.hoverPause&&document.querySelector("#rtDyn .ex-wrap:hover")); }catch(e){}
+    if(pg&&pg.classList.contains("on")&&X.current()==="rt"&&!RT.frozen&&!hv) dyn();
   }catch(e){ console.warn("running-trade:",e); }
 },1500);
 })();
