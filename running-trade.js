@@ -28,7 +28,7 @@ const CFG=Object.assign({ws:true,rest:false,url:DEF_URL,pollSec:3,tickers:"",hak
   hakaMinJt:300,hakaRatio:65,bigJt:50,accMinJt:200,accRatio:55,brkMinJt:100,minTrades:10,onlyOwn:false,onlyBull:false,tg:false,tick:true,auto:true,perPoll:5,adapt:true,refAdvM:20,bn:false,snd:false,feed:true,minLot:0,bigLot:0,hakaMinLot:0,accMinLot:0,brkMinLot:0,pxMin:0,pxMax:0,rejQuote:true,bigAlert:true,momAlert:true,confMin:3,confAlert:true,hoverPause:true,cost:0.4,digest:false,digestMin:30,digestN:5,digestClose:true},LS("rt_cfg",{}));
 // URL lama tersimpan di localStorage memakai order_by salah (RUN_TRADE_...): perbaiki otomatis. trade_number dibuang karena itu kursor tetap (data basi).
 CFG.url=String(CFG.url||DEF_URL).replace("RUN_TRADE_ORDER_BY_TIME","RUNNING_TRADE_ORDER_BY_TIME").replace(/([?&])trade_number=\d*&?/,"$1").replace(/[?&]$/,"");
-const RT={on:false,lastTs:{},first:[],diagOpen:false,trades:[],seen:new Set(),fp:new Map(),bigQ:[],sort:LS("rt_sort",{}),q:"",sel:"",bigOnly:false,gen:0,mm:{},gb:LS("rt_gb","ty"),frozen:false,hide:LS("rt_cols",{}),colReg:{},cal:LS("rt_cal",{}),restRaw:[],restKeys:[],dvOnly:false,momOnly:false,scOnly:false,cum:new Map(),cumDay:"",mode:LS("rt_mode","win"),raw:new Map(),last:{},lastSide:{},flag:{},samples:[],busy:false,poll:null,rot:0,dirty:0,saved:0,
+const RT={on:false,lastTs:{},first:[],diagOpen:false,trades:[],seen:new Set(),fp:new Map(),bigQ:[],sort:LS("rt_sort",{}),q:"",sel:"",bigOnly:false,gen:0,mm:{},gb:LS("rt_gb","ty"),frozen:false,hide:LS("rt_cols",{}),colReg:{},cal:LS("rt_cal",{}),restRaw:[],restKeys:[],dvOnly:false,dvSel:"",momOnly:false,scOnly:false,cum:new Map(),cumDay:"",mode:LS("rt_mode","win"),raw:new Map(),last:{},lastSide:{},flag:{},samples:[],busy:false,poll:null,rot:0,dirty:0,saved:0,
   st:{quote:0,dup:0,nw:0,nr:0,restored:0,symOk:0,symBad:0,watch:0,frames:0,parsed:0,unparsed:0,trades:0,est:0,brk:0,rest:0,restErr:null,restAt:0,startAt:0}};
 
 /* ---------- util ---------- */
@@ -397,7 +397,27 @@ function divOf(a){              // indikasi divergensi harga vs aliran (heuristi
   if(a.net<0&&a.pb<=40&&a.chg>=-0.2) return {c:"P",t:"🧱 Penyerapan jual",d:"Banyak HAKI tetapi harga bertahan: indikasi ada yang menyerap tekanan jual."};
   return null;
 }
-function bsRows(M,fq){
+// RSI 7/14/21 dari data Screener (X.stk). Nama field di app.js belum pasti, jadi dicoba beberapa kemungkinan;
+// kalau ada deret harga penutupan, RSI dihitung sendiri (Wilder). Tidak ketemu → null (tampil "-").
+function rsiCalc(cl,p){
+  if(!Array.isArray(cl)||cl.length<=p) return null; const c=cl.map(Number).filter(v=>isFinite(v)); if(c.length<=p) return null;
+  let g=0,l=0; for(let i=1;i<=p;i++){ const d=c[i]-c[i-1]; if(d>=0) g+=d; else l-=d; } g/=p; l/=p;
+  for(let i=p+1;i<c.length;i++){ const d=c[i]-c[i-1]; g=(g*(p-1)+(d>0?d:0))/p; l=(l*(p-1)+(d<0?-d:0))/p; }
+  return l===0?100:100-100/(1+g/l);
+}
+function rsiOf(tk){
+  const out={7:null,14:null,21:null}; let r=null; try{ r=X.stk(tk); }catch(e){} if(!r) return out;
+  [7,14,21].forEach(p=>{
+    const keys=["rsi"+p,"rsi_"+p,"RSI"+p,"RSI_"+p,"rsi"+p+"d","rsi"+p+"Value"]; let v=null;
+    for(const k of keys){ if(r[k]!=null&&isFinite(+r[k])){ v=+r[k]; break; } }
+    if(v==null&&r.rsi&&typeof r.rsi==="object"&&r.rsi[p]!=null&&isFinite(+r.rsi[p])) v=+r.rsi[p];
+    if(v==null&&p===14&&r.rsi!=null&&typeof r.rsi!=="object"&&isFinite(+r.rsi)) v=+r.rsi;
+    if(v==null){ const cl=r.closes||r.close||r.prices||r.hist||r.history; if(Array.isArray(cl)) v=rsiCalc(cl.map(x=>x&&typeof x==="object"?(x.close!=null?x.close:x.c):x),p); }
+    out[p]=v;
+  });
+  return out;
+}
+function bsRows(M,fq,skipDv){
   const am=accelMap();          // baris komposisi buy/sell: mode "win" = jendela akumulasi, "cum" = akumulasi sejak Mulai hari ini
   let src=M;
   if(RT.mode==="cum"){ src=[]; const own=X.ownTickers();
@@ -405,7 +425,7 @@ function bsRows(M,fq){
   const bw=RT.mode==="cum"?null:brkWin();
   return src.filter(fq).map(a=>{ const tv=a.bv+a.sv, tl=a.bl+a.sl, bm=bw?(bw.get(a.tk)||{}):a;
     return {tk:a.tk,last:a.last,chg:a.chg,bv:a.bv,sv:a.sv,bl:a.bl,sl:a.sl,nb:a.nb,ns:a.ns,tv,net:a.bv-a.sv,netL:a.bl-a.sl,pb:tv?a.bv/tv*100:0,ps:tv?a.sv/tv*100:0,pl:tl?a.bl/tl*100:0,
-      tb:topN(bm.bb,3),ts:topN(bm.bs,3),sc:scStatus(a.tk),ac:am.get(a.tk)||null}; }).map(r=>{ r.dv=divOf(r); return r; }).filter(a=>(!RT.scOnly||a.sc.length)&&(!RT.dvOnly||a.dv)&&(!RT.momOnly||(a.ac&&a.ac.sig)));
+      tb:topN(bm.bb,3),ts:topN(bm.bs,3),sc:scStatus(a.tk),rsi:rsiOf(a.tk),ac:am.get(a.tk)||null}; }).map(r=>{ r.dv=divOf(r); return r; }).filter(a=>(!RT.scOnly||a.sc.length)&&(!RT.dvOnly||a.dv)&&(skipDv||!RT.dvSel||(a.dv&&a.dv.c===RT.dvSel))&&(!RT.momOnly||(a.ac&&a.ac.sig)));
 }
 
 /* ---------- bandar: broker dengan net beli terbesar per ticker ---------- */
@@ -792,11 +812,13 @@ function dyn(){
     {h:"Lot besar (n)",k:a=>a.big,r:a=>a.big||"-"},{h:"Net lot besar",k:a=>a.bigNet,r:a=>a.bigNet?sgn(a.bigNet):"-"},{h:"Lot terbesar",k:a=>a.mx,r:a=>`${fpx(a.mx)} <span class="${a.mxs==="B"?"ex-up":"ex-dn"}">${a.mxs==="B"?"▲":"▼"}</span>`},
     {h:"Trx/mnt",k:a=>a.rate,r:a=>a.rate.toFixed(1)},{h:"Umur (dtk)",k:a=>a.age,r:a=>a.age}];
   const pc1=n=>n.toFixed(1)+"%";
-  const scCell=a=>a.sc.length?`<div style="max-width:300px">${a.sc.map(x=>`<span class="ex-chip" style="font-size:11px;padding:1px 6px;margin:1px;display:inline-block;white-space:nowrap" title="${E(x.t)}">${x.i} ${E(x.t)}</span>`).join("")}</div>`:"-";
+  const scCell=a=>a.sc.length?`<span class="ex-chip rt-scn" data-rt-sc="${E(a.tk)}" style="cursor:pointer;font-weight:700;padding:1px 9px;white-space:nowrap" title="${E(a.sc.map(x=>x.t).join(", "))} — klik untuk lihat daftar">${a.sc.length} lolos</span>`:`<span class="ex-mut">0</span>`;
+  const rsiCell=(a,p)=>{ const v=a.rsi&&a.rsi[p]; return v==null?"-":`<span class="${v>=70?"ex-dn":v<=30?"ex-up":""}" title="${v>=70?"Jenuh beli (≥70)":v<=30?"Jenuh jual (≤30)":"Netral"}">${v.toFixed(1)}</span>`; };
   const brkCell=(l,tot)=>l.length?`<div style="font-size:12px;line-height:1.35;min-width:130px">${l.map(x=>`<div title="${E(x[0])}: ${fv(x[1])} (${tot?Math.round(x[1]/tot*100):0}% dari total ${fv(tot)})"><b>${E(x[0])}</b> ${fv(x[1])}</div>`).join("")}</div>`:"-";
   const stack=a=>`<div style="display:flex;height:10px;min-width:110px;border-radius:3px;overflow:hidden" title="Buy ${pc1(a.pb)} / Sell ${pc1(a.ps)}"><span style="width:${a.pb.toFixed(1)}%;background:#22c55e"></span><span style="flex:1;background:#ef4444"></span></div>`;
-  const BS=bsRows(M,fq), bsB=BS.reduce((t,a)=>t+a.bv,0), bsS=BS.reduce((t,a)=>t+a.sv,0), bsT=bsB+bsS;
+  const BSall=bsRows(M,fq,true), BS=RT.dvSel?BSall.filter(a=>a.dv&&a.dv.c===RT.dvSel):BSall, bsB=BS.reduce((t,a)=>t+a.bv,0), bsS=BS.reduce((t,a)=>t+a.sv,0), bsT=bsB+bsS;
   const bsC=[{h:"Ticker",s:1,k:a=>a.tk,r:a=>tkc(a.tk)},{h:"Lolos screener",k:a=>a.sc.length,r:scCell},{h:"Harga",k:a=>a.last,r:a=>fpx(a.last)},{h:"Δ%",k:a=>a.chg,r:chg},
+    {h:"RSI 7",k:a=>a.rsi?a.rsi[7]:null,r:a=>rsiCell(a,7)},{h:"RSI 14",k:a=>a.rsi?a.rsi[14]:null,r:a=>rsiCell(a,14)},{h:"RSI 21",k:a=>a.rsi?a.rsi[21]:null,r:a=>rsiCell(a,21)},
     {h:"Buy (HAKA)",k:a=>a.bv,r:a=>`<span class="ex-up">${fv(a.bv)}</span>`},{h:"Sell (HAKI)",k:a=>a.sv,r:a=>`<span class="ex-dn">${fv(a.sv)}</span>`},
     {h:"Net",k:a=>a.net,r:a=>`<span class="${a.net>=0?"ex-up":"ex-dn"}">${fv(a.net)}</span>`},
     {h:"% Buy",k:a=>a.pb,r:a=>`<span class="${a.pb>=50?"ex-up":"ex-dn"}">${pc1(a.pb)}</span>`},{h:"% Sell",k:a=>a.ps,r:a=>pc1(a.ps)},{h:"Komposisi",r:stack},{h:"Δ% Buy (2m vs 5m)",k:a=>a.ac?a.ac.d:null,r:a=>a.ac&&a.ac.d!=null?`<span class="${a.ac.d>=0?"ex-up":"ex-dn"}" title="%Buy 2 menit terakhir ${a.ac.pbR==null?"-":a.ac.pbR.toFixed(0)}% vs 5 menit sebelumnya ${a.ac.pbB==null?"-":a.ac.pbB.toFixed(0)}%">${a.ac.d>=0?"+":"−"}${Math.abs(a.ac.d).toFixed(0)} pp</span>`:"-"},
@@ -836,7 +858,7 @@ function dyn(){
   <div class="ex-card"><h3>🔥 Sedang di-HAKA (${CFG.hakaWin} menit terakhir)</h3>${stbl("rth",hC,H,"Belum ada saham yang memenuhi syarat HAKA.")}</div>
   <div class="ex-card"><h3>🧲 Terakumulasi (${CFG.accWin} menit terakhir)</h3>${stbl("rta",aC,A,"Belum ada saham yang memenuhi syarat akumulasi.")}</div>
   <div class="ex-card"><h3>⚖️ Akumulasi Buy vs Sell per emiten (${bsHead}, ${BS.length} saham)</h3>
-    <div class="ex-chips"><span class="ex-chip">Total Buy <span class="ex-up">${fv(bsB)}</span> (${bsT?(bsB/bsT*100).toFixed(1):"0.0"}%)</span><span class="ex-chip">Total Sell <span class="ex-dn">${fv(bsS)}</span> (${bsT?(bsS/bsT*100).toFixed(1):"0.0"}%)</span>${["H","D","P"].map(c=>{ const n=BS.filter(a=>a.dv&&a.dv.c===c).length, t=c==="H"?"🕵 Akumulasi tersembunyi":c==="D"?"⚠ Distribusi":"🧱 Penyerapan jual"; return n?`<span class="ex-chip">${t}: ${n}</span>`:""; }).join("")}</div>
+    <div class="ex-chips"><span class="ex-chip">Total Buy <span class="ex-up">${fv(bsB)}</span> (${bsT?(bsB/bsT*100).toFixed(1):"0.0"}%)</span><span class="ex-chip">Total Sell <span class="ex-dn">${fv(bsS)}</span> (${bsT?(bsS/bsT*100).toFixed(1):"0.0"}%)</span>${["H","D","P"].map(c=>{ const n=BSall.filter(a=>a.dv&&a.dv.c===c).length, t=c==="H"?"🕵 Akumulasi tersembunyi":c==="D"?"⚠ Distribusi":"🧱 Penyerapan jual", on=RT.dvSel===c; return n||on?`<span class="ex-chip" data-rt-dv="${c}" style="cursor:pointer${on?";outline:2px solid #3b82f6;font-weight:700":""}" title="${on?"Klik lagi untuk tampilkan semua":"Klik untuk filter tabel hanya "+t}">${t}: ${n}${on?" ✕":""}</span>`:""; }).join("")}</div>
     ${stbl("rtbs",bsC,BS,"Belum ada transaksi.",{max:100})}<div class="ex-mut" style="margin-top:6px">Buy = transaksi HAKA (pembeli agresif), Sell = HAKI (penjual agresif); % dihitung dari nilai (Rp) dan lot. Pilih jendela atau akumulasi sejak Mulai di kotak "Buy/Sell" di atas (mode sejak Mulai tersimpan saat refresh, reset saat hari bursa berganti, dan tidak terkena filter min lot). Hijau pada bar = porsi Buy, merah = porsi Sell. Sisi bertanda ~ di tape adalah tebakan tick-rule. "Momentum" = %Buy 2 menit terakhir vs 5 menit sebelumnya: 🚀 bila naik ≥ 15 poin ke ≥ 60% dengan tape ≥ 1,5× lebih cepat dan net beli berarti, 🔻 kebalikannya; hanya aktif setelah ≥ 7 menit data terkumpul. Tape × = kecepatan transaksi 2 menit terakhir ÷ rata-rata 5 menit sebelumnya. Tren = %Buy per menit 10 menit terakhir. "Divergensi" = indikasi harga vs aliran (🕵 net beli besar tapi harga datar/turun, ⚠ harga naik tapi net jual besar, 🧱 banyak HAKI tapi harga bertahan; hanya heuristik, bukan kepastian). "Lolos screener" = hasil Smart Pick (nama sinyal), Trend Bullish, Keyakinan Tinggi, dan Watchlist/Posisi untuk saham itu; arahkan kursor ke chip untuk nama lengkap. Top 3 broker = 3 broker dengan total nilai beli/jual terbesar di saham itu (kedua sisi transaksi, seperti broker summary; arahkan kursor untuk porsinya); "-" berarti sumber data tidak membawa kode broker.</div></div>
   <div class="ex-card"><h3>🐘 Lot besar (${CFG.accWin} menit terakhir) — ${bigs.length} transaksi${cnt3||cnt2?` (${cnt3} mega, ${cnt2} jumbo)`:""}</h3>
     <div class="ex-mut rt-leg" style="margin-bottom:6px"><span class="rt-l1" style="background:rgba(250,204,21,.3)">🐘 BESAR ≥ batas</span><span style="background:rgba(251,146,60,.4)">🐘🐘 JUMBO ≥ 3×</span><span style="background:rgba(239,68,68,.5)">🐘🐘🐘 MEGA ≥ 10×</span> Batas = "Transaksi besar ≥ (jt Rp)" × pengali likuiditas, atau "Lot besar ≥" bila diisi.</div>
@@ -1074,9 +1096,24 @@ function openFull(tk){      // modal Detail Emiten milik app.js; tombol ‹ › 
   }catch(e){ console.warn("running-trade: openDetail gagal",e); pickTk(tk); }
 }
 function pickTk(tk){ RT.sel=tk; const i=document.getElementById("rtsel"); if(i) i.value=tk; dyn(); const d=document.getElementById("rtDetail"); if(d&&d.scrollIntoView) d.scrollIntoView({behavior:"smooth",block:"start"}); }
+function scPopClose(){ const o=document.getElementById("rtScPop"); if(o) o.remove(); }
+function scPop(tk,el){   // daftar screener/preset yang diloloskan saham ini (klik lagi untuk menutup)
+  const had=document.getElementById("rtScPop")&&document.getElementById("rtScPop").getAttribute("data-tk")===tk; scPopClose(); if(had) return;
+  const l=scStatus(tk), r=el.getBoundingClientRect(), d=document.createElement("div"); d.id="rtScPop"; d.setAttribute("data-tk",tk);
+  d.style.cssText="position:fixed;z-index:99999;min-width:220px;max-width:320px;padding:10px 12px;border-radius:10px;background:var(--card,#fff);color:var(--text,#111);border:1px solid rgba(128,128,128,.4);box-shadow:0 8px 24px rgba(0,0,0,.25);font-size:13px;line-height:1.5";
+  d.innerHTML=`<div style="display:flex;justify-content:space-between;gap:8px;margin-bottom:6px"><b>${E(tk)} — lolos ${l.length} screener/preset</b><span data-rt-scx="1" style="cursor:pointer">✕</span></div>`+
+    (l.length?l.map(x=>`<div>${x.i} ${E(x.t)}</div>`).join(""):`<div class="ex-mut">Belum lolos screener apa pun.</div>`)+
+    `<div style="margin-top:8px"><a href="#" data-rt-full="${E(tk)}" style="color:#3b82f6">Buka Detail Emiten →</a></div>`;
+  document.body.appendChild(d);
+  const w=d.offsetWidth,h=d.offsetHeight; d.style.left=Math.max(8,Math.min(r.left,innerWidth-w-8))+"px"; d.style.top=(r.bottom+6+h>innerHeight?Math.max(8,r.top-h-6):r.bottom+6)+"px";
+}
+document.addEventListener("click",e=>{ const t=e.target; if(t&&t.getAttribute&&t.getAttribute("data-rt-scx")) scPopClose(); if(t&&t.closest&&t.closest("#rtScPop a[data-rt-full]")){ e.preventDefault(); } },true);
 document.addEventListener("click",e=>{
   const c=e.target&&e.target.closest?e.target.closest.bind(e.target):null; if(!c) return;
-  let n=c("[data-rt-sort]"); if(n){ sortClick(n); return; }
+  let n=c("[data-rt-dv]"); if(n){ const k=n.getAttribute("data-rt-dv"); RT.dvSel=RT.dvSel===k?"":k; dyn(); return; }
+  n=c("[data-rt-sc]"); if(n){ scPop(n.getAttribute("data-rt-sc"),n); return; }
+  if(!c("#rtScPop")) scPopClose();
+  n=c("[data-rt-sort]"); if(n){ sortClick(n); return; }
   n=c("[data-rt-colall]"); if(n){ delete RT.hide[n.getAttribute("data-rt-colall")]; SV("rt_cols",RT.hide); colPanel(); dyn(); return; }
   n=c("[data-rt-colcompact]"); if(n){ RT.hide.rtbs=["% Sell","Lot buy","Lot sell","Net lot","% Lot buy","Trx buy","Trx sell"]; SV("rt_cols",RT.hide); colPanel(); dyn(); return; }
   n=c("[data-rt-full]"); if(n){ openFull(n.getAttribute("data-rt-full")); return; }
