@@ -543,6 +543,59 @@ function confList(){
   return confAll().filter(r=>r.n>=Math.max(1,CFG.confMin)&&r.score>0).sort((a,b)=>b.score-a.score||b.n-a.n||b.net-a.net);
 }
 
+/* ---------- panduan: aturan main membaca sinyal untuk entri & jual ---------- */
+const GUIDE_CHK=["Masuk tabel 🎯 Konfluensi dengan jumlah sinyal ≥ batas Anda","Kolom <b>Konfirmasi jendela</b> = 3/3 (1 mnt, jendela akumulasi, dan sejak Mulai sama-sama net beli)","Kolom <b>Bertahan</b> sudah beberapa menit (bukan muncul sesaat)","Status zona <b>Di zona entri</b> dan R:R ≥ batas (bukan ⏰ Telat atau ⬇ Di bawah zona)","Dukungan <b>Bandar</b>: ada broker pembeli dominan, dan saham tidak sepi (tanda ×0,3 / transaksi sedikit = waspada)","Tidak ada tanda ⚠ Distribusi, 🧱 Penyerapan jual, atau 🔻 anjlok","Chart searah: tidak menabrak resistance dan tren tidak melawan"];
+function guideHtml(){
+  const open=LS("rt_guide_open",false)?" open":"", tr=(a,b,c)=>`<tr><td>${a}</td><td>${b}</td><td>${c}</td></tr>`;
+  return `<details class="ex-card" id="rtGuide"${open}><summary style="cursor:pointer"><b>📖 Aturan main</b> <span class="ex-mut">— cara membaca sinyal untuk entri &amp; jual (panduan belajar)</span></summary>
+  <div style="font-size:13px;line-height:1.6;margin-top:8px">
+    <p><b>Prinsip dasar.</b> Running Trade mengukur <i>aliran transaksi</i>: siapa yang agresif membeli (HAKA) atau menjual (HAKI). Ini bukan ramalan harga, dan tidak ada satu tabel yang cukup untuk memutuskan. Perlakukan tiap tabel sebagai <b>saringan</b>, lalu tumpuk beberapa saringan. <span class="ex-mut">Pengaturan Anda sekarang: preset <b>${E(presetName())}</b> · min konfluensi <b>${CFG.confMin}</b> sinyal · biaya bolak-balik <b>${+CFG.cost||0}%</b>.</span></p>
+
+    <h4 style="margin:10px 0 4px">Alur 5 langkah</h4>
+    <ol style="margin:0 0 6px 18px;padding:0">
+      <li><b>Saring</b> — lihat 🎯 Konfluensi (gabungan HAKA, akumulasi, bandar, lot besar, momentum). Jangan turun dari 3 sinyal.</li>
+      <li><b>Konfirmasi</b> — cek kolom <i>Konfirmasi jendela</i> (3/3) dan <i>Bertahan</i>. Aliran yang hanya muncul di 1 menit sering cuma satu transaksi besar.</li>
+      <li><b>Cek zona</b> — masuk hanya bila status <i>Di zona entri</i>. ⏰ Telat berarti sudah lari; ⬇ Di bawah zona lebih baik ditunggu daripada ditebak; “Zona perkiraan” tidak bisa dinilai.</li>
+      <li><b>Eksekusi</b> — klik 📌 untuk mengikuti rencana (entri, SL, TP1, TP2). Alert SL/TP berjalan selama ▶ Mulai aktif dan tab terbuka. Ini pemantau, bukan pengganti order di sekuritas.</li>
+      <li><b>Kelola</b> — pantau tanda keluar di bawah. Pertimbangkan jual sebagian di TP1, bukan semuanya di satu titik.</li>
+    </ol>
+
+    <h4 style="margin:10px 0 4px">Checklist entri <span class="ex-mut" style="font-weight:400">(centang sendiri untuk latihan)</span></h4>
+    <div id="rtChk">${GUIDE_CHK.map((t,i)=>`<label style="display:block;margin:2px 0"><input type="checkbox" data-rt-chk="${i}"> ${t}</label>`).join("")}</div>
+    <div id="rtChkN" class="ex-mut" style="margin:4px 0 8px">0/${GUIDE_CHK.length} terpenuhi — makin banyak yang terpenuhi, makin kuat alasannya; sedikit = lebih baik menunggu.</div>
+
+    <h4 style="margin:10px 0 4px">Tanda untuk keluar / jual</h4>
+    <div class="ex-wrap"><table class="ex-tbl"><thead><tr><th>Tanda</th><th>Artinya</th><th>Yang bisa dipertimbangkan</th></tr></thead><tbody>
+      ${tr("Harga menyentuh SL","Rencana gagal","Keluar sesuai rencana; jangan menggeser SL")}
+      ${tr("Harga menyentuh TP1 / TP2","Target tercapai","Jual sebagian di TP1, sisanya sampai TP2")}
+      ${tr("% Buy turun di bawah 50% dan bertahan, atau 🔻 anjlok","Pembeli agresif berhenti / berbalik","Kurangi atau keluar")}
+      ${tr("⚠ Distribusi","Harga naik tetapi net jual besar","Waspada, amankan sebagian")}
+      ${tr("🧱 Penyerapan jual","Banyak HAKI tetapi harga bertahan","Awasi; bisa berbalik ke dua arah")}
+      ${tr("Bandar berbalik net jual (tabel 🐋 Bandar)","Broker pembeli utama mulai melepas","Kurangi atau keluar")}
+    </tbody></table></div>
+
+    <h4 style="margin:10px 0 4px">Tanda derau (jangan terlalu dipercaya)</h4>
+    <ul style="margin:0 0 6px 18px;padding:0">
+      <li>Saham bertanda <b>×0,3</b> / sepi: satu transaksi besar bisa memicu semua sinyal.</li>
+      <li>Data REST itu sampling dan sisi HAKA/HAKI kadang tebakan tick-rule, jadi angkanya bisa meleset dari Stockbit.</li>
+      <li>Data yang basi: kalau tabel berhenti bergerak, cek ▶ Mulai, token, dan umur harga di tabel Posisi.</li>
+      <li>Aliran beli besar tetap bisa gagal. Selalu konfirmasi dengan chart.</li>
+    </ul>
+
+    <h4 style="margin:10px 0 4px">Cara belajar yang disarankan</h4>
+    <ol style="margin:0 0 6px 18px;padding:0">
+      <li>Pilih <b>satu preset</b> (Scalping atau Intraday) dan jangan gonta-ganti selama beberapa hari, supaya datanya bisa dibandingkan.</li>
+      <li>Biarkan ▶ Mulai berjalan saat bursa buka; sinyal tercatat otomatis.</li>
+      <li>Buka tabel <b>📈 Hit-rate sinyal</b>: lihat jenis sinyal mana yang rata-rata positif di +5/+15/+30 menit <b>setelah biaya</b> (kolom “Hit +30m &gt; biaya”).</li>
+      <li>Perhatikan juga rentang kepercayaan 95%: sampel yang masih sedikit belum bisa disimpulkan (rentangnya akan lebar).</li>
+      <li>Fokuskan latihan pada jenis sinyal yang konsisten, abaikan yang tidak.</li>
+    </ol>
+
+    <h4 style="margin:10px 0 4px">Kamus singkat</h4>
+    <div class="ex-mut"><b>HAKA</b> = beli agresif (menyerbu harga jual) · <b>HAKI</b> = jual agresif · <b>Net</b> = beli − jual · <b>Rasio</b> = porsi beli dari total transaksi · <b>×0,3 / ×1,2</b> = pengali batas nilai sesuai likuiditas saham · <b>Zona</b>: Di zona entri / ⏰ Telat / ⬇ Di bawah zona / ⛔ Tembus SL · <b>Konfirmasi jendela 3/3</b> = 1 mnt, jendela akumulasi, dan sejak Mulai sama-sama net beli.</div>
+    <div class="ex-mut" style="margin-top:8px">Panduan ini materi belajar, bukan rekomendasi beli atau jual. Keputusan dan risikonya tetap di tangan Anda.</div>
+  </div></details>`;
+}
 /* ---------- preset ambang (hanya ambang & jendela; sumber data, alert, filter lot/harga, dan pilihan Anda lainnya tidak diubah) ---------- */
 const PRE_KEYS=["hakaWin","accWin","hakaMinJt","hakaRatio","bigJt","accMinJt","accRatio","brkMinJt","minTrades","pollSec","confMin"];
 const PRESETS={
@@ -553,9 +606,13 @@ const PRESETS={
   swing:{n:"🌊 Swing",d:"Jendela HAKA 15 mnt, akumulasi 60 mnt; ambang besar, sinyal lebih sedikit tetapi lebih tahan lama (polling 5 dtk). Butuh data terkumpul ± 1 jam.",
     v:{hakaWin:15,accWin:60,hakaMinJt:800,hakaRatio:60,bigJt:100,accMinJt:600,accRatio:55,brkMinJt:300,minTrades:30,pollSec:5,confMin:4}}
 };
-const userPre=()=>LS("rt_preset_user",null);
+const userPres=()=>{                 // daftar preset buatan sendiri: [{id,n,v}]; preset tunggal lama ("Preset saya") dimigrasi otomatis
+  let l=LS("rt_presets_user",null);
+  if(!Array.isArray(l)){ l=[]; const old=LS("rt_preset_user",null); if(old&&typeof old==="object"){ l.push({id:"p"+Date.now().toString(36),n:"Preset saya",v:old}); SV("rt_presets_user",l); } }
+  return l.filter(q=>q&&q.id&&q.n&&q.v&&typeof q.v==="object");
+};
 const sameP=(v)=>!!v&&PRE_KEYS.every(k=>+CFG[k]===+v[k]);
-function presetName(){ for(const k in PRESETS) if(sameP(PRESETS[k].v)) return PRESETS[k].n; return sameP(userPre())?"💾 Preset saya":"Kustom"; }
+function presetName(){ for(const k in PRESETS) if(sameP(PRESETS[k].v)) return PRESETS[k].n; const u=userPres().find(q=>sameP(q.v)); return u?"💾 "+u.n:"Kustom"; }
 function applyPreset(v,nama){
   PRE_KEYS.forEach(k=>{ if(v[k]!=null) CFG[k]=v[k]; });
   RT.mm={}; SV("rt_cfg",CFG); applyPoll(); X.repaint(); dyn(); X.toast("Preset "+nama+" diterapkan","up");
@@ -662,8 +719,8 @@ function view(){
   <div class="ex-mut" style="margin-bottom:10px;line-height:1.55">HAKA = pembeli agresif menyambar offer; nilai dihitung dari harga × lot × 100. ⭐ = Watchlist/posisi, ✨ = lolos Smart Pick (arahkan kursor untuk nama sinyalnya), 📈 = trend Bullish di Screener, ✅ = keyakinan tinggi. Batas nilai (HAKA, akumulasi, bandar, transaksi besar) dikalikan ×N sesuai likuiditas saham (acuan di pengaturan; saham sepi 0.3×, sangat likuid sampai 5×). Deteksi memakai transaksi yang tertangkap sejak tombol Mulai ditekan, jadi butuh beberapa menit untuk terisi. Klik judul kolom untuk mengurutkan, klik nama ticker untuk membuka Detail Emiten (analisa lengkap), klik 🔎 untuk panel detail running trade.</div>
   <div class="rt-tools" style="margin:0 0 12px"><b>Preset ambang:</b>
     ${Object.keys(PRESETS).map(k=>`<button class="ex-btn ${sameP(PRESETS[k].v)?"pri":""}" data-act="rtPre_${k}" title="${E(PRESETS[k].d)}">${PRESETS[k].n}</button>`).join("")}
-    <button class="ex-btn ${sameP(userPre())?"pri":""}" data-act="rtPreUser" title="Pakai ambang yang Anda simpan">💾 Preset saya</button>
-    <button class="ex-btn" data-act="rtPreSave" title="Simpan ambang & jendela saat ini sebagai Preset saya">➕ Simpan pengaturan ini</button>
+    ${userPres().map(q=>`<span style="display:inline-flex;gap:2px;align-items:center"><button class="ex-btn ${sameP(q.v)?"pri":""}" data-rt-upre="${E(q.id)}" title="Pakai preset ini">💾 ${E(q.n)}</button><button class="ex-btn" data-rt-udel="${E(q.id)}" title="Hapus preset ini" style="padding:0 6px">✕</button></span>`).join("")}
+    <button class="ex-btn" data-act="rtPreSave" title="Simpan ambang & jendela saat ini sebagai preset baru (nama yang sama = timpa preset itu)">➕ Simpan pengaturan ini</button>
     <span class="ex-mut">Aktif: <b>${E(presetName())}</b> · preset hanya mengubah jendela &amp; ambang nilai/rasio/min transaksi/interval/konfluensi (sumber data, alert, filter lot &amp; harga tidak ikut berubah)</span></div>
   <div class="ex-grid">
     ${ck("rt-ws",CFG.ws)}Sumber WebSocket (ekstensi)</label>
@@ -747,6 +804,7 @@ function view(){
     <label><input type="checkbox" id="rtbig"${RT.bigOnly?" checked":""} style="width:auto"> Tape: hanya lot besar</label>
   </div></div>
   <div class="ex-card" id="rtColCard" style="display:none"></div>
+  ${guideHtml()}
   <details class="ex-card"><summary style="cursor:pointer"><b>🎚 Kalibrasi dengan Stockbit</b> <span class="ex-mut">— bandingkan angka Buy/Sell satu saham dengan Stockbit</span></summary>
     <div class="ex-mut" style="margin:8px 0;line-height:1.55">Buka Running Trade/ringkasan Stockbit untuk satu saham dan jendela waktu yang sama, isi angkanya di sini (format Stockbit boleh: 8,07 M = miliar, 500 jt, 250 rb), lalu klik Bandingkan. Aplikasi menampilkan selisihnya dan kemungkinan penyebabnya.</div>
     <div class="rt-tools"><label>Ticker <input id="rtc-tk" type="text" value="${E(RT.cal.tk||"")}" placeholder="SMIL"></label>
@@ -1750,8 +1808,14 @@ X.act("rtCopyMkt",()=>{       // CSV tabel Semua saham sesuai urutan sort yang s
   copy(["ticker,harga,chg_pct,nilai_total,net_nilai,rasio_beli,lot_beli,lot_jual,net_lot,lot_besar_n,net_lot_besar,lot_terbesar,trx_per_menit,umur_dtk"].concat(M.map(a=>[a.tk,a.last,a.chg.toFixed(2),Math.round(a.vt),Math.round(a.net),(a.ratio*100).toFixed(0),a.bl,a.sl,a.netL,a.big,a.bigNet,a.mx,a.rate.toFixed(1),a.age].join(","))).join("\n"),"Tabel Semua saham disalin");
 });
 Object.keys(PRESETS).forEach(k=>X.act("rtPre_"+k,()=>{ readCfg(); applyPreset(PRESETS[k].v,PRESETS[k].n); }));
-X.act("rtPreSave",()=>{ readCfg(); const v={}; PRE_KEYS.forEach(k=>{ v[k]=CFG[k]; }); SV("rt_preset_user",v); X.repaint(); dyn(); X.toast("Pengaturan disimpan sebagai Preset saya","up"); });
-X.act("rtPreUser",()=>{ const v=userPre(); if(!v){ X.toast("Belum ada Preset saya — atur dulu, lalu klik ➕ Simpan pengaturan ini","down"); return; } applyPreset(v,"💾 Preset saya"); });
+X.act("rtPreSave",()=>{
+  readCfg(); const v={}; PRE_KEYS.forEach(k=>{ v[k]=CFG[k]; }); const L=userPres();
+  let nm=prompt("Nama preset (nama yang sama menimpa preset lama):","Preset "+(L.length+1)); if(nm==null) return;
+  nm=nm.replace(/\s+/g," ").trim().slice(0,24); if(!nm){ X.toast("Nama preset tidak boleh kosong","down"); return; }
+  const ex=L.find(q=>q.n.toLowerCase()===nm.toLowerCase());
+  if(ex){ ex.v=v; ex.n=nm; } else { if(L.length>=12){ X.toast("Maksimal 12 preset — hapus salah satu dulu","down"); return; } L.push({id:"p"+Date.now().toString(36),n:nm,v}); }
+  SV("rt_presets_user",L); X.repaint(); dyn(); X.toast(ex?"Preset \""+nm+"\" diperbarui":"Preset \""+nm+"\" disimpan","up");
+});
 X.act("rtCal",()=>{ calRun(); });
 X.act("rtCloudSave",()=>{ saveCloud("manual"); });
 X.act("rtHistLoad",()=>{ histRun(); });
@@ -1781,9 +1845,16 @@ function openFull(tk){      // modal Detail Emiten milik app.js; tombol ‹ › 
   }catch(e){ console.warn("running-trade: openDetail gagal",e); pickTk(tk); }
 }
 function pickTk(tk){ RT.sel=tk; const i=document.getElementById("rtsel"); if(i) i.value=tk; dyn(); const d=document.getElementById("rtDetail"); if(d&&d.scrollIntoView) d.scrollIntoView({behavior:"smooth",block:"start"}); }
+document.addEventListener("toggle",e=>{ if(e.target&&e.target.id==="rtGuide") SV("rt_guide_open",!!e.target.open); },true);
+document.addEventListener("change",e=>{ const t=e.target; if(!t||!t.getAttribute||t.getAttribute("data-rt-chk")==null) return;
+  const box=document.getElementById("rtChk"), n=box?box.querySelectorAll("input:checked").length:0, el=document.getElementById("rtChkN"), tot=GUIDE_CHK.length;
+  if(el) el.textContent=n+"/"+tot+" terpenuhi — "+(n>=tot-1?"alasan cukup kuat; tetap tentukan SL dan ukuran posisi dulu.":n>=Math.ceil(tot/2)?"sebagian terpenuhi; periksa yang belum sebelum masuk.":"masih sedikit; lebih baik menunggu.");
+});
 document.addEventListener("click",e=>{
   const c=e.target&&e.target.closest?e.target.closest.bind(e.target):null; if(!c) return;
-  let n=c("[data-rt-csv]"); if(n){ const id=n.getAttribute("data-rt-csv"), tx=exportTable(id); if(!tx){ X.toast("Tabel kosong — tidak ada yang diunduh","down"); return; } dlCsv(tx,expName(id).replace(/[^\w]+/g,"-").replace(/^-+|-+$/g,"").toLowerCase()||id); return; }
+  let n=c("[data-rt-upre]"); if(n){ const q=userPres().find(z=>z.id===n.getAttribute("data-rt-upre")); if(q){ readCfg(); applyPreset(q.v,q.n); } return; }
+  n=c("[data-rt-udel]"); if(n){ const L=userPres(), q=L.find(z=>z.id===n.getAttribute("data-rt-udel")); if(q&&confirm("Hapus preset \""+q.n+"\"?")){ SV("rt_presets_user",L.filter(z=>z.id!==q.id)); X.repaint(); dyn(); X.toast("Preset dihapus","up"); } return; }
+  n=c("[data-rt-csv]"); if(n){ const id=n.getAttribute("data-rt-csv"), tx=exportTable(id); if(!tx){ X.toast("Tabel kosong — tidak ada yang diunduh","down"); return; } dlCsv(tx,expName(id).replace(/[^\w]+/g,"-").replace(/^-+|-+$/g,"").toLowerCase()||id); return; }
   n=c("[data-rt-sort]"); if(n){ sortClick(n); return; }
   if(e.target&&e.target.id==="rtScPop"){ scClose(); return; }
   n=c("[data-rt-scx]"); if(n){ scClose(); return; }
