@@ -160,6 +160,7 @@ function loadTrades(){
 function onFrame(str){
   if(!RT.on||!CFG.ws) return;
   RT.st.frames++;
+  if(typeof str==="string"&&(/^\d{0,2}$/.test(str.trim())||/primus::(pong|ping)/.test(str)||/^\[binary\/non-string data, \d{1,3} bytes/.test(str))){ RT.st.ping=(RT.st.ping||0)+1; return; }   // keepalive Primus/socket.io: bukan data, jangan memenuhi diagnostik
   let j=null;
   if(str&&typeof str==="object"){
     j=str; if(RT.first.length<8){ try{ RT.first.push(JSON.stringify(str).slice(0,500)); }catch(e){} }
@@ -189,8 +190,8 @@ window.addEventListener("message",e=>{
 /* ---------- sumber 2: REST polling (paralel, tanpa jeda mati) ---------- */
 async function fetchOne(u){
   const want=(u.match(/symbols\[\]=([A-Za-z0-9]+)/)||[])[1];
-  let cursor=null, all=[], dt=null;
-  for(let pg=0;pg<(want?3:8);pg++){                    // trade_number = kursor: ambil halaman lebih lama kalau 1 halaman penuh transaksi baru (feed pasar: sampai 8 halaman)
+  let cursor=null, all=[], dt=null, capped=false; const maxPg=want?3:8;
+  for(let pg=0;pg<maxPg;pg++){                    // trade_number = kursor: ambil halaman lebih lama kalau 1 halaman penuh transaksi baru (feed pasar: sampai 8 halaman)
     const r=await stockbitRawRequest(cursor?u+"&trade_number="+cursor:u);
     if(r.error){ RT.st.restErr=r.error; break; }
     RT.st.restErr=null; RT.st.restAt=Date.now();
@@ -205,7 +206,9 @@ async function fetchOne(u){
     const tn=items.map(o=>toNum(o.trade_number)).filter(n=>n>0);
     if(fresh<items.length||!tn.length) break;        // sudah menyentuh data yang pernah diproses
     const nx=Math.min(...tn); if(nx===cursor) break; cursor=nx;
+    if(pg===maxPg-1) capped=true;                    // halaman terakhir masih penuh transaksi baru: sebagian mungkin terlewat
   }
+  if(capped){ RT.gap=RT.gap||{}; RT.st.gapN=(RT.st.gapN||0)+1; if(want) RT.gap[want]=Date.now(); else RT.gapFeedAt=Date.now(); }
   const tsOf=o=>{ const m=String(pick(o,["time","t"])||"").match(/^(\d{1,2}):(\d{2})(?::(\d{2}))?$/); if(!dt||!m) return 0;
     const v=Date.parse(dt+"T"+m[1].padStart(2,"0")+":"+m[2]+":"+(m[3]||"00")+"+07:00"); return v>0?v:0; };
   return all.reverse().map(o=>({o,ts:tsOf(o)}));      // terlama dulu; ts = waktu bursa (WIB)
@@ -217,6 +220,7 @@ async function pollOnce(){
     if(typeof state!=="undefined"&&!state.stockbitToken){ RT.st.restErr="Token Stockbit belum ada — isi/sinkronkan di Pengaturan."; return; }
     const list=watchList(), n=Math.max(1,Math.min(10,CFG.perPoll|0||5)); RT.st.watch=list.length;
     let tks=[]; if(list.length){ for(let i=0;i<Math.min(n,list.length);i++) tks.push(list[(RT.rot+i)%list.length]); RT.rot=(RT.rot+n)%list.length; }
+    const hotT=Object.keys(RT.gap||{}).filter(k=>Date.now()-RT.gap[k]<90000&&!tks.includes(k)).slice(0,2); tks=tks.concat(hotT);   // saham yang terpotong: tarik lagi segera
     const sep=CFG.url.indexOf("?")>=0?"&":"?";
     const urls=tks.map(t=>CFG.url+sep+"symbols[]="+encodeURIComponent(t));
     if(CFG.feed||!urls.length) urls.unshift(CFG.url);   // feed seluruh pasar tiap tarikan: saham di luar giliran tidak tertinggal
@@ -316,7 +320,8 @@ function badges(tk){
   let b=""; try{
     if(X.ownTickers().has(tk)) b+=" ⭐";
     const sp=spMap().get(tk); if(sp) b+=` <span title="Smart Pick: ${E(sp.join(", "))}">✨</span>`;
-    const sc=scale(tk); if(CFG.adapt&&Math.abs(sc-1)>.05) b+=` <span class="ex-mut" title="Batas nilai dikali ${sc.toFixed(2)} sesuai likuiditas saham">×${sc.toFixed(1)}</span>`;
+    const sc=scale(tk); if(CFG.adapt&&Math.abs(sc-1)>.05) b+=` <span class="ex-mut" title="Batas nilai dikali ${sc.toFixed(2)} sesuai likuiditas saham → HAKA min ${Math.round(CFG.hakaMinJt*sc)} jt, akumulasi min ${Math.round(CFG.accMinJt*sc)} jt, transaksi besar ≥ ${Math.round(CFG.bigJt*sc)} jt (matikan Batas menyesuaikan likuiditas untuk memakai angka tetap)">×${sc.toFixed(1)}</span>`;
+    if(RT.gap&&Date.now()-(RT.gap[tk]||0)<180000) b+=` <span title="Transaksi saham ini terlalu ramai untuk satu tarikan REST; sebagian mungkin terlewat, jadi nilai HAKA bisa lebih kecil dari Stockbit">⚠</span>`;
     const r=X.stk(tk);
     if(r&&typeof trendTone==="function"&&trendTone(r.trendHarga)==="up") b+=" 📈";
     if(r&&r.keyakinanTone==="up") b+=" ✅";
@@ -1206,11 +1211,42 @@ const xwCell=tk=>{ const x=xwOf(tk), f=v=>v?"✓":"✗";
 // 6. pelacak posisi dari rencana
 const POS=(()=>{ const l=LS("rt_pos",[]); return Array.isArray(l)?l:[]; })();
 const savePos=()=>SV("rt_pos",POS);
+/* ---- sinkron posisi 📌 ke Supabase (tabel rt_follow, lihat sql/07_rt_follow.sql): Edge Function running-trade-monitor memantau SL/TP saat tab ditutup ---- */
+const SRV={at:0,err:null,busy:false,sig:""};
+const posKey=q=>q.tk+"|"+q.ts;
+async function posSync(){
+  if(SRV.busy||SRV.err==="table"||!POS.length||typeof cloudOk!=="function"||!cloudOk()) return; SRV.busy=true;
+  try{
+    const H=getSupaHeaders();
+    // 1) tarik status dari server: SL/TP bisa saja kena saat tab tertutup
+    const res=await fetch(`${SUPABASE_URL}/rt_follow?select=pos_key,t1,status,close_px&order=followed_at.desc&limit=500`,{headers:H,cache:"no-store"});
+    if(!res.ok) throw new Error(res.status+" "+(await res.text()).slice(0,160));
+    const srv=new Map((await res.json()).map(r=>[r.pos_key,r])); let ch=false;
+    POS.forEach(q=>{ const r=srv.get(posKey(q)); if(!r||q.cl) return;
+      if(r.status==="SL"||r.status==="TP2"){ q.cl=r.status; q.px=+r.close_px||q.px; ch=true; X.toast(q.tk+": "+r.status+" sudah kena (dipantau server saat tab tertutup)",r.status==="SL"?"down":"up"); }
+      else if(r.t1&&!q.t1){ q.t1=true; ch=true; }
+    });
+    if(ch){ savePos(); dyn(); }
+    // 2) kirim posisi lokal. browser_seen_at = heartbeat: hanya diisi bila alert di browser benar-benar berjalan (▶ Mulai aktif dan data masuk), supaya server diam dan tidak dobel
+    const live=RT.on&&(RT.st.trades>0||RT.st.rest>0), now=new Date().toISOString();
+    const rows=POS.filter(q=>q.ts&&(!q.cl||Date.now()-q.ts<7*864e5)).map(q=>({pos_key:posKey(q),ticker:q.tk,entry:q.en,sl:q.sl,tp1:q.tp1,tp2:q.tp2,t1:!!q.t1,status:q.cl||"OPEN",close_px:q.px||null,followed_at:new Date(q.ts).toISOString(),browser_seen_at:live?now:null,updated_at:now}));
+    const sig=JSON.stringify(rows.map(r=>[r.pos_key,r.t1,r.status]))+live;
+    if(rows.length&&(live||sig!==SRV.sig)){
+      await supaFetch(`${SUPABASE_URL}/rt_follow?on_conflict=pos_key`,{method:"POST",headers:{...H,"Prefer":"resolution=merge-duplicates,return=minimal"},body:JSON.stringify(rows)});
+      SRV.sig=sig;
+    }
+    SRV.at=Date.now(); SRV.err=null;
+  }catch(e){ const m=String(e&&e.message||e); SRV.err=/relation|does not exist|404|42P01/i.test(m)?"table":m.slice(0,160); }
+  finally{ SRV.busy=false; }
+}
+function posUnf(q){ if(typeof cloudOk!=="function"||!cloudOk()||SRV.err==="table") return; try{ supaFetch(`${SUPABASE_URL}/rt_follow?pos_key=eq.${encodeURIComponent(posKey(q))}`,{method:"PATCH",headers:{...getSupaHeaders(),"Prefer":"return=minimal"},body:JSON.stringify({status:"UNFOLLOW",updated_at:new Date().toISOString()})}).catch(()=>{}); }catch(e){} }
+const posSrvNote=()=>{ if(typeof cloudOk!=="function"||!cloudOk()) return "☁️ Supabase belum dikonfigurasi: alert SL/TP hanya berjalan di browser."; if(SRV.err==="table") return `☁️ Tabel rt_follow belum ada: jalankan <code>sql/07_rt_follow.sql</code> agar SL/TP tetap dipantau server saat tab ditutup.`; if(SRV.err) return `☁️ <span class="ex-dn">Sinkron ke server gagal: ${E(SRV.err)}</span>`; if(SRV.at) return `☁️ Posisi tersinkron ke server (${Math.max(0,Math.round((Date.now()-SRV.at)/60000))} mnt lalu). Bila Edge Function <code>running-trade-monitor</code> terpasang, SL/TP tetap dipantau saat tab ditutup.`; return ""; };
+setInterval(()=>{ posSync(); },30000);
 const folIcon=tk=>POS.some(q=>q.tk===tk&&!q.cl)?`<span title="Sedang diikuti">📍</span>`:`<span class="rt-tk" data-rt-fol="${E(tk)}" title="Ikuti rencana ini: alert saat TP1/TP2/SL tersentuh">📌</span>`;
 function followTk(tk){
   const z=zoneOf(tk); if(!z){ X.toast("Belum ada rencana/harga live untuk "+tk,"down"); return; }
   if(POS.some(q=>q.tk===tk&&!q.cl)){ X.toast(tk+" sudah diikuti","down"); return; }
-  POS.push({tk,en:z.last,sl:z.p.sl,tp1:z.p.tp1,tp2:z.p.tp2,ts:Date.now(),t1:false,cl:null}); savePos(); X.toast("Mengikuti "+tk+" @ "+fpx(z.last),"up"); dyn();
+  POS.push({tk,en:z.last,sl:z.p.sl,tp1:z.p.tp1,tp2:z.p.tp2,ts:Date.now(),t1:false,cl:null}); savePos(); setTimeout(posSync,400); X.toast("Mengikuti "+tk+" @ "+fpx(z.last),"up"); dyn();
 }
 function posCheck(){            // dipanggil dari alerts()
   POS.forEach(q=>{
@@ -1225,7 +1261,7 @@ function posHtml(){
   const rows=act.concat(done).map(q=>{ const l=q.cl&&q.px?q.px:(RT.last[q.tk]||0), pl=l>0?(l-q.en)/q.en*100:null;
     const st=q.cl==="SL"?"<span class='ex-dn'>🛑 SL kena</span>":q.cl==="TP2"?"<span class='ex-up'>🏁 TP2 kena</span>":q.t1?"<span class='ex-up'>✅ TP1 kena, masih jalan</span>":"<span class='ex-mut'>berjalan</span>";
     return `<tr><td>${tkc(q.tk)}</td><td>${fpx(q.en)}</td><td>${l?fpx(l):"-"}${(!q.cl&&l)?(()=>{ const t=RT.lastTs[q.tk]; if(!t) return ` <small class="ex-mut" title="Belum ada transaksi baru terbaca untuk saham ini sejak perekaman dimulai; harga = harga saat diikuti">· belum update</small>`; const m=Math.round((Date.now()-t)/60000); return m>=2?` <small class="ex-mut" title="Waktu transaksi terakhir yang terbaca untuk saham ini">· ${m>=120?Math.round(m/60)+" jam":m+" mnt"} lalu</small>`:""; })():""}</td><td>${pl==null?"-":`<span class="${pl>=0?"ex-up":"ex-dn"}">${pctS(pl)}</span>`}</td><td class="ex-dn">${fpx(q.sl)}</td><td class="ex-up">${fpx(q.tp1)}</td><td class="ex-up">${fpx(q.tp2)}</td><td>${st}</td><td><span class="rt-tk" data-rt-unf="${E(q.tk)}|${q.ts}" title="Hapus dari daftar">🗑</span></td></tr>`; });
-  return `<div class="ex-card"><h3>📌 Posisi yang diikuti (${act.length} aktif)</h3>${tbl(["Ticker","Entri","Harga","P/L","SL","TP1","TP2","Status",""],rows,"Belum ada. Klik 📌 di kolom Status zona untuk mengikuti rencana suatu saham; alert TP1/TP2/SL dikirim selama perekaman berjalan.")}<div class="ex-mut" style="margin-top:6px">Entri = harga live saat 📌 diklik; SL/TP diambil dari rencana saat itu dan tidak ikut berubah. Harga = transaksi terakhir yang tertangkap: saham sepi bisa tidak berubah berjam-jam (label \"lalu\" menunjukkan umur harga). Alert memakai transaksi yang tertangkap, jadi hanya berjalan saat ▶ Mulai aktif dan tab terbuka. Ini pemantau, bukan pengganti order SL/TP di sekuritas.</div></div>`;
+  return `<div class="ex-card"><h3>📌 Posisi yang diikuti (${act.length} aktif)</h3>${tbl(["Ticker","Entri","Harga","P/L","SL","TP1","TP2","Status",""],rows,"Belum ada. Klik 📌 di kolom Status zona untuk mengikuti rencana suatu saham; alert TP1/TP2/SL dikirim selama perekaman berjalan.")}<div class="ex-mut" style="margin-top:6px">Entri = harga live saat 📌 diklik; SL/TP diambil dari rencana saat itu dan tidak ikut berubah. Harga = transaksi terakhir yang tertangkap: saham sepi bisa tidak berubah berjam-jam (label \"lalu\" menunjukkan umur harga). Alert di browser memakai transaksi yang tertangkap, jadi berjalan saat ▶ Mulai aktif dan tab terbuka. Ini pemantau, bukan pengganti order SL/TP di sekuritas.<div style="margin-top:4px">${posSrvNote()}</div></div></div>`;
 }
 // 7. uji ulang parameter dari riwayat TP1/SL
 function btRun(){
@@ -1338,7 +1374,12 @@ function dyn(){
   const spanMin=t0===Infinity?0:(now-t0)/60000;
   const covWarn=RT.on&&RT.trades.length&&spanMin<CFG.accWin*.95?`<div class="ex-warn" style="margin-top:6px">Data baru terkumpul ${spanMin.toFixed(1)} menit, jadi jendela ${spanMin<CFG.hakaWin*.95?"HAKA "+CFG.hakaWin+" dan ":""}akumulasi ${CFG.accWin} menit belum penuh. Angka akan lebih kecil dari Stockbit (yang menghitung seluruh jendela) sampai penuh.</div>`:"";
   const feedWarn=CFG.rest&&!CFG.feed&&s.watch?`<div class="ex-warn" style="margin-top:6px">REST hanya memantau ${s.watch} ticker bergiliran, saham lain tertinggal. Aktifkan "Sertakan feed seluruh pasar tiap tarikan".</div>`:"";
-  const warn=RT.on&&now-s.startAt>45000&&!s.trades?`<div class="ex-warn" style="margin-top:8px">Belum ada transaksi terbaca setelah 45 detik. Lihat bagian Diagnostik di bawah.</div>`:"";
+  const warn0=RT.on&&now-s.startAt>45000&&!s.trades?`<div class="ex-warn" style="margin-top:8px">Belum ada transaksi terbaca setelah 45 detik. Lihat bagian Diagnostik di bawah.</div>`:"";
+  const pingOnly=RT.on&&CFG.ws&&s.frames>=20&&(s.frames-(s.ping||0))<=2&&!s.parsed;
+  const pingWarn=pingOnly?`<div class="ex-warn" style="margin-top:6px">WS hanya menerima sinyal ping (${s.ping||0} dari ${s.frames} frame), bukan transaksi. ${CFG.rest&&s.rest>0?"Data Anda berasal dari REST, jadi ini aman; WS boleh dimatikan.":"Buka halaman Running Trade di tab Stockbit atau centang Sumber REST polling."}</div>`:"";
+  const gapWarn=RT.on&&CFG.rest&&RT.gapFeedAt&&now-RT.gapFeedAt<120000?`<div class="ex-warn" style="margin-top:6px">Feed pasar terlalu ramai untuk satu tarikan REST (${s.gapN||0} tarikan terpotong): sebagian transaksi bisa terlewat dan nilai HAKA/Buy bisa lebih kecil dari Stockbit. Perkecil Interval REST (mis. 1–2 detik).</div>`:"";
+  const lotWarn=RT.on&&(CFG.minLot||0)>=200?`<div class="ex-warn" style="margin-top:6px">Min lot per transaksi = ${CFG.minLot}: semua transaksi di bawah ${CFG.minLot} lot dibuang sebelum dihitung. Kalau maksud Anda ambang total lot HAKA, isi di “Min total lot HAKA” dan nolkan kolom ini.</div>`:"";
+  const warn=warn0+pingWarn+gapWarn+lotWarn;
   const fEmpty=s.trades&&!s.brk?"Sumber data ini tidak membawa kode broker, jadi aliran asing tidak bisa dihitung.":"Belum ada saham dengan net asing di atas batas.";
   const bEmpty=s.trades&&!s.brk?"Sumber data ini tidak membawa kode broker pembeli/penjual, jadi bandar tidak bisa dilacak dari running trade. Cek Diagnostik, atau pakai menu Bandarmologi untuk data broker harian."
     :"Belum ada broker yang memenuhi syarat (net beli ≥ batas dan porsi beli ≥ 25% dari total beli saham itu).";
@@ -1517,7 +1558,7 @@ function hitHtml(){
   const L=sigs(), rows=hitRows(); RT.hitRows=rows;
   const all=L.map(g=>retAt(g,"p30")).filter(v=>v!==null), w=all.filter(v=>v>0).length, ci=wilson(w,all.length), cost=+CFG.cost||0;
   const pc=v=>v==null?"-":`<span class="${v>=.55?"ex-up":v<=.45?"ex-dn":""}">${Math.round(v*100)}%</span>`, rp=v=>v==null?"-":`<span class="${v>=0?"ex-up":"ex-dn"}">${pctS(v)}</span>`;
-  const cols=[{h:GB[RT.gb]?GB[RT.gb][0].toUpperCase()+GB[RT.gb].slice(1):"Grup",s:1,k:r=>r.k,r:r=>E(r.k)},{h:"Sinyal",k:r=>r.n,r:r=>r.n},{h:"Terukur +30m",k:r=>r.e30,r:r=>r.e30},
+  const cols=[{h:GB[RT.gb]?GB[RT.gb][0].toUpperCase()+GB[RT.gb].slice(1):"Grup",s:1,k:r=>r.k,r:r=>E(r.k)},{h:"Sinyal",k:r=>r.n,r:r=>r.n},{h:"Terukur +30m",k:r=>r.e30,r:r=>r.e30<30?`${r.e30} <span class="ex-dn" title="Kurang dari 30 sinyal terukur: belum bisa disimpulkan, rentang 95% masih lebar">⚠ sampel kecil</span>`:r.e30},
     {h:"Hit +5m",k:r=>r.h5,r:r=>pc(r.h5)},{h:"Hit +15m",k:r=>r.h15,r:r=>pc(r.h15)},
     {h:"Hit +30m (rentang 95%)",k:r=>r.h30,r:r=>r.h30==null?"-":`${pc(r.h30)} <span class="ex-mut">(${Math.round(r.lo*100)}–${Math.round(r.hi*100)}%)</span>`},
     {h:"Rata² +15m",k:r=>r.a15,r:r=>rp(r.a15)},{h:"Rata² +30m",k:r=>r.a30,r:r=>rp(r.a30)},{h:"Median +30m",k:r=>r.m30,r:r=>rp(r.m30)},
@@ -1865,7 +1906,7 @@ document.addEventListener("click",e=>{
   n=c("[data-rt-full]"); if(n){ scClose(); openFull(n.getAttribute("data-rt-full")); return; }
   n=c("[data-rt-tk]"); if(n){ pickTk(n.getAttribute("data-rt-tk")); return; }
   n=c("[data-rt-fol]"); if(n){ followTk(n.getAttribute("data-rt-fol")); return; }
-  n=c("[data-rt-unf]"); if(n){ const pr=n.getAttribute("data-rt-unf").split("|"), i=POS.findIndex(q=>q.tk===pr[0]&&String(q.ts)===pr[1]); if(i>=0){ POS.splice(i,1); savePos(); dyn(); } return; }
+  n=c("[data-rt-unf]"); if(n){ const pr=n.getAttribute("data-rt-unf").split("|"), i=POS.findIndex(q=>q.tk===pr[0]&&String(q.ts)===pr[1]); if(i>=0){ posUnf(POS[i]); POS.splice(i,1); savePos(); dyn(); } return; }
   n=c("[data-rt-close]"); if(n){ RT.sel=""; const i=document.getElementById("rtsel"); if(i) i.value=""; dyn(); }
 });
 document.addEventListener("keydown",e=>{ if(e.key==="Escape") scClose(); });
