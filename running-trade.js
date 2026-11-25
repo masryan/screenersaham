@@ -229,7 +229,8 @@ async function pollOnce(){
 function watchList(){            // manual dulu, lalu Watchlist/Posisi, lalu Smart Pick (skor tertinggi dulu); kosong = seluruh pasar
   const man=CFG.tickers.split(/[\s,]+/).map(s=>s.toUpperCase()).filter(s=>/^[A-Z]{2,6}$/.test(s));
   let auto=[]; if(CFG.auto){ try{ auto=[...X.ownTickers()].concat(ctx().spTk); }catch(e){} }
-  return [...new Set(man.concat(auto))].slice(0,60);
+  const fol=(typeof POS!=="undefined"&&Array.isArray(POS))?POS.filter(q=>!q.cl).map(q=>q.tk):[];   // posisi yang diikuti harus selalu dipantau harganya
+  return [...new Set(man.concat(fol,auto))].slice(0,60);
 }
 function applyPoll(){            // penjadwalan sendiri: tarikan berikut mulai segera setelah yang lama selesai (interval = jarak minimum, bukan jeda tetap)
   if(RT.poll){ clearTimeout(RT.poll); RT.poll=null; }
@@ -562,17 +563,25 @@ function applyPreset(v,nama){
 
 /* ---------- ekspor semua tabel ---------- */
 const csvCell=v=>{ if(v==null) return ""; if(typeof v==="number") return isFinite(v)?String(+v.toFixed(4)):""; const t=String(v).replace(/"/g,'""'); return /[",\n]/.test(t)?'"'+t+'"':t; };
+const EXP_EXTRA={rtbdb:"Detail: Top 5 Buy broker",rtbds:"Detail: Top 5 Sell broker",rtld:"Detail: Price ladder",rtbk:"Detail: Broker (net terbesar)"};
+const expName=id=>String(TBL_NAMES[id]||EXP_EXTRA[id]||id);
+function tblLines(id){
+  const t=RT.tblData[id]; if(!t||!t.rows.length) return null; const cs=t.cols.filter(h=>h.k), L=[];
+  L.push(cs.map(h=>csvCell(String(h.h).replace(/<[^>]*>/g,""))).join(","));
+  t.rows.forEach(r=>L.push(cs.map(h=>{ let v; try{ v=h.k(r); }catch(e){ v=null; } if(h.h==="Waktu"&&typeof v==="number") v=new Date(v).toISOString(); return csvCell(v); }).join(",")));
+  return L;
+}
+function exportTable(id){ const L=tblLines(id); return L?L.join("\n"):""; }
 function exportCsv(){
   const L=["# Running Trade — ekspor "+new Date().toLocaleString("id-ID")+" · jendela akumulasi "+CFG.accWin+" mnt · mode Buy/Sell: "+(RT.mode==="cum"?"sejak Mulai":"jendela")+" · nilai Rp, lot, dan persen sebagai angka mentah (kolom grafik dilewati)"];
   Object.keys(RT.tblData).forEach(id=>{
-    const t=RT.tblData[id]; if(!t.rows.length) return; const cs=t.cols.filter(h=>h.k);
-    L.push("","## "+(TBL_NAMES[id]||id), cs.map(h=>csvCell(String(h.h).replace(/<[^>]*>/g,""))).join(","));
-    t.rows.forEach(r=>L.push(cs.map(h=>{ let v=h.k(r); if(h.h==="Waktu"&&typeof v==="number") v=new Date(v).toISOString(); return csvCell(v); }).join(",")));
+    const tl=tblLines(id); if(!tl) return;
+    L.push("","## "+expName(id)); tl.forEach(x=>L.push(x));
   });
   return L.join("\n");
 }
-function dlCsv(text){
-  try{ const b=new Blob(["\ufeff"+text],{type:"text/csv;charset=utf-8"}), u=URL.createObjectURL(b), a=document.createElement("a"); a.href=u; a.download="running-trade-"+new Date().toISOString().slice(0,16).replace(/[-:T]/g,"")+".csv"; document.body.appendChild(a); a.click(); setTimeout(()=>{ URL.revokeObjectURL(u); a.remove(); },500); X.toast("CSV diunduh","up"); }
+function dlCsv(text,name){
+  try{ const b=new Blob(["\ufeff"+text],{type:"text/csv;charset=utf-8"}), u=URL.createObjectURL(b), a=document.createElement("a"); a.href=u; a.download="running-trade-"+(name?name+"-":"")+new Date().toISOString().slice(0,16).replace(/[-:T]/g,"")+".csv"; document.body.appendChild(a); a.click(); setTimeout(()=>{ URL.revokeObjectURL(u); a.remove(); },500); X.toast("CSV diunduh","up"); }
   catch(e){ copy(text,"Unduhan tidak didukung — CSV disalin ke clipboard"); }
 }
 /* ---------- kalibrasi dengan Stockbit & pengaturan kolom ---------- */
@@ -765,14 +774,14 @@ function stbl(id,cols,rows,empty,o){
   o=o||{}; const c=RT.sort[id]; let data=rows;
   if(c&&cols[c.i]&&cols[c.i].k){ const k=cols[c.i].k;
     data=rows.slice().sort((a,b)=>{ const x=k(a),y=k(b); const r=(typeof x==="string"||typeof y==="string")?String(x==null?"":x).localeCompare(String(y==null?"":y)):((x==null||isNaN(x)?-1e18:x)-(y==null||isNaN(y)?-1e18:y)); return r*c.d; }); }
-  if(o.max) data=data.slice(0,o.max);
-  RT.colReg[id]=cols.map(h=>h.h); RT.tblData[id]={cols,rows:data.slice(0,5000)};
+  const fullRows=data; if(o.max) data=data.slice(0,o.max);
+  RT.colReg[id]=cols.map(h=>h.h); RT.tblData[id]={cols,rows:fullRows.slice(0,5000)};
   const hid=hidOf(id), vis=cols.map((h,i)=>({h,i})).filter(x=>x.i===0||hid.indexOf(x.h.h)<0);   // kolom pertama selalu tampil
   const head=vis.map(({h,i})=>{ const on=c&&c.i===i;
     return `<th${h.k?` class="rt-th" data-rt-sort="${id}|${i}"${h.s?"":" data-rt-num=\"1\""} title="Klik untuk urutkan"`:""}>${h.h}${on?(c.d<0?" ▼":" ▲"):""}</th>`; }).join("");
   let bad=0; const cell=(h,r)=>{ let v; try{ v=h.r(r); }catch(e){ bad++; return "-"; } if(typeof v==="string"&&/\bNaN\b|Infinity|undefined/.test(v.replace(/<[^>]*>/g,""))){ bad++; return "-"; } return v; };
   const body=data.map(r=>`<tr class="${o.cls?o.cls(r):""}">${vis.map(({h})=>`<td>${cell(h,r)}</td>`).join("")}</tr>`).join("");
-  return data.length?`<div class="ex-wrap" data-rt-w="${id}"><table class="ex-tbl"><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table></div>${bad?`<div class="ex-mut" style="font-size:11px">⚠ ${bad} sel tidak valid (NaN/kosong) ditampilkan "-".</div>`:""}`:`<div class="ex-mut">${empty}</div>`;
+  return data.length?`<div style="text-align:right;margin:0 0 3px"><button class="ex-btn" data-rt-csv="${id}" style="font-size:11px;padding:1px 8px" title="Unduh tabel ini sebagai CSV (semua baris, ${fullRows.length} baris)">⬇ CSV</button></div><div class="ex-wrap" data-rt-w="${id}"><table class="ex-tbl"><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table></div>${bad?`<div class="ex-mut" style="font-size:11px">⚠ ${bad} sel tidak valid (NaN/kosong) ditampilkan "-".</div>`:""}`:`<div class="ex-mut">${empty}</div>`;
 }
 function sortClick(th){
   const p=th.getAttribute("data-rt-sort").split("|"), id=p[0], idx=+p[1], first=th.hasAttribute("data-rt-num")?-1:1, c=RT.sort[id];
@@ -1157,8 +1166,8 @@ function posHtml(){
   const act=POS.filter(q=>!q.cl), done=POS.filter(q=>q.cl).slice(-5).reverse();
   const rows=act.concat(done).map(q=>{ const l=q.cl&&q.px?q.px:(RT.last[q.tk]||0), pl=l>0?(l-q.en)/q.en*100:null;
     const st=q.cl==="SL"?"<span class='ex-dn'>🛑 SL kena</span>":q.cl==="TP2"?"<span class='ex-up'>🏁 TP2 kena</span>":q.t1?"<span class='ex-up'>✅ TP1 kena, masih jalan</span>":"<span class='ex-mut'>berjalan</span>";
-    return `<tr><td>${tkc(q.tk)}</td><td>${fpx(q.en)}</td><td>${l?fpx(l):"-"}</td><td>${pl==null?"-":`<span class="${pl>=0?"ex-up":"ex-dn"}">${pctS(pl)}</span>`}</td><td class="ex-dn">${fpx(q.sl)}</td><td class="ex-up">${fpx(q.tp1)}</td><td class="ex-up">${fpx(q.tp2)}</td><td>${st}</td><td><span class="rt-tk" data-rt-unf="${E(q.tk)}|${q.ts}" title="Hapus dari daftar">🗑</span></td></tr>`; });
-  return `<div class="ex-card"><h3>📌 Posisi yang diikuti (${act.length} aktif)</h3>${tbl(["Ticker","Entri","Harga","P/L","SL","TP1","TP2","Status",""],rows,"Belum ada. Klik 📌 di kolom Status zona untuk mengikuti rencana suatu saham; alert TP1/TP2/SL dikirim selama perekaman berjalan.")}<div class="ex-mut" style="margin-top:6px">Entri = harga live saat 📌 diklik; SL/TP diambil dari rencana saat itu dan tidak ikut berubah. Alert memakai transaksi yang tertangkap, jadi hanya berjalan saat ▶ Mulai aktif dan tab terbuka. Ini pemantau, bukan pengganti order SL/TP di sekuritas.</div></div>`;
+    return `<tr><td>${tkc(q.tk)}</td><td>${fpx(q.en)}</td><td>${l?fpx(l):"-"}${(!q.cl&&l)?(()=>{ const t=RT.lastTs[q.tk]; if(!t) return ` <small class="ex-mut" title="Belum ada transaksi baru terbaca untuk saham ini sejak perekaman dimulai; harga = harga saat diikuti">· belum update</small>`; const m=Math.round((Date.now()-t)/60000); return m>=2?` <small class="ex-mut" title="Waktu transaksi terakhir yang terbaca untuk saham ini">· ${m>=120?Math.round(m/60)+" jam":m+" mnt"} lalu</small>`:""; })():""}</td><td>${pl==null?"-":`<span class="${pl>=0?"ex-up":"ex-dn"}">${pctS(pl)}</span>`}</td><td class="ex-dn">${fpx(q.sl)}</td><td class="ex-up">${fpx(q.tp1)}</td><td class="ex-up">${fpx(q.tp2)}</td><td>${st}</td><td><span class="rt-tk" data-rt-unf="${E(q.tk)}|${q.ts}" title="Hapus dari daftar">🗑</span></td></tr>`; });
+  return `<div class="ex-card"><h3>📌 Posisi yang diikuti (${act.length} aktif)</h3>${tbl(["Ticker","Entri","Harga","P/L","SL","TP1","TP2","Status",""],rows,"Belum ada. Klik 📌 di kolom Status zona untuk mengikuti rencana suatu saham; alert TP1/TP2/SL dikirim selama perekaman berjalan.")}<div class="ex-mut" style="margin-top:6px">Entri = harga live saat 📌 diklik; SL/TP diambil dari rencana saat itu dan tidak ikut berubah. Harga = transaksi terakhir yang tertangkap: saham sepi bisa tidak berubah berjam-jam (label \"lalu\" menunjukkan umur harga). Alert memakai transaksi yang tertangkap, jadi hanya berjalan saat ▶ Mulai aktif dan tab terbuka. Ini pemantau, bukan pengganti order SL/TP di sekuritas.</div></div>`;
 }
 // 7. uji ulang parameter dari riwayat TP1/SL
 function btRun(){
@@ -1774,7 +1783,8 @@ function openFull(tk){      // modal Detail Emiten milik app.js; tombol ‹ › 
 function pickTk(tk){ RT.sel=tk; const i=document.getElementById("rtsel"); if(i) i.value=tk; dyn(); const d=document.getElementById("rtDetail"); if(d&&d.scrollIntoView) d.scrollIntoView({behavior:"smooth",block:"start"}); }
 document.addEventListener("click",e=>{
   const c=e.target&&e.target.closest?e.target.closest.bind(e.target):null; if(!c) return;
-  let n=c("[data-rt-sort]"); if(n){ sortClick(n); return; }
+  let n=c("[data-rt-csv]"); if(n){ const id=n.getAttribute("data-rt-csv"), tx=exportTable(id); if(!tx){ X.toast("Tabel kosong — tidak ada yang diunduh","down"); return; } dlCsv(tx,expName(id).replace(/[^\w]+/g,"-").replace(/^-+|-+$/g,"").toLowerCase()||id); return; }
+  n=c("[data-rt-sort]"); if(n){ sortClick(n); return; }
   if(e.target&&e.target.id==="rtScPop"){ scClose(); return; }
   n=c("[data-rt-scx]"); if(n){ scClose(); return; }
   n=c("[data-rt-scd]"); if(n){ scPopup(n.getAttribute("data-rt-scd")); return; }
