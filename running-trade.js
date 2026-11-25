@@ -493,7 +493,7 @@ function repeatRaw(){
     a.n++; a.v+=x.px*x.lot*100; a.t.push(x.ts); if(x.px<a.lo) a.lo=x.px; if(x.px>a.hi) a.hi=x.px;
   }
   m.forEach(a=>{
-    if(a.n<6||a.v<thr(a.tk,CFG.bigJt)*2||!pxOk(a.tk)||(CFG.onlyOwn&&!own.has(a.tk))) return;
+    if(a.n<6||a.v<thr(a.tk,CFG.bigJt)*2||!okTk(a.tk,1e9,own)) return;
     const t=a.t.slice().sort((p,q)=>p-q), iv=[]; for(let i=1;i<t.length;i++) iv.push((t[i]-t[i-1])/1000);
     const mean=avg(iv), sd=Math.sqrt(avg(iv.map(d=>(d-mean)*(d-mean)))), cv=mean>0?sd/mean:9;
     out.push({tk:a.tk,side:a.side,lot:a.lot,br:a.br,n:a.n,tl:a.n*a.lot,v:a.v,lo:a.lo,hi:a.hi,mean,cv,reg:cv<0.6,span:(t[t.length-1]-t[0])/1000,age:Math.round((now-t[t.length-1])/1000)});
@@ -1344,8 +1344,9 @@ function dyn(){
   const maxTier=a=>lotTier({tk:a.tk,px:a.last,lot:a.mx});
   // transaksi terbaru & lot besar
   const withTier=x=>Object.assign({},x,{tier:lotTier(x)});
-  const tape=[]; for(let i=RT.trades.length-1;i>=0&&tape.length<60;i--){ const x=RT.trades[i]; if(!fq(x)||(CFG.minLot&&x.lot<CFG.minLot)) continue; const y=withTier(x); if(RT.bigOnly&&!y.tier) continue; tape.push(y); }
-  const bigFrom=now-CFG.accWin*60000, bigs=[]; for(let i=RT.trades.length-1;i>=0&&bigs.length<150;i--){ const x=RT.trades[i]; if(x.ts<bigFrom) continue; if(!fq(x)||!pxOk(x.tk)||(CFG.minLot&&x.lot<CFG.minLot)) continue; const y=withTier(x); if(y.tier) bigs.push(y); }
+  const ownF=X.ownTickers(), symF=new Map(), symOkF=tk=>{ let v=symF.get(tk); if(v===undefined){ v=okTk(tk,1e9,ownF); symF.set(tk,v); } return v; };   // filter per saham (harga min/maks, Hanya Watchlist, Hanya Bullish) juga untuk tabel per transaksi
+  const tape=[]; for(let i=RT.trades.length-1;i>=0&&tape.length<60;i--){ const x=RT.trades[i]; if(!fq(x)||!symOkF(x.tk)||(CFG.minLot&&x.lot<CFG.minLot)) continue; const y=withTier(x); if(RT.bigOnly&&!y.tier) continue; tape.push(y); }
+  const bigFrom=now-CFG.accWin*60000, bigs=[]; for(let i=RT.trades.length-1;i>=0&&bigs.length<150;i--){ const x=RT.trades[i]; if(x.ts<bigFrom) continue; if(!fq(x)||!symOkF(x.tk)||(CFG.minLot&&x.lot<CFG.minLot)) continue; const y=withTier(x); if(y.tier) bigs.push(y); }
   const cnt3=bigs.filter(x=>x.tier>=3).length, cnt2=bigs.filter(x=>x.tier===2).length;
   el.innerHTML=`<div class="ex-card"><div class="ex-mut">
     ${RT.on?"🟢 Merekam":"⚪ Berhenti"}${RT.frozen?" · ⏸ <b>Tampilan dibekukan</b> (data tetap direkam)":""}${s.open===false?` · 🔒 Pasar tutup (data terakhir ${E(s.dataDate||"-")})`:""}${lagTxt}${tokTxt} · WS: ${s.frames} frame (${s.parsed} terbaca, ${s.unparsed} tidak terbaca${s.quote?", "+s.quote+" mirip kuotasi ditolak":""}) · REST: ${s.rest} baris${CFG.rest?` (${CFG.feed?"seluruh pasar"+(s.watch?" + "+s.watch+" ticker bergiliran":""):s.watch?s.watch+" ticker bergiliran":"seluruh pasar"})`:""}${s.restAt?" · terakhir "+new Date(s.restAt).toLocaleTimeString("id-ID"):""}
@@ -1612,7 +1613,7 @@ function digestText(kind){
   const CF=confList().slice(0,n), am=accelMap(), up=[], dn=[], M=marketList(); let tb=0,ts=0; M.forEach(a=>{ tb+=a.bv; ts+=a.sv; });
   am.forEach((a,tk)=>{ if(a.sig==="U") up.push({tk,a}); else if(a.sig==="D") dn.push({tk,a}); });
   up.sort((p,q)=>q.a.net-p.a.net); dn.sort((p,q)=>p.a.net-q.a.net);
-  const from=now-CFG.accWin*60000, bg=[]; for(const x of RT.trades){ if(x.ts<from||(CFG.minLot&&x.lot<CFG.minLot)) continue; const t=lotTier(x); if(t>0) bg.push({x,v:x.px*x.lot*100}); }
+  const from=now-CFG.accWin*60000, bg=[], ownD=X.ownTickers(); for(const x of RT.trades){ if(x.ts<from||(CFG.minLot&&x.lot<CFG.minLot)||!okTk(x.tk,1e9,ownD)) continue; const t=lotTier(x); if(t>0) bg.push({x,v:x.px*x.lot*100}); }
   bg.sort((p,q)=>q.v-p.v);
   const L=sigs().map(g=>retAt(g,"p30")).filter(v=>v!==null), win=L.filter(v=>v>0).length;
   const lines=[`📊 <b>Digest Running Trade</b> · ${hh} WIB (${kind})`,`Jendela ${CFG.accWin} menit · ${M.length} saham · Buy ${fv(tb)} / Sell ${fv(ts)} (${tb+ts?Math.round(tb/(tb+ts)*100):0}% Buy)`,""];
@@ -1697,7 +1698,7 @@ function alerts(){
     }));
   }
   RT.bigQ.splice(0).forEach(x=>{                       // lot JUMBO/MEGA: cooldown 2 menit per ticker+sisi; hanya sisi HAKA yang dicatat ke hit-rate
-    if(CFG.minLot&&x.lot<CFG.minLot) return; if(!pxOk(x.tk)) return;
+    if(CFG.minLot&&x.lot<CFG.minLot) return; if(!okTk(x.tk,1e9,X.ownTickers())) return;
     const k="L"+x.tk+x.side; if(now-(RT.flag[k]||0)<120000) return; RT.flag[k]=now;
     const v=x.px*x.lot*100;
     if(x.side==="B") rec("L",x.tk,x.px,`${fpx(x.lot)} lot HAKA ${fv(v)}${x.buyer?" · "+x.buyer:""}`);
