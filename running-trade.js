@@ -799,6 +799,7 @@ function view(){
     <button class="ex-btn" data-act="rtTokSync" title="Ambil token Stockbit terbaru dari Supabase (diisi extension Chrome)">🔄 Sinkron token</button>
     <button class="ex-btn" data-act="rtColBtn">🧩 Atur kolom</button>
     <button class="ex-btn" data-act="rtExpDl" title="Unduh semua tabel yang tampil sebagai satu file CSV">💾 Unduh semua (CSV)</button>
+    <button class="ex-btn" data-act="rtExpXlsx" title="Unduh semua tabel yang tampil sebagai file Excel, satu sheet per tabel">📗 Unduh Excel (per sheet)</button>
     <button class="ex-btn" data-act="rtExpCopy">📋 Salin semua</button>
     <button class="ex-btn" data-act="rtDigestNow" title="Kirim ringkasan sekarang ke Telegram (perlu Bot Token & Chat ID di Pengaturan)">📨 Kirim digest sekarang</button>
     <label>⚖️ Buy/Sell <select id="rtmode"><option value="win"${RT.mode==="win"?" selected":""}>Jendela akumulasi</option><option value="cum"${RT.mode==="cum"?" selected":""}>Sejak Mulai (hari ini)</option></select></label>
@@ -1210,18 +1211,19 @@ const xwCell=tk=>{ const x=xwOf(tk), f=v=>v?"✓":"✗";
   return `<span style="white-space:nowrap" title="${E("1 mnt: net beli dan rasio ≥ "+Math.max(60,CFG.accRatio)+"% ("+f(x.a)+"); "+CFG.accWin+" mnt: net beli dan rasio ≥ "+CFG.accRatio+"% ("+f(x.b)+"); sejak Mulai: net beli dan rasio ≥ 55% ("+f(x.d)+")")}"><b class="${x.n===3?"ex-up":x.n===0?"ex-dn":""}">${x.n===3?"✅ ":""}${x.n}/3</b> <small>1m${f(x.a)} ${CFG.accWin}m${f(x.b)} hari${f(x.d)}</small></span>`; };
 // 6. pelacak posisi dari rencana
 const POS=(()=>{ const l=LS("rt_pos",[]); return Array.isArray(l)?l:[]; })();
-const savePos=()=>SV("rt_pos",POS);
+const savePos=()=>{ const cl=POS.filter(q=>q.cl); if(cl.length>100) cl.sort((a,b)=>(a.ts||0)-(b.ts||0)).slice(0,cl.length-100).forEach(q=>{ const i=POS.indexOf(q); if(i>=0) POS.splice(i,1); }); SV("rt_pos",POS); };   // posisi ditutup: simpan 100 terakhir
 /* ---- sinkron posisi 📌 ke Supabase (tabel rt_follow, lihat sql/07_rt_follow.sql): Edge Function running-trade-monitor memantau SL/TP saat tab ditutup ---- */
-const SRV={at:0,err:null,busy:false,sig:""};
+const SRV={at:0,err:null,busy:false,sig:"",px:{}};
 const posKey=q=>q.tk+"|"+q.ts;
 async function posSync(){
   if(SRV.busy||SRV.err==="table"||!POS.length||typeof cloudOk!=="function"||!cloudOk()) return; SRV.busy=true;
   try{
     const H=getSupaHeaders();
     // 1) tarik status dari server: SL/TP bisa saja kena saat tab tertutup
-    const res=await fetch(`${SUPABASE_URL}/rt_follow?select=pos_key,t1,status,close_px&order=followed_at.desc&limit=500`,{headers:H,cache:"no-store"});
+    const res=await fetch(`${SUPABASE_URL}/rt_follow?select=pos_key,ticker,t1,status,close_px,last_px,last_px_at&order=followed_at.desc&limit=500`,{headers:H,cache:"no-store"});
     if(!res.ok) throw new Error(res.status+" "+(await res.text()).slice(0,160));
-    const srv=new Map((await res.json()).map(r=>[r.pos_key,r])); let ch=false;
+    const srvRows=await res.json(), srv=new Map(srvRows.map(r=>[r.pos_key,r])); let ch=false;
+    srvRows.forEach(r=>{ const at=Date.parse(r.last_px_at)||0, px=+r.last_px; if(px>0&&at&&(!SRV.px[r.ticker]||at>SRV.px[r.ticker].at)){ if(!SRV.px[r.ticker]||SRV.px[r.ticker].px!==px) ch=true; SRV.px[r.ticker]={px,at}; } });   // harga terakhir yang dicatat server (saat tab tertutup)
     POS.forEach(q=>{ const r=srv.get(posKey(q)); if(!r||q.cl) return;
       if(r.status==="SL"||r.status==="TP2"){ q.cl=r.status; q.px=+r.close_px||q.px; ch=true; X.toast(q.tk+": "+r.status+" sudah kena (dipantau server saat tab tertutup)",r.status==="SL"?"down":"up"); }
       else if(r.t1&&!q.t1){ q.t1=true; ch=true; }
@@ -1238,6 +1240,12 @@ async function posSync(){
     SRV.at=Date.now(); SRV.err=null;
   }catch(e){ const m=String(e&&e.message||e); SRV.err=/relation|does not exist|404|42P01/i.test(m)?"table":m.slice(0,160); }
   finally{ SRV.busy=false; }
+}
+function posPxOf(q){          // harga posisi: transaksi lokal, atau harga catatan server bila lebih baru (tab sempat tertutup)
+  if(q.cl&&q.px) return {l:q.px,t:0,src:"cl"};
+  const lt=RT.lastTs[q.tk]||0, ll=RT.last[q.tk]||0, sv=SRV.px[q.tk];
+  if(sv&&sv.px>0&&(sv.at>lt||!ll)) return {l:sv.px,t:sv.at,src:"srv"};
+  return {l:ll,t:lt,src:"loc"};
 }
 function posUnf(q){ if(typeof cloudOk!=="function"||!cloudOk()||SRV.err==="table") return; try{ supaFetch(`${SUPABASE_URL}/rt_follow?pos_key=eq.${encodeURIComponent(posKey(q))}`,{method:"PATCH",headers:{...getSupaHeaders(),"Prefer":"return=minimal"},body:JSON.stringify({status:"UNFOLLOW",updated_at:new Date().toISOString()})}).catch(()=>{}); }catch(e){} }
 const posSrvNote=()=>{ if(typeof cloudOk!=="function"||!cloudOk()) return "☁️ Supabase belum dikonfigurasi: alert SL/TP hanya berjalan di browser."; if(SRV.err==="table") return `☁️ Tabel rt_follow belum ada: jalankan <code>sql/07_rt_follow.sql</code> agar SL/TP tetap dipantau server saat tab ditutup.`; if(SRV.err) return `☁️ <span class="ex-dn">Sinkron ke server gagal: ${E(SRV.err)}</span>`; if(SRV.at) return `☁️ Posisi tersinkron ke server (${Math.max(0,Math.round((Date.now()-SRV.at)/60000))} mnt lalu). Bila Edge Function <code>running-trade-monitor</code> terpasang, SL/TP tetap dipantau saat tab ditutup.`; return ""; };
@@ -1256,12 +1264,19 @@ function posCheck(){            // dipanggil dari alerts()
     else if(l>=q.tp1&&!q.t1){ q.t1=true; savePos(); fire(`✅ ${q.tk} menyentuh TP1 ${fpx(q.tp1)} (harga ${fpx(l)}, entri ${fpx(q.en)}, ${pPct(l,q.en)})`); }
   });
 }
+function posStatsHtml(){
+  const C=POS.filter(q=>q.cl), A=POS.filter(q=>!q.cl), t1=A.filter(q=>q.t1).length;
+  if(!C.length&&!t1) return "";
+  const R=C.map(q=>q.px>0&&q.en>0?(q.px-q.en)/q.en*100:null).filter(v=>v!=null), tp=C.filter(q=>q.cl==="TP2").length, sl=C.filter(q=>q.cl==="SL").length;
+  const avg=R.length?R.reduce((a,b)=>a+b,0)/R.length:null;
+  return `<div class="ex-mut" style="margin-top:6px">📊 <b>Hasil posisi</b> (${C.length} ditutup, maks. 100 terakhir): TP2 ${tp} · SL ${sl}${C.length?` · TP2 tercapai ${Math.round(tp/C.length*100)}%`:""}${avg!=null?` · rata-rata hasil <span class="${avg>=0?"ex-up":"ex-dn"}">${pctS(avg)}</span>`:""}${t1?` · ${t1} masih jalan setelah TP1`:""}${C.length<30?" · <i>sampel masih kecil, jangan disimpulkan dulu</i>":""}</div>`;
+}
 function posHtml(){
   const act=POS.filter(q=>!q.cl), done=POS.filter(q=>q.cl).slice(-5).reverse();
-  const rows=act.concat(done).map(q=>{ const l=q.cl&&q.px?q.px:(RT.last[q.tk]||0), pl=l>0?(l-q.en)/q.en*100:null;
+  const rows=act.concat(done).map(q=>{ const pp=posPxOf(q), l=pp.l, pl=l>0?(l-q.en)/q.en*100:null;
     const st=q.cl==="SL"?"<span class='ex-dn'>🛑 SL kena</span>":q.cl==="TP2"?"<span class='ex-up'>🏁 TP2 kena</span>":q.t1?"<span class='ex-up'>✅ TP1 kena, masih jalan</span>":"<span class='ex-mut'>berjalan</span>";
-    return `<tr><td>${tkc(q.tk)}</td><td>${fpx(q.en)}</td><td>${l?fpx(l):"-"}${(!q.cl&&l)?(()=>{ const t=RT.lastTs[q.tk]; if(!t) return ` <small class="ex-mut" title="Belum ada transaksi baru terbaca untuk saham ini sejak perekaman dimulai; harga = harga saat diikuti">· belum update</small>`; const m=Math.round((Date.now()-t)/60000); return m>=2?` <small class="ex-mut" title="Waktu transaksi terakhir yang terbaca untuk saham ini">· ${m>=120?Math.round(m/60)+" jam":m+" mnt"} lalu</small>`:""; })():""}</td><td>${pl==null?"-":`<span class="${pl>=0?"ex-up":"ex-dn"}">${pctS(pl)}</span>`}</td><td class="ex-dn">${fpx(q.sl)}</td><td class="ex-up">${fpx(q.tp1)}</td><td class="ex-up">${fpx(q.tp2)}</td><td>${st}</td><td><span class="rt-tk" data-rt-unf="${E(q.tk)}|${q.ts}" title="Hapus dari daftar">🗑</span></td></tr>`; });
-  return `<div class="ex-card"><h3>📌 Posisi yang diikuti (${act.length} aktif)</h3>${tbl(["Ticker","Entri","Harga","P/L","SL","TP1","TP2","Status",""],rows,"Belum ada. Klik 📌 di kolom Status zona untuk mengikuti rencana suatu saham; alert TP1/TP2/SL dikirim selama perekaman berjalan.")}<div class="ex-mut" style="margin-top:6px">Entri = harga live saat 📌 diklik; SL/TP diambil dari rencana saat itu dan tidak ikut berubah. Harga = transaksi terakhir yang tertangkap: saham sepi bisa tidak berubah berjam-jam (label \"lalu\" menunjukkan umur harga). Alert di browser memakai transaksi yang tertangkap, jadi berjalan saat ▶ Mulai aktif dan tab terbuka. Ini pemantau, bukan pengganti order SL/TP di sekuritas.<div style="margin-top:4px">${posSrvNote()}</div></div></div>`;
+    return `<tr><td>${tkc(q.tk)}</td><td>${fpx(q.en)}</td><td>${l?fpx(l):"-"}${(!q.cl&&l)?(()=>{ const t=pp.t; if(!t) return ` <small class="ex-mut" title="Belum ada transaksi baru terbaca untuk saham ini sejak perekaman dimulai; harga = harga saat diikuti">· belum update</small>`; const m=Math.round((Date.now()-t)/60000); return m>=2?` <small class="ex-mut" title="Waktu transaksi terakhir yang terbaca untuk saham ini">· ${m>=120?Math.round(m/60)+" jam":m+" mnt"} lalu${pp.src==="srv"?" (dicatat server)":""}</small>`:""; })():""}</td><td>${pl==null?"-":`<span class="${pl>=0?"ex-up":"ex-dn"}">${pctS(pl)}</span>`}</td><td class="ex-dn">${fpx(q.sl)}</td><td class="ex-up">${fpx(q.tp1)}</td><td class="ex-up">${fpx(q.tp2)}</td><td>${st}</td><td><span class="rt-tk" data-rt-unf="${E(q.tk)}|${q.ts}" title="Hapus dari daftar">🗑</span></td></tr>`; });
+  return `<div class="ex-card"><h3>📌 Posisi yang diikuti (${act.length} aktif)</h3>${tbl(["Ticker","Entri","Harga","P/L","SL","TP1","TP2","Status",""],rows,"Belum ada. Klik 📌 di kolom Status zona untuk mengikuti rencana suatu saham; alert TP1/TP2/SL dikirim selama perekaman berjalan.")}${posStatsHtml()}<div class="ex-mut" style="margin-top:6px">${POS.some(q=>q.cl)?`<button class="ex-btn" data-rt-posclear="1" style="font-size:11px;padding:1px 8px;float:right">🧹 Hapus yang sudah ditutup</button>`:""}Entri = harga live saat 📌 diklik; SL/TP diambil dari rencana saat itu dan tidak ikut berubah. Harga = transaksi terakhir yang tertangkap: saham sepi bisa tidak berubah berjam-jam (label \"lalu\" menunjukkan umur harga). Alert di browser memakai transaksi yang tertangkap, jadi berjalan saat ▶ Mulai aktif dan tab terbuka. Ini pemantau, bukan pengganti order SL/TP di sekuritas.<div style="margin-top:4px">${posSrvNote()}</div></div></div>`;
 }
 // 7. uji ulang parameter dari riwayat TP1/SL
 function btRun(){
@@ -1867,6 +1882,24 @@ X.act("rtTokSync",async()=>{
   catch(e){ X.toast("Sinkron token gagal: "+(e&&e.message||e),"down"); }
 });
 X.act("rtExpDl",()=>{ if(!Object.keys(RT.tblData).length){ X.toast("Belum ada tabel — tekan ▶ Mulai dulu","down"); return; } dlCsv(exportCsv()); });
+async function loadXlsx(){
+  if(typeof XLSX!=="undefined") return XLSX;
+  await new Promise((ok,no)=>{ const sc=document.createElement("script"); sc.src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"; sc.onload=ok; sc.onerror=()=>no(new Error("library XLSX gagal dimuat")); document.head.appendChild(sc); });
+  if(typeof XLSX==="undefined") throw new Error("library XLSX tidak tersedia");
+  return XLSX;
+}
+function xlsxCell(h,r){ let v; try{ v=h.k(r); }catch(e){ v=null; } if(h.h==="Waktu"&&typeof v==="number") return new Date(v); if(v==null) return ""; if(typeof v==="number") return isFinite(v)?v:""; if(typeof v==="boolean") return v; return String(v); }
+X.act("rtExpXlsx",async()=>{
+  const ids=Object.keys(RT.tblData).filter(id=>RT.tblData[id].rows.length); if(!ids.length){ X.toast("Belum ada tabel — tekan ▶ Mulai dulu","down"); return; }
+  try{
+    const XL=await loadXlsx(), wb=XL.utils.book_new(), used=new Set();
+    ids.forEach(id=>{ const t=RT.tblData[id], cs=t.cols.filter(h=>h.k);
+      const aoa=[cs.map(h=>String(h.h).replace(/<[^>]*>/g,""))].concat(t.rows.map(r=>cs.map(h=>xlsxCell(h,r))));
+      let nm=expName(id).replace(/[\[\]:*?\/\\]/g," ").replace(/\s+/g," ").trim().slice(0,31)||id, k=2; while(used.has(nm.toLowerCase())) nm=nm.slice(0,28)+" "+(k++); used.add(nm.toLowerCase());
+      XL.utils.book_append_sheet(wb,XL.utils.aoa_to_sheet(aoa,{cellDates:true}),nm); });
+    XL.writeFile(wb,"running-trade-"+new Date().toISOString().slice(0,16).replace(/[-:T]/g,"")+".xlsx"); X.toast("Excel diunduh: "+ids.length+" sheet","up");
+  }catch(e){ X.toast("Ekspor Excel gagal: "+String(e&&e.message||e).slice(0,120)+" — pakai Unduh semua (CSV)","down"); }
+});
 X.act("rtExpCopy",()=>{ if(!Object.keys(RT.tblData).length){ X.toast("Belum ada tabel — tekan ▶ Mulai dulu","down"); return; } copy(exportCsv(),"Semua tabel disalin (CSV)"); });
 X.act("rtDigestNow",()=>{ sendDigest("manual"); });
 X.act("rtBt",()=>{ btRun(); dyn(); });
@@ -1893,7 +1926,8 @@ document.addEventListener("change",e=>{ const t=e.target; if(!t||!t.getAttribute
 });
 document.addEventListener("click",e=>{
   const c=e.target&&e.target.closest?e.target.closest.bind(e.target):null; if(!c) return;
-  let n=c("[data-rt-upre]"); if(n){ const q=userPres().find(z=>z.id===n.getAttribute("data-rt-upre")); if(q){ readCfg(); applyPreset(q.v,q.n); } return; }
+  let n=c("[data-rt-posclear]"); if(n){ const cl=POS.filter(q=>q.cl).length; if(cl&&confirm("Hapus "+cl+" posisi yang sudah ditutup dari daftar? Ringkasan hasil ikut direset.")){ for(let i=POS.length-1;i>=0;i--) if(POS[i].cl) POS.splice(i,1); savePos(); dyn(); X.toast("Posisi yang sudah ditutup dihapus","up"); } return; }
+  n=c("[data-rt-upre]"); if(n){ const q=userPres().find(z=>z.id===n.getAttribute("data-rt-upre")); if(q){ readCfg(); applyPreset(q.v,q.n); } return; }
   n=c("[data-rt-udel]"); if(n){ const L=userPres(), q=L.find(z=>z.id===n.getAttribute("data-rt-udel")); if(q&&confirm("Hapus preset \""+q.n+"\"?")){ SV("rt_presets_user",L.filter(z=>z.id!==q.id)); X.repaint(); dyn(); X.toast("Preset dihapus","up"); } return; }
   n=c("[data-rt-csv]"); if(n){ const id=n.getAttribute("data-rt-csv"), tx=exportTable(id); if(!tx){ X.toast("Tabel kosong — tidak ada yang diunduh","down"); return; } dlCsv(tx,expName(id).replace(/[^\w]+/g,"-").replace(/^-+|-+$/g,"").toLowerCase()||id); return; }
   n=c("[data-rt-sort]"); if(n){ sortClick(n); return; }
