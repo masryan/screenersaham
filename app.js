@@ -681,9 +681,14 @@ async function runIndexMembershipSyncFromUI(){
 // state.stockbitBrokerBulkResults supaya user bisa lihat & laporkan
 // balik nama field yang benar (baru mapping-nya disesuaikan).
 // ==========================================================
-// Kalender resmi Libur Bursa BEI 2026, dari pengumuman IDX No. Peng-00171/BEI.POP/09-2025
-// (idx.co.id/id/berita/jadwal-libur-bursa) + berita yang mengutipnya. 21 tanggal di luar
-// weekend, sudah dicocokkan dengan angka resmi "21 hari libur bursa 2026" yang diberitakan.
+// Kalender resmi Libur Bursa BEI, dari pengumuman IDX (idx.co.id/id/berita/jadwal-libur-bursa)
+// + berita yang mengutipnya:
+//  - 2026: No. Peng-00171/BEI.POP/09-2025 — 22 tanggal hari kerja (261 hari kerja − 22 = 239 hari
+//    bursa efektif, cocok dengan angka resmi 239). Koreksi: 15 Mei 2026 (Cuti Bersama Kenaikan
+//    Yesus Kristus) sebelumnya terlewat sehingga hanya 21 tanggal / 240 hari.
+//  - 2027: No. Peng-00169/BEI.POP/09-2026 (16 Sep 2026) — 20 tanggal hari kerja (261 − 20 = 241
+//    hari bursa efektif, cocok dengan angka resmi 241).
+// Libur nasional yang jatuh Sabtu/Minggu tidak tercantum (bukan libur bursa).
 // PENTING: kalender ini WAJIB diupdate tiap tahun (IDX biasanya umumkan kalender tahun
 // berikutnya sekitar September) — kalau BURSA_HOLIDAYS tidak ada entri untuk suatu tahun,
 // tradingDaysBack() otomatis fallback ke exclude-weekend-saja untuk tahun itu (lihat di bawah).
@@ -701,6 +706,7 @@ const BURSA_HOLIDAYS = new Set([
   "2026-04-03", // Wafat Yesus Kristus (Jumat Agung)
   "2026-05-01", // Hari Buruh Internasional
   "2026-05-14", // Kenaikan Yesus Kristus
+  "2026-05-15", // Cuti Bersama Kenaikan Yesus Kristus
   "2026-05-27", // Idul Adha 1447 H
   "2026-05-28", // Cuti Bersama Idul Adha 1447 H
   "2026-06-01", // Hari Lahir Pancasila
@@ -710,6 +716,27 @@ const BURSA_HOLIDAYS = new Set([
   "2026-12-24", // Cuti Bersama Hari Raya Natal
   "2026-12-25", // Hari Raya Natal
   "2026-12-31", // Libur Bursa (penutup tahun)
+  // 2027 (Peng-00169/BEI.POP/09-2026)
+  "2027-01-01", // Tahun Baru 2027 Masehi
+  "2027-01-05", // Isra Mikraj Nabi Muhammad SAW 1448 H
+  "2027-02-05", // Cuti Bersama Tahun Baru Imlek 2578 Kongzili
+  "2027-03-08", // Hari Suci Nyepi (Tahun Baru Saka 1949)
+  "2027-03-09", // Cuti Bersama Idul Fitri 1448 H
+  "2027-03-10", // Idul Fitri 1448 H
+  "2027-03-11", // Idul Fitri 1448 H
+  "2027-03-12", // Cuti Bersama Idul Fitri 1448 H
+  "2027-03-15", // Cuti Bersama Idul Fitri 1448 H
+  "2027-03-25", // Cuti Bersama Wafat Yesus Kristus
+  "2027-03-26", // Wafat Yesus Kristus
+  "2027-05-06", // Kenaikan Yesus Kristus
+  "2027-05-17", // Idul Adha 1448 H
+  "2027-05-18", // Cuti Bersama Idul Adha 1448 H
+  "2027-05-19", // Cuti Bersama Hari Raya Waisak 2571 BE
+  "2027-05-20", // Hari Raya Waisak 2571 BE
+  "2027-06-01", // Hari Lahir Pancasila
+  "2027-08-17", // Proklamasi Kemerdekaan RI
+  "2027-12-24", // Cuti Bersama Kelahiran Yesus Kristus
+  "2027-12-31", // Libur Bursa (penutup tahun)
 ]);
 
 // Selalu pakai komponen tanggal LOKAL (getFullYear/getMonth/getDate), JANGAN
